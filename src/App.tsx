@@ -61,7 +61,7 @@ const mockChecklist = [
 ];
 
 const mockLogs = [
-  { id: 101, time: '10:30', user: 'JOKE', action: 'Portit avattu yleisölle' },
+  { id: 101, time: '10:30', user: 'TIKE', action: 'Portit avattu yleisölle' },
   { id: 102, time: '10:35', user: 'Gate 1', action: 'Kapasiteetti 1500/h saavutettu' },
   { id: 103, time: '10:42', user: 'Spotter A', action: 'Ilmoitus ruuhkasta Main Stagen edessä' }
 ];
@@ -724,36 +724,20 @@ export default function App() {
               />
             </div>
 
-            {/* Main Content Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Left Column - Alerts & Status */}
-              <div className="lg:col-span-2 space-y-6">
-                <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
-                  <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                      <Activity className="text-rose-500" size={20} />
-                      Aktiiviset Hälytykset ja Poikkeamat
-                    </h2>
-                    <button className="text-sm text-indigo-600 font-medium hover:text-indigo-700">Näytä Kaikki</button>
-                  </div>
-                  <div className="space-y-1">
-                    {mockAlerts.map(alert => (
-                      <AlertBanner key={alert.id} alert={alert} />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+            {/* Yläruudukko - TIKE-loki ja valmiustarkastus samalla rivillä */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+              {/* Vasen kortti - TIKE-loki */}
+              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 flex flex-col h-full">
                    <div className="flex justify-between items-center mb-6">
                     <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                       <MessageSquare className="text-indigo-500" size={20} />
-                      JOKE Loki (Viimeisimmät)
+                      TIKE Loki (Viimeisimmät)
                     </h2>
                     <button className="px-4 py-2 bg-indigo-50 text-indigo-700 text-sm font-medium rounded-lg hover:bg-indigo-100 transition-colors">
                       + Uusi Kirjaus
                     </button>
                   </div>
-                  <div className="space-y-4">
+                  <div className="space-y-4 flex-1">
                     {mockLogs.map(log => (
                       <div key={log.id} className="flex gap-4 p-3 hover:bg-slate-50 rounded-lg transition-colors border-b border-slate-50 last:border-0">
                         <div className="text-sm font-mono text-slate-400 w-16 pt-0.5">{log.time}</div>
@@ -764,13 +748,10 @@ export default function App() {
                       </div>
                     ))}
                   </div>
-                </div>
               </div>
 
-              {/* Right Column - Checklist & Actions */}
-              <div className="space-y-6">
-                {/* Swaippattava / Välilehdellinen kortti */}
-                <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+              {/* Oikea kortti - Valmiustarkastus ja raportit */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden flex flex-col h-full">
                   <div className="flex border-b border-slate-100">
                     <button 
                       onClick={() => setOverviewCardTab('checklist')}
@@ -788,7 +769,7 @@ export default function App() {
                     </button>
                   </div>
                   
-                  <div className="p-6">
+                  <div className="p-6 flex-1">
                     {overviewCardTab === 'checklist' ? (
                       <div className="space-y-3 animate-in fade-in duration-300">
                         {mockChecklist.map(item => (
@@ -813,7 +794,7 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="space-y-3 animate-in fade-in duration-300">
-                        {reports.slice(0, 5).map((rep, idx) => (
+                        {reports.slice(0, 8).map((rep, idx) => (
                           <div key={idx} className="flex flex-col gap-1 p-3 rounded-lg bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors cursor-pointer">
                             <div className="flex justify-between items-center">
                               <span className="text-xs font-bold text-indigo-600 uppercase tracking-wide">{rep.type}</span>
@@ -833,6 +814,21 @@ export default function App() {
                     )}
                   </div>
                 </div>
+            </div>
+
+            {/* Hälytykset koko leveydellä */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                  <Activity className="text-rose-500" size={20} />
+                  Aktiiviset Hälytykset ja Poikkeamat
+                </h2>
+                <button className="text-sm text-indigo-600 font-medium hover:text-indigo-700">Näytä Kaikki</button>
+              </div>
+              <div className="space-y-1">
+                {mockAlerts.map(alert => (
+                  <AlertBanner key={alert.id} alert={alert} />
+                ))}
               </div>
             </div>
           </div>
