@@ -2251,7 +2251,7 @@ export default function App() {
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden tilannekuva</p>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
             </div>
           </div>
         </div>
