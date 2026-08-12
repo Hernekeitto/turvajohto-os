@@ -72,11 +72,13 @@ const mockEmployees = [
   "Lahtinen Oskari Juhani Tapio"
 ];
 
-const mockCheckedInEmployees = [
-  { id: 1, name: "Korhonen Elli Marja Orvokki", role: "Järjestyksenvalvoja", vest: true, badge: "1234", headset: true, radio: "R-12" },
-  { id: 2, name: "Virtanen Matti Johannes Antero", role: "Vartija", vest: false, badge: "5521", headset: false, radio: "" },
-  { id: 3, name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05" }
+const initialCheckedInEmployees = [
+  { id: 1, name: "Korhonen Elli Marja Orvokki", role: "Järjestyksenvalvoja", vest: true, badge: "1234", headset: true, radio: "R-12", checkInDate: "", checkInTime: "10:15", comment: "" },
+  { id: 2, name: "Virtanen Matti Johannes Antero", role: "Vartija", vest: false, badge: "5521", headset: false, radio: "", checkInDate: "", checkInTime: "10:22", comment: "" },
+  { id: 3, name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05", checkInDate: "", checkInTime: "10:40", comment: "" }
 ];
+
+const CHECKIN_STORAGE_KEY = 'turvajohto-checkins';
 
 const mockReports = [
   { id: '26/FesX/1108/099', type: 'Työntekijän uloskirjaus', author: 'TIKE Päivystäjä', time: '14:10', summary: 'Virtanen ulos, radiopuhelin rikki.' },
@@ -150,11 +152,20 @@ export default function App() {
   const [eventTimeStr, setEventTimeStr] = useState('');
   const timeInputRef = useRef(null);
 
+  // Sisäänkirjatut työntekijät (yhteinen tila koko sovellukselle)
+  const [checkedInEmployees, setCheckedInEmployees] = useState(initialCheckedInEmployees);
+
   // Check-in Form State
   const [empSearch, setEmpSearch] = useState('');
   const [selectedEmp, setSelectedEmp] = useState('');
   const [checkInDate, setCheckInDate] = useState('');
   const [checkInTime, setCheckInTime] = useState('');
+  const [checkInRole, setCheckInRole] = useState('Järjestyksenvalvoja');
+  const [checkInVest, setCheckInVest] = useState(false);
+  const [checkInBadge, setCheckInBadge] = useState('');
+  const [checkInHeadset, setCheckInHeadset] = useState(false);
+  const [checkInRadio, setCheckInRadio] = useState('');
+  const [checkInComment, setCheckInComment] = useState('');
 
   // Check-out Form State
   const [outEmpSearch, setOutEmpSearch] = useState('');
@@ -206,6 +217,28 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  // Ladataan sisäänkirjaukset selaimen muistista sivun avautuessa
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(CHECKIN_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) setCheckedInEmployees(parsed);
+      }
+    } catch {
+      // Viallinen tallennus ohitetaan ja jatketaan alkutilalla
+    }
+  }, []);
+
+  // Tallennetaan muutokset selaimen muistiin
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHECKIN_STORAGE_KEY, JSON.stringify(checkedInEmployees));
+    } catch {
+      // Tallennus voi epäonnistua esim. yksityisessä selaustilassa
+    }
+  }, [checkedInEmployees]);
+
   const formatTime = (date) => {
     return date.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
@@ -251,6 +284,53 @@ export default function App() {
     setCheckInTime(t);
   };
 
+  const resetCheckInForm = () => {
+    setSelectedEmp('');
+    setEmpSearch('');
+    setCheckInDate('');
+    setCheckInTime('');
+    setCheckInRole('Järjestyksenvalvoja');
+    setCheckInVest(false);
+    setCheckInBadge('');
+    setCheckInHeadset(false);
+    setCheckInRadio('');
+    setCheckInComment('');
+  };
+
+  const handleSaveCheckIn = () => {
+    if (!selectedEmp) return;
+    if (checkedInEmployees.some(e => e.name === selectedEmp)) {
+      alert('Työntekijä on jo sisäänkirjattuna.');
+      return;
+    }
+    const now = new Date();
+    const localNow = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    setCheckedInEmployees(prev => [...prev, {
+      id: Date.now(),
+      name: selectedEmp,
+      role: checkInRole,
+      vest: checkInVest,
+      badge: checkInBadge,
+      headset: checkInHeadset,
+      radio: checkInRadio,
+      comment: checkInComment,
+      checkInDate: checkInDate || localNow.toISOString().split('T')[0],
+      checkInTime: checkInTime || localNow.toISOString().slice(11, 16)
+    }]);
+    resetCheckInForm();
+    setActiveTab('planning_employees');
+  };
+
+  const handleCheckOut = () => {
+    if (!selectedOutEmp) return;
+    setCheckedInEmployees(prev => prev.filter(e => e.id !== selectedOutEmp.id));
+    setSelectedOutEmp(null);
+    setOutEmpSearch('');
+    setShowOutTimeInput(false);
+    setCheckOutDate('');
+    setCheckOutTime('');
+  };
+
   const handleOpenKirjausNyt = () => {
     const now = new Date();
     now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
@@ -280,12 +360,20 @@ export default function App() {
   };
 
   const filteredEmployees = empSearch.length >= 3 
-    ? mockEmployees.filter(e => e.toLowerCase().includes(empSearch.toLowerCase())) 
+    ? mockEmployees.filter(e => 
+        e.toLowerCase().includes(empSearch.toLowerCase()) &&
+        !checkedInEmployees.some(c => c.name === e)) 
     : [];
 
   const filteredOutEmployees = outEmpSearch.length >= 3
-    ? mockCheckedInEmployees.filter(e => e.name.toLowerCase().includes(outEmpSearch.toLowerCase()))
+    ? checkedInEmployees.filter(e => e.name.toLowerCase().includes(outEmpSearch.toLowerCase()))
     : [];
+
+  // Miehityslaskurit sisäänkirjatuista työntekijöistä
+  const jvCount = checkedInEmployees.filter(e => e.role === 'Järjestyksenvalvoja').length;
+  const guardCount = checkedInEmployees.filter(e => e.role === 'Vartija').length;
+  const requiredJv = 142;
+  const jvMissing = Math.max(0, requiredJv - jvCount);
 
   // Readiness logic computations
   const completedChecksCount = Object.values(readinessChecks).filter(Boolean).length;
@@ -365,8 +453,10 @@ export default function App() {
               <DashboardCard 
                 title="Aktiiviset Järjestyksenvalvojat" 
                 icon={ShieldCheck} 
-                value="142" 
-                subtitle="Mitoitus: 1:100 (vaatimus 142)"
+                value={jvCount} 
+                subtitle={jvMissing === 0
+                  ? `Sisäänkirjattu ${jvCount}/${requiredJv} — mitoitus täyttyy`
+                  : `Sisäänkirjattu ${jvCount}/${requiredJv} — puuttuu ${jvMissing}`}
               />
               <DashboardCard 
                 title="Ensiaputapaukset" 
@@ -861,11 +951,11 @@ export default function App() {
             {/* Info Boxes / Työntekijätilanne */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-8">
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center flex flex-col justify-center">
-                <div className="text-2xl font-bold text-slate-800">142</div>
+                <div className="text-2xl font-bold text-slate-800">{jvCount}</div>
                 <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">JV paikalla</div>
               </div>
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center flex flex-col justify-center">
-                <div className="text-2xl font-bold text-slate-800">25</div>
+                <div className="text-2xl font-bold text-slate-800">{guardCount}</div>
                 <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">Vartijat</div>
               </div>
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center flex flex-col justify-center">
@@ -934,11 +1024,23 @@ export default function App() {
                       <label className="block text-sm font-bold text-slate-700 mb-3">Työntekijän rooli</label>
                       <div className="flex gap-6">
                         <label className="flex items-center gap-2 cursor-pointer">
-                          <input type="radio" name="role" className="w-4 h-4 text-emerald-600 focus:ring-emerald-500" defaultChecked />
+                          <input 
+                            type="radio" 
+                            name="role" 
+                            className="w-4 h-4 text-emerald-600 focus:ring-emerald-500" 
+                            checked={checkInRole === 'Järjestyksenvalvoja'}
+                            onChange={() => setCheckInRole('Järjestyksenvalvoja')}
+                          />
                           <span className="text-sm font-medium text-slate-700">Järjestyksenvalvoja</span>
                         </label>
                         <label className="flex items-center gap-2 cursor-pointer">
-                          <input type="radio" name="role" className="w-4 h-4 text-emerald-600 focus:ring-emerald-500" />
+                          <input 
+                            type="radio" 
+                            name="role" 
+                            className="w-4 h-4 text-emerald-600 focus:ring-emerald-500" 
+                            checked={checkInRole === 'Vartija'}
+                            onChange={() => setCheckInRole('Vartija')}
+                          />
                           <span className="text-sm font-medium text-slate-700">Vartija</span>
                         </label>
                       </div>
@@ -981,11 +1083,11 @@ export default function App() {
                         <span className="text-sm font-medium text-slate-700">JV / Vartijan liivi</span>
                         <div className="flex gap-4">
                           <label className="flex items-center gap-2 cursor-pointer">
-                            <input type="radio" name="vest" className="text-emerald-600 focus:ring-emerald-500" />
+                            <input type="radio" name="vest" className="text-emerald-600 focus:ring-emerald-500" checked={checkInVest === true} onChange={() => setCheckInVest(true)} />
                             <span className="text-sm">Kyllä</span>
                           </label>
                           <label className="flex items-center gap-2 cursor-pointer">
-                            <input type="radio" name="vest" className="text-slate-600 focus:ring-slate-500" defaultChecked />
+                            <input type="radio" name="vest" className="text-slate-600 focus:ring-slate-500" checked={checkInVest === false} onChange={() => setCheckInVest(false)} />
                             <span className="text-sm">Ei</span>
                           </label>
                         </div>
@@ -993,18 +1095,18 @@ export default function App() {
 
                       <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
                         <label className="block text-sm font-medium text-slate-700 mb-1">JV yksilötunnus</label>
-                        <input type="text" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-emerald-500" placeholder="Esim. 1234" />
+                        <input type="text" value={checkInBadge} onChange={(e) => setCheckInBadge(e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-emerald-500" placeholder="Esim. 1234" />
                       </div>
 
                       <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
                         <span className="text-sm font-medium text-slate-700">Headset</span>
                         <div className="flex gap-4">
                           <label className="flex items-center gap-2 cursor-pointer">
-                            <input type="radio" name="headset" className="text-emerald-600 focus:ring-emerald-500" />
+                            <input type="radio" name="headset" className="text-emerald-600 focus:ring-emerald-500" checked={checkInHeadset === true} onChange={() => setCheckInHeadset(true)} />
                             <span className="text-sm">Kyllä</span>
                           </label>
                           <label className="flex items-center gap-2 cursor-pointer">
-                            <input type="radio" name="headset" className="text-slate-600 focus:ring-slate-500" defaultChecked />
+                            <input type="radio" name="headset" className="text-slate-600 focus:ring-slate-500" checked={checkInHeadset === false} onChange={() => setCheckInHeadset(false)} />
                             <span className="text-sm">Ei</span>
                           </label>
                         </div>
@@ -1012,7 +1114,7 @@ export default function App() {
 
                       <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
                         <label className="block text-sm font-medium text-slate-700 mb-1">Radiopuhelimen nro</label>
-                        <input type="text" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-emerald-500" placeholder="Esim. R-12" />
+                        <input type="text" value={checkInRadio} onChange={(e) => setCheckInRadio(e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-emerald-500" placeholder="Esim. R-12" />
                       </div>
                       
                     </div>
@@ -1027,6 +1129,8 @@ export default function App() {
                     <div>
                       <textarea 
                         rows="3" 
+                        value={checkInComment}
+                        onChange={(e) => setCheckInComment(e.target.value)}
                         className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-emerald-500" 
                         placeholder="Esim. työntekijä joutuu lähtemään ennen työvuoron loppua, varustepuutteet tai muu huomionarvoinen asia..."
                       ></textarea>
@@ -1036,12 +1140,16 @@ export default function App() {
                   <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
                     <button 
                       type="button" 
-                      onClick={() => { setSelectedEmp(''); setEmpSearch(''); }}
+                      onClick={resetCheckInForm}
                       className="px-5 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                     >
                       Peruuta
                     </button>
-                    <button type="button" className="px-5 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center gap-2">
+                    <button 
+                      type="button" 
+                      onClick={handleSaveCheckIn}
+                      className="px-5 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center gap-2"
+                    >
                       <CheckCircle size={16} />
                       Tallenna kirjaus
                     </button>
@@ -1075,11 +1183,11 @@ export default function App() {
             {/* Info Boxes / Työntekijätilanne */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-8">
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center flex flex-col justify-center">
-                <div className="text-2xl font-bold text-slate-800">142</div>
+                <div className="text-2xl font-bold text-slate-800">{jvCount}</div>
                 <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">JV paikalla</div>
               </div>
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center flex flex-col justify-center">
-                <div className="text-2xl font-bold text-slate-800">25</div>
+                <div className="text-2xl font-bold text-slate-800">{guardCount}</div>
                 <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">Vartijat</div>
               </div>
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center flex flex-col justify-center">
@@ -1195,11 +1303,7 @@ export default function App() {
                       <div className="flex flex-col sm:flex-row gap-3">
                         <button 
                           type="button" 
-                          onClick={() => {
-                            // Tässä tallennetaan data nykyajalla. UI:n tyhjennys demo-tarkoituksessa:
-                            setSelectedOutEmp(null);
-                            setOutEmpSearch('');
-                          }}
+                          onClick={handleCheckOut}
                           className="flex-1 py-3 px-4 text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition-colors flex justify-center items-center gap-2 shadow-sm"
                         >
                           <LogOut size={18} />
@@ -1234,11 +1338,7 @@ export default function App() {
                         <div className="flex gap-3">
                           <button 
                             type="button" 
-                            onClick={() => {
-                              setSelectedOutEmp(null);
-                              setOutEmpSearch('');
-                              setShowOutTimeInput(false);
-                            }}
+                            onClick={handleCheckOut}
                             className="px-5 py-2.5 text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors shadow-sm flex-1"
                           >
                             Tallenna uloskirjaus
@@ -2006,7 +2106,9 @@ export default function App() {
                   <Users className="text-indigo-500" size={24} />
                   Tapahtuman työntekijät
                 </h2>
-                <p className="text-sm text-slate-500 mt-1">Tapahtumaan rekisteröity henkilöstö ({mockEmployees.length} henkilöä).</p>
+                <p className="text-sm text-slate-500 mt-1">
+                  Sisäänkirjattuna {checkedInEmployees.length} hlö (JV {jvCount}, vartijat {guardCount}). Rekisterissä {mockEmployees.length} hlö.
+                </p>
               </div>
               <button 
                 onClick={() => { setEditingEmp(null); setActiveTab('planning_employee_new'); }}
@@ -2022,32 +2124,53 @@ export default function App() {
                 <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
                   <tr>
                     <th className="p-4">Nimi</th>
-                    <th className="p-4">Roolit</th>
-                    <th className="p-4">Kortit tarkistettu</th>
+                    <th className="p-4">Rooli</th>
+                    <th className="p-4">Sisäänkirjattu</th>
+                    <th className="p-4">Yksilötunnus</th>
+                    <th className="p-4">Varusteet</th>
                     <th className="p-4 text-right">Toiminnot</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {mockCheckedInEmployees.map((emp) => (
+                  {checkedInEmployees.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-sm text-slate-500">
+                        Ei sisäänkirjattuja työntekijöitä. Kirjaus tehdään kohdassa Raportointi &rarr; TIKE &rarr; Työntekijän sisäänkirjaus.
+                      </td>
+                    </tr>
+                  ) : checkedInEmployees.map((emp) => (
                     <tr key={emp.id} className="hover:bg-white transition-colors">
                       <td className="p-4 font-medium text-slate-800">{emp.name}</td>
                       <td className="p-4">
-                        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-700/10">
+                        <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ring-1 ring-inset ${emp.role === 'Järjestyksenvalvoja' ? 'bg-indigo-50 text-indigo-700 ring-indigo-700/10' : 'bg-slate-100 text-slate-700 ring-slate-700/10'}`}>
                           {emp.role}
                         </span>
                       </td>
+                      <td className="p-4 font-mono text-slate-600">{emp.checkInTime || '-'}</td>
+                      <td className="p-4 text-slate-600">{emp.badge || '-'}</td>
                       <td className="p-4">
-                        <span className="flex items-center gap-1 text-emerald-600 text-xs font-bold">
-                          <CheckCircle size={14} /> OK
-                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {emp.vest && <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded">Liivi</span>}
+                          {emp.headset && <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded">Headset</span>}
+                          {emp.radio && <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded">{emp.radio}</span>}
+                          {!emp.vest && !emp.headset && !emp.radio && <span className="text-xs text-slate-400">-</span>}
+                        </div>
                       </td>
                       <td className="p-4 text-right">
-                        <button 
-                          onClick={() => { setEditingEmp(emp); setActiveTab('planning_employee_new'); }}
-                          className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
-                        >
-                          Muokkaa
-                        </button>
+                        <div className="flex justify-end gap-2">
+                          <button 
+                            onClick={() => { setEditingEmp(emp); setActiveTab('planning_employee_new'); }}
+                            className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
+                          >
+                            Muokkaa
+                          </button>
+                          <button 
+                            onClick={() => setCheckedInEmployees(prev => prev.filter(e => e.id !== emp.id))}
+                            className="text-rose-600 hover:text-rose-800 font-medium text-xs bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
+                          >
+                            Kirjaa ulos
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
