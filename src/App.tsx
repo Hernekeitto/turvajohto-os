@@ -328,7 +328,7 @@ export default function App() {
               
               <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 mt-6 mb-10">
                 <h2 className="text-xl md:text-2xl font-semibold text-slate-700">
-                  {getGreeting(currentTime)}, <span className="text-indigo-600">oletuskäyttäjä</span>
+                  {getGreeting(currentTime)}, <span className="text-indigo-600">Turva 1</span>
                 </h2>
                 <p className="text-slate-500 font-medium mt-1">Turvajohto</p>
               </div>
@@ -339,7 +339,7 @@ export default function App() {
                   className="flex items-center justify-center gap-3 p-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all shadow-sm hover:shadow group"
                 >
                   <Activity size={20} className="group-hover:scale-110 transition-transform" />
-                  Siirry tilannekuvaan
+                  Tilannekuva
                 </button>
                 <button 
                   onClick={() => setActiveTab('reporting')}
@@ -2280,13 +2280,13 @@ export default function App() {
                 </div>
                 <div className="space-y-3">
                   <button className="w-full py-3 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg transition-colors flex justify-center items-center gap-2 shadow-sm">
-                    SHOW STOP PROTOKOLLA
+                    STOP PROTOKOLLA
                   </button>
                   <button className="w-full py-3 px-4 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors flex justify-center items-center gap-2">
                     <PhoneCall size={18} /> Yhteys Viranomaisiin
                   </button>
                   <button className="w-full py-3 px-4 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors flex justify-center items-center gap-2">
-                    <Layers size={18} /> Eskaloi Tilanne
+                    <Layers size={18} /> Lähetä toimintaohjeita
                   </button>
                 </div>
               </div>
