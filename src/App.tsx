@@ -82,10 +82,22 @@ const initialCheckedInEmployees = [
 
 const CHECKIN_STORAGE_KEY = 'turvajohto-checkins';
 
-const mockReports = [
-  { id: '26/FesX/1108/099', type: 'Työntekijän uloskirjaus', author: 'TIKE Päivystäjä', time: '14:10', summary: 'Virtanen ulos, radiopuhelin rikki.' },
-  { id: '26/FesX/1108/098', type: 'JV Tapahtumailmoitus', author: 'Korhonen Elli', time: '13:45', summary: 'Kiinniotto portilla 2.' },
-  { id: '26/FesX/1108/097', type: 'Ensiaputilanne', author: 'EA-Päivystys', time: '12:15', summary: 'Nyrjähdys, paikattu pisteellä.' }
+const REPORT_STORAGE_KEY = 'turvajohto-reports';
+
+// Poikkeamiksi laskettavat kirjaustyypit
+const DEVIATION_TYPES = ['jvaction', 'firstaid', 'threat', 'fence', 'damage'];
+
+const initialReports = [
+  { id: '26/FesX/1108/099', typeId: 'out', type: 'Työntekijän uloskirjaus', author: 'TIKE Päivystäjä', time: '14:10', summary: 'Virtanen ulos, radiopuhelin rikki.' },
+  { id: '26/FesX/1108/098', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Korhonen Elli', time: '13:45', summary: 'Kiinniotto portilla 2.', denied: 0, removed: 1, detained: 1, force: true, tools: true, firearm: false, firstAid: false },
+  { id: '26/FesX/1108/097', typeId: 'firstaid', type: 'Ensiaputilanne', author: 'EA-Päivystys', time: '12:15', summary: 'Nyrjähdys, paikattu pisteellä.' },
+  { id: '26/FesX/1108/096', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Mäkinen Kalle', time: '11:50', summary: 'Päihtynyt asiakas poistettu anniskelualueelta.', denied: 0, removed: 2, detained: 0, force: false, tools: false, firearm: false, firstAid: false },
+  { id: '26/FesX/1108/095', typeId: 'fence', type: 'Aitojen ylitys / luvaton sisäänpääsy', author: 'Jaakko Mäki', time: '11:20', summary: 'Kaksi henkilöä aidan yli lohkolla C, poistettu alueelta.' },
+  { id: '26/FesX/1108/094', typeId: 'firstaid', type: 'Ensiaputilanne', author: 'EA-Päivystys', time: '10:55', summary: 'Lämpöuupumus, seurantaan EA-pisteelle.' },
+  { id: '26/FesX/1108/093', typeId: 'threat', type: 'Uhkatilanne', author: 'Liisa Ollila', time: '10:30', summary: 'Sanallinen uhkaus henkilökuntaa kohtaan pääportilla.' },
+  { id: '26/FesX/1108/092', typeId: 'damage', type: 'Omaisuusvaurio', author: 'Markus Joki', time: '09:45', summary: 'Aitaelementti vaurioitunut lohkolla B.' },
+  { id: '26/FesX/1108/091', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Korhonen Elli', time: '09:20', summary: 'Pääsy estetty portilla 2, ei lippua.', denied: 3, removed: 0, detained: 0, force: false, tools: false, firearm: false, firstAid: false },
+  { id: '26/FesX/1108/090', typeId: 'patrol', type: 'Kierrosraportti', author: 'Anna Lahti', time: '09:00', summary: 'Aamukierros, ei huomautettavaa.' }
 ];
 
 // --- COMPONENTS ---
@@ -180,6 +192,9 @@ export default function App() {
 
   // Sisäänkirjatut työntekijät (yhteinen tila koko sovellukselle)
   const [checkedInEmployees, setCheckedInEmployees] = useState(initialCheckedInEmployees);
+
+  // Kirjaukset ja raportit (yhteinen tila koko sovellukselle)
+  const [reports, setReports] = useState(initialReports);
 
   // Check-in Form State
   const [empSearch, setEmpSearch] = useState('');
@@ -299,6 +314,27 @@ export default function App() {
       // Tallennus voi epäonnistua esim. yksityisessä selaustilassa
     }
   }, [checkedInEmployees]);
+
+  // Ladataan kirjaukset selaimen muistista sivun avautuessa
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(REPORT_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) setReports(parsed);
+      }
+    } catch {
+      // Viallinen tallennus ohitetaan ja jatketaan alkutilalla
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(REPORT_STORAGE_KEY, JSON.stringify(reports));
+    } catch {
+      // Tallennus voi epäonnistua esim. yksityisessä selaustilassa
+    }
+  }, [reports]);
 
   const formatTime = (date) => {
     return date.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -474,9 +510,36 @@ export default function App() {
       alert('Valitse vähintään yksi toimenpide.');
       return;
     }
+    const now = new Date();
+    const timeLabel = jvaTime || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+    const parts = [];
+    if (jvaDenied) parts.push(`estetty pääsy ${Number(jvaDeniedCount) || 1}`);
+    if (jvaRemoved) parts.push(`poistettu ${Number(jvaRemovedCount) || 1}`);
+    if (jvaDetained) parts.push(`kiinniotettu ${Number(jvaDetainedCount) || 1}`);
+    if (jvaForce) parts.push('voimakeinoja käytetty');
+    if (jvaTools) parts.push(`välineet: ${jvaToolList.join(', ') || 'ei eritelty'}`);
+    if (jvaFirearm) parts.push('ampuma-ase esillä tai käytetty');
+    if (jvaFirstAid) parts.push('ensiapu tai ensihoito');
+
+    setReports(prev => [{
+      id: getDynamicId(),
+      typeId: 'jvaction',
+      type: 'JV:n tai vartijan toimenpide',
+      author: jvaName,
+      time: timeLabel,
+      summary: `${jvaLocation ? jvaLocation + ': ' : ''}${parts.join(', ')}`,
+      denied: jvaDenied ? (Number(jvaDeniedCount) || 1) : 0,
+      removed: jvaRemoved ? (Number(jvaRemovedCount) || 1) : 0,
+      detained: jvaDetained ? (Number(jvaDetainedCount) || 1) : 0,
+      force: jvaForce,
+      tools: jvaTools,
+      firearm: jvaFirearm,
+      firstAid: jvaFirstAid
+    }, ...prev]);
+
     setRunningNumber(prev => prev + 1);
     resetJvaForm();
-    setActiveTab('report_tike');
+    setActiveTab('overview');
   };
 
   const handleFaNyt = () => {
@@ -522,6 +585,39 @@ export default function App() {
   const guardCount = checkedInEmployees.filter(e => e.role === 'Vartija').length;
   const requiredJv = 142;
   const jvMissing = Math.max(0, requiredJv - jvCount);
+
+  // ---- Tilannekuvan laskurit raportoiduista kirjauksista ----
+
+  // Kellonaika tunteina, käytetään viimeisen tunnin suodatukseen
+  const minutesFromTimeString = (t) => {
+    if (!t || typeof t !== 'string' || !t.includes(':')) return null;
+    const [h, m] = t.split(':').map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return null;
+    return h * 60 + m;
+  };
+  const nowMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const withinLastHour = (t) => {
+    const mins = minutesFromTimeString(t);
+    if (mins === null) return false;
+    return mins <= nowMinutes && nowMinutes - mins <= 60;
+  };
+
+  // Ensiaputapaukset: erilliset ensiapukirjaukset ja ne toimenpiteet,
+  // joissa kohdehenkilö on viety ensiapuun tai ensihoitoa on käytetty
+  const firstAidReports = reports.filter(r => r.typeId === 'firstaid');
+  const firstAidInActions = reports.filter(r => r.typeId === 'jvaction' && r.firstAid);
+  const firstAidCount = firstAidReports.length + firstAidInActions.length;
+  const firstAidLastHour = [...firstAidReports, ...firstAidInActions].filter(r => withinLastHour(r.time)).length;
+
+  // Poistot: poistettujen henkilöiden yhteismäärä toimenpidekirjauksista
+  const removalReports = reports.filter(r => r.typeId === 'jvaction' && Number(r.removed) > 0);
+  const removalCount = removalReports.reduce((sum, r) => sum + Number(r.removed || 0), 0);
+
+  // Poikkeamat: JV:n tai vartijan toimenpide, ensiaputilanne, uhkatilanne,
+  // aitojen ylitys tai luvaton sisäänpääsy sekä omaisuusvaurio
+  const deviationReports = reports.filter(r => DEVIATION_TYPES.includes(r.typeId));
+  const deviationCount = deviationReports.length;
+  const deviationLastHour = deviationReports.filter(r => withinLastHour(r.time)).length;
 
   // Readiness logic computations
   const completedChecksCount = Object.values(readinessChecks).filter(Boolean).length;
@@ -609,20 +705,22 @@ export default function App() {
               <DashboardCard 
                 title="Ensiaputapaukset" 
                 icon={HeartPulse} 
-                value="12" 
-                subtitle="Viimeisen tunnin aikana: 3"
+                value={firstAidCount} 
+                subtitle={`Raportoitu ${firstAidReports.length} ensiapukirjausta ja ${firstAidInActions.length} toimenpiteen yhteydessä | Viimeisen tunnin aikana ${firstAidLastHour}`}
               />
               <DashboardCard 
                 title="Poistot" 
                 icon={LogOut} 
-                value="8" 
-                subtitle="Koko tapahtuman ajalta"
+                value={removalCount} 
+                subtitle={removalCount === 0
+                  ? 'Ei poistoja kirjattuna'
+                  : `${removalReports.length} kirjauksesta, koko tapahtuman ajalta`}
               />
               <DashboardCard 
                 title="Poikkeamat" 
                 icon={AlertTriangle} 
-                value="3" 
-                subtitle="Avoinna olevat tilanteet"
+                value={deviationCount} 
+                subtitle={`Toimenpiteet, ensiapu, uhkatilanteet, aitojen ylitykset ja omaisuusvauriot | Viimeisen tunnin aikana ${deviationLastHour}`}
               />
             </div>
 
@@ -715,7 +813,7 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="space-y-3 animate-in fade-in duration-300">
-                        {mockReports.map((rep, idx) => (
+                        {reports.slice(0, 5).map((rep, idx) => (
                           <div key={idx} className="flex flex-col gap-1 p-3 rounded-lg bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors cursor-pointer">
                             <div className="flex justify-between items-center">
                               <span className="text-xs font-bold text-indigo-600 uppercase tracking-wide">{rep.type}</span>
@@ -836,7 +934,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {mockReports.map((rep, idx) => (
+                  {reports.slice(0, 5).map((rep, idx) => (
                     <tr key={idx} className="hover:bg-white transition-colors cursor-pointer">
                       <td className="p-4 font-mono text-xs text-slate-500">{rep.id}</td>
                       <td className="p-4 font-medium text-slate-800">{rep.time}</td>
@@ -3429,7 +3527,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {mockReports.map((report) => (
+                  {reports.map((report) => (
                     <tr key={report.id} className="hover:bg-white transition-colors">
                       <td className="p-4 font-mono text-xs text-slate-700">{report.id}</td>
                       <td className="p-4 font-medium text-slate-800">{report.type}</td>
