@@ -174,6 +174,28 @@ export default function App() {
   const [checkOutTime, setCheckOutTime] = useState('');
   const [showOutTimeInput, setShowOutTimeInput] = useState(false);
 
+  // JV:n / vartijan toimenpide -lomakkeen tila
+  const [jvaRole, setJvaRole] = useState('Järjestyksenvalvoja');
+  const [jvaSearch, setJvaSearch] = useState('');
+  const [jvaName, setJvaName] = useState('');
+  const [jvaLocation, setJvaLocation] = useState('');
+  const [jvaDate, setJvaDate] = useState('');
+  const [jvaTime, setJvaTime] = useState('');
+  const [jvaDenied, setJvaDenied] = useState(false);
+  const [jvaDeniedCount, setJvaDeniedCount] = useState('');
+  const [jvaRemoved, setJvaRemoved] = useState(false);
+  const [jvaRemovedCount, setJvaRemovedCount] = useState('');
+  const [jvaDetained, setJvaDetained] = useState(false);
+  const [jvaDetainedCount, setJvaDetainedCount] = useState('');
+  const [jvaForce, setJvaForce] = useState(false);
+  const [jvaTools, setJvaTools] = useState(false);
+  const [jvaToolList, setJvaToolList] = useState([]);
+  const [jvaToolOther, setJvaToolOther] = useState('');
+  const [jvaFirearm, setJvaFirearm] = useState(false);
+  const [jvaFirstAid, setJvaFirstAid] = useState(false);
+  const [jvaDesc, setJvaDesc] = useState('');
+  const [jvaReporterFiled, setJvaReporterFiled] = useState(false);
+
   // Open Log Form State
   const [openKirjausDate, setOpenKirjausDate] = useState('');
   const [openKirjausTime, setOpenKirjausTime] = useState('');
@@ -339,6 +361,50 @@ export default function App() {
     setOpenKirjausTime(t);
   };
 
+  const handleJvaNyt = () => {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    const [d, t] = now.toISOString().slice(0, 16).split('T');
+    setJvaDate(d);
+    setJvaTime(t);
+  };
+
+  const toggleJvaTool = (tool) => {
+    setJvaToolList(prev => prev.includes(tool) ? prev.filter(t => t !== tool) : [...prev, tool]);
+  };
+
+  const resetJvaForm = () => {
+    setJvaRole('Järjestyksenvalvoja');
+    setJvaSearch('');
+    setJvaName('');
+    setJvaLocation('');
+    setJvaDate('');
+    setJvaTime('');
+    setJvaDenied(false); setJvaDeniedCount('');
+    setJvaRemoved(false); setJvaRemovedCount('');
+    setJvaDetained(false); setJvaDetainedCount('');
+    setJvaForce(false);
+    setJvaTools(false); setJvaToolList([]); setJvaToolOther('');
+    setJvaFirearm(false);
+    setJvaFirstAid(false);
+    setJvaDesc('');
+    setJvaReporterFiled(false);
+  };
+
+  const handleSaveJvaReport = () => {
+    if (!jvaName.trim()) {
+      alert('Kirjaa toimenpiteen suorittaneen henkilön nimi.');
+      return;
+    }
+    if (!jvaDenied && !jvaRemoved && !jvaDetained && !jvaForce && !jvaTools && !jvaFirearm) {
+      alert('Valitse vähintään yksi toimenpide.');
+      return;
+    }
+    setRunningNumber(prev => prev + 1);
+    resetJvaForm();
+    setActiveTab('report_tike');
+  };
+
   const handleFaNyt = () => {
     const now = new Date();
     now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
@@ -367,6 +433,14 @@ export default function App() {
 
   const filteredOutEmployees = outEmpSearch.length >= 3
     ? checkedInEmployees.filter(e => e.name.toLowerCase().includes(outEmpSearch.toLowerCase()))
+    : [];
+
+  // Toimenpiteen tekijän haku: ensisijaisesti sisäänkirjatuista, muuten koko rekisteristä
+  const jvaNameOptions = jvaSearch.length >= 3
+    ? Array.from(new Set([
+        ...checkedInEmployees.filter(e => e.role === jvaRole).map(e => e.name),
+        ...mockEmployees
+      ])).filter(n => n.toLowerCase().includes(jvaSearch.toLowerCase()))
     : [];
 
   // Miehityslaskurit sisäänkirjatuista työntekijöistä
@@ -877,6 +951,7 @@ export default function App() {
         const tikeOptions = [
           { id: 'in', label: 'Työntekijän sisäänkirjaus', icon: LogIn, color: 'text-emerald-600', bg: 'bg-emerald-50' },
           { id: 'out', label: 'Työntekijän uloskirjaus', icon: LogOut, color: 'text-rose-600', bg: 'bg-rose-50' },
+          { id: 'jvaction', label: 'JV:n tai vartijan toimenpide', icon: ShieldCheck, color: 'text-amber-600', bg: 'bg-amber-50' },
           { id: 'open', label: 'Avoin kirjaus', icon: PenTool, color: 'text-indigo-600', bg: 'bg-indigo-50' },
           { id: 'firstaid', label: 'Ensiaputilanne', icon: HeartPulse, color: 'text-rose-600', bg: 'bg-rose-50' },
           { id: 'threat', label: 'Uhkatilanne', icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-50' },
@@ -1658,6 +1733,416 @@ export default function App() {
             </form>
           </div>
         );
+      case 'tike_form_jvaction': {
+        const jvaTooling = ['Käsiraudat', 'Teleskooppipatukka', 'Patukka', 'Kaasusumutin', 'Sidontaväline', 'Muu'];
+        const jvaSelectedCount = [jvaDenied, jvaRemoved, jvaDetained].filter(Boolean).length;
+        return (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
+            <button
+              onClick={() => setActiveTab('report_tike')}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin TIKE-valikkoon
+            </button>
+
+            <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end gap-4 flex-wrap">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <ShieldCheck className="text-amber-500" size={24} />
+                  Järjestyksenvalvojan tai vartijan toimenpide
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">TIKE:n oma kirjanpito ja tapahtumien seuranta.</p>
+              </div>
+
+              <div className="flex flex-col items-end">
+                <span className="text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Tunniste</span>
+                <div className="text-sm font-mono bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200">
+                  {getDynamicId()}
+                </div>
+              </div>
+            </div>
+
+            {/* Huomautus vastuunjaosta */}
+            <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
+              <Info className="text-amber-600 shrink-0 mt-0.5" size={18} />
+              <div className="text-sm text-amber-900">
+                <span className="font-bold">Tämä ei korvaa tapahtumailmoitusta.</span> TIKE täyttää tämän lomakkeen omaa
+                kirjanpitoa ja tapahtumien seurantaa varten. Toimenpiteen suorittanut järjestyksenvalvoja tai vartija
+                täyttää lisäksi itse oman tapahtumailmoituksensa. Voimakeinojen, voimankäyttövälineiden ja ampuma-aseen
+                käyttöön liittyy erillinen ilmoitusvelvollisuus, jonka menettely tarkistetaan toimeksiantajan ja
+                toimeksisaajan ohjeista.
+              </div>
+            </div>
+
+            <form className="space-y-6 text-left">
+
+              {/* Rooli */}
+              <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
+                <label className="block text-sm font-bold text-slate-700 mb-3">Toimenpiteen suorittajan rooli</label>
+                <div className="flex flex-wrap gap-6">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="jvaRole"
+                      className="w-4 h-4 text-amber-600 focus:ring-amber-500"
+                      checked={jvaRole === 'Järjestyksenvalvoja'}
+                      onChange={() => { setJvaRole('Järjestyksenvalvoja'); setJvaName(''); setJvaSearch(''); }}
+                    />
+                    <span className="text-sm font-medium text-slate-700">Järjestyksenvalvoja</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="jvaRole"
+                      className="w-4 h-4 text-amber-600 focus:ring-amber-500"
+                      checked={jvaRole === 'Vartija'}
+                      onChange={() => { setJvaRole('Vartija'); setJvaName(''); setJvaSearch(''); }}
+                    />
+                    <span className="text-sm font-medium text-slate-700">Vartija</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Nimi ja paikka */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">
+                    {jvaRole === 'Vartija' ? 'Vartijan nimi' : 'Järjestyksenvalvojan nimi'}
+                  </label>
+                  <div className="relative">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-3 text-slate-400" size={18} />
+                      <input
+                        type="text"
+                        value={jvaSearch}
+                        onChange={(e) => { setJvaSearch(e.target.value); setJvaName(''); }}
+                        className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 text-sm font-medium"
+                        placeholder="Kirjoita vähintään 3 merkkiä..."
+                      />
+                    </div>
+                    {jvaSearch.length >= 3 && !jvaName && (
+                      <ul className="absolute z-10 bg-white border border-slate-200 rounded-lg shadow-lg w-full mt-1 max-h-60 overflow-y-auto">
+                        {jvaNameOptions.length > 0 ? (
+                          jvaNameOptions.map((name, idx) => (
+                            <li
+                              key={idx}
+                              onClick={() => { setJvaName(name); setJvaSearch(name); }}
+                              className="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium text-slate-700 border-b border-slate-100 last:border-0"
+                            >
+                              {name}
+                              {checkedInEmployees.some(c => c.name === name) && (
+                                <span className="ml-2 text-xs text-emerald-600 font-bold">sisäänkirjattu</span>
+                              )}
+                            </li>
+                          ))
+                        ) : (
+                          <li
+                            onClick={() => setJvaName(jvaSearch)}
+                            className="px-4 py-3 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer"
+                          >
+                            Ei osumia. Käytä kirjoitettua nimeä.
+                          </li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                  {jvaName && (
+                    <div className="mt-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5">
+                      <CheckCircle size={14} />
+                      Valittu: {jvaName}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Tapahtumapaikka</label>
+                  <input
+                    type="text"
+                    value={jvaLocation}
+                    onChange={(e) => setJvaLocation(e.target.value)}
+                    className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-amber-500"
+                    placeholder="Esim. Portti 2, Main Stage etualue, VIP-alue"
+                  />
+                </div>
+              </div>
+
+              {/* Aika */}
+              <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
+                <label className="block text-sm font-bold text-slate-700 mb-2">Tapahtuma-aika</label>
+                <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+                  <div className="flex gap-2 w-full sm:w-auto">
+                    <input
+                      type="date"
+                      value={jvaDate}
+                      onChange={(e) => setJvaDate(e.target.value)}
+                      className="w-full sm:w-auto rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-amber-500"
+                    />
+                    <input
+                      type="time"
+                      value={jvaTime}
+                      onChange={(e) => setJvaTime(e.target.value)}
+                      className="w-full sm:w-auto rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleJvaNyt}
+                    className="px-4 py-2 text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg transition-colors shadow-sm"
+                  >
+                    NYT
+                  </button>
+                </div>
+              </div>
+
+              {/* Toimenpiteet */}
+              <div className="space-y-4">
+                <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex justify-between items-end">
+                  <span>Suoritetut toimenpiteet</span>
+                  <span className="text-xs font-normal text-slate-500">Valittuna {jvaSelectedCount}</span>
+                </h3>
+
+                <div className="space-y-3">
+                  <div className={`p-4 rounded-lg border transition-colors ${jvaDenied ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+                    <div className="flex items-center justify-between gap-4 flex-wrap">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={jvaDenied}
+                          onChange={(e) => { setJvaDenied(e.target.checked); if (!e.target.checked) setJvaDeniedCount(''); }}
+                          className="w-5 h-5 rounded text-amber-600 focus:ring-amber-500 border-slate-300"
+                        />
+                        <span className="text-sm font-medium text-slate-800">Estetty pääsy</span>
+                      </label>
+                      {jvaDenied && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">Henkilöä</span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={jvaDeniedCount}
+                            onChange={(e) => setJvaDeniedCount(e.target.value)}
+                            className="w-20 rounded-lg border-slate-300 border p-1.5 text-sm focus:ring-2 focus:ring-amber-500"
+                            placeholder="1"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className={`p-4 rounded-lg border transition-colors ${jvaRemoved ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+                    <div className="flex items-center justify-between gap-4 flex-wrap">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={jvaRemoved}
+                          onChange={(e) => { setJvaRemoved(e.target.checked); if (!e.target.checked) setJvaRemovedCount(''); }}
+                          className="w-5 h-5 rounded text-amber-600 focus:ring-amber-500 border-slate-300"
+                        />
+                        <span className="text-sm font-medium text-slate-800">Poistettu henkilö</span>
+                      </label>
+                      {jvaRemoved && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">Henkilöä</span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={jvaRemovedCount}
+                            onChange={(e) => setJvaRemovedCount(e.target.value)}
+                            className="w-20 rounded-lg border-slate-300 border p-1.5 text-sm focus:ring-2 focus:ring-amber-500"
+                            placeholder="1"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className={`p-4 rounded-lg border transition-colors ${jvaDetained ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'}`}>
+                    <div className="flex items-center justify-between gap-4 flex-wrap">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={jvaDetained}
+                          onChange={(e) => { setJvaDetained(e.target.checked); if (!e.target.checked) setJvaDetainedCount(''); }}
+                          className="w-5 h-5 rounded text-rose-600 focus:ring-rose-500 border-slate-300"
+                        />
+                        <span className="text-sm font-medium text-slate-800">Otettu henkilö kiinni</span>
+                      </label>
+                      {jvaDetained && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">Henkilöä</span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={jvaDetainedCount}
+                            onChange={(e) => setJvaDetainedCount(e.target.value)}
+                            className="w-20 rounded-lg border-slate-300 border p-1.5 text-sm focus:ring-2 focus:ring-rose-500"
+                            placeholder="1"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    {jvaDetained && (
+                      <p className="text-xs text-rose-700 mt-3 pl-8">
+                        Kiinniotetusta on ilmoitettava viipymättä poliisille. Kirjaa poliisin toimenpiteet vapaaseen kuvaukseen.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Voimankäyttö */}
+              <div className="space-y-4">
+                <h3 className="text-md font-semibold text-slate-700 border-b pb-2">Voimankäyttö</h3>
+
+                <div className={`p-4 rounded-lg border transition-colors ${jvaForce ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'}`}>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={jvaForce}
+                      onChange={(e) => setJvaForce(e.target.checked)}
+                      className="w-5 h-5 rounded text-rose-600 focus:ring-rose-500 border-slate-300"
+                    />
+                    <span className="text-sm font-medium text-slate-800">Käytetty voimakeinoja</span>
+                  </label>
+                </div>
+
+                <div className={`p-4 rounded-lg border transition-colors ${jvaTools ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'}`}>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={jvaTools}
+                      onChange={(e) => { setJvaTools(e.target.checked); if (!e.target.checked) { setJvaToolList([]); setJvaToolOther(''); } }}
+                      className="w-5 h-5 rounded text-rose-600 focus:ring-rose-500 border-slate-300"
+                    />
+                    <span className="text-sm font-medium text-slate-800">Käytetty voimankäyttövälineitä</span>
+                  </label>
+
+                  {jvaTools && (
+                    <div className="mt-4 pl-8 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                      <span className="block text-xs font-bold text-slate-600 uppercase tracking-wide">Mitä välineitä käytettiin</span>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {jvaTooling.map((tool) => (
+                          <label key={tool} className="flex items-center gap-2 cursor-pointer bg-white border border-slate-200 rounded-lg px-3 py-2 hover:border-rose-300 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={jvaToolList.includes(tool)}
+                              onChange={() => toggleJvaTool(tool)}
+                              className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 border-slate-300"
+                            />
+                            <span className="text-sm text-slate-700">{tool}</span>
+                          </label>
+                        ))}
+                      </div>
+                      {jvaToolList.includes('Muu') && (
+                        <input
+                          type="text"
+                          value={jvaToolOther}
+                          onChange={(e) => setJvaToolOther(e.target.value)}
+                          className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-rose-500"
+                          placeholder="Tarkenna muu väline"
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className={`p-4 rounded-lg border transition-colors ${jvaFirearm ? 'bg-rose-100 border-rose-300' : 'bg-slate-50 border-slate-200'}`}>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={jvaFirearm}
+                      onChange={(e) => setJvaFirearm(e.target.checked)}
+                      className="w-5 h-5 rounded text-rose-700 focus:ring-rose-600 border-slate-300"
+                    />
+                    <span className="text-sm font-bold text-slate-900">Otettu esille tai käytetty ampuma-asetta</span>
+                  </label>
+                  {jvaFirearm && (
+                    <div className="mt-3 pl-8 flex gap-2 text-xs text-rose-800 bg-white/70 border border-rose-200 rounded-lg p-3">
+                      <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                      <span>
+                        Ilmoita välittömästi turvallisuuspäällikölle ja hätäkeskukseen. Ampuma-aseen esille ottaminen ja
+                        käyttö edellyttävät erillistä selvitystä ja poliisille tehtävää ilmoitusta.
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className={`p-4 rounded-lg border transition-colors ${jvaFirstAid ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={jvaFirstAid}
+                      onChange={(e) => setJvaFirstAid(e.target.checked)}
+                      className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500 border-slate-300"
+                    />
+                    <span className="text-sm font-medium text-slate-800">Kohdehenkilö viety ensiapuun tai ensihoitoa käytetty</span>
+                  </label>
+                  {jvaFirstAid && (
+                    <p className="text-xs text-emerald-800 mt-3 pl-8">
+                      Tee lisäksi erillinen ensiaputilanteen kirjaus TIKE-valikosta.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Vapaa kuvaus */}
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">Vapaa kuvaus tapahtumasta</label>
+                <textarea
+                  rows="5"
+                  value={jvaDesc}
+                  onChange={(e) => setJvaDesc(e.target.value)}
+                  className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-amber-500"
+                  placeholder="Kuvaa tapahtuman kulku aikajärjestyksessä: mitä havaittiin, mitä tehtiin, miten tilanne päättyi ja ketkä osallistuivat."
+                ></textarea>
+                <p className="text-xs text-slate-500 mt-1">
+                  Kirjaa vain seurannan kannalta tarpeelliset tiedot. Kohdehenkilöiden henkilötiedot kirjataan tapahtumailmoitukseen.
+                </p>
+              </div>
+
+              {/* Kuittaus tapahtumailmoituksesta */}
+              <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={jvaReporterFiled}
+                    onChange={(e) => setJvaReporterFiled(e.target.checked)}
+                    className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 mt-0.5"
+                  />
+                  <span className="text-sm text-indigo-900">
+                    Toimenpiteen suorittaja on ilmoittanut täyttäneensä oman tapahtumailmoituksensa
+                  </span>
+                </label>
+                {!jvaReporterFiled && (jvaDetained || jvaForce || jvaTools || jvaFirearm) && (
+                  <p className="text-xs text-indigo-700 mt-2 pl-8">
+                    Muistuta toimenpiteen suorittajaa tapahtumailmoituksesta ennen vuoron päättymistä.
+                  </p>
+                )}
+              </div>
+
+              {/* Toiminnot */}
+              <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { resetJvaForm(); setActiveTab('report_tike'); }}
+                  className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                >
+                  Peruuta
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveJvaReport}
+                  className="px-5 py-2.5 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                >
+                  <CheckCircle size={18} />
+                  Tallenna toimenpidekirjaus
+                </button>
+              </div>
+            </form>
+          </div>
+        );
+      }
       case 'tike_form_threat':
       case 'tike_form_damage':
       case 'tike_form_lostfound':
