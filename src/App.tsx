@@ -41,7 +41,9 @@ import {
   Home,
   DoorOpen,
   CheckSquare,
-  Menu
+  Menu,
+  Plus,
+  Briefcase
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -139,6 +141,30 @@ const AlertBanner = ({ alert }) => {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('landing');
+
+  // Tapahtumavalinta: null = valintasivu, 'fesx' = tuotantotapahtuma,
+  // 'feso' = mallitapahtuma, 'new' = uuden tapahtuman lomake
+  const [selectedEvent, setSelectedEvent] = useState(null);
+
+  const emptyNewEvent = {
+    clientName: '', businessId: '',
+    ordererName: '', ordererPhone: '', ordererEmail: '',
+    deciderName: '', deciderPhone: '', deciderEmail: '',
+    einvoiceAddress: '', einvoiceOperator: '', billingRef: '',
+    eventName: '', eventType: '', eventTypeOther: '',
+    publicStartDate: '', publicStartTime: '', publicEndDate: '', publicEndTime: '',
+    buildStart: '', buildEnd: '', teardownStart: '', teardownEnd: '',
+    address: '', areaType: '', fenced: '', areaNotes: '',
+    audienceCount: '', ageProfile: '', audienceNotes: '',
+    heldBefore: '', previousIncidents: '',
+    hasBar: false, barResponsible: '', barOperator: '',
+    performers: '', reactionRisk: false, vipGuests: false, vipNotes: '',
+    existingCctv: '', cctvNotes: '', lighting: '', exitRoutes: '',
+    policeNotification: '', rescuePlan: '', authorityResponsible: '',
+    otherOperators: '', buildPhaseResponsible: ''
+  };
+  const [newEvent, setNewEvent] = useState(emptyNewEvent);
+  const updNewEvent = (key, value) => setNewEvent(prev => ({ ...prev, [key]: value }));
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [showQuickActions, setShowQuickActions] = useState(false);
@@ -3112,6 +3138,672 @@ export default function App() {
     }
   };
 
+  // ====================== TAPAHTUMAN VALINTA ======================
+  if (selectedEvent === null) {
+    const eventCards = [
+      {
+        id: 'fesx',
+        name: 'FestivaaliX',
+        status: 'Käynnissä',
+        statusTone: 'bg-emerald-100 text-emerald-700',
+        dates: '11.8.–13.8.2026',
+        place: 'Ratinan suvanto, Tampere',
+        audience: '14 200 hlö / vrk',
+        client: 'Tapahtumatuotanto X Oy',
+        accent: 'border-emerald-200 hover:border-emerald-400'
+      },
+      {
+        id: 'feso',
+        name: 'FestivaaliÖ',
+        status: 'Suunnittelu',
+        statusTone: 'bg-slate-200 text-slate-700',
+        dates: '5.9.–6.9.2026',
+        place: 'Ei vahvistettu',
+        audience: 'Arvio puuttuu',
+        client: 'Mallitoimeksiantaja',
+        accent: 'border-slate-200 hover:border-indigo-400'
+      }
+    ];
+
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
+        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="text-indigo-400" size={28} />
+            <div>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
+              <Clock size={16} className="text-indigo-400" />
+              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
+            </div>
+            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">
+              TJ
+            </div>
+          </div>
+        </nav>
+
+        <main className="flex-1 p-6 md:p-10">
+          <div className="max-w-5xl mx-auto">
+            <div className="mb-8">
+              <h2 className="text-2xl font-bold text-slate-800">Valitse tapahtuma</h2>
+              <p className="text-sm text-slate-500 mt-1">
+                Avaa olemassa oleva tapahtuma tai luo uusi toimeksianto. Kaikki kirjaukset kohdistuvat valittuun tapahtumaan.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {eventCards.map((ev) => (
+                <button
+                  key={ev.id}
+                  onClick={() => { setSelectedEvent(ev.id); setActiveTab('landing'); }}
+                  className={`bg-white rounded-xl border-2 ${ev.accent} shadow-sm hover:shadow-md transition-all p-6 text-left group`}
+                >
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="p-3 rounded-lg bg-indigo-50 text-indigo-600 group-hover:scale-110 transition-transform duration-200">
+                      <Layers size={24} />
+                    </div>
+                    <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${ev.statusTone}`}>
+                      {ev.status}
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-800">{ev.name}</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">{ev.client}</p>
+
+                  <dl className="mt-4 space-y-2 text-sm">
+                    <div className="flex items-center gap-2 text-slate-600">
+                      <Calendar size={15} className="text-slate-400 shrink-0" />
+                      <span>{ev.dates}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-slate-600">
+                      <Map size={15} className="text-slate-400 shrink-0" />
+                      <span>{ev.place}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-slate-600">
+                      <Users size={15} className="text-slate-400 shrink-0" />
+                      <span>{ev.audience}</span>
+                    </div>
+                  </dl>
+
+                  <div className="mt-5 pt-4 border-t border-slate-100 text-sm font-bold text-indigo-600 flex items-center gap-1">
+                    Avaa tapahtuma
+                    <ChevronRight size={16} />
+                  </div>
+                </button>
+              ))}
+
+              <button
+                onClick={() => setSelectedEvent('new')}
+                className="bg-white rounded-xl border-2 border-dashed border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/30 transition-all p-6 text-left group flex flex-col justify-center items-center min-h-[240px]"
+              >
+                <div className="p-4 rounded-full bg-slate-100 text-slate-500 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors mb-4">
+                  <Plus size={28} />
+                </div>
+                <h3 className="text-lg font-bold text-slate-700 group-hover:text-indigo-700">Luo uusi tapahtuma</h3>
+                <p className="text-xs text-slate-500 mt-1 text-center max-w-xs">
+                  Kerää toimeksiannon perustiedot ja riskiprofiili aloituslomakkeella.
+                </p>
+              </button>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // ====================== UUDEN TAPAHTUMAN LOMAKE ======================
+  if (selectedEvent === 'new') {
+    const inputCls = "w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500";
+    const labelCls = "block text-sm font-medium text-slate-700 mb-1.5";
+    const sectionCls = "bg-white rounded-xl border border-slate-200 shadow-sm p-6";
+    const headCls = "text-md font-bold text-slate-800 mb-4 pb-3 border-b border-slate-100 flex items-center gap-2";
+
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
+        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md sticky top-0 z-50">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="text-indigo-400" size={28} />
+            <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+          </div>
+          <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">TJ</div>
+        </nav>
+
+        <main className="flex-1 p-6 md:p-10">
+          <div className="max-w-4xl mx-auto">
+            <button
+              onClick={() => { setSelectedEvent(null); setNewEvent(emptyNewEvent); }}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin tapahtumavalintaan
+            </button>
+
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold text-slate-800">Luo uusi tapahtuma</h2>
+              <p className="text-sm text-slate-500 mt-1">
+                Toimeksiannon aloituslomake. Tiedot muodostavat pohjan turvallisuussuunnittelulle ja resurssimitoitukselle.
+              </p>
+            </div>
+
+            <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
+              <Info className="text-amber-600 shrink-0 mt-0.5" size={18} />
+              <div className="text-sm text-amber-900">
+                <span className="font-bold">Demo.</span> Lomake ei vielä tallenna tietoja eikä luo uutta tapahtumaa.
+                Tallennus kytketään käyttöön, kun taustajärjestelmä on toteutettu.
+              </div>
+            </div>
+
+            <form className="space-y-6">
+
+              {/* 1. Toimeksiantaja */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><Briefcase size={18} className="text-indigo-500" />1. Toimeksiantajan viralliset tiedot</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className={labelCls}>Yrityksen tai yhdistyksen virallinen nimi</label>
+                    <input type="text" className={inputCls} value={newEvent.clientName} onChange={(e) => updNewEvent('clientName', e.target.value)} placeholder="Esim. Tapahtumatuotanto X Oy" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Y-tunnus</label>
+                    <input type="text" className={inputCls} value={newEvent.businessId} onChange={(e) => updNewEvent('businessId', e.target.value)} placeholder="1234567-8" />
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Yhteyshenkilöt */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><Users size={18} className="text-indigo-500" />2. Yhteyshenkilöt</h3>
+
+                <div className="mb-5">
+                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Tilaaja</div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className={labelCls}>Nimi</label>
+                      <input type="text" className={inputCls} value={newEvent.ordererName} onChange={(e) => updNewEvent('ordererName', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Puhelinnumero</label>
+                      <input type="tel" className={inputCls} value={newEvent.ordererPhone} onChange={(e) => updNewEvent('ordererPhone', e.target.value)} placeholder="+358" />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Sähköpostiosoite</label>
+                      <input type="email" className={inputCls} value={newEvent.ordererEmail} onChange={(e) => updNewEvent('ordererEmail', e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-rose-50 border border-rose-100 rounded-lg p-4">
+                  <div className="text-xs font-bold text-rose-700 uppercase tracking-wide mb-1">Päättävä vastuuhenkilö hätätilanteessa</div>
+                  <p className="text-xs text-rose-700 mb-3">Henkilö, joka tekee toimeksiantajan puolesta päätökset esimerkiksi keskeytyksestä ja evakuoinnista.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className={labelCls}>Nimi</label>
+                      <input type="text" className={inputCls} value={newEvent.deciderName} onChange={(e) => updNewEvent('deciderName', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Puhelinnumero</label>
+                      <input type="tel" className={inputCls} value={newEvent.deciderPhone} onChange={(e) => updNewEvent('deciderPhone', e.target.value)} placeholder="+358" />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Sähköpostiosoite</label>
+                      <input type="email" className={inputCls} value={newEvent.deciderEmail} onChange={(e) => updNewEvent('deciderEmail', e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Laskutus */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><FileText size={18} className="text-indigo-500" />3. Laskutustiedot</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className={labelCls}>Verkkolaskuosoite</label>
+                    <input type="text" className={inputCls} value={newEvent.einvoiceAddress} onChange={(e) => updNewEvent('einvoiceAddress', e.target.value)} placeholder="003712345678" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Operaattoritunnus</label>
+                    <input type="text" className={inputCls} value={newEvent.einvoiceOperator} onChange={(e) => updNewEvent('einvoiceOperator', e.target.value)} placeholder="Esim. 003721291126" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Viite tai kustannuspaikka</label>
+                    <input type="text" className={inputCls} value={newEvent.billingRef} onChange={(e) => updNewEvent('billingRef', e.target.value)} />
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Tapahtuman nimi ja luonne */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><Layers size={18} className="text-indigo-500" />4. Tapahtuman virallinen nimi ja luonne</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className={labelCls}>Tapahtuman virallinen nimi</label>
+                    <input type="text" className={inputCls} value={newEvent.eventName} onChange={(e) => updNewEvent('eventName', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Tapahtuman luonne</label>
+                    <select className={inputCls} value={newEvent.eventType} onChange={(e) => updNewEvent('eventType', e.target.value)}>
+                      <option value="">Valitse</option>
+                      <option value="Festivaali">Festivaali</option>
+                      <option value="Urheilutapahtuma">Urheilutapahtuma</option>
+                      <option value="Yritystapahtuma">Yritystapahtuma</option>
+                      <option value="Mielenosoitus">Mielenosoitus</option>
+                      <option value="Muu">Muu</option>
+                    </select>
+                  </div>
+                </div>
+                {newEvent.eventType === 'Muu' && (
+                  <div className="mt-4">
+                    <label className={labelCls}>Tarkenna tapahtuman luonne</label>
+                    <input type="text" className={inputCls} value={newEvent.eventTypeOther} onChange={(e) => updNewEvent('eventTypeOther', e.target.value)} />
+                  </div>
+                )}
+              </div>
+
+              {/* 5. Ajankohta */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><Clock size={18} className="text-indigo-500" />5. Ajankohta ja aikataulu</h3>
+
+                <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Aukioloajat yleisölle</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+                  <div>
+                    <label className={labelCls}>Alkaa</label>
+                    <div className="flex gap-2">
+                      <input type="date" className={inputCls} value={newEvent.publicStartDate} onChange={(e) => updNewEvent('publicStartDate', e.target.value)} />
+                      <input type="time" className={inputCls} value={newEvent.publicStartTime} onChange={(e) => updNewEvent('publicStartTime', e.target.value)} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Päättyy</label>
+                    <div className="flex gap-2">
+                      <input type="date" className={inputCls} value={newEvent.publicEndDate} onChange={(e) => updNewEvent('publicEndDate', e.target.value)} />
+                      <input type="time" className={inputCls} value={newEvent.publicEndTime} onChange={(e) => updNewEvent('publicEndTime', e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
+                  <div className="text-xs font-bold text-amber-800 uppercase tracking-wide mb-1">Rakennus- ja purkuajat</div>
+                  <p className="text-xs text-amber-800 mb-3">Työturvallisuuden kannalta riskialtteinta aikaa. Kirjaa myös yöaikainen työskentely.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls}>Rakennus alkaa</label>
+                      <input type="datetime-local" className={inputCls} value={newEvent.buildStart} onChange={(e) => updNewEvent('buildStart', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Rakennus päättyy</label>
+                      <input type="datetime-local" className={inputCls} value={newEvent.buildEnd} onChange={(e) => updNewEvent('buildEnd', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Purku alkaa</label>
+                      <input type="datetime-local" className={inputCls} value={newEvent.teardownStart} onChange={(e) => updNewEvent('teardownStart', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Purku päättyy</label>
+                      <input type="datetime-local" className={inputCls} value={newEvent.teardownEnd} onChange={(e) => updNewEvent('teardownEnd', e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 6. Tapahtumapaikka */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><Map size={18} className="text-indigo-500" />6. Tapahtumapaikka</h3>
+                <div className="mb-5">
+                  <label className={labelCls}>Tarkka osoite</label>
+                  <input type="text" className={inputCls} value={newEvent.address} onChange={(e) => updNewEvent('address', e.target.value)} placeholder="Katuosoite, postinumero ja kunta" />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className={labelCls}>Aluetyyppi</label>
+                    <select className={inputCls} value={newEvent.areaType} onChange={(e) => updNewEvent('areaType', e.target.value)}>
+                      <option value="">Valitse</option>
+                      <option value="Sisätila">Sisätila</option>
+                      <option value="Ulkotila">Ulkotila</option>
+                      <option value="Sisä- ja ulkotila">Sisä- ja ulkotila</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Onko alue aidattu</label>
+                    <select className={inputCls} value={newEvent.fenced} onChange={(e) => updNewEvent('fenced', e.target.value)}>
+                      <option value="">Valitse</option>
+                      <option value="Kyllä, koko alue">Kyllä, koko alue</option>
+                      <option value="Osittain">Osittain</option>
+                      <option value="Ei">Ei</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <label className={labelCls}>Aluerajaukset ja huomiot</label>
+                  <textarea rows="3" className={inputCls} value={newEvent.areaNotes} onChange={(e) => updNewEvent('areaNotes', e.target.value)} placeholder="Sisäänkäynnit, VIP-alueet, backstage, yleisen alueen rajapinnat, liikennejärjestelyt."></textarea>
+                </div>
+              </div>
+
+              {/* 7. Yleisö */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><Users size={18} className="text-indigo-500" />7. Arvioitu yleisömäärä ja kohderyhmä</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className={labelCls}>Arvioitu yleisömäärä (hlö)</label>
+                    <input type="number" min="0" className={inputCls} value={newEvent.audienceCount} onChange={(e) => updNewEvent('audienceCount', e.target.value)} placeholder="Esim. 14200" />
+                    {newEvent.audienceCount && Number(newEvent.audienceCount) > 0 && (
+                      <p className="text-xs text-slate-500 mt-1.5">
+                        Suuntaa antava mitoitus 1:100 antaa {Math.ceil(Number(newEvent.audienceCount) / 100)} järjestyksenvalvojaa.
+                        Lopullisen määrän vahvistaa poliisi.
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className={labelCls}>Ikärakenne</label>
+                    <select className={inputCls} value={newEvent.ageProfile} onChange={(e) => updNewEvent('ageProfile', e.target.value)}>
+                      <option value="">Valitse</option>
+                      <option value="Perhetapahtuma">Perhetapahtuma, kaikenikäisiä</option>
+                      <option value="K-18">K-18</option>
+                      <option value="Pääosin nuoret">Pääosin nuoret</option>
+                      <option value="Pääosin aikuiset">Pääosin aikuiset</option>
+                      <option value="Ei rajoitusta">Ei ikärajoitusta</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <label className={labelCls}>Kohderyhmän kuvaus</label>
+                  <textarea rows="2" className={inputCls} value={newEvent.audienceNotes} onChange={(e) => updNewEvent('audienceNotes', e.target.value)}></textarea>
+                </div>
+              </div>
+
+              {/* 8. Riskiprofiili */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><AlertTriangle size={18} className="text-amber-500" />8. Riskiprofiili ja historia</h3>
+                <div className="mb-4">
+                  <label className={labelCls}>Onko vastaava tapahtuma järjestetty aiemmin</label>
+                  <select className={inputCls} value={newEvent.heldBefore} onChange={(e) => updNewEvent('heldBefore', e.target.value)}>
+                    <option value="">Valitse</option>
+                    <option value="Kyllä, samassa paikassa">Kyllä, samassa paikassa</option>
+                    <option value="Kyllä, muualla">Kyllä, muualla</option>
+                    <option value="Ei, ensimmäinen kerta">Ei, ensimmäinen kerta</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Aiemmat järjestyshäiriöt, sairaankuljetukset ja poikkeamat</label>
+                  <textarea rows="4" className={inputCls} value={newEvent.previousIncidents} onChange={(e) => updNewEvent('previousIncidents', e.target.value)} placeholder="Kirjaa lukumäärät ja tyypit, jos tiedossa. Esimerkiksi poistot, kiinniotot, ensiaputapahtumat ja poliisin tehtävät."></textarea>
+                </div>
+              </div>
+
+              {/* 9. Anniskelu */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><Info size={18} className="text-indigo-500" />9. Alkoholin anniskelu</h3>
+                <label className="flex items-center gap-3 cursor-pointer bg-slate-50 border border-slate-200 rounded-lg p-4">
+                  <input type="checkbox" checked={newEvent.hasBar} onChange={(e) => updNewEvent('hasBar', e.target.checked)} className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" />
+                  <span className="text-sm font-medium text-slate-800">Alueella on anniskelualue</span>
+                </label>
+                {newEvent.hasBar && (
+                  <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div>
+                      <label className={labelCls}>Anniskelusta vastaa</label>
+                      <select className={inputCls} value={newEvent.barResponsible} onChange={(e) => updNewEvent('barResponsible', e.target.value)}>
+                        <option value="">Valitse</option>
+                        <option value="Toimeksiantaja">Toimeksiantaja</option>
+                        <option value="Kolmas osapuoli">Kolmas osapuoli</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Anniskeluluvan haltija ja yhteystiedot</label>
+                      <input type="text" className={inputCls} value={newEvent.barOperator} onChange={(e) => updNewEvent('barOperator', e.target.value)} />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 10. Esiintyjät */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><Users size={18} className="text-indigo-500" />10. Esiintyjät ja ohjelmisto</h3>
+                <div className="mb-4">
+                  <label className={labelCls}>Esiintyjät ja puhujat</label>
+                  <textarea rows="3" className={inputCls} value={newEvent.performers} onChange={(e) => updNewEvent('performers', e.target.value)} placeholder="Nimet ja esiintymisajat, jos tiedossa."></textarea>
+                </div>
+                <div className="space-y-3">
+                  <label className={`flex items-center gap-3 cursor-pointer border rounded-lg p-4 transition-colors ${newEvent.reactionRisk ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+                    <input type="checkbox" checked={newEvent.reactionRisk} onChange={(e) => updNewEvent('reactionRisk', e.target.checked)} className="w-5 h-5 rounded text-amber-600 focus:ring-amber-500 border-slate-300" />
+                    <span className="text-sm font-medium text-slate-800">Ohjelmistossa on esiintyjiä tai puhujia, jotka voivat herättää voimakkaita reaktioita</span>
+                  </label>
+                  <label className={`flex items-center gap-3 cursor-pointer border rounded-lg p-4 transition-colors ${newEvent.vipGuests ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-slate-200'}`}>
+                    <input type="checkbox" checked={newEvent.vipGuests} onChange={(e) => updNewEvent('vipGuests', e.target.checked)} className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" />
+                    <span className="text-sm font-medium text-slate-800">Mukana VIP-vieraita, jotka vaativat henkilösuojausta</span>
+                  </label>
+                </div>
+                {(newEvent.reactionRisk || newEvent.vipGuests) && (
+                  <div className="mt-4">
+                    <label className={labelCls}>Tarkennus suojaustarpeesta</label>
+                    <textarea rows="3" className={inputCls} value={newEvent.vipNotes} onChange={(e) => updNewEvent('vipNotes', e.target.value)} placeholder="Kohteet, saapumisreitit, backstage-järjestelyt, mahdolliset uhka-arviot."></textarea>
+                  </div>
+                )}
+              </div>
+
+              {/* 11. Infrastruktuuri */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><Wrench size={18} className="text-slate-600" />11. Olemassa oleva infrastruktuuri</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-4">
+                  <div>
+                    <label className={labelCls}>Onko alueella kameravalvontaa</label>
+                    <select className={inputCls} value={newEvent.existingCctv} onChange={(e) => updNewEvent('existingCctv', e.target.value)}>
+                      <option value="">Valitse</option>
+                      <option value="Kyllä, hyödynnettävissä">Kyllä, hyödynnettävissä</option>
+                      <option value="Kyllä, ei käyttöoikeutta">Kyllä, mutta ei käyttöoikeutta</option>
+                      <option value="Ei">Ei</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Kameravalvonnan tarkennus</label>
+                    <input type="text" className={inputCls} value={newEvent.cctvNotes} onChange={(e) => updNewEvent('cctvNotes', e.target.value)} placeholder="Kameroiden määrä, kattavuus, valvomon sijainti." />
+                  </div>
+                </div>
+                <div className="mb-4">
+                  <label className={labelCls}>Valaistus pimeän aikaan</label>
+                  <textarea rows="2" className={inputCls} value={newEvent.lighting} onChange={(e) => updNewEvent('lighting', e.target.value)} placeholder="Kiinteä valaistus, tilapäisvalaistus, pimeät alueet ja lisävalaistuksen tarve."></textarea>
+                </div>
+                <div>
+                  <label className={labelCls}>Poistumisreitit ja pelastustiet</label>
+                  <textarea rows="3" className={inputCls} value={newEvent.exitRoutes} onChange={(e) => updNewEvent('exitRoutes', e.target.value)} placeholder="Sijainnit, leveydet, opastus ja pelastusteiden pitäminen vapaana."></textarea>
+                </div>
+              </div>
+
+              {/* 12. Viranomaisyhteistyö */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><ShieldAlert size={18} className="text-rose-500" />12. Viranomaisyhteistyö</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-4">
+                  <div>
+                    <label className={labelCls}>Yleisötilaisuusilmoitus poliisille</label>
+                    <select className={inputCls} value={newEvent.policeNotification} onChange={(e) => updNewEvent('policeNotification', e.target.value)}>
+                      <option value="">Valitse</option>
+                      <option value="Tehty">Tehty</option>
+                      <option value="Kesken">Kesken</option>
+                      <option value="Ei tehty">Ei tehty</option>
+                      <option value="Ei tarvita">Ei tarvita</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Pelastussuunnitelma pelastuslaitokselle</label>
+                    <select className={inputCls} value={newEvent.rescuePlan} onChange={(e) => updNewEvent('rescuePlan', e.target.value)}>
+                      <option value="">Valitse</option>
+                      <option value="Tehty">Tehty</option>
+                      <option value="Kesken">Kesken</option>
+                      <option value="Ei tehty">Ei tehty</option>
+                      <option value="Ei tarvita">Ei tarvita</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className={labelCls}>Kenen vastuulla asiakirjojen laatiminen on</label>
+                  <select className={inputCls} value={newEvent.authorityResponsible} onChange={(e) => updNewEvent('authorityResponsible', e.target.value)}>
+                    <option value="">Valitse</option>
+                    <option value="Toimeksiantaja">Toimeksiantaja</option>
+                    <option value="Turva Oy">Turva Oy</option>
+                    <option value="Jaettu vastuu">Jaettu vastuu</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* 13. Muut toimijat */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><Layers size={18} className="text-indigo-500" />13. Muiden toimijoiden läsnäolo</h3>
+                <div className="mb-4">
+                  <label className={labelCls}>Alueella toimivat muut osapuolet</label>
+                  <textarea rows="3" className={inputCls} value={newEvent.otherOperators} onChange={(e) => updNewEvent('otherOperators', e.target.value)} placeholder="Ensiapupäivystys, liikenteenohjaus, lavarakentajat, siivous, ravintolatoimijat. Kirjaa yhteyshenkilöt."></textarea>
+                </div>
+                <div>
+                  <label className={labelCls}>Päävastuu alueen kokonaisturvallisuudesta rakennusvaiheessa</label>
+                  <input type="text" className={inputCls} value={newEvent.buildPhaseResponsible} onChange={(e) => updNewEvent('buildPhaseResponsible', e.target.value)} placeholder="Nimi, rooli ja organisaatio" />
+                </div>
+              </div>
+
+              {/* Toiminnot */}
+              <div className="flex justify-end gap-3 pb-6">
+                <button
+                  type="button"
+                  onClick={() => { setNewEvent(emptyNewEvent); setSelectedEvent(null); }}
+                  className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg transition-colors"
+                >
+                  Peruuta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => alert('Demo: lomake ei vielä tallenna tietoja eikä luo uutta tapahtumaa.')}
+                  className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                >
+                  <CheckCircle size={18} />
+                  Tallenna tapahtuma
+                </button>
+              </div>
+            </form>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // ====================== MALLITAPAHTUMA FESTIVAALIÖ ======================
+  if (selectedEvent === 'feso') {
+    const demoNav = [
+      { label: 'Tilannekuva', icon: Activity },
+      { label: 'Raportointi ja lomakkeet', icon: PenTool },
+      { label: 'Ennen Tapahtumaa', icon: Calendar },
+      { label: 'FestivaaliÖ', icon: Layers },
+      { label: 'Lomakekartoitus', icon: FileText },
+      { label: 'Asetukset', icon: Settings }
+    ];
+
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans">
+        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center sticky top-0 z-50 shadow-md">
+          <div className="flex items-center gap-4">
+            <div className="p-1.5 text-slate-500">
+              <Menu size={24} />
+            </div>
+            <div className="flex items-center gap-3">
+              <ShieldCheck className="text-indigo-400" size={28} />
+              <div>
+                <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+                <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 sm:gap-6">
+            <div className="flex items-center gap-2 bg-rose-600/50 text-white/70 px-4 py-2 rounded-lg font-bold text-sm cursor-not-allowed">
+              <AlertTriangle size={16} />
+              <span className="hidden sm:inline">Pikatoiminnot</span>
+            </div>
+            <button
+              onClick={() => setSelectedEvent(null)}
+              className="hidden sm:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white transition-colors"
+            >
+              <ArrowLeft size={16} />
+              Vaihda tapahtuma
+            </button>
+            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
+              <Clock size={16} className="text-indigo-400" />
+              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
+            </div>
+            <div className="flex items-center gap-3 border-l border-slate-700 pl-4 sm:pl-6">
+              <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">TJ</div>
+            </div>
+          </div>
+        </nav>
+
+        <div className="flex">
+          <aside className="w-64 bg-white border-r border-slate-200 min-h-[calc(100vh-72px)] p-4 hidden md:block">
+            <nav className="space-y-1">
+              {demoNav.map((item, idx) => {
+                const Icon = item.icon;
+                return (
+                  <div
+                    key={idx}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-slate-400 cursor-not-allowed select-none"
+                  >
+                    <Icon size={18} />
+                    {item.label}
+                  </div>
+                );
+              })}
+            </nav>
+          </aside>
+
+          <main className="flex-1 p-6 md:p-8">
+            <div className="max-w-4xl">
+              <div className="mb-6 pb-4 border-b border-slate-200">
+                <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                  <Layers className="text-indigo-500" size={28} />
+                  FestivaaliÖ
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">Mallitapahtuma. Suunnitteluvaihe, tietoja ei ole vielä täydennetty.</p>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3 mb-6">
+                <Info className="text-amber-600 shrink-0 mt-0.5" size={18} />
+                <div className="text-sm text-amber-900">
+                  <span className="font-bold">Tyhjä pohja.</span> Tämä tapahtuma käyttää samaa Turvajohto OS -runkoa,
+                  mutta toiminnot eivät ole käytössä. Valikot ja pikatoiminnot on poistettu käytöstä, koska tapahtuman
+                  perustiedot puuttuvat.
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
+                {['Aktiiviset järjestyksenvalvojat', 'Avoimet tehtävät', 'Kirjaukset tänään', 'Yleisöarvio'].map((title, idx) => (
+                  <div key={idx} className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
+                    <div className="flex justify-between items-start mb-3">
+                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{title}</span>
+                      <div className="p-2 rounded-lg bg-slate-50 text-slate-300">
+                        <Activity size={18} />
+                      </div>
+                    </div>
+                    <div className="text-3xl font-bold text-slate-300">-</div>
+                    <div className="text-xs text-slate-400 mt-1">Ei tietoja</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
+                <Layers className="text-slate-300 mx-auto mb-4" size={48} />
+                <h3 className="text-lg font-bold text-slate-700 mb-1">Tapahtuman tiedot puuttuvat</h3>
+                <p className="text-sm text-slate-500 max-w-md mx-auto">
+                  Täytä toimeksiannon perustiedot, jotta tilannekuva, resurssimitoitus ja raportointi saadaan käyttöön.
+                </p>
+                <button
+                  onClick={() => setSelectedEvent('new')}
+                  className="mt-5 px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors inline-flex items-center gap-2"
+                >
+                  <Plus size={18} />
+                  Täytä tapahtuman tiedot
+                </button>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans">
       {/* Top Navigation Bar */}
@@ -3186,6 +3878,14 @@ export default function App() {
               </div>
             )}
           </div>
+
+          <button
+            onClick={() => { setSelectedEvent(null); setActiveTab('landing'); setShowQuickActions(false); }}
+            className="hidden sm:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white transition-colors"
+          >
+            <ArrowLeft size={16} />
+            Vaihda tapahtuma
+          </button>
 
           <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
             <Clock size={16} className="text-indigo-400" />
