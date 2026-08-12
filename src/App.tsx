@@ -222,6 +222,19 @@ export default function App() {
   const [jvaDesc, setJvaDesc] = useState('');
   const [jvaReporterFiled, setJvaReporterFiled] = useState(false);
 
+  // Riskin arviointi -lomakkeen tila
+  const [raTarget, setRaTarget] = useState('');
+  const [raHazard, setRaHazard] = useState('');
+  const [raCategory, setRaCategory] = useState('');
+  const [raControls, setRaControls] = useState('');
+  const [raProb, setRaProb] = useState(0);
+  const [raSev, setRaSev] = useState(0);
+  const [raActions, setRaActions] = useState('');
+  const [raOwner, setRaOwner] = useState('');
+  const [raDeadline, setRaDeadline] = useState('');
+  const [raResProb, setRaResProb] = useState(0);
+  const [raResSev, setRaResSev] = useState(0);
+
   // Open Log Form State
   const [openKirjausDate, setOpenKirjausDate] = useState('');
   const [openKirjausTime, setOpenKirjausTime] = useState('');
@@ -297,6 +310,41 @@ export default function App() {
     if (hour >= 10 && hour < 17) return 'Hyvää päivää';
     if (hour >= 17 && hour < 22) return 'Hyvää iltaa';
     return 'Hyvää yötä';
+  };
+
+  // Riskin suuruus: todennäköisyys x seurausten vakavuus, tulos 1-5
+  const riskMatrix = [
+    [1, 2, 3],
+    [2, 3, 4],
+    [3, 4, 5]
+  ];
+
+  const getRiskScore = (prob, sev) => {
+    if (!prob || !sev) return 0;
+    return riskMatrix[prob - 1][sev - 1];
+  };
+
+  const riskLevels = {
+    1: { label: 'Merkityksetön riski', tone: 'emerald', action: 'Toimenpiteitä ei tarvita. Tilannetta seurataan normaalisti.' },
+    2: { label: 'Vähäinen riski', tone: 'lime', action: 'Seurataan tilannetta. Harkitaan edullisia parannuksia, jos ne ovat helposti toteutettavissa.' },
+    3: { label: 'Kohtalainen riski', tone: 'amber', action: 'Toimenpiteet on suunniteltava ja toteutettava määräajassa. Riskiä pienennetään ennen tapahtuman alkua.' },
+    4: { label: 'Merkittävä riski', tone: 'orange', action: 'Toimenpiteet ovat välttämättömiä. Toimintaa ei aloiteta ennen kuin riskiä on pienennetty.' },
+    5: { label: 'Sietämätön riski', tone: 'rose', action: 'Toiminta keskeytetään tai sitä ei aloiteta. Riski on poistettava ennen jatkamista.' }
+  };
+
+  const riskTones = {
+    emerald: { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', solid: 'bg-emerald-600' },
+    lime: { bg: 'bg-lime-50', border: 'border-lime-200', text: 'text-lime-700', solid: 'bg-lime-600' },
+    amber: { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700', solid: 'bg-amber-500' },
+    orange: { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', solid: 'bg-orange-500' },
+    rose: { bg: 'bg-rose-50', border: 'border-rose-200', text: 'text-rose-700', solid: 'bg-rose-600' }
+  };
+
+  const resetRiskForm = () => {
+    setRaTarget(''); setRaHazard(''); setRaCategory(''); setRaControls('');
+    setRaProb(0); setRaSev(0);
+    setRaActions(''); setRaOwner(''); setRaDeadline('');
+    setRaResProb(0); setRaResSev(0);
   };
 
   const getDynamicId = () => {
@@ -2834,7 +2882,8 @@ export default function App() {
           { id: 'forms', label: 'Täytettävät lomakkeet', icon: Clipboard, color: 'text-indigo-600', bg: 'bg-indigo-50', desc: 'Tapahtumailmoitukset, tarkastuslistat ja viranomaislomakkeet.' },
           { id: 'pdf', label: 'Raporttien PDF-versiot', icon: FileText, color: 'text-emerald-600', bg: 'bg-emerald-50', desc: 'Valmiit kirjaukset arkistointia ja toimeksiantajaa varten.' },
           { id: 'trash', label: 'Roskakori', icon: Archive, color: 'text-slate-600', bg: 'bg-slate-100', desc: 'Poistetut kirjaukset ja asiakirjat säilytysajan loppuun asti.' },
-          { id: 'emergency', label: 'Hätätilanneohjeet', icon: ShieldAlert, color: 'text-rose-600', bg: 'bg-rose-50', desc: 'Toimintakortit poikkeus- ja hätätilanteisiin.' }
+          { id: 'emergency', label: 'Hätätilanneohjeet', icon: ShieldAlert, color: 'text-rose-600', bg: 'bg-rose-50', desc: 'Toimintakortit poikkeus- ja hätätilanteisiin.' },
+          { id: 'risk', label: 'Riskiarviointi', icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-50', desc: 'Tehdyt riskiarviot ja uuden riskin arviointi laskurilla.' }
         ];
 
         return (
@@ -2865,6 +2914,431 @@ export default function App() {
                 );
               })}
             </div>
+          </div>
+        );
+      }
+      case 'documents_risk': {
+        const riskOptions = [
+          { id: 'risk_done', label: 'Tehdyt riskiarviot', icon: Archive, color: 'text-indigo-600', bg: 'bg-indigo-50', desc: 'Aiemmin laaditut riskiarviot ja niiden toimenpiteet.' },
+          { id: 'risk_new', label: 'Riskin arviointi', icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-50', desc: 'Arvioi yksittäinen riski laskurilla ja kirjaa toimenpiteet.' }
+        ];
+
+        return (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
+            <button
+              onClick={() => setActiveTab('documents')}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin asiakirjavalikkoon
+            </button>
+
+            <div className="mb-8 border-b border-slate-100 pb-4">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <AlertTriangle className="text-amber-500" size={24} />
+                Riskiarviointi
+              </h2>
+              <p className="text-sm text-slate-500 mt-1">Tapahtuman vaarojen tunnistaminen, riskien suuruuden arviointi ja toimenpiteet.</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {riskOptions.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <button
+                    key={option.id}
+                    onClick={() => setActiveTab(`documents_${option.id}`)}
+                    className="flex flex-col items-start p-5 rounded-xl border border-slate-200 hover:border-amber-300 hover:shadow-md transition-all text-left group bg-white"
+                  >
+                    <div className={`p-3 rounded-lg mb-4 transition-transform ${option.bg} ${option.color} group-hover:scale-110 duration-200`}>
+                      <Icon size={24} />
+                    </div>
+                    <span className="font-bold text-slate-800 text-sm">{option.label}</span>
+                    <span className="text-xs text-slate-500 mt-1">{option.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      }
+      case 'documents_risk_done': {
+        const doneAssessments = [
+          { id: '26/FesX/RA/001', name: 'Yleisön puristuminen etualueella', category: 'Väkijoukko', score: 4, author: 'Ismo Näkki', date: '02.08.2026', status: 'Toimenpiteet kesken' },
+          { id: '26/FesX/RA/002', name: 'Lavarakenteiden asennus ja nostotyöt', category: 'Työturvallisuus', score: 3, author: 'Liisa Ollila', date: '28.07.2026', status: 'Hyväksytty' },
+          { id: '26/FesX/RA/003', name: 'Anniskelualueen järjestyshäiriöt', category: 'Järjestys', score: 3, author: 'Ismo Näkki', date: '30.07.2026', status: 'Hyväksytty' },
+          { id: '26/FesX/RA/004', name: 'Ukkospuuska ja rakenteiden kestävyys', category: 'Sää', score: 5, author: 'Jaakko Mäki', date: '05.08.2026', status: 'Toimenpiteet kesken' },
+          { id: '26/FesX/RA/005', name: 'Löytötavaroiden ja epäilyttävien esineiden käsittely', category: 'Turvatoimet', score: 2, author: 'Maria Lohi', date: '01.08.2026', status: 'Hyväksytty' }
+        ];
+
+        return (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
+            <button
+              onClick={() => setActiveTab('documents_risk')}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin riskiarviointiin
+            </button>
+
+            <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end gap-4 flex-wrap">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <Archive className="text-indigo-500" size={24} />
+                  Tehdyt riskiarviot
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">{doneAssessments.length} arviota. Demoaineistoa.</p>
+              </div>
+              <button
+                onClick={() => setActiveTab('documents_risk_new')}
+                className="px-4 py-2 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors flex items-center gap-2"
+              >
+                <Plus size={16} />
+                Uusi riskiarvio
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {doneAssessments.map((ra) => {
+                const level = riskLevels[ra.score];
+                const tone = riskTones[level.tone];
+                return (
+                  <button
+                    key={ra.id}
+                    onClick={() => alert(`Demo: riskiarvion ${ra.id} avaaminen toteutetaan taustajärjestelmän kanssa.`)}
+                    className="w-full text-left bg-slate-50 hover:bg-white border border-slate-200 hover:border-amber-300 hover:shadow-sm rounded-xl p-4 transition-all flex items-center gap-4"
+                  >
+                    <div className={`shrink-0 w-12 h-12 rounded-lg ${tone.solid} text-white font-bold text-xl flex items-center justify-center`}>
+                      {ra.score}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-slate-800 text-sm">{ra.name}</span>
+                        <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded">{ra.category}</span>
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1 flex gap-3 flex-wrap">
+                        <span className="font-mono">{ra.id}</span>
+                        <span>{ra.author}</span>
+                        <span>{ra.date}</span>
+                      </div>
+                    </div>
+                    <div className="hidden sm:block text-right shrink-0">
+                      <div className={`text-xs font-bold ${tone.text}`}>{level.label}</div>
+                      <div className={`text-xs mt-1 px-2 py-0.5 rounded inline-block ${ra.status === 'Hyväksytty' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                        {ra.status}
+                      </div>
+                    </div>
+                    <ChevronRight size={18} className="text-slate-400 shrink-0" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      }
+      case 'documents_risk_new': {
+        const probLabels = [
+          { value: 1, label: 'Epätodennäköinen', desc: 'Tapahtuu harvoin ja epäsäännöllisesti' },
+          { value: 2, label: 'Mahdollinen', desc: 'Tapahtuu joskus, ei kuitenkaan säännöllisesti' },
+          { value: 3, label: 'Todennäköinen', desc: 'Tapahtuu usein tai toistuvasti' }
+        ];
+        const sevLabels = [
+          { value: 1, label: 'Vähäiset', desc: 'Ohimenevä haitta, ei hoidon tarvetta' },
+          { value: 2, label: 'Haitalliset', desc: 'Hoitoa vaativa vamma tai merkittävä häiriö' },
+          { value: 3, label: 'Vakavat', desc: 'Pysyvä vamma, kuolema tai toiminnan keskeytyminen' }
+        ];
+
+        const score = getRiskScore(raProb, raSev);
+        const level = score ? riskLevels[score] : null;
+        const tone = level ? riskTones[level.tone] : null;
+
+        const resScore = getRiskScore(raResProb, raResSev);
+        const resLevel = resScore ? riskLevels[resScore] : null;
+        const resTone = resLevel ? riskTones[resLevel.tone] : null;
+
+        const inputCls = "w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-amber-500";
+        const labelCls = "block text-sm font-bold text-slate-700 mb-1.5";
+
+        return (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
+            <button
+              onClick={() => setActiveTab('documents_risk')}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin riskiarviointiin
+            </button>
+
+            <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end gap-4 flex-wrap">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <AlertTriangle className="text-amber-500" size={24} />
+                  Riskin arviointi
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">Tunnista vaara, arvioi riskin suuruus ja kirjaa toimenpiteet.</p>
+              </div>
+              <div className="flex flex-col items-end">
+                <span className="text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wide">Tunniste</span>
+                <div className="text-sm font-mono bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200">
+                  {getDynamicId()}
+                </div>
+              </div>
+            </div>
+
+            <form className="space-y-6">
+
+              {/* Kohde ja vaara */}
+              <div className="space-y-4">
+                <h3 className="text-md font-semibold text-slate-700 border-b pb-2">1. Vaaran tunnistaminen</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className={labelCls}>Kohde tai toiminto</label>
+                    <input type="text" className={inputCls} value={raTarget} onChange={(e) => setRaTarget(e.target.value)} placeholder="Esim. Lava 1 etualue, Portti 2, rakennusvaihe" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Riskiluokka</label>
+                    <select className={inputCls} value={raCategory} onChange={(e) => setRaCategory(e.target.value)}>
+                      <option value="">Valitse</option>
+                      <option value="Väkijoukko">Väkijoukko</option>
+                      <option value="Järjestys">Järjestyshäiriöt ja väkivalta</option>
+                      <option value="Työturvallisuus">Työturvallisuus</option>
+                      <option value="Paloturvallisuus">Paloturvallisuus</option>
+                      <option value="Sää">Sää ja luonnonolosuhteet</option>
+                      <option value="Terveys">Terveys ja ensiapu</option>
+                      <option value="Liikenne">Liikenne ja pysäköinti</option>
+                      <option value="Tekniikka">Tekniikka ja sähkö</option>
+                      <option value="Turvatoimet">Turvatoimet ja tarkastukset</option>
+                      <option value="Muu">Muu</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className={labelCls}>Vaaran kuvaus</label>
+                  <textarea rows="3" className={inputCls} value={raHazard} onChange={(e) => setRaHazard(e.target.value)} placeholder="Mikä voi mennä pieleen, kenelle ja missä tilanteessa."></textarea>
+                </div>
+                <div>
+                  <label className={labelCls}>Nykyiset hallintakeinot</label>
+                  <textarea rows="3" className={inputCls} value={raControls} onChange={(e) => setRaControls(e.target.value)} placeholder="Mitä on jo tehty: aidat, miehitys, opastus, ohjeistus, tekniset ratkaisut."></textarea>
+                </div>
+              </div>
+
+              {/* Laskuri */}
+              <div className="space-y-4">
+                <h3 className="text-md font-semibold text-slate-700 border-b pb-2">2. Riskin suuruus</h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <span className={labelCls}>Todennäköisyys</span>
+                    <div className="space-y-2">
+                      {probLabels.map((p) => (
+                        <button
+                          key={p.value}
+                          type="button"
+                          onClick={() => setRaProb(p.value)}
+                          className={`w-full text-left p-3 rounded-lg border transition-colors ${raProb === p.value ? 'bg-amber-50 border-amber-400 ring-1 ring-amber-400' : 'bg-slate-50 border-slate-200 hover:border-slate-300'}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center ${raProb === p.value ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                              {p.value}
+                            </span>
+                            <span className="text-sm font-medium text-slate-800">{p.label}</span>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1 pl-8">{p.desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className={labelCls}>Seurausten vakavuus</span>
+                    <div className="space-y-2">
+                      {sevLabels.map((v) => (
+                        <button
+                          key={v.value}
+                          type="button"
+                          onClick={() => setRaSev(v.value)}
+                          className={`w-full text-left p-3 rounded-lg border transition-colors ${raSev === v.value ? 'bg-amber-50 border-amber-400 ring-1 ring-amber-400' : 'bg-slate-50 border-slate-200 hover:border-slate-300'}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center ${raSev === v.value ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                              {v.value}
+                            </span>
+                            <span className="text-sm font-medium text-slate-800">{v.label}</span>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1 pl-8">{v.desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Matriisi */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
+                  <div className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-3">Riskimatriisi</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-center text-sm border-collapse">
+                      <thead>
+                        <tr>
+                          <th className="p-2 text-xs text-slate-500 font-medium text-left">Todennäköisyys \ Seuraukset</th>
+                          {sevLabels.map((v) => (
+                            <th key={v.value} className="p-2 text-xs text-slate-600 font-semibold">{v.label}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {probLabels.map((p) => (
+                          <tr key={p.value}>
+                            <td className="p-2 text-xs text-slate-600 font-semibold text-left">{p.label}</td>
+                            {sevLabels.map((v) => {
+                              const cellScore = riskMatrix[p.value - 1][v.value - 1];
+                              const cellTone = riskTones[riskLevels[cellScore].tone];
+                              const active = raProb === p.value && raSev === v.value;
+                              return (
+                                <td key={v.value} className="p-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => { setRaProb(p.value); setRaSev(v.value); }}
+                                    className={`w-full py-3 rounded-lg font-bold text-white transition-all ${cellTone.solid} ${active ? 'ring-4 ring-slate-800 scale-105' : 'opacity-60 hover:opacity-100'}`}
+                                  >
+                                    {cellScore}
+                                  </button>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-3">
+                    Riskin suuruus on todennäköisyyden ja seurausten vakavuuden yhdistelmä asteikolla 1-5.
+                  </p>
+                </div>
+
+                {/* Tulos */}
+                {level ? (
+                  <div className={`rounded-xl border-2 p-5 ${tone.bg} ${tone.border}`}>
+                    <div className="flex items-center gap-4">
+                      <div className={`shrink-0 w-16 h-16 rounded-xl ${tone.solid} text-white font-bold text-3xl flex items-center justify-center shadow-sm`}>
+                        {score}
+                      </div>
+                      <div>
+                        <div className={`text-lg font-bold ${tone.text}`}>{level.label}</div>
+                        <div className="text-xs text-slate-600 mt-0.5">
+                          Todennäköisyys {raProb} ja seuraukset {raSev}
+                        </div>
+                      </div>
+                    </div>
+                    <p className="text-sm text-slate-700 mt-4 pt-4 border-t border-white/60">
+                      <span className="font-bold">Toimintaohje: </span>{level.action}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border-2 border-dashed border-slate-300 p-8 text-center">
+                    <p className="text-sm text-slate-500">Valitse todennäköisyys ja seurausten vakavuus, niin riskin suuruus lasketaan.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Toimenpiteet */}
+              <div className="space-y-4">
+                <h3 className="text-md font-semibold text-slate-700 border-b pb-2">3. Toimenpiteet</h3>
+                <div>
+                  <label className={labelCls}>Päätetyt toimenpiteet riskin pienentämiseksi</label>
+                  <textarea rows="4" className={inputCls} value={raActions} onChange={(e) => setRaActions(e.target.value)} placeholder="Konkreettiset toimet: lisämiehitys, rakenteelliset muutokset, ohjeistus, seuranta, keskeytyskriteerit."></textarea>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className={labelCls}>Vastuuhenkilö</label>
+                    <input type="text" className={inputCls} value={raOwner} onChange={(e) => setRaOwner(e.target.value)} placeholder="Nimi ja rooli" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Toteutettava viimeistään</label>
+                    <input type="date" className={inputCls} value={raDeadline} onChange={(e) => setRaDeadline(e.target.value)} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Jäännösriski */}
+              <div className="space-y-4">
+                <h3 className="text-md font-semibold text-slate-700 border-b pb-2">4. Jäännösriski toimenpiteiden jälkeen</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className={labelCls}>Todennäköisyys toimenpiteiden jälkeen</label>
+                    <select className={inputCls} value={raResProb} onChange={(e) => setRaResProb(Number(e.target.value))}>
+                      <option value={0}>Valitse</option>
+                      {probLabels.map((p) => <option key={p.value} value={p.value}>{p.value} {p.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Seuraukset toimenpiteiden jälkeen</label>
+                    <select className={inputCls} value={raResSev} onChange={(e) => setRaResSev(Number(e.target.value))}>
+                      <option value={0}>Valitse</option>
+                      {sevLabels.map((v) => <option key={v.value} value={v.value}>{v.value} {v.label}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {resLevel && (
+                  <div className={`rounded-xl border p-4 flex items-center gap-4 ${resTone.bg} ${resTone.border}`}>
+                    <div className={`shrink-0 w-12 h-12 rounded-lg ${resTone.solid} text-white font-bold text-xl flex items-center justify-center`}>
+                      {resScore}
+                    </div>
+                    <div className="flex-1">
+                      <div className={`text-sm font-bold ${resTone.text}`}>{resLevel.label}</div>
+                      {score > 0 && (
+                        <div className="text-xs text-slate-600 mt-0.5">
+                          {resScore < score
+                            ? `Riski pienenee ${score} tasolta tasolle ${resScore}.`
+                            : resScore === score
+                              ? 'Toimenpiteet eivät pienennä riskiä. Harkitse tehokkaampia keinoja.'
+                              : `Jäännösriski on suurempi kuin alkuperäinen. Tarkista arviointi.`}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {resScore >= 4 && (
+                  <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex gap-3">
+                    <AlertTriangle className="text-rose-600 shrink-0 mt-0.5" size={18} />
+                    <div className="text-sm text-rose-900">
+                      Jäännösriski on edelleen merkittävä tai sietämätön. Vie arvio turvallisuuspäällikön ja toimeksiantajan
+                      käsittelyyn ennen toiminnan aloittamista.
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Toiminnot */}
+              <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { resetRiskForm(); setActiveTab('documents_risk'); }}
+                  className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                >
+                  Peruuta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!raTarget.trim() || !raHazard.trim()) {
+                      alert('Kirjaa vähintään kohde ja vaaran kuvaus.');
+                      return;
+                    }
+                    if (!score) {
+                      alert('Valitse todennäköisyys ja seurausten vakavuus.');
+                      return;
+                    }
+                    alert('Demo: riskiarvio ei vielä tallennu taustajärjestelmään.');
+                  }}
+                  className="px-5 py-2.5 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                >
+                  <CheckCircle size={18} />
+                  Tallenna riskiarvio
+                </button>
+              </div>
+            </form>
           </div>
         );
       }
