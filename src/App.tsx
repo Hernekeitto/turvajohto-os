@@ -2803,14 +2803,286 @@ export default function App() {
             </form>
           </div>
         );
-      case 'documents':
+      case 'documents': {
+        const documentOptions = [
+          { id: 'forms', label: 'Täytettävät lomakkeet', icon: Clipboard, color: 'text-indigo-600', bg: 'bg-indigo-50', desc: 'Tapahtumailmoitukset, tarkastuslistat ja viranomaislomakkeet.' },
+          { id: 'pdf', label: 'Raporttien PDF-versiot', icon: FileText, color: 'text-emerald-600', bg: 'bg-emerald-50', desc: 'Valmiit kirjaukset arkistointia ja toimeksiantajaa varten.' },
+          { id: 'trash', label: 'Roskakori', icon: Archive, color: 'text-slate-600', bg: 'bg-slate-100', desc: 'Poistetut kirjaukset ja asiakirjat säilytysajan loppuun asti.' },
+          { id: 'emergency', label: 'Hätätilanneohjeet', icon: ShieldAlert, color: 'text-rose-600', bg: 'bg-rose-50', desc: 'Toimintakortit poikkeus- ja hätätilanteisiin.' }
+        ];
+
         return (
-          <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100 flex flex-col items-center justify-center min-h-[400px] text-center">
-            <FileText className="text-slate-300 mb-4" size={48} />
-            <h2 className="text-2xl font-bold text-slate-800 mb-2">Lomakkeet & Asiakirjat</h2>
-            <p className="text-slate-500 max-w-md">Viranomaislomakkeet, JOKE-loki, ja poikkeamaraportit (Osa 4).</p>
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
+            <div className="mb-8 border-b border-slate-100 pb-4">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <FileText className="text-indigo-500" size={24} />
+                Lomakkeet ja asiakirjat
+              </h2>
+              <p className="text-sm text-slate-500 mt-1">Valitse asiakirjaryhmä.</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {documentOptions.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <button
+                    key={option.id}
+                    onClick={() => setActiveTab(`documents_${option.id}`)}
+                    className="flex flex-col items-start p-5 rounded-xl border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all text-left group bg-white"
+                  >
+                    <div className={`p-3 rounded-lg mb-4 transition-transform ${option.bg} ${option.color} group-hover:scale-110 duration-200`}>
+                      <Icon size={24} />
+                    </div>
+                    <span className="font-bold text-slate-800 text-sm">{option.label}</span>
+                    <span className="text-xs text-slate-500 mt-1">{option.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         );
+      }
+      case 'documents_forms': {
+        const fillableForms = [
+          { name: 'Tapahtumailmoitus', desc: 'JV:n tai vartijan oma ilmoitus toimenpiteestä.', tag: 'Viranomaislomake' },
+          { name: 'Kiinniottoilmoitus', desc: 'Kiinniotetun luovutus poliisille.', tag: 'Viranomaislomake' },
+          { name: 'Voimankäyttöselvitys', desc: 'Selvitys voimakeinojen ja välineiden käytöstä.', tag: 'Sisäinen' },
+          { name: 'Ensiapukaavake', desc: 'Ensiaputilanteen kirjaus ja jatkotoimet.', tag: 'Sisäinen' },
+          { name: 'Vahinkoilmoitus', desc: 'Omaisuusvaurio ja vastuukysymykset.', tag: 'Sisäinen' },
+          { name: 'Löytötavarailmoitus', desc: 'Vastaanotettu tai luovutettu löytötavara.', tag: 'Sisäinen' },
+          { name: 'Perehdytyslomake', desc: 'Työntekijän perehdytys ja kuittaus.', tag: 'Sisäinen' },
+          { name: 'Vuoron luovutus', desc: 'Vuoronvaihdon tilannekatsaus ja avoimet asiat.', tag: 'Sisäinen' }
+        ];
+
+        return (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
+            <button
+              onClick={() => setActiveTab('documents')}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin asiakirjavalikkoon
+            </button>
+
+            <div className="mb-6 border-b border-slate-100 pb-4">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <Clipboard className="text-indigo-500" size={24} />
+                Täytettävät lomakkeet
+              </h2>
+              <p className="text-sm text-slate-500 mt-1">Avaa lomake täytettäväksi tai tulosta tyhjä pohja.</p>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-200">
+              {fillableForms.map((form, idx) => (
+                <div key={idx} className="p-4 flex justify-between items-center gap-4 flex-wrap hover:bg-white transition-colors">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-slate-800 text-sm">{form.name}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${form.tag === 'Viranomaislomake' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                        {form.tag}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">{form.desc}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors">
+                      Täytä
+                    </button>
+                    <button className="text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-md transition-colors">
+                      Tyhjä pohja
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
+      case 'documents_pdf':
+        return (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
+            <button
+              onClick={() => setActiveTab('documents')}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin asiakirjavalikkoon
+            </button>
+
+            <div className="mb-6 border-b border-slate-100 pb-4">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <FileText className="text-emerald-500" size={24} />
+                Raporttien PDF-versiot
+              </h2>
+              <p className="text-sm text-slate-500 mt-1">Tallennetut kirjaukset PDF-muodossa. Tunniste vastaa alkuperäistä kirjausta.</p>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                  <tr>
+                    <th className="p-4">Tunniste</th>
+                    <th className="p-4">Tyyppi</th>
+                    <th className="p-4">Laatija</th>
+                    <th className="p-4">Aika</th>
+                    <th className="p-4 text-right">Toiminnot</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {mockReports.map((report) => (
+                    <tr key={report.id} className="hover:bg-white transition-colors">
+                      <td className="p-4 font-mono text-xs text-slate-700">{report.id}</td>
+                      <td className="p-4 font-medium text-slate-800">{report.type}</td>
+                      <td className="p-4 text-slate-600">{report.author}</td>
+                      <td className="p-4 font-mono text-slate-600">{report.time}</td>
+                      <td className="p-4 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button className="text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors">
+                            Avaa PDF
+                          </button>
+                          <button className="text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-md transition-colors">
+                            Lataa
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <p className="text-xs text-slate-500 mt-4">
+              PDF-tiedostot sisältävät henkilötietoja. Käsittele ja jaa vain toimeksiannon edellyttämässä laajuudessa.
+            </p>
+          </div>
+        );
+      case 'documents_trash':
+        return (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
+            <button
+              onClick={() => setActiveTab('documents')}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin asiakirjavalikkoon
+            </button>
+
+            <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end gap-4 flex-wrap">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <Archive className="text-slate-500" size={24} />
+                  Roskakori
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">Poistetut kirjaukset ja asiakirjat.</p>
+              </div>
+              <button className="px-4 py-2 text-sm font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors">
+                Tyhjennä roskakori
+              </button>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-12 text-center">
+              <Archive className="text-slate-300 mx-auto mb-3" size={40} />
+              <p className="text-sm font-medium text-slate-600">Roskakori on tyhjä.</p>
+              <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                Poistetut asiakirjat näkyvät täällä. Kirjauksia ei poisteta lopullisesti ennen säilytysajan päättymistä.
+              </p>
+            </div>
+
+            <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
+              <Info className="text-amber-600 shrink-0 mt-0.5" size={18} />
+              <div className="text-sm text-amber-900">
+                Turvallisuusalan kirjauksilla on lakisääteinen säilytysaika. Tarkista säilytys- ja poistokäytännöt
+                toimeksiantajan tietosuojaselosteesta ennen roskakorin tyhjentämistä.
+              </div>
+            </div>
+          </div>
+        );
+      case 'documents_emergency': {
+        const emergencyCards = [
+          { title: 'Kaikkien alueiden evakuointi', icon: DoorOpen, tone: 'rose', steps: ['Vahvista päätös turvallisuuspäälliköltä', 'Pysäytä esitys ja anna kuulutus', 'Avaa kaikki hätäpoistumistiet', 'Ohjaa yleisö kokoontumispaikoille', 'Kuittaa alueiden tyhjeneminen TIKE:lle'] },
+          { title: 'Tulipalo', icon: AlertTriangle, tone: 'amber', steps: ['Hätäilmoitus 112', 'Rajaa alue ja estä pääsy', 'Alkusammutus jos turvallista', 'Opasta pelastuslaitos paikalle', 'Kirjaa tapahtuma-aika ja toimenpiteet'] },
+          { title: 'Väkijoukon puristuminen', icon: Users, tone: 'rose', steps: ['Keskeytä esitys välittömästi', 'Avaa sivukäytävät ja purkureitit', 'Ohjaa yleisö taaksepäin kuulutuksella', 'Hälytä ensiapu etualueelle', 'Kirjaa tiheysarvio ja aika'] },
+          { title: 'Vakava väkivaltatilanne', icon: ShieldAlert, tone: 'rose', steps: ['Hätäilmoitus 112', 'Suojaa ja siirrä yleisö pois alueelta', 'Älä lähesty ilman poliisia', 'Varmista kohteen tiedot ja kulkusuunta', 'Säilytä tallenteet ja havainnot'] },
+          { title: 'Sähkökatko', icon: Wrench, tone: 'slate', steps: ['Varmista varavalaistus', 'Siirry radioyhteyteen', 'Estä pääsy pimeille alueille', 'Ota yhteys tekniseen vastaavaan', 'Arvioi tarve keskeyttää tapahtuma'] },
+          { title: 'Sään äkillinen muutos', icon: Cloud, tone: 'sky', steps: ['Seuraa varoituksia', 'Tarkista rakenteiden kiinnitykset', 'Valmistele suojautumisohjeet', 'Harkitse esityksen keskeytystä', 'Tiedota yleisölle ajoissa'] }
+        ];
+        const toneMap = {
+          rose: { bg: 'bg-rose-50', border: 'border-rose-200', text: 'text-rose-600', num: 'bg-rose-600' },
+          amber: { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', num: 'bg-amber-600' },
+          slate: { bg: 'bg-slate-100', border: 'border-slate-200', text: 'text-slate-600', num: 'bg-slate-600' },
+          sky: { bg: 'bg-sky-50', border: 'border-sky-200', text: 'text-sky-600', num: 'bg-sky-600' }
+        };
+
+        return (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
+            <button
+              onClick={() => setActiveTab('documents')}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin asiakirjavalikkoon
+            </button>
+
+            <div className="mb-6 border-b border-slate-100 pb-4">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <ShieldAlert className="text-rose-500" size={24} />
+                Hätätilanneohjeet
+              </h2>
+              <p className="text-sm text-slate-500 mt-1">Toimintakortit. Nämä eivät korvaa tapahtuman pelastussuunnitelmaa.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {emergencyCards.map((card, idx) => {
+                const Icon = card.icon;
+                const tone = toneMap[card.tone];
+                return (
+                  <div key={idx} className={`rounded-xl border p-5 ${tone.bg} ${tone.border}`}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <Icon className={tone.text} size={20} />
+                      <h3 className="font-bold text-slate-800 text-sm">{card.title}</h3>
+                    </div>
+                    <ol className="space-y-2">
+                      {card.steps.map((step, sIdx) => (
+                        <li key={sIdx} className="flex gap-2 text-sm text-slate-700">
+                          <span className={`shrink-0 w-5 h-5 rounded-full ${tone.num} text-white text-xs font-bold flex items-center justify-center mt-0.5`}>
+                            {sIdx + 1}
+                          </span>
+                          <span>{step}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-6 bg-slate-800 rounded-xl p-5 text-white">
+              <h3 className="font-bold text-sm mb-3 flex items-center gap-2">
+                <PhoneCall size={18} className="text-rose-400" />
+                Hätänumerot
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                <div className="bg-slate-700 rounded-lg p-3">
+                  <div className="text-2xl font-bold">112</div>
+                  <div className="text-xs text-slate-300 mt-0.5">Hätäkeskus</div>
+                </div>
+                <div className="bg-slate-700 rounded-lg p-3">
+                  <div className="font-bold">Turva 1</div>
+                  <div className="text-xs text-slate-300 mt-0.5">Turvallisuuspäällikkö</div>
+                </div>
+                <div className="bg-slate-700 rounded-lg p-3">
+                  <div className="font-bold">TIKE</div>
+                  <div className="text-xs text-slate-300 mt-0.5">Tilannekeskus</div>
+                </div>
+                <div className="bg-slate-700 rounded-lg p-3">
+                  <div className="font-bold">EA-päivystys</div>
+                  <div className="text-xs text-slate-300 mt-0.5">Ensiapupiste 1</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
       case 'settings':
         return (
           <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100 flex flex-col items-center justify-center min-h-[400px] text-center">
@@ -2876,23 +3148,37 @@ export default function App() {
             </button>
             
             {showQuickActions && (
-              <div className="absolute right-0 mt-3 w-72 bg-slate-800 rounded-xl shadow-xl border border-slate-700 p-5 z-50 animate-in fade-in slide-in-from-top-2">
-                <div className="flex justify-between items-center mb-4 border-b border-slate-700 pb-3">
-                  <h3 className="text-white font-bold flex items-center gap-2">
-                    <AlertTriangle className="text-rose-400" size={18} />
-                    Kriittiset toiminnot
-                  </h3>
+              <div className="absolute right-0 mt-3 w-80 bg-slate-800 rounded-xl shadow-xl border border-slate-700 p-5 z-50 animate-in fade-in slide-in-from-top-2">
+                <div className="flex justify-end mb-3">
                   <button onClick={() => setShowQuickActions(false)} className="text-slate-400 hover:text-white transition-colors">
                     <X size={18} />
                   </button>
                 </div>
-                <div className="space-y-3">
-                  <button className="w-full py-3 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg transition-colors flex justify-center items-center gap-2 shadow-sm">
-                    STOP PROTOKOLLA
+
+                <div className="space-y-5">
+                  <button className="w-full py-4 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg transition-colors flex justify-center items-center gap-2 shadow-sm text-center leading-tight">
+                    <AlertTriangle size={20} className="shrink-0" />
+                    KAIKKIEN ALUEIDEN EVAKUOINTI
                   </button>
-                  <button className="w-full py-3 px-4 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors flex justify-center items-center gap-2">
-                    <PhoneCall size={18} /> Yhteys Viranomaisiin
-                  </button>
+
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2">
+                      <PhoneCall size={14} />
+                      Yhteys viranomaisiin
+                    </h4>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button className="py-3 px-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors border border-slate-600 leading-tight">
+                        Oma Turva
+                      </button>
+                      <button className="py-3 px-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors border border-slate-600 leading-tight">
+                        Turva + VIRA
+                      </button>
+                      <button className="py-3 px-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors border border-slate-600 leading-tight">
+                        Varautumis&shy;tilanne
+                      </button>
+                    </div>
+                  </div>
+
                   <button className="w-full py-3 px-4 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors flex justify-center items-center gap-2">
                     <Layers size={18} /> Lähetä toimintaohjeita
                   </button>
