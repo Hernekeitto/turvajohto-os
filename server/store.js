@@ -10,6 +10,7 @@ const COLLECTIONS = {
   checkins: 'checkins.json',
   reports: 'reports.json',
   events: 'events.json',
+  riskAssessments: 'riskAssessments.json',
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
