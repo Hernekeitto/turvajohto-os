@@ -43,7 +43,9 @@ import {
   CheckSquare,
   Menu,
   Plus,
-  Briefcase
+  Briefcase,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -193,6 +195,14 @@ export default function App() {
   // Tapahtumariippumaton "Tallennetut raportit" -näkymä (kaikki tapahtumat samassa listassa)
   const [viewingAllReports, setViewingAllReports] = useState(false);
   const [allReportsSortBy, setAllReportsSortBy] = useState('newest');
+
+  // Tapahtuman muokkaus: jos asetettu, "Luo uusi tapahtuma" -lomake päivittää
+  // tämän id:n tapahtuman sen sijaan että loisi uuden. Lomake avataan aina tyhjänä.
+  const [editingEventId, setEditingEventId] = useState(null);
+
+  // "Tallennetut tapahtumat" -näkymä: poistetut (arkistoidut) tapahtumat ja niiden data
+  const [viewingArchivedEvents, setViewingArchivedEvents] = useState(false);
+  const [archivedEventDetailId, setArchivedEventDetailId] = useState(null);
 
   const emptyNewEvent = {
     clientName: '', businessId: '',
@@ -532,6 +542,33 @@ export default function App() {
       return;
     }
 
+    const dates = newEvent.publicStartDate
+      ? newEvent.publicEndDate && newEvent.publicEndDate !== newEvent.publicStartDate
+        ? `${formatFiDate(newEvent.publicStartDate)}–${formatFiDate(newEvent.publicEndDate)}`
+        : formatFiDate(newEvent.publicStartDate)
+      : 'Ei vahvistettu';
+
+    const commonFields = {
+      name: newEvent.eventName.trim(),
+      dates,
+      place: newEvent.address.trim() || 'Ei vahvistettu',
+      audience: newEvent.audienceCount ? `${newEvent.audienceCount} hlö` : 'Arvio puuttuu',
+      client: newEvent.clientName.trim() || 'Ei tiedossa',
+      formData: newEvent
+    };
+
+    if (editingEventId) {
+      // Muokkaus: säilytetään sama id (raportit/kirjaukset viittaavat siihen) ja
+      // olemassa oleva tila (status/statusTone/accent) — vain kuvailevat kentät päivittyvät.
+      setEvents(prev => prev.map(e => (e.id === editingEventId ? { ...e, ...commonFields } : e)));
+      setNewEvent(emptyNewEvent);
+      const targetId = editingEventId;
+      setEditingEventId(null);
+      setSelectedEvent(targetId);
+      setActiveTab('landing');
+      return;
+    }
+
     const slug = slugify(newEvent.eventName) || 'tapahtuma';
     const existingIds = new Set(events.map(e => e.id));
     let id = slug;
@@ -541,29 +578,34 @@ export default function App() {
       n += 1;
     }
 
-    const dates = newEvent.publicStartDate
-      ? newEvent.publicEndDate && newEvent.publicEndDate !== newEvent.publicStartDate
-        ? `${formatFiDate(newEvent.publicStartDate)}–${formatFiDate(newEvent.publicEndDate)}`
-        : formatFiDate(newEvent.publicStartDate)
-      : 'Ei vahvistettu';
-
     const newEventCard = {
       id,
-      name: newEvent.eventName.trim(),
       status: 'Suunnittelu',
       statusTone: 'bg-slate-200 text-slate-700',
-      dates,
-      place: newEvent.address.trim() || 'Ei vahvistettu',
-      audience: newEvent.audienceCount ? `${newEvent.audienceCount} hlö` : 'Arvio puuttuu',
-      client: newEvent.clientName.trim() || 'Ei tiedossa',
       accent: 'border-slate-200 hover:border-indigo-400',
-      formData: newEvent
+      ...commonFields
     };
 
     setEvents(prev => [...prev, newEventCard]);
     setNewEvent(emptyNewEvent);
     setSelectedEvent(id);
     setActiveTab('landing');
+  };
+
+  const handleStartEditEvent = (id) => {
+    setEditingEventId(id);
+    setNewEvent(emptyNewEvent);
+    setSelectedEvent('new');
+  };
+
+  const handleDeleteEvent = (ev) => {
+    const confirmed = window.confirm(
+      `Haluatko varmasti poistaa tapahtuman "${ev.name}"?\n\n` +
+      'Tapahtuma piilotetaan tapahtumavalinnasta, mutta sen raportit ja kirjaukset ' +
+      'säilyvät tallessa ja löytyvät jatkossa "Tallennetut tapahtumat" -näkymästä.'
+    );
+    if (!confirmed) return;
+    setEvents(prev => prev.map(e => (e.id === ev.id ? { ...e, archived: true, archivedAt: new Date().toISOString() } : e)));
   };
 
   const handleSaveCheckIn = () => {
@@ -3954,6 +3996,170 @@ export default function App() {
     );
   }
 
+  // ====================== TALLENNETUT TAPAHTUMAT (poistetut/arkistoidut) ======================
+  if (viewingArchivedEvents) {
+    const archivedEvents = events.filter(e => e.archived);
+    const detailEvent = archivedEventDetailId ? archivedEvents.find(e => e.id === archivedEventDetailId) : null;
+
+    if (detailEvent) {
+      const eventReports = reports.filter(r => (r.eventId || 'fesx') === detailEvent.id);
+      const eventCheckins = checkedInEmployees.filter(e => (e.eventId || 'fesx') === detailEvent.id);
+
+      return (
+        <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
+          <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
+            <div className="flex items-center gap-3">
+              <ShieldCheck className="text-indigo-400" size={28} />
+              <div>
+                <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+                <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
+              </div>
+            </div>
+            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">TJ</div>
+          </nav>
+
+          <main className="flex-1 p-6 md:p-10">
+            <div className="max-w-6xl mx-auto">
+              <button
+                onClick={() => setArchivedEventDetailId(null)}
+                className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+              >
+                <ArrowLeft size={16} />
+                Takaisin tallennettuihin tapahtumiin
+              </button>
+
+              <div className="mb-6 bg-slate-100 border border-slate-200 rounded-xl p-4 flex items-start gap-3">
+                <Archive className="text-slate-500 shrink-0 mt-0.5" size={18} />
+                <div className="text-sm text-slate-700">
+                  <span className="font-bold">{detailEvent.name}</span> — poistettu {new Date(detailEvent.archivedAt).toLocaleString('fi-FI')}.
+                  Tiedot ovat vain luku -tilassa.
+                </div>
+              </div>
+
+              <h3 className="text-lg font-bold text-slate-800 mb-3">Raportit ({eventReports.length})</h3>
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto mb-8">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                    <tr>
+                      <th className="p-4">Tunniste</th>
+                      <th className="p-4">Tyyppi</th>
+                      <th className="p-4">Laatija</th>
+                      <th className="p-4">Aika</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {eventReports.length === 0 ? (
+                      <tr><td colSpan={4} className="p-8 text-center text-sm text-slate-500">Ei raportteja.</td></tr>
+                    ) : eventReports.map((report) => (
+                      <tr key={report.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4 font-mono text-xs text-slate-700">{report.id}</td>
+                        <td className="p-4 font-medium text-slate-800">{report.type}</td>
+                        <td className="p-4 text-slate-600">{report.author}</td>
+                        <td className="p-4 font-mono text-slate-600">{report.time}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <h3 className="text-lg font-bold text-slate-800 mb-3">Sisäänkirjatut työntekijät ({eventCheckins.length})</h3>
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                    <tr>
+                      <th className="p-4">Nimi</th>
+                      <th className="p-4">Rooli</th>
+                      <th className="p-4">Sisäänkirjattu</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {eventCheckins.length === 0 ? (
+                      <tr><td colSpan={3} className="p-8 text-center text-sm text-slate-500">Ei sisäänkirjattuja työntekijöitä.</td></tr>
+                    ) : eventCheckins.map((emp) => (
+                      <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4 font-medium text-slate-800">{emp.name}</td>
+                        <td className="p-4 text-slate-600">{emp.role}</td>
+                        <td className="p-4 font-mono text-slate-600">{emp.checkInTime}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
+        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="text-indigo-400" size={28} />
+            <div>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
+            </div>
+          </div>
+          <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">TJ</div>
+        </nav>
+
+        <main className="flex-1 p-6 md:p-10">
+          <div className="max-w-5xl mx-auto">
+            <button
+              onClick={() => setViewingArchivedEvents(false)}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin tapahtumavalintaan
+            </button>
+
+            <div className="mb-8">
+              <h2 className="text-2xl font-bold text-slate-800">Tallennetut tapahtumat</h2>
+              <p className="text-sm text-slate-500 mt-1">
+                Poistetut tapahtumat säilyvät tässä raportteineen ja kirjauksineen ({archivedEvents.length} kpl).
+              </p>
+            </div>
+
+            {archivedEvents.length === 0 ? (
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-10 text-center text-sm text-slate-500">
+                Ei poistettuja tapahtumia.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {archivedEvents.map((ev) => (
+                  <button
+                    key={ev.id}
+                    onClick={() => setArchivedEventDetailId(ev.id)}
+                    className="bg-white rounded-xl border-2 border-slate-200 hover:border-indigo-400 shadow-sm hover:shadow-md transition-all p-6 text-left group"
+                  >
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="p-3 rounded-lg bg-slate-100 text-slate-500 group-hover:scale-110 transition-transform duration-200">
+                        <Archive size={24} />
+                      </div>
+                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-200 text-slate-700">
+                        Poistettu
+                      </span>
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-800">{ev.name}</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">{ev.client}</p>
+                    <p className="text-xs text-slate-400 mt-3">
+                      Poistettu {new Date(ev.archivedAt).toLocaleDateString('fi-FI')}
+                    </p>
+                    <div className="mt-5 pt-4 border-t border-slate-100 text-sm font-bold text-indigo-600 flex items-center gap-1">
+                      Näytä tiedot
+                      <ChevronRight size={16} />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   // ====================== TAPAHTUMAN VALINTA ======================
   if (selectedEvent === null) {
     return (
@@ -3973,6 +4179,13 @@ export default function App() {
             >
               <FileText size={16} className="text-indigo-400" />
               Tallennetut raportit
+            </button>
+            <button
+              onClick={() => setViewingArchivedEvents(true)}
+              className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              <Archive size={16} className="text-indigo-400" />
+              Tallennetut tapahtumat
             </button>
             <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
               <Clock size={16} className="text-indigo-400" />
@@ -4000,16 +4213,45 @@ export default function App() {
                 <FileText size={16} />
                 Tallennetut raportit
               </button>
+              <button
+                onClick={() => setViewingArchivedEvents(true)}
+                className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+              >
+                <Archive size={16} />
+                Tallennetut tapahtumat
+              </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {events.map((ev) => (
-                <button
+              {events.filter(ev => !ev.archived).map((ev) => (
+                <div
                   key={ev.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => { setSelectedEvent(ev.id); setActiveTab('landing'); }}
-                  className={`bg-white rounded-xl border-2 ${ev.accent} shadow-sm hover:shadow-md transition-all p-6 text-left group`}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { setSelectedEvent(ev.id); setActiveTab('landing'); } }}
+                  className={`bg-white rounded-xl border-2 ${ev.accent} shadow-sm hover:shadow-md transition-all p-6 text-left group cursor-pointer relative`}
                 >
-                  <div className="flex justify-between items-start mb-4">
+                  <div className="absolute top-4 right-4 flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleStartEditEvent(ev.id); }}
+                      title="Muokkaa tapahtumaa"
+                      className="p-1.5 rounded-md bg-white border border-slate-200 text-slate-500 hover:text-indigo-600 hover:border-indigo-300 shadow-sm"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteEvent(ev); }}
+                      title="Poista tapahtuma"
+                      className="p-1.5 rounded-md bg-white border border-slate-200 text-slate-500 hover:text-rose-600 hover:border-rose-300 shadow-sm"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+
+                  <div className="flex justify-between items-start mb-4 pr-16">
                     <div className="p-3 rounded-lg bg-indigo-50 text-indigo-600 group-hover:scale-110 transition-transform duration-200">
                       <Layers size={24} />
                     </div>
@@ -4039,7 +4281,7 @@ export default function App() {
                     Avaa tapahtuma
                     <ChevronRight size={16} />
                   </div>
-                </button>
+                </div>
               ))}
 
               <button
@@ -4081,7 +4323,7 @@ export default function App() {
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-4xl mx-auto">
             <button
-              onClick={() => { setSelectedEvent(null); setNewEvent(emptyNewEvent); }}
+              onClick={() => { setSelectedEvent(null); setNewEvent(emptyNewEvent); setEditingEventId(null); }}
               className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
             >
               <ArrowLeft size={16} />
@@ -4089,18 +4331,12 @@ export default function App() {
             </button>
 
             <div className="mb-6">
-              <h2 className="text-2xl font-bold text-slate-800">Luo uusi tapahtuma</h2>
+              <h2 className="text-2xl font-bold text-slate-800">{editingEventId ? 'Muokkaa tapahtumaa' : 'Luo uusi tapahtuma'}</h2>
               <p className="text-sm text-slate-500 mt-1">
-                Toimeksiannon aloituslomake. Tiedot muodostavat pohjan turvallisuussuunnittelulle ja resurssimitoitukselle.
+                {editingEventId
+                  ? 'Täytä tapahtuman tiedot uudelleen — tallennus korvaa tapahtuman aiemmat tiedot. Raportit ja kirjaukset säilyvät ennallaan.'
+                  : 'Toimeksiannon aloituslomake. Tiedot muodostavat pohjan turvallisuussuunnittelulle ja resurssimitoitukselle.'}
               </p>
-            </div>
-
-            <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
-              <Info className="text-amber-600 shrink-0 mt-0.5" size={18} />
-              <div className="text-sm text-amber-900">
-                <span className="font-bold">Demo.</span> Lomake ei vielä tallenna tietoja eikä luo uutta tapahtumaa.
-                Tallennus kytketään käyttöön, kun taustajärjestelmä on toteutettu.
-              </div>
             </div>
 
             <form className="space-y-6">
@@ -4469,7 +4705,7 @@ export default function App() {
               <div className="flex justify-end gap-3 pb-6">
                 <button
                   type="button"
-                  onClick={() => { setNewEvent(emptyNewEvent); setSelectedEvent(null); }}
+                  onClick={() => { setNewEvent(emptyNewEvent); setSelectedEvent(null); setEditingEventId(null); }}
                   className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg transition-colors"
                 >
                   Peruuta
@@ -4480,7 +4716,7 @@ export default function App() {
                   className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
                 >
                   <CheckCircle size={18} />
-                  Tallenna tapahtuma
+                  {editingEventId ? 'Tallenna muutokset' : 'Tallenna tapahtuma'}
                 </button>
               </div>
             </form>
