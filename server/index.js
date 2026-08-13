@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import cookie from 'cookie';
 import rateLimit from 'express-rate-limit';
 import { findUser } from './db.js';
+import { readCollection, writeCollection, KNOWN_COLLECTIONS } from './store.js';
 
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -17,7 +18,7 @@ if (!JWT_SECRET) {
 
 const app = express();
 app.set('trust proxy', 1); // nginx on edessä
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -85,6 +86,38 @@ app.post('/api/logout', (req, res) => {
 app.get('/api/session', (req, res) => {
   const username = getSessionUser(req);
   res.json({ authenticated: !!username, username: username || null });
+});
+
+function requireAuth(req, res, next) {
+  const username = getSessionUser(req);
+  if (!username) return res.status(401).json({ ok: false, error: 'Kirjaudu sisään.' });
+  req.username = username;
+  next();
+}
+
+// Jaettu data (kirjaukset, raportit ym.) — koko sisältö korvataan joka tallennuksella,
+// samaan tapaan kuin selaimen localStorage aiemmin toimi, mutta nyt kaikkien käyttäjien
+// kesken jaettuna palvelimella. Huom: kaksi samanaikaista tallentajaa voi ylikirjoittaa
+// toisensa muutokset (viimeisin voittaa) — riittää pienelle tiimille, mutta ei ole
+// rakennettu ristiriitojen yhdistämiseen.
+app.get('/api/data/:name', requireAuth, (req, res) => {
+  const { name } = req.params;
+  if (!KNOWN_COLLECTIONS.includes(name)) {
+    return res.status(404).json({ ok: false, error: 'Tuntematon kokoelma.' });
+  }
+  res.json({ ok: true, data: readCollection(name) });
+});
+
+app.put('/api/data/:name', requireAuth, (req, res) => {
+  const { name } = req.params;
+  if (!KNOWN_COLLECTIONS.includes(name)) {
+    return res.status(404).json({ ok: false, error: 'Tuntematon kokoelma.' });
+  }
+  if (!Array.isArray(req.body)) {
+    return res.status(400).json({ ok: false, error: 'Odotettiin taulukkoa.' });
+  }
+  writeCollection(name, req.body);
+  res.json({ ok: true });
 });
 
 app.listen(PORT, '127.0.0.1', () => {

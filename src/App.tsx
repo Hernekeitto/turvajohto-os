@@ -80,10 +80,6 @@ const initialCheckedInEmployees = [
   { id: 3, name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05", checkInDate: "", checkInTime: "10:40", comment: "" }
 ];
 
-const CHECKIN_STORAGE_KEY = 'turvajohto-checkins';
-
-const REPORT_STORAGE_KEY = 'turvajohto-reports';
-
 // Poikkeamiksi laskettavat kirjaustyypit
 const DEVIATION_TYPES = ['jvaction', 'firstaid', 'threat', 'fence', 'damage'];
 
@@ -190,11 +186,13 @@ export default function App() {
   const [eventTimeStr, setEventTimeStr] = useState('');
   const timeInputRef = useRef(null);
 
-  // Sisäänkirjatut työntekijät (yhteinen tila koko sovellukselle)
+  // Sisäänkirjatut työntekijät (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
   const [checkedInEmployees, setCheckedInEmployees] = useState(initialCheckedInEmployees);
+  const [checkinsLoaded, setCheckinsLoaded] = useState(false);
 
-  // Kirjaukset ja raportit (yhteinen tila koko sovellukselle)
+  // Kirjaukset ja raportit (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
   const [reports, setReports] = useState(initialReports);
+  const [reportsLoaded, setReportsLoaded] = useState(false);
 
   // Check-in Form State
   const [empSearch, setEmpSearch] = useState('');
@@ -293,48 +291,56 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Ladataan sisäänkirjaukset selaimen muistista sivun avautuessa
+  // Ladataan sisäänkirjaukset palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(CHECKIN_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) setCheckedInEmployees(parsed);
-      }
-    } catch {
-      // Viallinen tallennus ohitetaan ja jatketaan alkutilalla
-    }
+    fetch('/api/data/checkins', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && Array.isArray(res.data)) setCheckedInEmployees(res.data);
+      })
+      .catch(() => {
+        // Verkkovirhe: jatketaan alkutilalla, seuraava tallennusyritys näyttää virheen
+      })
+      .finally(() => setCheckinsLoaded(true));
   }, []);
 
-  // Tallennetaan muutokset selaimen muistiin
+  // Tallennetaan muutokset palvelimelle (ei ensimmäisellä renderillä, ettei alkutila ylikirjoita jo tallennettua dataa)
   useEffect(() => {
-    try {
-      localStorage.setItem(CHECKIN_STORAGE_KEY, JSON.stringify(checkedInEmployees));
-    } catch {
-      // Tallennus voi epäonnistua esim. yksityisessä selaustilassa
-    }
-  }, [checkedInEmployees]);
+    if (!checkinsLoaded) return;
+    fetch('/api/data/checkins', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(checkedInEmployees),
+    }).catch(() => {
+      // Tallennus epäonnistui (esim. yhteysongelma) — muutos jää vain tämän selaimen muistiin toistaiseksi
+    });
+  }, [checkedInEmployees, checkinsLoaded]);
 
-  // Ladataan kirjaukset selaimen muistista sivun avautuessa
+  // Ladataan kirjaukset/raportit palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(REPORT_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) setReports(parsed);
-      }
-    } catch {
-      // Viallinen tallennus ohitetaan ja jatketaan alkutilalla
-    }
+    fetch('/api/data/reports', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && Array.isArray(res.data)) setReports(res.data);
+      })
+      .catch(() => {
+        // Verkkovirhe: jatketaan alkutilalla, seuraava tallennusyritys näyttää virheen
+      })
+      .finally(() => setReportsLoaded(true));
   }, []);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(REPORT_STORAGE_KEY, JSON.stringify(reports));
-    } catch {
-      // Tallennus voi epäonnistua esim. yksityisessä selaustilassa
-    }
-  }, [reports]);
+    if (!reportsLoaded) return;
+    fetch('/api/data/reports', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(reports),
+    }).catch(() => {
+      // Tallennus epäonnistui (esim. yhteysongelma) — muutos jää vain tämän selaimen muistiin toistaiseksi
+    });
+  }, [reports, reportsLoaded]);
 
   const formatTime = (date) => {
     return date.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
