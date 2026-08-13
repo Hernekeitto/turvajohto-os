@@ -9,6 +9,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const COLLECTIONS = {
   checkins: 'checkins.json',
   reports: 'reports.json',
+  events: 'events.json',
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });

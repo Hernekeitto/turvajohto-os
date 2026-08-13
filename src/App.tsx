@@ -75,8 +75,10 @@ const mockEmployees = [
 ];
 
 // Tapahtumat — jaettu perustieto, käytetään sekä tapahtumavalinnassa että
-// tapahtumariippumattomassa raporttinäkymässä (nimen näyttämiseen)
-const EVENTS = [
+// tapahtumariippumattomassa raporttinäkymässä (nimen näyttämiseen).
+// Tämä on vain alkuarvo ensimmäistä latausta varten — todellinen lista tulee
+// palvelimelta (ks. `events`-tila) ja "Luo uusi tapahtuma" -lomake lisää siihen.
+const INITIAL_EVENTS = [
   {
     id: 'fesx',
     name: 'FestivaaliX',
@@ -101,11 +103,11 @@ const EVENTS = [
   }
 ];
 
-function eventName(eventId) {
+function findEventName(eventId, eventsList) {
   // Vanha data ilman eventId-kenttää lasketaan kuuluvaksi FestivaaliX:ään
   // (sama oletus kuin currentEventReports/currentEventCheckedIn-suodatuksessa)
   const id = eventId || 'fesx';
-  return EVENTS.find(e => e.id === id)?.name || id;
+  return eventsList.find(e => e.id === id)?.name || id;
 }
 
 const initialCheckedInEmployees = [
@@ -224,6 +226,10 @@ export default function App() {
   const [eventTimeStr, setEventTimeStr] = useState('');
   const timeInputRef = useRef(null);
 
+  // Tapahtumat (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
+  const [events, setEvents] = useState(INITIAL_EVENTS);
+  const [eventsLoaded, setEventsLoaded] = useState(false);
+
   // Sisäänkirjatut työntekijät (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
   const [checkedInEmployees, setCheckedInEmployees] = useState(initialCheckedInEmployees);
   const [checkinsLoaded, setCheckinsLoaded] = useState(false);
@@ -328,6 +334,31 @@ export default function App() {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Ladataan tapahtumat palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
+  useEffect(() => {
+    fetch('/api/data/events', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && Array.isArray(res.data)) setEvents(res.data);
+      })
+      .catch(() => {
+        // Verkkovirhe: jatketaan alkutilalla, seuraava tallennusyritys näyttää virheen
+      })
+      .finally(() => setEventsLoaded(true));
+  }, []);
+
+  useEffect(() => {
+    if (!eventsLoaded) return;
+    fetch('/api/data/events', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(events),
+    }).catch(() => {
+      // Tallennus epäonnistui (esim. yhteysongelma) — muutos jää vain tämän selaimen muistiin toistaiseksi
+    });
+  }, [events, eventsLoaded]);
 
   // Ladataan sisäänkirjaukset palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
   useEffect(() => {
@@ -480,6 +511,59 @@ export default function App() {
     setCheckInHeadset(false);
     setCheckInRadio('');
     setCheckInComment('');
+  };
+
+  const formatFiDate = (isoDate) => {
+    if (!isoDate) return '';
+    const [y, m, d] = isoDate.split('-');
+    return `${Number(d)}.${Number(m)}.${y}`;
+  };
+
+  const slugify = (text) =>
+    (text || '')
+      .toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '') // poistaa aksentit yhdistelmämerkeistä
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+
+  const handleSaveEvent = () => {
+    if (!newEvent.eventName.trim()) {
+      alert('Anna tapahtumalle nimi ennen tallennusta.');
+      return;
+    }
+
+    const slug = slugify(newEvent.eventName) || 'tapahtuma';
+    const existingIds = new Set(events.map(e => e.id));
+    let id = slug;
+    let n = 2;
+    while (existingIds.has(id)) {
+      id = `${slug}-${n}`;
+      n += 1;
+    }
+
+    const dates = newEvent.publicStartDate
+      ? newEvent.publicEndDate && newEvent.publicEndDate !== newEvent.publicStartDate
+        ? `${formatFiDate(newEvent.publicStartDate)}–${formatFiDate(newEvent.publicEndDate)}`
+        : formatFiDate(newEvent.publicStartDate)
+      : 'Ei vahvistettu';
+
+    const newEventCard = {
+      id,
+      name: newEvent.eventName.trim(),
+      status: 'Suunnittelu',
+      statusTone: 'bg-slate-200 text-slate-700',
+      dates,
+      place: newEvent.address.trim() || 'Ei vahvistettu',
+      audience: newEvent.audienceCount ? `${newEvent.audienceCount} hlö` : 'Arvio puuttuu',
+      client: newEvent.clientName.trim() || 'Ei tiedossa',
+      accent: 'border-slate-200 hover:border-indigo-400',
+      formData: newEvent
+    };
+
+    setEvents(prev => [...prev, newEventCard]);
+    setNewEvent(emptyNewEvent);
+    setSelectedEvent(id);
+    setActiveTab('landing');
   };
 
   const handleSaveCheckIn = () => {
@@ -3766,7 +3850,7 @@ export default function App() {
     const sortedAllReports = [...reports].sort((a, b) => {
       if (allReportsSortBy === 'id') return String(a.id).localeCompare(String(b.id));
       if (allReportsSortBy === 'author') return String(a.author || '').localeCompare(String(b.author || ''));
-      if (allReportsSortBy === 'event') return eventName(a.eventId).localeCompare(eventName(b.eventId));
+      if (allReportsSortBy === 'event') return findEventName(a.eventId, events).localeCompare(findEventName(b.eventId, events));
       return 0; // 'newest' — tallennusjärjestys on jo uusin ensin
     });
 
@@ -3857,7 +3941,7 @@ export default function App() {
                       <td className="p-4 font-mono text-xs text-slate-700">{report.id}</td>
                       <td className="p-4 font-medium text-slate-800">{report.type}</td>
                       <td className="p-4 text-slate-600">{report.author}</td>
-                      <td className="p-4 text-slate-600">{eventName(report.eventId)}</td>
+                      <td className="p-4 text-slate-600">{findEventName(report.eventId, events)}</td>
                       <td className="p-4 font-mono text-slate-600">{report.time}</td>
                     </tr>
                   ))}
@@ -3919,7 +4003,7 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {EVENTS.map((ev) => (
+              {events.map((ev) => (
                 <button
                   key={ev.id}
                   onClick={() => { setSelectedEvent(ev.id); setActiveTab('landing'); }}
@@ -4392,7 +4476,7 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => alert('Demo: lomake ei vielä tallenna tietoja eikä luo uutta tapahtumaa.')}
+                  onClick={handleSaveEvent}
                   className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
                 >
                   <CheckCircle size={18} />
