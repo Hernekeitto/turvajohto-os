@@ -112,6 +112,85 @@ function findEventName(eventId, eventsList) {
   return eventsList.find(e => e.id === id)?.name || id;
 }
 
+// Kuvaa "Luo uusi tapahtuma" -lomakkeen kentät ryhmiteltynä — käytetään
+// "Tallennetut tapahtumat" -arkistonäkymässä koko lomakedatan näyttämiseen
+// vain luku -muodossa (ei pelkkiä raportteja/kirjauksia).
+const FORM_FIELD_GROUPS = [
+  { title: '1. Toimeksiantajan viralliset tiedot', fields: [
+    { key: 'clientName', label: 'Yrityksen tai yhdistyksen virallinen nimi' },
+    { key: 'businessId', label: 'Y-tunnus' },
+  ]},
+  { title: '2. Yhteyshenkilöt', fields: [
+    { key: 'ordererName', label: 'Tilaaja – Nimi' },
+    { key: 'ordererPhone', label: 'Tilaaja – Puhelinnumero' },
+    { key: 'ordererEmail', label: 'Tilaaja – Sähköpostiosoite' },
+    { key: 'deciderName', label: 'Päättävä vastuuhenkilö – Nimi' },
+    { key: 'deciderPhone', label: 'Päättävä vastuuhenkilö – Puhelinnumero' },
+    { key: 'deciderEmail', label: 'Päättävä vastuuhenkilö – Sähköpostiosoite' },
+  ]},
+  { title: '3. Laskutustiedot', fields: [
+    { key: 'einvoiceAddress', label: 'Verkkolaskuosoite' },
+    { key: 'einvoiceOperator', label: 'Operaattoritunnus' },
+    { key: 'billingRef', label: 'Viite tai kustannuspaikka' },
+  ]},
+  { title: '4. Tapahtuman virallinen nimi ja luonne', fields: [
+    { key: 'eventName', label: 'Tapahtuman virallinen nimi' },
+    { key: 'eventType', label: 'Tapahtuman luonne' },
+    { key: 'eventTypeOther', label: 'Tarkenna tapahtuman luonne' },
+  ]},
+  { title: '5. Ajankohta ja aikataulu', fields: [
+    { key: 'publicStartDate', label: 'Yleisölle alkaa (pvm)' },
+    { key: 'publicStartTime', label: 'Yleisölle alkaa (klo)' },
+    { key: 'publicEndDate', label: 'Yleisölle päättyy (pvm)' },
+    { key: 'publicEndTime', label: 'Yleisölle päättyy (klo)' },
+    { key: 'buildStart', label: 'Rakennus alkaa' },
+    { key: 'buildEnd', label: 'Rakennus päättyy' },
+    { key: 'teardownStart', label: 'Purku alkaa' },
+    { key: 'teardownEnd', label: 'Purku päättyy' },
+  ]},
+  { title: '6. Tapahtumapaikka', fields: [
+    { key: 'address', label: 'Tarkka osoite' },
+    { key: 'areaType', label: 'Aluetyyppi' },
+    { key: 'fenced', label: 'Onko alue aidattu' },
+    { key: 'areaNotes', label: 'Aluerajaukset ja huomiot' },
+  ]},
+  { title: '7. Arvioitu yleisömäärä ja kohderyhmä', fields: [
+    { key: 'audienceCount', label: 'Arvioitu yleisömäärä (hlö)' },
+    { key: 'ageProfile', label: 'Ikärakenne' },
+    { key: 'audienceNotes', label: 'Kohderyhmän kuvaus' },
+  ]},
+  { title: '8. Riskiprofiili ja historia', fields: [
+    { key: 'heldBefore', label: 'Onko vastaava tapahtuma järjestetty aiemmin' },
+    { key: 'previousIncidents', label: 'Aiemmat järjestyshäiriöt, sairaankuljetukset ja poikkeamat' },
+  ]},
+  { title: '9. Alkoholin anniskelu', fields: [
+    { key: 'hasBar', label: 'Alueella on anniskelualue', bool: true },
+    { key: 'barResponsible', label: 'Anniskelusta vastaa' },
+    { key: 'barOperator', label: 'Anniskeluluvan haltija ja yhteystiedot' },
+  ]},
+  { title: '10. Esiintyjät ja ohjelmisto', fields: [
+    { key: 'performers', label: 'Esiintyjät ja puhujat' },
+    { key: 'reactionRisk', label: 'Ohjelmistossa voimakkaita reaktioita herättäviä esiintyjiä/puhujia', bool: true },
+    { key: 'vipGuests', label: 'Mukana VIP-vieraita, jotka vaativat henkilösuojausta', bool: true },
+    { key: 'vipNotes', label: 'Tarkennus suojaustarpeesta' },
+  ]},
+  { title: '11. Olemassa oleva infrastruktuuri', fields: [
+    { key: 'existingCctv', label: 'Onko alueella kameravalvontaa' },
+    { key: 'cctvNotes', label: 'Kameravalvonnan tarkennus' },
+    { key: 'lighting', label: 'Valaistus pimeän aikaan' },
+    { key: 'exitRoutes', label: 'Poistumisreitit ja pelastustiet' },
+  ]},
+  { title: '12. Viranomaisyhteistyö', fields: [
+    { key: 'policeNotification', label: 'Yleisötilaisuusilmoitus poliisille' },
+    { key: 'rescuePlan', label: 'Pelastussuunnitelma pelastuslaitokselle' },
+    { key: 'authorityResponsible', label: 'Kenen vastuulla asiakirjojen laatiminen on' },
+  ]},
+  { title: '13. Muiden toimijoiden läsnäolo', fields: [
+    { key: 'otherOperators', label: 'Alueella toimivat muut osapuolet' },
+    { key: 'buildPhaseResponsible', label: 'Päävastuu alueen kokonaisturvallisuudesta rakennusvaiheessa' },
+  ]},
+];
+
 const initialCheckedInEmployees = [
   { id: 1, eventId: 'fesx', name: "Korhonen Elli Marja Orvokki", role: "Järjestyksenvalvoja", vest: true, badge: "1234", headset: true, radio: "R-12", checkInDate: "", checkInTime: "10:15", comment: "" },
   { id: 2, eventId: 'fesx', name: "Virtanen Matti Johannes Antero", role: "Vartija", vest: false, badge: "5521", headset: false, radio: "", checkInDate: "", checkInTime: "10:22", comment: "" },
@@ -593,8 +672,12 @@ export default function App() {
   };
 
   const handleStartEditEvent = (id) => {
+    const ev = events.find(e => e.id === id);
     setEditingEventId(id);
-    setNewEvent(emptyNewEvent);
+    // Esitäytetään lomake tapahtuman aiemmilla tiedoilla, jotta vain tarvittavat
+    // kohdat pitää muuttaa. emptyNewEvent-pohjalla varmistetaan, ettei puutu kenttiä
+    // jos tapahtuma on tallennettu ennen jotain myöhemmin lisättyä lomakekenttää.
+    setNewEvent({ ...emptyNewEvent, ...(ev?.formData || {}) });
     setSelectedEvent('new');
   };
 
@@ -4036,6 +4119,40 @@ export default function App() {
                 </div>
               </div>
 
+              <h3 className="text-lg font-bold text-slate-800 mb-3">Tapahtuman perustiedot (luontilomake)</h3>
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-8 space-y-6">
+                {(() => {
+                  const fd = detailEvent.formData || {};
+                  const groupsWithData = FORM_FIELD_GROUPS
+                    .map(group => ({
+                      ...group,
+                      fields: group.fields.filter(f => {
+                        const v = fd[f.key];
+                        return f.bool ? !!v : !!(v && String(v).trim());
+                      })
+                    }))
+                    .filter(group => group.fields.length > 0);
+
+                  if (groupsWithData.length === 0) {
+                    return <p className="text-sm text-slate-500">Ei tallennettuja lomaketietoja tälle tapahtumalle.</p>;
+                  }
+
+                  return groupsWithData.map(group => (
+                    <div key={group.title}>
+                      <h4 className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">{group.title}</h4>
+                      <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
+                        {group.fields.map(f => (
+                          <div key={f.key} className="text-sm">
+                            <dt className="text-slate-500">{f.label}</dt>
+                            <dd className="text-slate-800 font-medium">{f.bool ? 'Kyllä' : fd[f.key]}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </div>
+                  ));
+                })()}
+              </div>
+
               <h3 className="text-lg font-bold text-slate-800 mb-3">Raportit ({eventReports.length})</h3>
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto mb-8">
                 <table className="w-full text-sm text-left">
@@ -4334,7 +4451,7 @@ export default function App() {
               <h2 className="text-2xl font-bold text-slate-800">{editingEventId ? 'Muokkaa tapahtumaa' : 'Luo uusi tapahtuma'}</h2>
               <p className="text-sm text-slate-500 mt-1">
                 {editingEventId
-                  ? 'Täytä tapahtuman tiedot uudelleen — tallennus korvaa tapahtuman aiemmat tiedot. Raportit ja kirjaukset säilyvät ennallaan.'
+                  ? 'Lomake on esitäytetty tapahtuman aiemmilla tiedoilla — muokkaa vain tarvittavia kohtia. Raportit ja kirjaukset säilyvät ennallaan.'
                   : 'Toimeksiannon aloituslomake. Tiedot muodostavat pohjan turvallisuussuunnittelulle ja resurssimitoitukselle.'}
               </p>
             </div>
