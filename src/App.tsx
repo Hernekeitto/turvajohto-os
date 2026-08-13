@@ -74,26 +74,57 @@ const mockEmployees = [
   "Lahtinen Oskari Juhani Tapio"
 ];
 
+// Tapahtumat — jaettu perustieto, käytetään sekä tapahtumavalinnassa että
+// tapahtumariippumattomassa raporttinäkymässä (nimen näyttämiseen)
+const EVENTS = [
+  {
+    id: 'fesx',
+    name: 'FestivaaliX',
+    status: 'Käynnissä',
+    statusTone: 'bg-emerald-100 text-emerald-700',
+    dates: '11.8.–13.8.2026',
+    place: 'Ratinan suvanto, Tampere',
+    audience: '14 200 hlö / vrk',
+    client: 'Tapahtumatuotanto X Oy',
+    accent: 'border-emerald-200 hover:border-emerald-400'
+  },
+  {
+    id: 'feso',
+    name: 'FestivaaliÖ',
+    status: 'Suunnittelu',
+    statusTone: 'bg-slate-200 text-slate-700',
+    dates: '5.9.–6.9.2026',
+    place: 'Ei vahvistettu',
+    audience: 'Arvio puuttuu',
+    client: 'Mallitoimeksiantaja',
+    accent: 'border-slate-200 hover:border-indigo-400'
+  }
+];
+
+function eventName(eventId) {
+  return EVENTS.find(e => e.id === eventId)?.name || eventId || 'Tuntematon tapahtuma';
+}
+
 const initialCheckedInEmployees = [
-  { id: 1, name: "Korhonen Elli Marja Orvokki", role: "Järjestyksenvalvoja", vest: true, badge: "1234", headset: true, radio: "R-12", checkInDate: "", checkInTime: "10:15", comment: "" },
-  { id: 2, name: "Virtanen Matti Johannes Antero", role: "Vartija", vest: false, badge: "5521", headset: false, radio: "", checkInDate: "", checkInTime: "10:22", comment: "" },
-  { id: 3, name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05", checkInDate: "", checkInTime: "10:40", comment: "" }
+  { id: 1, eventId: 'fesx', name: "Korhonen Elli Marja Orvokki", role: "Järjestyksenvalvoja", vest: true, badge: "1234", headset: true, radio: "R-12", checkInDate: "", checkInTime: "10:15", comment: "" },
+  { id: 2, eventId: 'fesx', name: "Virtanen Matti Johannes Antero", role: "Vartija", vest: false, badge: "5521", headset: false, radio: "", checkInDate: "", checkInTime: "10:22", comment: "" },
+  { id: 3, eventId: 'fesx', name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05", checkInDate: "", checkInTime: "10:40", comment: "" }
 ];
 
 // Poikkeamiksi laskettavat kirjaustyypit
 const DEVIATION_TYPES = ['jvaction', 'firstaid', 'threat', 'fence', 'damage'];
 
 const initialReports = [
-  { id: '26/FesX/1108/099', typeId: 'out', type: 'Työntekijän uloskirjaus', author: 'TIKE Päivystäjä', time: '14:10', summary: 'Virtanen ulos, radiopuhelin rikki.' },
-  { id: '26/FesX/1108/098', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Korhonen Elli', time: '13:45', summary: 'Kiinniotto portilla 2.', denied: 0, removed: 1, detained: 1, force: true, tools: true, firearm: false, firstAid: false },
-  { id: '26/FesX/1108/097', typeId: 'firstaid', type: 'Ensiaputilanne', author: 'EA-Päivystys', time: '12:15', summary: 'Nyrjähdys, paikattu pisteellä.' },
-  { id: '26/FesX/1108/096', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Mäkinen Kalle', time: '11:50', summary: 'Päihtynyt asiakas poistettu anniskelualueelta.', denied: 0, removed: 2, detained: 0, force: false, tools: false, firearm: false, firstAid: false },
-  { id: '26/FesX/1108/095', typeId: 'fence', type: 'Aitojen ylitys / luvaton sisäänpääsy', author: 'Jaakko Mäki', time: '11:20', summary: 'Kaksi henkilöä aidan yli lohkolla C, poistettu alueelta.' },
-  { id: '26/FesX/1108/094', typeId: 'firstaid', type: 'Ensiaputilanne', author: 'EA-Päivystys', time: '10:55', summary: 'Lämpöuupumus, seurantaan EA-pisteelle.' },
-  { id: '26/FesX/1108/093', typeId: 'threat', type: 'Uhkatilanne', author: 'Liisa Ollila', time: '10:30', summary: 'Sanallinen uhkaus henkilökuntaa kohtaan pääportilla.' },
-  { id: '26/FesX/1108/092', typeId: 'damage', type: 'Omaisuusvaurio', author: 'Markus Joki', time: '09:45', summary: 'Aitaelementti vaurioitunut lohkolla B.' },
-  { id: '26/FesX/1108/091', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Korhonen Elli', time: '09:20', summary: 'Pääsy estetty portilla 2, ei lippua.', denied: 3, removed: 0, detained: 0, force: false, tools: false, firearm: false, firstAid: false },
-  { id: '26/FesX/1108/090', typeId: 'patrol', type: 'Kierrosraportti', author: 'Anna Lahti', time: '09:00', summary: 'Aamukierros, ei huomautettavaa.' }
+  { id: '26/FesX/1108/099', eventId: 'fesx', typeId: 'out', type: 'Työntekijän uloskirjaus', author: 'TIKE Päivystäjä', time: '14:10', summary: 'Virtanen ulos, radiopuhelin rikki.' },
+  { id: '26/FesX/1108/098', eventId: 'fesx', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Korhonen Elli', time: '13:45', summary: 'Kiinniotto portilla 2.', denied: 0, removed: 1, detained: 1, force: true, tools: true, firearm: false, firstAid: false },
+  { id: '26/FesX/1108/097', eventId: 'fesx', typeId: 'firstaid', type: 'Ensiaputilanne', author: 'EA-Päivystys', time: '12:15', summary: 'Nyrjähdys, paikattu pisteellä.' },
+  { id: '26/FesX/1108/096', eventId: 'fesx', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Mäkinen Kalle', time: '11:50', summary: 'Päihtynyt asiakas poistettu anniskelualueelta.', denied: 0, removed: 2, detained: 0, force: false, tools: false, firearm: false, firstAid: false },
+  { id: '26/FesX/1108/095', eventId: 'fesx', typeId: 'fence', type: 'Aitojen ylitys / luvaton sisäänpääsy', author: 'Jaakko Mäki', time: '11:20', summary: 'Kaksi henkilöä aidan yli lohkolla C, poistettu alueelta.' },
+  { id: '26/FesX/1108/094', eventId: 'fesx', typeId: 'firstaid', type: 'Ensiaputilanne', author: 'EA-Päivystys', time: '10:55', summary: 'Lämpöuupumus, seurantaan EA-pisteelle.' },
+  { id: '26/FesX/1108/093', eventId: 'fesx', typeId: 'threat', type: 'Uhkatilanne', author: 'Liisa Ollila', time: '10:30', summary: 'Sanallinen uhkaus henkilökuntaa kohtaan pääportilla.' },
+  { id: '26/FesX/1108/092', eventId: 'fesx', typeId: 'damage', type: 'Omaisuusvaurio', author: 'Markus Joki', time: '09:45', summary: 'Aitaelementti vaurioitunut lohkolla B.' },
+  { id: '26/FesX/1108/091', eventId: 'fesx', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Korhonen Elli', time: '09:20', summary: 'Pääsy estetty portilla 2, ei lippua.', denied: 3, removed: 0, detained: 0, force: false, tools: false, firearm: false, firstAid: false },
+  { id: '26/FesX/1108/090', eventId: 'fesx', typeId: 'patrol', type: 'Kierrosraportti', author: 'Anna Lahti', time: '09:00', summary: 'Aamukierros, ei huomautettavaa.' }
 ];
 
 // --- COMPONENTS ---
@@ -153,6 +184,10 @@ export default function App() {
   // Tapahtumavalinta: null = valintasivu, 'fesx' = tuotantotapahtuma,
   // 'feso' = mallitapahtuma, 'new' = uuden tapahtuman lomake
   const [selectedEvent, setSelectedEvent] = useState(null);
+
+  // Tapahtumariippumaton "Tallennetut raportit" -näkymä (kaikki tapahtumat samassa listassa)
+  const [viewingAllReports, setViewingAllReports] = useState(false);
+  const [allReportsSortBy, setAllReportsSortBy] = useState('newest');
 
   const emptyNewEvent = {
     clientName: '', businessId: '',
@@ -342,6 +377,15 @@ export default function App() {
     });
   }, [reports, reportsLoaded]);
 
+  // Vain valitun tapahtuman kirjaukset — vanha data (ilman eventId-kenttää) lasketaan
+  // kuuluvaksi FestivaaliX:ään, ettei olemassa oleva data "katoa" siirtymässä.
+  const currentEventCheckedIn = checkedInEmployees.filter(
+    (e) => (e.eventId || 'fesx') === selectedEvent
+  );
+  const currentEventReports = reports.filter(
+    (r) => (r.eventId || 'fesx') === selectedEvent
+  );
+
   const formatTime = (date) => {
     return date.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
@@ -437,7 +481,7 @@ export default function App() {
 
   const handleSaveCheckIn = () => {
     if (!selectedEmp) return;
-    if (checkedInEmployees.some(e => e.name === selectedEmp)) {
+    if (currentEventCheckedIn.some(e => e.name === selectedEmp)) {
       alert('Työntekijä on jo sisäänkirjattuna.');
       return;
     }
@@ -445,6 +489,7 @@ export default function App() {
     const localNow = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
     setCheckedInEmployees(prev => [...prev, {
       id: Date.now(),
+      eventId: selectedEvent,
       name: selectedEmp,
       role: checkInRole,
       vest: checkInVest,
@@ -529,6 +574,7 @@ export default function App() {
 
     setReports(prev => [{
       id: getDynamicId(),
+      eventId: selectedEvent,
       typeId: 'jvaction',
       type: 'JV:n tai vartijan toimenpide',
       author: jvaName,
@@ -571,24 +617,24 @@ export default function App() {
   const filteredEmployees = empSearch.length >= 3 
     ? mockEmployees.filter(e => 
         e.toLowerCase().includes(empSearch.toLowerCase()) &&
-        !checkedInEmployees.some(c => c.name === e)) 
+        !currentEventCheckedIn.some(c => c.name === e))
     : [];
 
   const filteredOutEmployees = outEmpSearch.length >= 3
-    ? checkedInEmployees.filter(e => e.name.toLowerCase().includes(outEmpSearch.toLowerCase()))
+    ? currentEventCheckedIn.filter(e => e.name.toLowerCase().includes(outEmpSearch.toLowerCase()))
     : [];
 
   // Toimenpiteen tekijän haku: ensisijaisesti sisäänkirjatuista, muuten koko rekisteristä
   const jvaNameOptions = jvaSearch.length >= 3
     ? Array.from(new Set([
-        ...checkedInEmployees.filter(e => e.role === jvaRole).map(e => e.name),
+        ...currentEventCheckedIn.filter(e => e.role === jvaRole).map(e => e.name),
         ...mockEmployees
       ])).filter(n => n.toLowerCase().includes(jvaSearch.toLowerCase()))
     : [];
 
   // Miehityslaskurit sisäänkirjatuista työntekijöistä
-  const jvCount = checkedInEmployees.filter(e => e.role === 'Järjestyksenvalvoja').length;
-  const guardCount = checkedInEmployees.filter(e => e.role === 'Vartija').length;
+  const jvCount = currentEventCheckedIn.filter(e => e.role === 'Järjestyksenvalvoja').length;
+  const guardCount = currentEventCheckedIn.filter(e => e.role === 'Vartija').length;
   const requiredJv = 142;
   const jvMissing = Math.max(0, requiredJv - jvCount);
 
@@ -610,18 +656,18 @@ export default function App() {
 
   // Ensiaputapaukset: erilliset ensiapukirjaukset ja ne toimenpiteet,
   // joissa kohdehenkilö on viety ensiapuun tai ensihoitoa on käytetty
-  const firstAidReports = reports.filter(r => r.typeId === 'firstaid');
-  const firstAidInActions = reports.filter(r => r.typeId === 'jvaction' && r.firstAid);
+  const firstAidReports = currentEventReports.filter(r => r.typeId === 'firstaid');
+  const firstAidInActions = currentEventReports.filter(r => r.typeId === 'jvaction' && r.firstAid);
   const firstAidCount = firstAidReports.length + firstAidInActions.length;
   const firstAidLastHour = [...firstAidReports, ...firstAidInActions].filter(r => withinLastHour(r.time)).length;
 
   // Poistot: poistettujen henkilöiden yhteismäärä toimenpidekirjauksista
-  const removalReports = reports.filter(r => r.typeId === 'jvaction' && Number(r.removed) > 0);
+  const removalReports = currentEventReports.filter(r => r.typeId === 'jvaction' && Number(r.removed) > 0);
   const removalCount = removalReports.reduce((sum, r) => sum + Number(r.removed || 0), 0);
 
   // Poikkeamat: JV:n tai vartijan toimenpide, ensiaputilanne, uhkatilanne,
   // aitojen ylitys tai luvaton sisäänpääsy sekä omaisuusvaurio
-  const deviationReports = reports.filter(r => DEVIATION_TYPES.includes(r.typeId));
+  const deviationReports = currentEventReports.filter(r => DEVIATION_TYPES.includes(r.typeId));
   const deviationCount = deviationReports.length;
   const deviationLastHour = deviationReports.filter(r => withinLastHour(r.time)).length;
 
@@ -800,7 +846,7 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="space-y-3 animate-in fade-in duration-300">
-                        {reports.slice(0, 8).map((rep, idx) => (
+                        {currentEventReports.slice(0, 8).map((rep, idx) => (
                           <div key={idx} className="flex flex-col gap-1 p-3 rounded-lg bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors cursor-pointer">
                             <div className="flex justify-between items-center">
                               <span className="text-xs font-bold text-indigo-600 uppercase tracking-wide">{rep.type}</span>
@@ -936,7 +982,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {reports.slice(0, 5).map((rep, idx) => (
+                  {currentEventReports.slice(0, 5).map((rep, idx) => (
                     <tr key={idx} className="hover:bg-white transition-colors cursor-pointer">
                       <td className="p-4 font-mono text-xs text-slate-500">{rep.id}</td>
                       <td className="p-4 font-medium text-slate-800">{rep.time}</td>
@@ -2005,7 +2051,7 @@ export default function App() {
                               className="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium text-slate-700 border-b border-slate-100 last:border-0"
                             >
                               {name}
-                              {checkedInEmployees.some(c => c.name === name) && (
+                              {currentEventCheckedIn.some(c => c.name === name) && (
                                 <span className="ml-2 text-xs text-emerald-600 font-bold">sisäänkirjattu</span>
                               )}
                             </li>
@@ -2766,7 +2812,7 @@ export default function App() {
                   Tapahtuman työntekijät
                 </h2>
                 <p className="text-sm text-slate-500 mt-1">
-                  Sisäänkirjattuna {checkedInEmployees.length} hlö (JV {jvCount}, vartijat {guardCount}). Rekisterissä {mockEmployees.length} hlö.
+                  Sisäänkirjattuna {currentEventCheckedIn.length} hlö (JV {jvCount}, vartijat {guardCount}). Rekisterissä {mockEmployees.length} hlö.
                 </p>
               </div>
               <button 
@@ -2791,13 +2837,13 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {checkedInEmployees.length === 0 ? (
+                  {currentEventCheckedIn.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="p-8 text-center text-sm text-slate-500">
                         Ei sisäänkirjattuja työntekijöitä. Kirjaus tehdään kohdassa Raportointi &rarr; TIKE &rarr; Työntekijän sisäänkirjaus.
                       </td>
                     </tr>
-                  ) : checkedInEmployees.map((emp) => (
+                  ) : currentEventCheckedIn.map((emp) => (
                     <tr key={emp.id} className="hover:bg-white transition-colors">
                       <td className="p-4 font-medium text-slate-800">{emp.name}</td>
                       <td className="p-4">
@@ -3529,7 +3575,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {reports.map((report) => (
+                  {currentEventReports.map((report) => (
                     <tr key={report.id} className="hover:bg-white transition-colors">
                       <td className="p-4 font-mono text-xs text-slate-700">{report.id}</td>
                       <td className="p-4 font-medium text-slate-800">{report.type}</td>
@@ -3712,31 +3758,20 @@ export default function App() {
     }
   };
 
-  // ====================== TAPAHTUMAN VALINTA ======================
-  if (selectedEvent === null) {
-    const eventCards = [
-      {
-        id: 'fesx',
-        name: 'FestivaaliX',
-        status: 'Käynnissä',
-        statusTone: 'bg-emerald-100 text-emerald-700',
-        dates: '11.8.–13.8.2026',
-        place: 'Ratinan suvanto, Tampere',
-        audience: '14 200 hlö / vrk',
-        client: 'Tapahtumatuotanto X Oy',
-        accent: 'border-emerald-200 hover:border-emerald-400'
-      },
-      {
-        id: 'feso',
-        name: 'FestivaaliÖ',
-        status: 'Suunnittelu',
-        statusTone: 'bg-slate-200 text-slate-700',
-        dates: '5.9.–6.9.2026',
-        place: 'Ei vahvistettu',
-        audience: 'Arvio puuttuu',
-        client: 'Mallitoimeksiantaja',
-        accent: 'border-slate-200 hover:border-indigo-400'
-      }
+  // ====================== TALLENNETUT RAPORTIT (kaikki tapahtumat) ======================
+  if (viewingAllReports) {
+    const sortedAllReports = [...reports].sort((a, b) => {
+      if (allReportsSortBy === 'id') return String(a.id).localeCompare(String(b.id));
+      if (allReportsSortBy === 'author') return String(a.author || '').localeCompare(String(b.author || ''));
+      if (allReportsSortBy === 'event') return eventName(a.eventId).localeCompare(eventName(b.eventId));
+      return 0; // 'newest' — tallennusjärjestys on jo uusin ensin
+    });
+
+    const sortOptions = [
+      { id: 'newest', label: 'Uusin' },
+      { id: 'id', label: 'Tunniste' },
+      { id: 'author', label: 'Kirjaaja' },
+      { id: 'event', label: 'Tapahtuma' }
     ];
 
     return (
@@ -3746,7 +3781,7 @@ export default function App() {
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut raportit</p>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -3761,16 +3796,127 @@ export default function App() {
         </nav>
 
         <main className="flex-1 p-6 md:p-10">
+          <div className="max-w-6xl mx-auto">
+            <button
+              onClick={() => setViewingAllReports(false)}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin tapahtumavalintaan
+            </button>
+
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800">Tallennetut raportit</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Kaikki kirjaukset kaikista tapahtumista samassa listassa ({sortedAllReports.length} kpl).
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-1 shadow-sm">
+                <span className="text-xs font-medium text-slate-400 pl-2 pr-1 hidden sm:inline">Lajittele:</span>
+                {sortOptions.map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setAllReportsSortBy(opt.id)}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${
+                      allReportsSortBy === opt.id
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                  <tr>
+                    <th className="p-4">Tunniste</th>
+                    <th className="p-4">Tyyppi</th>
+                    <th className="p-4">Laatija</th>
+                    <th className="p-4">Tapahtuma</th>
+                    <th className="p-4">Aika</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {sortedAllReports.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-sm text-slate-500">
+                        Ei vielä tallennettuja raportteja.
+                      </td>
+                    </tr>
+                  ) : sortedAllReports.map((report) => (
+                    <tr key={report.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-4 font-mono text-xs text-slate-700">{report.id}</td>
+                      <td className="p-4 font-medium text-slate-800">{report.type}</td>
+                      <td className="p-4 text-slate-600">{report.author}</td>
+                      <td className="p-4 text-slate-600">{eventName(report.eventId)}</td>
+                      <td className="p-4 font-mono text-slate-600">{report.time}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // ====================== TAPAHTUMAN VALINTA ======================
+  if (selectedEvent === null) {
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
+        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="text-indigo-400" size={28} />
+            <div>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setViewingAllReports(true)}
+              className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              <FileText size={16} className="text-indigo-400" />
+              Tallennetut raportit
+            </button>
+            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
+              <Clock size={16} className="text-indigo-400" />
+              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
+            </div>
+            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">
+              TJ
+            </div>
+          </div>
+        </nav>
+
+        <main className="flex-1 p-6 md:p-10">
           <div className="max-w-5xl mx-auto">
-            <div className="mb-8">
-              <h2 className="text-2xl font-bold text-slate-800">Valitse tapahtuma</h2>
-              <p className="text-sm text-slate-500 mt-1">
-                Avaa olemassa oleva tapahtuma tai luo uusi toimeksianto. Kaikki kirjaukset kohdistuvat valittuun tapahtumaan.
-              </p>
+            <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800">Valitse tapahtuma</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Avaa olemassa oleva tapahtuma tai luo uusi toimeksianto. Kaikki kirjaukset kohdistuvat valittuun tapahtumaan.
+                </p>
+              </div>
+              <button
+                onClick={() => setViewingAllReports(true)}
+                className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+              >
+                <FileText size={16} />
+                Tallennetut raportit
+              </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {eventCards.map((ev) => (
+              {EVENTS.map((ev) => (
                 <button
                   key={ev.id}
                   onClick={() => { setSelectedEvent(ev.id); setActiveTab('landing'); }}
