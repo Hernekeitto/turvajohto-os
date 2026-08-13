@@ -346,6 +346,7 @@ export default function App() {
   const [reportsLoaded, setReportsLoaded] = useState(false);
 
   // Check-in Form State
+  const [reportSearchQuery, setReportSearchQuery] = useState('');
   const [empSearch, setEmpSearch] = useState('');
   const [selectedEmp, setSelectedEmp] = useState('');
   const [checkInDate, setCheckInDate] = useState('');
@@ -713,6 +714,18 @@ export default function App() {
     );
     if (!confirmed) return;
     setEvents(prev => prev.map(e => (e.id === ev.id ? { ...e, archived: true, archivedAt: new Date().toISOString() } : e)));
+  };
+
+  const handleDeleteReport = (report) => {
+    const confirmed = window.confirm(
+      `Haluatko varmasti poistaa raportin "${report.type}" (${report.id})?\n\n` +
+      'Poistoa ei voi perua.'
+    );
+    if (!confirmed) return;
+    // Viiteyhtäläisyys (=== ) on turvallisempi kuin id:n vertailu, koska raporttien
+    // tunnisteet eivät ole taatusti uniikkeja tapahtumien välillä.
+    setReports(prev => prev.filter(r => r !== report));
+    setOpenedReport(null);
   };
 
   const handleSaveCheckIn = () => {
@@ -1327,7 +1340,13 @@ export default function App() {
               </div>
               <div className="relative w-64">
                 <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-                <input type="text" placeholder="Hae raporteista..." className="w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                <input
+                  type="text"
+                  value={reportSearchQuery}
+                  onChange={(e) => setReportSearchQuery(e.target.value)}
+                  placeholder="Hae raporteista..."
+                  className="w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
               </div>
             </div>
 
@@ -1344,31 +1363,51 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {currentEventReports.slice(0, 5).map((rep, idx) => (
-                    <tr
-                      key={idx}
-                      className="hover:bg-white transition-colors cursor-pointer"
-                      onClick={() => setOpenedReport(rep)}
-                    >
-                      <td className="p-4 font-mono text-xs text-slate-500">{rep.id}</td>
-                      <td className="p-4 font-medium text-slate-800">{rep.time}</td>
-                      <td className="p-4">
-                        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-700">
-                          {rep.type}
-                        </span>
-                      </td>
-                      <td className="p-4 text-slate-600">{rep.author}</td>
-                      <td className="p-4 text-slate-600 line-clamp-1 max-w-[200px]">{rep.summary}</td>
-                      <td className="p-4 text-right">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setOpenedReport(rep); }}
-                          className="text-blue-600 hover:text-blue-900 font-medium text-xs bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md transition-colors"
-                        >
-                          Avaa
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {(() => {
+                    const q = reportSearchQuery.trim().toLowerCase();
+                    const filtered = q
+                      ? currentEventReports.filter(rep =>
+                          [rep.id, rep.type, rep.author, rep.summary]
+                            .some(v => v && String(v).toLowerCase().includes(q))
+                        )
+                      : currentEventReports;
+
+                    if (filtered.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={6} className="p-8 text-center text-sm text-slate-500">
+                            {q ? `Ei hakua "${reportSearchQuery}" vastaavia raportteja.` : 'Ei vielä tallennettuja raportteja.'}
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return filtered.map((rep, idx) => (
+                      <tr
+                        key={idx}
+                        className="hover:bg-white transition-colors cursor-pointer"
+                        onClick={() => setOpenedReport(rep)}
+                      >
+                        <td className="p-4 font-mono text-xs text-slate-500">{rep.id}</td>
+                        <td className="p-4 font-medium text-slate-800">{rep.time}</td>
+                        <td className="p-4">
+                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-700">
+                            {rep.type}
+                          </span>
+                        </td>
+                        <td className="p-4 text-slate-600">{rep.author}</td>
+                        <td className="p-4 text-slate-600 line-clamp-1 max-w-[200px]">{rep.summary}</td>
+                        <td className="p-4 text-right">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setOpenedReport(rep); }}
+                            className="text-blue-600 hover:text-blue-900 font-medium text-xs bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md transition-colors"
+                          >
+                            Avaa
+                          </button>
+                        </td>
+                      </tr>
+                    ));
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -5376,12 +5415,21 @@ export default function App() {
                 <h2 className="font-bold text-lg text-slate-800">{openedReport.type}</h2>
                 <p className="text-xs font-mono text-slate-400 mt-0.5">{openedReport.id}</p>
               </div>
-              <button
-                onClick={() => setOpenedReport(null)}
-                className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors"
-              >
-                <X size={22} />
-              </button>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => handleDeleteReport(openedReport)}
+                  title="Poista raportti"
+                  className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded-lg transition-colors"
+                >
+                  <Trash2 size={20} />
+                </button>
+                <button
+                  onClick={() => setOpenedReport(null)}
+                  className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors"
+                >
+                  <X size={22} />
+                </button>
+              </div>
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4 text-sm text-left">
