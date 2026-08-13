@@ -102,7 +102,10 @@ const EVENTS = [
 ];
 
 function eventName(eventId) {
-  return EVENTS.find(e => e.id === eventId)?.name || eventId || 'Tuntematon tapahtuma';
+  // Vanha data ilman eventId-kenttää lasketaan kuuluvaksi FestivaaliX:ään
+  // (sama oletus kuin currentEventReports/currentEventCheckedIn-suodatuksessa)
+  const id = eventId || 'fesx';
+  return EVENTS.find(e => e.id === id)?.name || id;
 }
 
 const initialCheckedInEmployees = [
