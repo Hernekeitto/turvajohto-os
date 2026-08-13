@@ -113,6 +113,21 @@ function findEventName(eventId, eventsList) {
   return eventsList.find(e => e.id === id)?.name || id;
 }
 
+// Raporttien tyyppikohtaiset lisäkentät ihmisluettavaksi "Avaa raportti" -näkymässä.
+// id/eventId/typeId/type/author/time/summary/attachment näytetään erikseen kiinteässä muodossa.
+const REPORT_DETAIL_FIELDS = [
+  { key: 'actions', label: 'Tehdyt toimenpiteet' },
+  { key: 'resources', label: 'Käytetyt resurssit' },
+  { key: 'employees', label: 'Paikalla olleet työntekijät' },
+  { key: 'denied', label: 'Estetty pääsy (hlö)' },
+  { key: 'removed', label: 'Poistettu alueelta (hlö)' },
+  { key: 'detained', label: 'Kiinniotettu (hlö)' },
+  { key: 'force', label: 'Voimakeinoja käytetty', bool: true },
+  { key: 'tools', label: 'Voimankäyttövälineitä käytetty', bool: true },
+  { key: 'firearm', label: 'Ampuma-ase esillä tai käytetty', bool: true },
+  { key: 'firstAid', label: 'Ensiapu tai ensihoito annettu', bool: true },
+];
+
 // Kuvaa "Luo uusi tapahtuma" -lomakkeen kentät ryhmiteltynä — käytetään
 // "Tallennetut tapahtumat" -arkistonäkymässä koko lomakedatan näyttämiseen
 // vain luku -muodossa (ei pelkkiä raportteja/kirjauksia).
@@ -306,6 +321,7 @@ export default function App() {
   const updNewEvent = (key, value) => setNewEvent(prev => ({ ...prev, [key]: value }));
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showInfoModal, setShowInfoModal] = useState(false);
+  const [openedReport, setOpenedReport] = useState(null);
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
@@ -1189,7 +1205,11 @@ export default function App() {
                     ) : (
                       <div className="space-y-3 animate-in fade-in duration-300">
                         {currentEventReports.slice(0, 8).map((rep, idx) => (
-                          <div key={idx} className="flex flex-col gap-1 p-3 rounded-lg bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors cursor-pointer">
+                          <div
+                            key={idx}
+                            onClick={() => setOpenedReport(rep)}
+                            className="flex flex-col gap-1 p-3 rounded-lg bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors cursor-pointer"
+                          >
                             <div className="flex justify-between items-center">
                               <span className="text-xs font-bold text-indigo-600 uppercase tracking-wide">{rep.type}</span>
                               <span className="text-xs font-mono text-slate-400">{rep.time}</span>
@@ -1325,7 +1345,11 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {currentEventReports.slice(0, 5).map((rep, idx) => (
-                    <tr key={idx} className="hover:bg-white transition-colors cursor-pointer">
+                    <tr
+                      key={idx}
+                      className="hover:bg-white transition-colors cursor-pointer"
+                      onClick={() => setOpenedReport(rep)}
+                    >
                       <td className="p-4 font-mono text-xs text-slate-500">{rep.id}</td>
                       <td className="p-4 font-medium text-slate-800">{rep.time}</td>
                       <td className="p-4">
@@ -1336,7 +1360,10 @@ export default function App() {
                       <td className="p-4 text-slate-600">{rep.author}</td>
                       <td className="p-4 text-slate-600 line-clamp-1 max-w-[200px]">{rep.summary}</td>
                       <td className="p-4 text-right">
-                        <button className="text-blue-600 hover:text-blue-900 font-medium text-xs bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md transition-colors">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setOpenedReport(rep); }}
+                          className="text-blue-600 hover:text-blue-900 font-medium text-xs bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md transition-colors"
+                        >
                           Avaa
                         </button>
                       </td>
@@ -5324,8 +5351,91 @@ export default function App() {
             </div>
             
             <div className="p-4 border-t border-slate-100 flex justify-end">
-              <button 
+              <button
                 onClick={() => setShowInfoModal(false)}
+                className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-lg transition-colors"
+              >
+                Sulje
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {openedReport && (
+        <div
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+          onClick={() => setOpenedReport(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-start p-5 border-b border-slate-100">
+              <div>
+                <h2 className="font-bold text-lg text-slate-800">{openedReport.type}</h2>
+                <p className="text-xs font-mono text-slate-400 mt-0.5">{openedReport.id}</p>
+              </div>
+              <button
+                onClick={() => setOpenedReport(null)}
+                className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 text-sm text-left">
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+                <div>
+                  <dt className="text-xs text-slate-400 uppercase tracking-wide">Laatija</dt>
+                  <dd className="text-slate-800 font-medium">{openedReport.author || '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-slate-400 uppercase tracking-wide">Aika</dt>
+                  <dd className="text-slate-800 font-medium font-mono">{openedReport.time || '—'}</dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-xs text-slate-400 uppercase tracking-wide">Tapahtuma</dt>
+                  <dd className="text-slate-800 font-medium">{findEventName(openedReport.eventId, events)}</dd>
+                </div>
+              </dl>
+
+              {openedReport.summary && (
+                <div>
+                  <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Kuvaus</p>
+                  <p className="text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-3 whitespace-pre-wrap">{openedReport.summary}</p>
+                </div>
+              )}
+
+              {REPORT_DETAIL_FIELDS.filter(f => {
+                const v = openedReport[f.key];
+                return f.bool ? !!v : (v !== undefined && v !== null && String(v).trim() !== '' && String(v) !== '0');
+              }).map(f => (
+                <div key={f.key}>
+                  <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">{f.label}</p>
+                  <p className="text-slate-700">{f.bool ? 'Kyllä' : openedReport[f.key]}</p>
+                </div>
+              ))}
+
+              {openedReport.attachment && (
+                <div>
+                  <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Liite</p>
+                  <a
+                    href={`/api/uploads/${openedReport.attachment.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-indigo-600 hover:text-indigo-800 font-medium bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    <Paperclip size={14} />
+                    {openedReport.attachment.name}
+                  </a>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-100 flex justify-end">
+              <button
+                onClick={() => setOpenedReport(null)}
                 className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-lg transition-colors"
               >
                 Sulje
