@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
+import { useSessionUsername } from './SessionContext';
+import {
   AlertTriangle, 
   ShieldCheck, 
   Activity, 
@@ -265,6 +266,7 @@ const AlertBanner = ({ alert }) => {
 // --- MAIN APP COMPONENT ---
 
 export default function App() {
+  const sessionUsername = useSessionUsername();
   const [activeTab, setActiveTab] = useState('landing');
 
   // Tapahtumavalinta: null = valintasivu, 'fesx' = tuotantotapahtuma,
@@ -804,6 +806,87 @@ export default function App() {
     setRunningNumber(prev => prev + 1);
     resetJvaForm();
     setActiveTab('overview');
+  };
+
+  const handleSaveOpenKirjaus = () => {
+    if (!openKirjausText.trim()) {
+      alert('Kirjoita kuvaus tapahtuneesta ennen tallennusta.');
+      return;
+    }
+    const now = new Date();
+    const timeLabel = openKirjausTime || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+
+    setReports(prev => [{
+      id: getDynamicId(),
+      eventId: selectedEvent,
+      typeId: 'open',
+      type: 'Avoin kirjaus',
+      author: sessionUsername || 'TIKE Päivystäjä',
+      time: timeLabel,
+      summary: openKirjausText.trim(),
+      attachment: fileName || null
+    }, ...prev]);
+
+    setRunningNumber(prev => prev + 1);
+    setActiveTab('report_tike');
+    setOpenKirjausDate('');
+    setOpenKirjausTime('');
+    setOpenKirjausText('');
+    setFileName('');
+  };
+
+  const handleSaveFirstAid = () => {
+    if (!faDesc.trim()) {
+      alert('Kirjaa tapahtuman kuvaus ennen tallennusta.');
+      return;
+    }
+    const now = new Date();
+    const timeLabel = faTime || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+
+    setReports(prev => [{
+      id: getDynamicId(),
+      eventId: selectedEvent,
+      typeId: 'firstaid',
+      type: 'Ensiaputilanne',
+      author: sessionUsername || 'EA-Päivystys',
+      time: timeLabel,
+      summary: faDesc.trim(),
+      actions: faActions.trim(),
+      resources: faResources.trim(),
+      employees: faEmployees.trim(),
+      attachment: faFileName || null
+    }, ...prev]);
+
+    setRunningNumber(prev => prev + 1);
+    setActiveTab('report_tike');
+    setFaDate(''); setFaTime(''); setFaDesc(''); setFaActions(''); setFaResources(''); setFaEmployees(''); setFaFileName('');
+  };
+
+  // Yhteinen tallennus uhkatilanne-, omaisuusvaurio-, löytötavara-, jono- ja sääraporteille
+  const handleSaveGenericReport = (typeId, title) => {
+    if (!genRepDesc.trim()) {
+      alert('Kirjaa tapahtuman kuvaus ennen tallennusta.');
+      return;
+    }
+    const now = new Date();
+    const timeLabel = genRepTime || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+
+    setReports(prev => [{
+      id: getDynamicId(),
+      eventId: selectedEvent,
+      typeId,
+      type: title,
+      author: sessionUsername || 'TIKE Päivystäjä',
+      time: timeLabel,
+      summary: genRepDesc.trim(),
+      actions: genRepActions.trim(),
+      employees: genRepEmps.trim(),
+      attachment: genRepFile || null
+    }, ...prev]);
+
+    setRunningNumber(prev => prev + 1);
+    setActiveTab('report_tike');
+    setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps(''); setGenRepFile('');
   };
 
   const handleFaNyt = () => {
@@ -1981,15 +2064,9 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                <button 
-                  type="button" 
-                  onClick={() => {
-                    // Tallennuksen yhteydessä juokseva numero kasvaa
-                    setRunningNumber(prev => prev + 1);
-                    setActiveTab('report_tike');
-                    setOpenKirjausText('');
-                    setFileName('');
-                  }}
+                <button
+                  type="button"
+                  onClick={handleSaveOpenKirjaus}
                   className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
                 >
                   <CheckCircle size={18} />
@@ -2149,13 +2226,9 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                <button 
-                  type="button" 
-                  onClick={() => {
-                    setRunningNumber(prev => prev + 1);
-                    setActiveTab('report_tike');
-                    setFaDesc(''); setFaActions(''); setFaResources(''); setFaEmployees(''); setFaFileName('');
-                  }}
+                <button
+                  type="button"
+                  onClick={handleSaveFirstAid}
                   className="px-5 py-2.5 text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
                 >
                   <CheckCircle size={18} />
@@ -2727,13 +2800,9 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                <button 
-                  type="button" 
-                  onClick={() => {
-                    setRunningNumber(prev => prev + 1);
-                    setActiveTab('report_tike');
-                    setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps(''); setGenRepFile('');
-                  }}
+                <button
+                  type="button"
+                  onClick={() => handleSaveGenericReport(activeTab.replace('tike_form_', ''), config.title)}
                   className={`px-5 py-2.5 text-sm font-bold text-white rounded-lg transition-colors flex items-center gap-2 shadow-sm ${config.btnBg}`}
                 >
                   <CheckCircle size={18} />

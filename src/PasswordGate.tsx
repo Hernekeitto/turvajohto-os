@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { SessionContext } from './SessionContext';
 
 type SessionState = 'loading' | 'authed' | 'anon';
 
 export default function PasswordGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<SessionState>('loading');
+  const [loggedInUsername, setLoggedInUsername] = useState<string | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -12,12 +14,17 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     fetch('/api/session', { credentials: 'include' })
       .then((r) => r.json())
-      .then((data) => setSession(data.authenticated ? 'authed' : 'anon'))
+      .then((data) => {
+        setSession(data.authenticated ? 'authed' : 'anon');
+        if (data.authenticated) setLoggedInUsername(data.username || null);
+      })
       .catch(() => setSession('anon'));
   }, []);
 
   if (session === 'loading') return null;
-  if (session === 'authed') return <>{children}</>;
+  if (session === 'authed') {
+    return <SessionContext.Provider value={loggedInUsername}>{children}</SessionContext.Provider>;
+  }
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -32,6 +39,7 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
       });
       const data = await res.json();
       if (res.ok && data.ok) {
+        setLoggedInUsername(data.username || username);
         setSession('authed');
       } else {
         setError(data.error || 'Kirjautuminen epäonnistui.');
