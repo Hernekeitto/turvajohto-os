@@ -3,8 +3,10 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import cookie from 'cookie';
 import rateLimit from 'express-rate-limit';
+import multer from 'multer';
 import { findUser } from './db.js';
 import { readCollection, writeCollection, KNOWN_COLLECTIONS } from './store.js';
+import { isAllowedFile, saveUpload, getUploadPath } from './uploads.js';
 
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -19,6 +21,19 @@ if (!JWT_SECRET) {
 const app = express();
 app.set('trust proxy', 1); // nginx on edessä
 app.use(express.json({ limit: '5mb' }));
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15 MB / tiedosto
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Liian monta tiedostolähetystä. Yritä myöhemmin uudelleen.' },
+});
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -118,6 +133,31 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   }
   writeCollection(name, req.body);
   res.json({ ok: true });
+});
+
+// Lomakkeiden "Ota kuva" / "Liitä tiedosto" -liitteet. Tallennetaan levylle
+// (ei git-repoon, ei muihin kokoelmiin) ja viitataan raportissa pelkällä id:llä.
+app.post('/api/uploads', requireAuth, uploadLimiter, (req, res) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Tiedosto on liian suuri (max 15 Mt).' : 'Tiedoston lähetys epäonnistui.';
+      return res.status(400).json({ ok: false, error: msg });
+    }
+    if (!req.file) {
+      return res.status(400).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
+    }
+    if (!isAllowedFile(req.file.originalname)) {
+      return res.status(400).json({ ok: false, error: 'Tiedostotyyppiä ei tueta.' });
+    }
+    const id = saveUpload(req.file.originalname, req.file.buffer);
+    res.json({ ok: true, id, name: req.file.originalname, size: req.file.size });
+  });
+});
+
+app.get('/api/uploads/:id', requireAuth, (req, res) => {
+  const filePath = getUploadPath(req.params.id);
+  if (!filePath) return res.status(404).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
+  res.sendFile(filePath);
 });
 
 app.listen(PORT, '127.0.0.1', () => {

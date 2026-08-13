@@ -388,6 +388,8 @@ export default function App() {
   const [openKirjausTime, setOpenKirjausTime] = useState('');
   const [openKirjausText, setOpenKirjausText] = useState('');
   const [fileName, setFileName] = useState('');
+  const [fileUploadId, setFileUploadId] = useState('');
+  const [fileUploading, setFileUploading] = useState(false);
   const [runningNumber, setRunningNumber] = useState(100);
 
   // First Aid Form State
@@ -398,6 +400,8 @@ export default function App() {
   const [faResources, setFaResources] = useState('');
   const [faEmployees, setFaEmployees] = useState('');
   const [faFileName, setFaFileName] = useState('');
+  const [faFileUploadId, setFaFileUploadId] = useState('');
+  const [faFileUploading, setFaFileUploading] = useState(false);
 
   // Generic TIKE Reports State
   const [genRepDate, setGenRepDate] = useState('');
@@ -406,6 +410,8 @@ export default function App() {
   const [genRepActions, setGenRepActions] = useState('');
   const [genRepEmps, setGenRepEmps] = useState('');
   const [genRepFile, setGenRepFile] = useState('');
+  const [genRepFileUploadId, setGenRepFileUploadId] = useState('');
+  const [genRepFileUploading, setGenRepFileUploading] = useState(false);
 
   // Edit Employee Form State
   const [editingEmp, setEditingEmp] = useState(null);
@@ -808,9 +814,39 @@ export default function App() {
     setActiveTab('overview');
   };
 
+  // Lataa valitun tiedoston palvelimelle ja päivittää nimi-/id-/latausindikaattoritilat.
+  // setName: näytettävä tiedostonimi, setId: palvelimen antama viite (talletetaan raporttiin), setUploading: latauksen tilailmaisin.
+  const uploadAttachment = async (file, setName, setId, setUploading) => {
+    if (!file) return;
+    setName(file.name);
+    setId('');
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/uploads', { method: 'POST', credentials: 'include', body: formData });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setId(data.id);
+      } else {
+        alert(data.error || 'Tiedoston lähetys epäonnistui.');
+        setName('');
+      }
+    } catch {
+      alert('Tiedoston lähetys epäonnistui (yhteysvirhe).');
+      setName('');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleSaveOpenKirjaus = () => {
     if (!openKirjausText.trim()) {
       alert('Kirjoita kuvaus tapahtuneesta ennen tallennusta.');
+      return;
+    }
+    if (fileUploading) {
+      alert('Odota, että liitetiedoston lähetys valmistuu.');
       return;
     }
     const now = new Date();
@@ -824,7 +860,7 @@ export default function App() {
       author: sessionUsername || 'TIKE Päivystäjä',
       time: timeLabel,
       summary: openKirjausText.trim(),
-      attachment: fileName || null
+      attachment: fileUploadId ? { id: fileUploadId, name: fileName } : null
     }, ...prev]);
 
     setRunningNumber(prev => prev + 1);
@@ -833,11 +869,16 @@ export default function App() {
     setOpenKirjausTime('');
     setOpenKirjausText('');
     setFileName('');
+    setFileUploadId('');
   };
 
   const handleSaveFirstAid = () => {
     if (!faDesc.trim()) {
       alert('Kirjaa tapahtuman kuvaus ennen tallennusta.');
+      return;
+    }
+    if (faFileUploading) {
+      alert('Odota, että liitetiedoston lähetys valmistuu.');
       return;
     }
     const now = new Date();
@@ -854,18 +895,23 @@ export default function App() {
       actions: faActions.trim(),
       resources: faResources.trim(),
       employees: faEmployees.trim(),
-      attachment: faFileName || null
+      attachment: faFileUploadId ? { id: faFileUploadId, name: faFileName } : null
     }, ...prev]);
 
     setRunningNumber(prev => prev + 1);
     setActiveTab('report_tike');
-    setFaDate(''); setFaTime(''); setFaDesc(''); setFaActions(''); setFaResources(''); setFaEmployees(''); setFaFileName('');
+    setFaDate(''); setFaTime(''); setFaDesc(''); setFaActions(''); setFaResources(''); setFaEmployees('');
+    setFaFileName(''); setFaFileUploadId('');
   };
 
   // Yhteinen tallennus uhkatilanne-, omaisuusvaurio-, löytötavara-, jono- ja sääraporteille
   const handleSaveGenericReport = (typeId, title) => {
     if (!genRepDesc.trim()) {
       alert('Kirjaa tapahtuman kuvaus ennen tallennusta.');
+      return;
+    }
+    if (genRepFileUploading) {
+      alert('Odota, että liitetiedoston lähetys valmistuu.');
       return;
     }
     const now = new Date();
@@ -881,12 +927,13 @@ export default function App() {
       summary: genRepDesc.trim(),
       actions: genRepActions.trim(),
       employees: genRepEmps.trim(),
-      attachment: genRepFile || null
+      attachment: genRepFileUploadId ? { id: genRepFileUploadId, name: genRepFile } : null
     }, ...prev]);
 
     setRunningNumber(prev => prev + 1);
     setActiveTab('report_tike');
-    setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps(''); setGenRepFile('');
+    setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps('');
+    setGenRepFile(''); setGenRepFileUploadId('');
   };
 
   const handleFaNyt = () => {
@@ -2029,7 +2076,7 @@ export default function App() {
                       accept="image/*" 
                       capture="environment" 
                       className="hidden" 
-                      onChange={(e) => setFileName(e.target.files[0]?.name || '')}
+                      onChange={(e) => uploadAttachment(e.target.files[0], setFileName, setFileUploadId, setFileUploading)}
                     />
                   </label>
 
@@ -2040,14 +2087,14 @@ export default function App() {
                     <input 
                       type="file" 
                       className="hidden" 
-                      onChange={(e) => setFileName(e.target.files[0]?.name || '')}
+                      onChange={(e) => uploadAttachment(e.target.files[0], setFileName, setFileUploadId, setFileUploading)}
                     />
                   </label>
                 </div>
                 {fileName && (
-                  <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100 mt-2">
+                  <div className={`flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border mt-2 ${fileUploading ? 'text-slate-500 bg-slate-50 border-slate-200' : 'text-emerald-600 bg-emerald-50 border-emerald-100'}`}>
                     <FileCheck size={16} />
-                    Liitetty: {fileName}
+                    {fileUploading ? `Lähetetään: ${fileName}…` : `Liitetty: ${fileName}`}
                   </div>
                 )}
               </div>
@@ -2055,10 +2102,11 @@ export default function App() {
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
                 <button 
                   type="button" 
-                  onClick={() => { 
-                    setActiveTab('report_tike'); 
-                    setOpenKirjausText(''); 
-                    setFileName(''); 
+                  onClick={() => {
+                    setActiveTab('report_tike');
+                    setOpenKirjausText('');
+                    setFileName('');
+                    setFileUploadId('');
                   }}
                   className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                 >
@@ -2192,7 +2240,7 @@ export default function App() {
                       accept="image/*" 
                       capture="environment" 
                       className="hidden" 
-                      onChange={(e) => setFaFileName(e.target.files[0]?.name || '')}
+                      onChange={(e) => uploadAttachment(e.target.files[0], setFaFileName, setFaFileUploadId, setFaFileUploading)}
                     />
                   </label>
 
@@ -2203,14 +2251,14 @@ export default function App() {
                     <input 
                       type="file" 
                       className="hidden" 
-                      onChange={(e) => setFaFileName(e.target.files[0]?.name || '')}
+                      onChange={(e) => uploadAttachment(e.target.files[0], setFaFileName, setFaFileUploadId, setFaFileUploading)}
                     />
                   </label>
                 </div>
                 {faFileName && (
-                  <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100 mt-2">
+                  <div className={`flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border mt-2 ${faFileUploading ? 'text-slate-500 bg-slate-50 border-slate-200' : 'text-emerald-600 bg-emerald-50 border-emerald-100'}`}>
                     <FileCheck size={16} />
-                    Liitetty: {faFileName}
+                    {faFileUploading ? `Lähetetään: ${faFileName}…` : `Liitetty: ${faFileName}`}
                   </div>
                 )}
               </div>
@@ -2218,9 +2266,10 @@ export default function App() {
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
                 <button 
                   type="button" 
-                  onClick={() => { 
-                    setActiveTab('report_tike'); 
-                    setFaDesc(''); setFaActions(''); setFaResources(''); setFaEmployees(''); setFaFileName(''); 
+                  onClick={() => {
+                    setActiveTab('report_tike');
+                    setFaDesc(''); setFaActions(''); setFaResources(''); setFaEmployees('');
+                    setFaFileName(''); setFaFileUploadId('');
                   }}
                   className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                 >
@@ -2669,7 +2718,8 @@ export default function App() {
             <button 
               onClick={() => {
                 setActiveTab('report_tike');
-                setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps(''); setGenRepFile('');
+                setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps('');
+                setGenRepFile(''); setGenRepFileUploadId('');
               }}
               className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
             >
@@ -2767,7 +2817,7 @@ export default function App() {
                       accept="image/*" 
                       capture="environment" 
                       className="hidden" 
-                      onChange={(e) => setGenRepFile(e.target.files[0]?.name || '')}
+                      onChange={(e) => uploadAttachment(e.target.files[0], setGenRepFile, setGenRepFileUploadId, setGenRepFileUploading)}
                     />
                   </label>
 
@@ -2777,14 +2827,14 @@ export default function App() {
                     <input 
                       type="file" 
                       className="hidden" 
-                      onChange={(e) => setGenRepFile(e.target.files[0]?.name || '')}
+                      onChange={(e) => uploadAttachment(e.target.files[0], setGenRepFile, setGenRepFileUploadId, setGenRepFileUploading)}
                     />
                   </label>
                 </div>
                 {genRepFile && (
-                  <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100 mt-2">
+                  <div className={`flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border mt-2 ${genRepFileUploading ? 'text-slate-500 bg-slate-50 border-slate-200' : 'text-emerald-600 bg-emerald-50 border-emerald-100'}`}>
                     <FileCheck size={16} />
-                    Liitetty: {genRepFile}
+                    {genRepFileUploading ? `Lähetetään: ${genRepFile}…` : `Liitetty: ${genRepFile}`}
                   </div>
                 )}
               </div>
@@ -2792,9 +2842,10 @@ export default function App() {
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
                 <button 
                   type="button" 
-                  onClick={() => { 
-                    setActiveTab('report_tike'); 
-                    setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps(''); setGenRepFile(''); 
+                  onClick={() => {
+                    setActiveTab('report_tike');
+                    setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps('');
+                    setGenRepFile(''); setGenRepFileUploadId('');
                   }}
                   className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                 >
@@ -4121,12 +4172,13 @@ export default function App() {
                     <th className="p-4">Laatija</th>
                     <th className="p-4">Tapahtuma</th>
                     <th className="p-4">Aika</th>
+                    <th className="p-4">Liite</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {sortedAllReports.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="p-8 text-center text-sm text-slate-500">
+                      <td colSpan={6} className="p-8 text-center text-sm text-slate-500">
                         Ei vielä tallennettuja raportteja.
                       </td>
                     </tr>
@@ -4137,6 +4189,21 @@ export default function App() {
                       <td className="p-4 text-slate-600">{report.author}</td>
                       <td className="p-4 text-slate-600">{findEventName(report.eventId, events)}</td>
                       <td className="p-4 font-mono text-slate-600">{report.time}</td>
+                      <td className="p-4">
+                        {report.attachment ? (
+                          <a
+                            href={`/api/uploads/${report.attachment.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                          >
+                            <Paperclip size={12} />
+                            {report.attachment.name}
+                          </a>
+                        ) : (
+                          <span className="text-xs text-slate-300">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -4231,17 +4298,33 @@ export default function App() {
                       <th className="p-4">Tyyppi</th>
                       <th className="p-4">Laatija</th>
                       <th className="p-4">Aika</th>
+                      <th className="p-4">Liite</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {eventReports.length === 0 ? (
-                      <tr><td colSpan={4} className="p-8 text-center text-sm text-slate-500">Ei raportteja.</td></tr>
+                      <tr><td colSpan={5} className="p-8 text-center text-sm text-slate-500">Ei raportteja.</td></tr>
                     ) : eventReports.map((report) => (
                       <tr key={report.id} className="hover:bg-slate-50 transition-colors">
                         <td className="p-4 font-mono text-xs text-slate-700">{report.id}</td>
                         <td className="p-4 font-medium text-slate-800">{report.type}</td>
                         <td className="p-4 text-slate-600">{report.author}</td>
                         <td className="p-4 font-mono text-slate-600">{report.time}</td>
+                        <td className="p-4">
+                          {report.attachment ? (
+                            <a
+                              href={`/api/uploads/${report.attachment.id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                            >
+                              <Paperclip size={12} />
+                              {report.attachment.name}
+                            </a>
+                          ) : (
+                            <span className="text-xs text-slate-300">—</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
