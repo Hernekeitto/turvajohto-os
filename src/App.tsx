@@ -820,8 +820,20 @@ export default function App() {
     if (isAdminUser) return;
     const IDLE_MS = 60 * 60 * 1000; // 1h
     const TOUCH_INTERVAL_MS = 5 * 60 * 1000; // pidä palvelimen istunto elossa enintään 5 min välein
+    const POLL_MS = 30 * 1000; // tarkista pakotettu uloskirjaus tasaisin väliajoin riippumatta siitä tekeekö käyttäjä mitään API-kutsua vaativaa
     let idleTimer: ReturnType<typeof setTimeout>;
     let lastTouch = 0;
+
+    // Sama tarkistus kahdesta eri syystä: 1) aktiivisuuspingi pitää liukuvan istunnon
+    // voimassa, 2) säännöllinen pollaus huomaa "Kirjaa käyttäjä ulos" -painikkeen tai
+    // muun mitätöinnin, vaikka käyttäjä vain selaisi näkymiä eikä tekisi mitään
+    // tallennusta tms. (jolloin globaali fetch-käärin ei muuten laukeaisi lainkaan).
+    const checkSession = () => {
+      fetch('/api/session', { credentials: 'include' })
+        .then((r) => r.json())
+        .then((data) => { if (!data.authenticated) window.location.reload(); })
+        .catch(() => {});
+    };
 
     const resetIdleTimer = () => {
       clearTimeout(idleTimer);
@@ -833,23 +845,18 @@ export default function App() {
       const now = Date.now();
       if (now - lastTouch > TOUCH_INTERVAL_MS) {
         lastTouch = now;
-        // Pingaa myös sen varalta että admin on painanut "Kirjaa käyttäjä ulos" —
-        // istunto on silloin jo mitätöity palvelimella vaikka eväste olisi muuten
-        // vielä voimassa, ja käyttäjä ohjataan kirjautumisnäkymään heti seuraavan
-        // aktiivisuuden yhteydessä sen sijaan että jäisi vanhentuneeseen näkymään kiinni.
-        fetch('/api/session', { credentials: 'include' })
-          .then((r) => r.json())
-          .then((data) => { if (!data.authenticated) window.location.reload(); })
-          .catch(() => {});
+        checkSession();
       }
     };
 
     const events = ['mousemove', 'keydown', 'mousedown', 'scroll', 'touchstart'];
     events.forEach((evt) => window.addEventListener(evt, onActivity, { passive: true }));
     resetIdleTimer();
+    const pollTimer = setInterval(checkSession, POLL_MS);
 
     return () => {
       clearTimeout(idleTimer);
+      clearInterval(pollTimer);
       events.forEach((evt) => window.removeEventListener(evt, onActivity));
     };
   }, [isAdminUser]);
