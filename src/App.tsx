@@ -209,9 +209,9 @@ const FORM_FIELD_GROUPS = [
 ];
 
 const initialCheckedInEmployees = [
-  { id: 1, eventId: 'fesx', name: "Korhonen Elli Marja Orvokki", role: "Järjestyksenvalvoja", vest: true, badge: "1234", headset: true, radio: "R-12", checkInDate: "", checkInTime: "10:15", comment: "" },
-  { id: 2, eventId: 'fesx', name: "Virtanen Matti Johannes Antero", role: "Vartija", vest: false, badge: "5521", headset: false, radio: "", checkInDate: "", checkInTime: "10:22", comment: "" },
-  { id: 3, eventId: 'fesx', name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05", checkInDate: "", checkInTime: "10:40", comment: "" }
+  { id: 1, eventId: 'fesx', name: "Korhonen Elli Marja Orvokki", role: "Järjestyksenvalvoja", vest: true, badge: "1234", headset: true, radio: "R-12", checkInDate: "", checkInTime: "10:15", checkOutDate: "", checkOutTime: "", comment: "", status: 'checked_in' },
+  { id: 2, eventId: 'fesx', name: "Virtanen Matti Johannes Antero", role: "Vartija", vest: false, badge: "5521", headset: false, radio: "", checkInDate: "", checkInTime: "10:22", checkOutDate: "", checkOutTime: "", comment: "", status: 'checked_in' },
+  { id: 3, eventId: 'fesx', name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05", checkInDate: "", checkInTime: "10:40", checkOutDate: "", checkOutTime: "", comment: "", status: 'checked_in' }
 ];
 
 // Poikkeamiksi laskettavat kirjaustyypit
@@ -251,6 +251,30 @@ const DashboardCard = ({ title, icon: Icon, value, subtitle, trend, trendUp }) =
     </div>
   </div>
 );
+
+// Tapahtumaan merkityn työntekijän tila: pending = merkitty tapahtumaan mutta ei
+// vielä sisäänkirjattu TIKE:llä, checked_in = TIKE:n sisäänkirjaus tehty,
+// checked_out = TIKE:n uloskirjaus tehty. Puuttuva status (vanha data ennen tätä
+// ominaisuutta) tulkitaan sisäänkirjatuksi, koska vanhassa mallissa listalla oleminen
+// tarkoitti aina sisäänkirjausta.
+const EMP_STATUS_META = {
+  pending: { dot: 'bg-rose-500', label: 'Ei sisäänkirjattu' },
+  checked_in: { dot: 'bg-emerald-500', label: 'Sisäänkirjattu' },
+  checked_out: { dot: 'bg-blue-500', label: 'Uloskirjattu' },
+};
+const getEmpStatus = (emp) => emp.status || 'checked_in';
+
+const EmpStatusBadge = ({ emp }) => {
+  const status = getEmpStatus(emp);
+  const meta = EMP_STATUS_META[status];
+  const time = status === 'checked_in' ? emp.checkInTime : status === 'checked_out' ? emp.checkOutTime : '';
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${meta.dot}`} title={meta.label} />
+      <span className="text-xs text-slate-600 whitespace-nowrap">{meta.label}{time ? ` · ${time}` : ''}</span>
+    </span>
+  );
+};
 
 const AlertBanner = ({ alert }) => {
   const colors = {
@@ -762,10 +786,8 @@ export default function App() {
 
   const handleAddSelectedEmployees = () => {
     if (addEmpSelectedIds.length === 0) return;
-    const now = new Date();
-    const localNow = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-    const checkInDateVal = localNow.toISOString().split('T')[0];
-    const checkInTimeVal = localNow.toISOString().slice(11, 16);
+    // Vain merkitään tapahtumaan (status "pending") — itse sisäänkirjaus tehdään
+    // aina erikseen TIKE:n "Työntekijän sisäänkirjaus" -lomakkeella.
     const toAdd = employees.filter(e => addEmpSelectedIds.includes(e.id));
     setCheckedInEmployees(prev => [
       ...prev,
@@ -779,8 +801,11 @@ export default function App() {
         headset: false,
         radio: '',
         comment: '',
-        checkInDate: checkInDateVal,
-        checkInTime: checkInTimeVal
+        checkInDate: '',
+        checkInTime: '',
+        checkOutDate: '',
+        checkOutTime: '',
+        status: 'pending'
       }))
     ]);
     setAddEmpSearch('');
@@ -929,37 +954,64 @@ export default function App() {
 
   const handleSaveCheckIn = () => {
     if (!selectedEmp) return;
-    if (currentEventCheckedIn.some(e => e.name === selectedEmp)) {
+    if (currentEventCheckedIn.some(e => e.name === selectedEmp && getEmpStatus(e) === 'checked_in')) {
       alert('Työntekijä on jo sisäänkirjattuna.');
       return;
     }
     const now = new Date();
     const localNow = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-    setCheckedInEmployees(prev => [...prev, {
-      id: Date.now(),
-      eventId: selectedEvent,
-      name: selectedEmp,
-      role: checkInRole,
-      vest: checkInVest,
-      badge: checkInBadge,
-      headset: checkInHeadset,
-      radio: checkInRadio,
-      comment: checkInComment,
-      checkInDate: checkInDate || localNow.toISOString().split('T')[0],
-      checkInTime: checkInTime || localNow.toISOString().slice(11, 16)
-    }]);
+    const checkInDateVal = checkInDate || localNow.toISOString().split('T')[0];
+    const checkInTimeVal = checkInTime || localNow.toISOString().slice(11, 16);
+    // Jos työntekijä on jo merkitty tapahtumaan (odottaa tai on uloskirjattu),
+    // päivitetään sama rivi sisäänkirjatuksi sen sijaan että luotaisiin kaksoiskappale.
+    setCheckedInEmployees(prev => {
+      const existing = prev.find(e => e.name === selectedEmp && (e.eventId || 'fesx') === selectedEvent && getEmpStatus(e) !== 'checked_in');
+      const updated = {
+        role: checkInRole,
+        vest: checkInVest,
+        badge: checkInBadge,
+        headset: checkInHeadset,
+        radio: checkInRadio,
+        comment: checkInComment,
+        checkInDate: checkInDateVal,
+        checkInTime: checkInTimeVal,
+        checkOutDate: '',
+        checkOutTime: '',
+        status: 'checked_in'
+      };
+      if (existing) {
+        return prev.map(e => (e === existing ? { ...e, ...updated } : e));
+      }
+      return [...prev, { id: Date.now(), eventId: selectedEvent, name: selectedEmp, ...updated }];
+    });
     resetCheckInForm();
     setActiveTab('planning_employees');
   };
 
   const handleCheckOut = () => {
     if (!selectedOutEmp) return;
-    setCheckedInEmployees(prev => prev.filter(e => e.id !== selectedOutEmp.id));
+    const now = new Date();
+    const localNow = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    const checkOutDateVal = checkOutDate || localNow.toISOString().split('T')[0];
+    const checkOutTimeVal = checkOutTime || localNow.toISOString().slice(11, 16);
+    setCheckedInEmployees(prev => prev.map(e => (e.id === selectedOutEmp.id
+      ? { ...e, checkOutDate: checkOutDateVal, checkOutTime: checkOutTimeVal, status: 'checked_out' }
+      : e)));
     setSelectedOutEmp(null);
     setOutEmpSearch('');
     setShowOutTimeInput(false);
     setCheckOutDate('');
     setCheckOutTime('');
+  };
+
+  const handleRemoveFromEventRoster = (emp) => {
+    const confirmed = window.confirm(
+      `Haluatko varmasti poistaa "${emp.name}" tästä tapahtumasta?\n\n` +
+      'Tämä ei ole uloskirjaus — jos työntekijä on paikan päällä ja poistuu tapahtumasta, ' +
+      'käytä TIKE:n "Työntekijän uloskirjaus" -lomaketta. Poistoa ei voi perua.'
+    );
+    if (!confirmed) return;
+    setCheckedInEmployees(prev => prev.filter(e => e.id !== emp.id));
   };
 
   const handleOpenKirjausNyt = () => {
@@ -1184,27 +1236,31 @@ export default function App() {
     setReadinessChecks(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
+  // Sisäänkirjaushaku: pois suljetaan vain jo aktiivisesti sisäänkirjatut — tapahtumaan
+  // merkityt (mutta ei vielä sisäänkirjatut) ja jo uloskirjatut saa hakea uudelleen.
   const filteredEmployees = empSearch.length >= 3
     ? employees.map(e => e.name).filter(e =>
         e.toLowerCase().includes(empSearch.toLowerCase()) &&
-        !currentEventCheckedIn.some(c => c.name === e))
+        !currentEventCheckedIn.some(c => c.name === e && getEmpStatus(c) === 'checked_in'))
     : [];
 
+  // Uloskirjaushaku: vain juuri nyt aktiivisesti sisäänkirjatut voi kirjata ulos.
   const filteredOutEmployees = outEmpSearch.length >= 3
-    ? currentEventCheckedIn.filter(e => e.name.toLowerCase().includes(outEmpSearch.toLowerCase()))
+    ? currentEventCheckedIn.filter(e => getEmpStatus(e) === 'checked_in' && e.name.toLowerCase().includes(outEmpSearch.toLowerCase()))
     : [];
 
-  // Toimenpiteen tekijän haku: ensisijaisesti sisäänkirjatuista, muuten koko rekisteristä
+  // Toimenpiteen tekijän haku: ensisijaisesti paikalla (sisäänkirjattuna) olevista, muuten koko rekisteristä
   const jvaNameOptions = jvaSearch.length >= 3
     ? Array.from(new Set([
-        ...currentEventCheckedIn.filter(e => e.role === jvaRole).map(e => e.name),
+        ...currentEventCheckedIn.filter(e => e.role === jvaRole && getEmpStatus(e) === 'checked_in').map(e => e.name),
         ...employees.map(e => e.name)
       ])).filter(n => n.toLowerCase().includes(jvaSearch.toLowerCase()))
     : [];
 
-  // Miehityslaskurit sisäänkirjatuista työntekijöistä
-  const jvCount = currentEventCheckedIn.filter(e => e.role === 'Järjestyksenvalvoja').length;
-  const guardCount = currentEventCheckedIn.filter(e => e.role === 'Vartija').length;
+  // Miehityslaskurit vain aktiivisesti sisäänkirjatuista työntekijöistä (ei tapahtumaan
+  // vasta merkittyjä eikä jo uloskirjattuja).
+  const jvCount = currentEventCheckedIn.filter(e => e.role === 'Järjestyksenvalvoja' && getEmpStatus(e) === 'checked_in').length;
+  const guardCount = currentEventCheckedIn.filter(e => e.role === 'Vartija' && getEmpStatus(e) === 'checked_in').length;
   const requiredJv = 142;
   const jvMissing = Math.max(0, requiredJv - jvCount);
 
@@ -1933,6 +1989,48 @@ export default function App() {
               </div>
             </div>
 
+            {/* Tapahtumaan merkityt työntekijät */}
+            <div className="mb-8">
+              <h3 className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <Users size={16} className="text-slate-400" />
+                Tapahtumaan merkityt työntekijät ({currentEventCheckedIn.length})
+              </h3>
+              {currentEventCheckedIn.length === 0 ? (
+                <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                  Ei työntekijöitä merkitty tapahtumaan. Lisää heitä kohdassa Tapahtuman työntekijät &rarr; Lisää tapahtumaan työntekijä.
+                </p>
+              ) : (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200 sticky top-0">
+                      <tr>
+                        <th className="p-3">Nimi</th>
+                        <th className="p-3">Rooli</th>
+                        <th className="p-3">Tila</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {currentEventCheckedIn.map((emp) => {
+                        const selectable = getEmpStatus(emp) !== 'checked_in';
+                        return (
+                          <tr
+                            key={emp.id}
+                            onClick={selectable ? () => { setSelectedEmp(emp.name); setEmpSearch(emp.name); } : undefined}
+                            title={selectable ? 'Valitse sisäänkirjattavaksi' : 'On jo sisäänkirjattuna'}
+                            className={`transition-colors ${selectable ? 'hover:bg-emerald-50 cursor-pointer' : 'opacity-60'}`}
+                          >
+                            <td className="p-3 font-medium text-slate-800">{emp.name}</td>
+                            <td className="p-3 text-slate-600">{emp.role}</td>
+                            <td className="p-3"><EmpStatusBadge emp={emp} /></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
             <form className="space-y-8 text-left">
               {/* Haku */}
               <div>
@@ -2163,6 +2261,48 @@ export default function App() {
                 <div className="text-2xl font-bold text-amber-700">3</div>
                 <div className="text-xs text-amber-600 font-medium uppercase tracking-wide mt-1">Poikkeamat</div>
               </div>
+            </div>
+
+            {/* Tapahtumaan merkityt työntekijät */}
+            <div className="mb-8">
+              <h3 className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <Users size={16} className="text-slate-400" />
+                Tapahtumaan merkityt työntekijät ({currentEventCheckedIn.length})
+              </h3>
+              {currentEventCheckedIn.length === 0 ? (
+                <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                  Ei työntekijöitä merkitty tapahtumaan.
+                </p>
+              ) : (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200 sticky top-0">
+                      <tr>
+                        <th className="p-3">Nimi</th>
+                        <th className="p-3">Rooli</th>
+                        <th className="p-3">Tila</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {currentEventCheckedIn.map((emp) => {
+                        const selectable = getEmpStatus(emp) === 'checked_in';
+                        return (
+                          <tr
+                            key={emp.id}
+                            onClick={selectable ? () => { setSelectedOutEmp(emp); setOutEmpSearch(emp.name); setShowOutTimeInput(false); } : undefined}
+                            title={selectable ? 'Valitse uloskirjattavaksi' : 'Ei ole sisäänkirjattuna'}
+                            className={`transition-colors ${selectable ? 'hover:bg-rose-50 cursor-pointer' : 'opacity-60'}`}
+                          >
+                            <td className="p-3 font-medium text-slate-800">{emp.name}</td>
+                            <td className="p-3 text-slate-600">{emp.role}</td>
+                            <td className="p-3"><EmpStatusBadge emp={emp} /></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
             <form className="space-y-8 text-left">
@@ -2709,7 +2849,7 @@ export default function App() {
                               className="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium text-slate-700 border-b border-slate-100 last:border-0"
                             >
                               {name}
-                              {currentEventCheckedIn.some(c => c.name === name) && (
+                              {currentEventCheckedIn.some(c => c.name === name && getEmpStatus(c) === 'checked_in') && (
                                 <span className="ml-2 text-xs text-emerald-600 font-bold">sisäänkirjattu</span>
                               )}
                             </li>
@@ -3453,7 +3593,7 @@ export default function App() {
                   Tapahtuman työntekijät
                 </h2>
                 <p className="text-sm text-slate-500 mt-1">
-                  Sisäänkirjattuna {currentEventCheckedIn.length} hlö (JV {jvCount}, vartijat {guardCount}). Rekisterissä {employees.length} hlö.
+                  Merkitty tapahtumaan {currentEventCheckedIn.length} hlö, sisäänkirjattuna {jvCount + guardCount} hlö (JV {jvCount}, vartijat {guardCount}). Rekisterissä {employees.length} hlö.
                 </p>
               </div>
               <button
@@ -3481,7 +3621,7 @@ export default function App() {
                   {currentEventCheckedIn.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="p-8 text-center text-sm text-slate-500">
-                        Ei sisäänkirjattuja työntekijöitä. Kirjaus tehdään kohdassa Raportointi &rarr; TIKE &rarr; Työntekijän sisäänkirjaus.
+                        Ei työntekijöitä merkitty tapahtumaan. Lisää työntekijöitä "Lisää tapahtumaan työntekijä" -painikkeella, ja kirjaa heidät sisään kohdassa Raportointi &rarr; TIKE &rarr; Työntekijän sisäänkirjaus.
                       </td>
                     </tr>
                   ) : currentEventCheckedIn.map((emp) => (
@@ -3492,7 +3632,7 @@ export default function App() {
                           {emp.role}
                         </span>
                       </td>
-                      <td className="p-4 font-mono text-slate-600">{emp.checkInTime || '-'}</td>
+                      <td className="p-4"><EmpStatusBadge emp={emp} /></td>
                       <td className="p-4 text-slate-600">{emp.badge || '-'}</td>
                       <td className="p-4">
                         <div className="flex flex-wrap gap-1">
@@ -3516,11 +3656,12 @@ export default function App() {
                           >
                             Muokkaa
                           </button>
-                          <button 
-                            onClick={() => setCheckedInEmployees(prev => prev.filter(e => e.id !== emp.id))}
+                          <button
+                            onClick={() => handleRemoveFromEventRoster(emp)}
+                            title="Poistaa työntekijän tapahtumasta — ei ole uloskirjaus"
                             className="text-rose-600 hover:text-rose-800 font-medium text-xs bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
                           >
-                            Kirjaa ulos
+                            Poista tapahtumasta
                           </button>
                         </div>
                       </td>
@@ -4900,7 +5041,7 @@ export default function App() {
                 </table>
               </div>
 
-              <h3 className="text-lg font-bold text-slate-800 mb-3">Sisäänkirjatut työntekijät ({eventCheckins.length})</h3>
+              <h3 className="text-lg font-bold text-slate-800 mb-3">Tapahtumaan merkityt työntekijät ({eventCheckins.length})</h3>
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
                 <table className="w-full text-sm text-left">
                   <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
@@ -4912,12 +5053,12 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {eventCheckins.length === 0 ? (
-                      <tr><td colSpan={3} className="p-8 text-center text-sm text-slate-500">Ei sisäänkirjattuja työntekijöitä.</td></tr>
+                      <tr><td colSpan={3} className="p-8 text-center text-sm text-slate-500">Ei työntekijöitä merkitty tapahtumaan.</td></tr>
                     ) : eventCheckins.map((emp) => (
                       <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
                         <td className="p-4 font-medium text-slate-800">{emp.name}</td>
                         <td className="p-4 text-slate-600">{emp.role}</td>
-                        <td className="p-4 font-mono text-slate-600">{emp.checkInTime}</td>
+                        <td className="p-4"><EmpStatusBadge emp={emp} /></td>
                       </tr>
                     ))}
                   </tbody>
