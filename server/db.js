@@ -28,6 +28,11 @@ function withDefaults(user) {
   if (withRole.role !== 'admin' && !withRole.totp_secret) {
     withRole.totp_secret = generateBase32Secret();
   }
+  // Vaatimus päällä oletuksena kaikille ei-admineille — admin voi ottaa pois käytöstä
+  // "Muokkaa oikeuksia" -näkymästä (esim. jos käyttäjällä ei ole omaa puhelinta).
+  if (withRole.role !== 'admin' && withRole.totp_required === undefined) {
+    withRole.totp_required = true;
+  }
   return withRole;
 }
 
@@ -40,7 +45,13 @@ function withDefaults(user) {
 function migrateUsers(rawUsers) {
   const users = rawUsers.map(withDefaults);
   if (users.length > 0 && !users.some((u) => u.role === 'admin')) {
-    users[0] = { ...users[0], role: 'admin', permissions: { '*': { view: true, edit: true } }, totp_secret: undefined };
+    users[0] = {
+      ...users[0],
+      role: 'admin',
+      permissions: { '*': { view: true, edit: true } },
+      totp_secret: undefined,
+      totp_required: undefined,
+    };
   }
   return users;
 }
@@ -94,6 +105,29 @@ export function resetTotpSecret(username) {
   existing.totp_secret = generateBase32Secret();
   writeUsers(users);
   return existing.totp_secret;
+}
+
+// Ottaa TOTP-vaatimuksen pois käytöstä / palauttaa sen tietylle käyttäjälle (admin
+// päättää tämän "Muokkaa oikeuksia" -näkymästä). Vaikuttaa vain siihen vaaditaanko
+// koodi kirjautuessa — itse salaisuus/QR säilyy ennallaan jos otetaan myöhemmin takaisin käyttöön.
+export function setTotpRequired(username, required) {
+  const users = readUsers();
+  const existing = users.find((u) => u.username === username);
+  if (!existing) return null;
+  existing.totp_required = !!required;
+  writeUsers(users);
+  return existing;
+}
+
+// Pakottaa käyttäjän uloskirjautumaan: kaikki ennen tätä hetkeä myönnetyt evästeet
+// (myös vielä voimassa olevat) mitätöityvät heti, ks. index.js:n getSessionUser.
+export function forceLogout(username) {
+  const users = readUsers();
+  const existing = users.find((u) => u.username === username);
+  if (!existing) return false;
+  existing.session_invalidated_at = Date.now();
+  writeUsers(users);
+  return true;
 }
 
 export function upsertUser(username, passwordHash, { nickname, role } = {}) {

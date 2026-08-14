@@ -5,7 +5,17 @@ import cookie from 'cookie';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import QRCode from 'qrcode';
-import { findUser, listUsers, upsertUser, updateUser, updatePassword, getTotpSecret, resetTotpSecret } from './db.js';
+import {
+  findUser,
+  listUsers,
+  upsertUser,
+  updateUser,
+  updatePassword,
+  getTotpSecret,
+  resetTotpSecret,
+  setTotpRequired,
+  forceLogout,
+} from './db.js';
 import { readCollection, writeCollection, KNOWN_COLLECTIONS } from './store.js';
 import { isAllowedFile, saveUpload, getUploadPath } from './uploads.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
@@ -82,12 +92,21 @@ function getSessionUser(req) {
   const cookies = cookie.parse(req.headers.cookie || '');
   const token = cookies[COOKIE_NAME];
   if (!token) return null;
+  let payload;
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    return payload.sub;
+    payload = jwt.verify(token, JWT_SECRET);
   } catch {
     return null;
   }
+  const user = findUser(payload.sub);
+  if (!user) return null;
+  // Admin on painanut "Kirjaa käyttäjä ulos" -painiketta — kaikki ennen sitä hetkeä
+  // myönnetyt evästeet (myös vielä muuten voimassa olevat) mitätöityvät välittömästi,
+  // eikä uutta evästettä tietenkään anneta ennen kuin käyttäjä kirjautuu uudelleen.
+  if (user.session_invalidated_at && payload.iat * 1000 < user.session_invalidated_at) {
+    return null;
+  }
+  return payload.sub;
 }
 
 // Kirjautuminen kahdessa vaiheessa ei-admin-käyttäjille: käyttäjätunnus+salasana
@@ -109,7 +128,7 @@ app.post('/api/login', loginLimiter, (req, res) => {
     return res.status(401).json({ ok: false, error: 'Väärä käyttäjätunnus tai salasana.' });
   }
 
-  if (user.role !== 'admin') {
+  if (user.role !== 'admin' && user.totp_required !== false) {
     if (!totpCode) {
       return res.json({ ok: true, requiresTotp: true, username: user.username });
     }
@@ -255,7 +274,7 @@ app.get('/api/users/:username/totp', requireAuth, requireAdmin, async (req, res)
   const secret = getTotpSecret(username);
   const otpauthUri = buildOtpauthUri(secret, username);
   const qrDataUri = await QRCode.toDataURL(otpauthUri, { width: 220, margin: 1 });
-  res.json({ ok: true, secret, otpauthUri, qrDataUri });
+  res.json({ ok: true, secret, otpauthUri, qrDataUri, totpRequired: user.totp_required !== false });
 });
 
 // Nollaa käyttäjän TOTP-salaisuuden (esim. puhelin kadonnut) — vanha Authenticator-
@@ -270,7 +289,37 @@ app.post('/api/users/:username/totp/reset', requireAuth, requireAdmin, async (re
   const secret = resetTotpSecret(username);
   const otpauthUri = buildOtpauthUri(secret, username);
   const qrDataUri = await QRCode.toDataURL(otpauthUri, { width: 220, margin: 1 });
-  res.json({ ok: true, secret, otpauthUri, qrDataUri });
+  res.json({ ok: true, secret, otpauthUri, qrDataUri, totpRequired: user.totp_required !== false });
+});
+
+// Ottaa Authenticator-vaatimuksen pois käytöstä / palauttaa sen (esim. käyttäjällä ei
+// ole omaa puhelinta) — itse salaisuus/QR säilyy ennallaan jos otetaan myöhemmin takaisin.
+app.put('/api/users/:username/totp', requireAuth, requireAdmin, (req, res) => {
+  const { username } = req.params;
+  const { required } = req.body || {};
+  const user = findUser(username);
+  if (!user) return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
+  if (user.role === 'admin') {
+    return res.status(400).json({ ok: false, error: 'Pääkäyttäjä ei käytä Authenticator-tunnistautumista.' });
+  }
+  if (typeof required !== 'boolean') {
+    return res.status(400).json({ ok: false, error: 'Virheellinen pyyntö.' });
+  }
+  setTotpRequired(username, required);
+  res.json({ ok: true, totpRequired: required });
+});
+
+// Pakottaa valitun käyttäjän uloskirjautumaan välittömästi — hänen nykyinen istuntonsa
+// mitätöityy vaikka eväste olisi muuten vielä voimassa, ja hänen täytyy kirjautua uudelleen.
+app.post('/api/users/:username/logout', requireAuth, requireAdmin, (req, res) => {
+  const { username } = req.params;
+  const user = findUser(username);
+  if (!user) return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
+  if (user.role === 'admin') {
+    return res.status(400).json({ ok: false, error: 'Pääkäyttäjää ei voi kirjata ulos tästä näkymästä.' });
+  }
+  forceLogout(username);
+  res.json({ ok: true });
 });
 
 app.post('/api/change-password', requireAuth, loginLimiter, (req, res) => {

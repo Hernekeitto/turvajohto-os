@@ -654,6 +654,9 @@ export default function App() {
   const [permTotpLoading, setPermTotpLoading] = useState(false);
   const [permTotpError, setPermTotpError] = useState('');
   const [permTotpResetting, setPermTotpResetting] = useState(false);
+  const [permTotpToggling, setPermTotpToggling] = useState(false);
+  const [permForceLogoutSubmitting, setPermForceLogoutSubmitting] = useState(false);
+  const [permForceLogoutMessage, setPermForceLogoutMessage] = useState('');
 
   // Työntekijäpankki: yrityksen koko henkilöstörekisteri (yhteinen tila, tallennetaan palvelimelle)
   const [employees, setEmployees] = useState(initialEmployees);
@@ -809,7 +812,14 @@ export default function App() {
       const now = Date.now();
       if (now - lastTouch > TOUCH_INTERVAL_MS) {
         lastTouch = now;
-        fetch('/api/session', { credentials: 'include' }).catch(() => {});
+        // Pingaa myös sen varalta että admin on painanut "Kirjaa käyttäjä ulos" —
+        // istunto on silloin jo mitätöity palvelimella vaikka eväste olisi muuten
+        // vielä voimassa, ja käyttäjä ohjataan kirjautumisnäkymään heti seuraavan
+        // aktiivisuuden yhteydessä sen sijaan että jäisi vanhentuneeseen näkymään kiinni.
+        fetch('/api/session', { credentials: 'include' })
+          .then((r) => r.json())
+          .then((data) => { if (!data.authenticated) window.location.reload(); })
+          .catch(() => {});
       }
     };
 
@@ -1272,6 +1282,7 @@ export default function App() {
     setPermSaveError('');
     setPermTotpInfo(null);
     setPermTotpError('');
+    setPermForceLogoutMessage('');
     setViewingUserAdmin('permissions');
     if (user.role !== 'admin') fetchPermTotpInfo(user.username);
   };
@@ -1296,6 +1307,53 @@ export default function App() {
       })
       .catch(() => setPermTotpError('Yhteysvirhe.'))
       .finally(() => setPermTotpResetting(false));
+  };
+
+  const handleToggleTotpRequired = () => {
+    if (!editingPermUser) return;
+    const nextRequired = !(permTotpInfo ? permTotpInfo.totpRequired !== false : editingPermUser.totp_required !== false);
+    setPermTotpToggling(true);
+    setPermTotpError('');
+    fetch(`/api/users/${encodeURIComponent(editingPermUser.username)}/totp`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ required: nextRequired }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok) {
+          setPermTotpInfo((prev) => (prev ? { ...prev, totpRequired: data.totpRequired } : prev));
+          setEditingPermUser((prev) => (prev ? { ...prev, totp_required: data.totpRequired } : prev));
+        } else {
+          setPermTotpError(data.error || 'Muutos epäonnistui.');
+        }
+      })
+      .catch(() => setPermTotpError('Yhteysvirhe.'))
+      .finally(() => setPermTotpToggling(false));
+  };
+
+  const handleForceLogoutUser = () => {
+    if (!editingPermUser) return;
+    const confirmed = window.confirm(
+      `Kirjataanko "${editingPermUser.nickname}" (${editingPermUser.username}) ulos välittömästi?\n\n` +
+      'Käyttäjän nykyinen istunto mitätöityy heti, ja hänen täytyy kirjautua uudelleen.'
+    );
+    if (!confirmed) return;
+    setPermForceLogoutSubmitting(true);
+    setPermForceLogoutMessage('');
+    setPermTotpError('');
+    fetch(`/api/users/${encodeURIComponent(editingPermUser.username)}/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok) setPermForceLogoutMessage('Käyttäjä kirjattu ulos.');
+        else setPermTotpError(data.error || 'Uloskirjaus epäonnistui.');
+      })
+      .catch(() => setPermTotpError('Yhteysvirhe.'))
+      .finally(() => setPermForceLogoutSubmitting(false));
   };
 
   const handleTogglePerm = (nodeId, field, value) => {
@@ -5790,8 +5848,25 @@ export default function App() {
                     </h2>
                     <p className="text-sm text-slate-500 mt-1">Valitse mitkä sivut käyttäjä näkee ja voi muokata.</p>
                   </div>
-                  {roleBadge(editingPermUser.role)}
+                  <div className="flex items-center gap-3">
+                    {roleBadge(editingPermUser.role)}
+                    {editingPermUser.role !== 'admin' && (
+                      <button
+                        type="button"
+                        disabled={permForceLogoutSubmitting}
+                        onClick={handleForceLogoutUser}
+                        title="Mitätöi käyttäjän nykyisen istunnon välittömästi"
+                        className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-rose-700 bg-slate-100 hover:bg-rose-50 disabled:opacity-60 px-3 py-1.5 rounded-lg transition-colors"
+                      >
+                        <LogOut size={14} />
+                        {permForceLogoutSubmitting ? 'Kirjataan ulos…' : 'Kirjaa käyttäjä ulos'}
+                      </button>
+                    )}
+                  </div>
                 </div>
+                {permForceLogoutMessage && (
+                  <p className="text-sm text-emerald-600 -mt-4 mb-6">{permForceLogoutMessage}</p>
+                )}
 
                 <div className="mb-6 max-w-sm">
                   <label className="block text-sm font-medium text-slate-700 mb-1">Nimimerkki</label>
@@ -5808,6 +5883,11 @@ export default function App() {
                     <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-1">
                       <Smartphone size={18} className="text-slate-400" />
                       Authenticator-sovellus (TOTP)
+                      {permTotpInfo && (
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${permTotpInfo.totpRequired !== false ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                          {permTotpInfo.totpRequired !== false ? 'Käytössä' : 'Pois käytöstä'}
+                        </span>
+                      )}
                     </h3>
                     <p className="text-xs text-slate-500 mb-4">
                       Käyttäjä tarvitsee tämän kirjautuakseen. Skannaa QR-koodi Google Authenticatorilla (tai vastaavalla) käyttäjän puhelimeen, tai syötä tekstisalaisuus käsin.
@@ -5831,15 +5911,30 @@ export default function App() {
                               {permTotpInfo.secret}
                             </code>
                           </div>
-                          <button
-                            type="button"
-                            disabled={permTotpResetting}
-                            onClick={handleResetTotp}
-                            className="flex items-center gap-2 text-xs font-bold text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 disabled:opacity-60 px-3 py-2 rounded-lg transition-colors"
-                          >
-                            <RefreshCw size={14} />
-                            {permTotpResetting ? 'Nollataan…' : 'Nollaa Authenticator (esim. puhelin kadonnut)'}
-                          </button>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              disabled={permTotpResetting}
+                              onClick={handleResetTotp}
+                              className="flex items-center gap-2 text-xs font-bold text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 disabled:opacity-60 px-3 py-2 rounded-lg transition-colors"
+                            >
+                              <RefreshCw size={14} />
+                              {permTotpResetting ? 'Nollataan…' : 'Nollaa Authenticator (esim. puhelin kadonnut)'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={permTotpToggling}
+                              onClick={handleToggleTotpRequired}
+                              className="flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 disabled:opacity-60 px-3 py-2 rounded-lg transition-colors"
+                            >
+                              <Smartphone size={14} />
+                              {permTotpToggling
+                                ? 'Päivitetään…'
+                                : permTotpInfo.totpRequired !== false
+                                  ? 'Poista Authenticator käytöstä'
+                                  : 'Ota Authenticator uudelleen käyttöön'}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ) : null}
