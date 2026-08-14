@@ -65,7 +65,7 @@ export function findUser(username) {
 
 // Käyttäjälista ilman salasanatiivisteitä — turvallinen palauttaa suoraan APIsta.
 export function listUsers() {
-  return readUsers().map(({ password_hash, ...rest }) => rest);
+  return readUsers().map(({ password_hash: _password_hash, ...rest }) => rest);
 }
 
 export function upsertUser(username, passwordHash, { nickname, role } = {}) {

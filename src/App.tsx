@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useSessionUsername } from './SessionContext';
+import { useSession } from './SessionContext';
 import {
   AlertTriangle, 
   ShieldCheck, 
@@ -50,7 +50,8 @@ import {
   Landmark,
   Languages,
   BadgeCheck,
-  HardHat
+  HardHat,
+  KeyRound
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -119,6 +120,11 @@ const employeeToFormState = (emp) => {
   const needsSplit = emp.firstName === undefined && emp.name;
   return { ...emptyEmpForm, ...emp, ...(needsSplit ? splitFullName(emp.name) : {}) };
 };
+
+// Sama sääntö kuin palvelimella (server/index.js) — tämä on vain välitöntä
+// käyttäjäpalautetta varten, palvelin on todellinen portti.
+const isValidPasswordClient = (pw) =>
+  typeof pw === 'string' && pw.length >= 10 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /[0-9]/.test(pw);
 
 const initialEmployees = mockEmployees.map((name, idx) => ({
   ...emptyEmpForm,
@@ -325,6 +331,66 @@ const EmpStatusBadge = ({ emp }) => {
   );
 };
 
+// Nimimerkin alkukirjaimet profiilipainikkeeseen (esim. "Turva 1" -> "T1", "TIKE Päivystäjä" -> "TP").
+const getInitials = (name) => {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+};
+
+// Yläpalkin profiilipainike + pudotusvalikko. Korvaa aiemman kovakoodatun "TJ"-badgen
+// kaikissa nav-palkeissa (ks. käyttöpaikat renderöinnin puolella).
+const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onManageUsers, onLogout }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title={nickname}
+        className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-500 flex items-center justify-center font-bold text-sm text-white transition-colors"
+      >
+        {getInitials(nickname)}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50 text-left">
+            <div className="px-4 py-2 border-b border-slate-100">
+              <p className="text-sm font-bold text-slate-800 truncate">{nickname}</p>
+              {isAdmin && <p className="text-xs text-indigo-600 font-medium mt-0.5">Pääkäyttäjä</p>}
+            </div>
+            <button
+              onClick={() => { setOpen(false); onChangePassword(); }}
+              className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
+            >
+              <KeyRound size={16} className="text-slate-400" />
+              Vaihda salasana
+            </button>
+            {isAdmin && (
+              <button
+                onClick={() => { setOpen(false); onManageUsers(); }}
+                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
+              >
+                <Users size={16} className="text-slate-400" />
+                Muokkaa käyttäjiä
+              </button>
+            )}
+            <div className="border-t border-slate-100 my-1" />
+            <button
+              onClick={() => { setOpen(false); onLogout(); }}
+              className="w-full text-left px-4 py-2 text-sm text-rose-600 hover:bg-rose-50 flex items-center gap-2 transition-colors"
+            >
+              <LogOut size={16} />
+              Kirjaudu ulos
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 const AlertBanner = ({ alert }) => {
   const colors = {
     critical: 'bg-rose-50 border-rose-200 text-rose-800',
@@ -355,7 +421,11 @@ const AlertBanner = ({ alert }) => {
 // --- MAIN APP COMPONENT ---
 
 export default function App() {
-  const sessionUsername = useSessionUsername();
+  const session = useSession();
+  const sessionUsername = session?.username ?? null;
+  // Nimimerkki on se, mikä näkyy raporteissa "Laatija"-kenttänä (esim. "Turva 1",
+  // "TIKE Päivystäjä") — käyttäjätunnus itsessään ei näy käyttäjille.
+  const sessionNickname = session?.nickname || sessionUsername;
   const [activeTab, setActiveTab] = useState('landing');
 
   // Tapahtumavalinta: null = valintasivu, 'fesx' = tuotantotapahtuma,
@@ -420,6 +490,15 @@ export default function App() {
   // Sisäänkirjatut työntekijät (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
   const [checkedInEmployees, setCheckedInEmployees] = useState(initialCheckedInEmployees);
   const [checkinsLoaded, setCheckinsLoaded] = useState(false);
+
+  // Käyttäjähallinta: profiilivalikon salasananvaihto + admin-only käyttäjienhallintanäkymä
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [changePasswordError, setChangePasswordError] = useState('');
+  const [changePasswordSubmitting, setChangePasswordSubmitting] = useState(false);
+  const [viewingUserAdmin, setViewingUserAdmin] = useState(null); // null | 'list' | 'new' | 'permissions'
 
   // Työntekijäpankki: yrityksen koko henkilöstörekisteri (yhteinen tila, tallennetaan palvelimelle)
   const [employees, setEmployees] = useState(initialEmployees);
@@ -774,7 +853,7 @@ export default function App() {
       resProb: raResProb,
       resSev: raResSev,
       resScore,
-      author: sessionUsername || 'TIKE Päivystäjä',
+      author: sessionNickname || 'TIKE Päivystäjä',
       date: new Date().toLocaleDateString('fi-FI'),
       status: 'Toimenpiteet kesken'
     }, ...prev]);
@@ -868,6 +947,56 @@ export default function App() {
     setAddEmpSearch('');
     setAddEmpSelectedIds([]);
     setActiveTab('planning_employees');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+    } finally {
+      // Täysi uudelleenlataus palauttaa PasswordGate-komponentin alkutilaan
+      // (kirjautumislomake) ilman erillistä sovellustilan nollauslogiikkaa.
+      window.location.reload();
+    }
+  };
+
+  const resetChangePasswordForm = () => {
+    setCurrentPasswordInput('');
+    setNewPasswordInput('');
+    setConfirmPasswordInput('');
+    setChangePasswordError('');
+  };
+
+  const handleChangePassword = async () => {
+    setChangePasswordError('');
+    if (newPasswordInput !== confirmPasswordInput) {
+      setChangePasswordError('Uudet salasanat eivät täsmää.');
+      return;
+    }
+    if (!isValidPasswordClient(newPasswordInput)) {
+      setChangePasswordError('Salasanan tulee olla vähintään 10 merkkiä ja sisältää iso kirjain, pieni kirjain ja numero.');
+      return;
+    }
+    setChangePasswordSubmitting(true);
+    try {
+      const res = await fetch('/api/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ currentPassword: currentPasswordInput, newPassword: newPasswordInput }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setShowChangePassword(false);
+        resetChangePasswordForm();
+        alert('Salasana vaihdettu.');
+      } else {
+        setChangePasswordError(data.error || 'Salasanan vaihto epäonnistui.');
+      }
+    } catch {
+      setChangePasswordError('Yhteysvirhe. Yritä uudelleen.');
+    } finally {
+      setChangePasswordSubmitting(false);
+    }
   };
 
   const handleTamaPvm = () => {
@@ -1194,7 +1323,7 @@ export default function App() {
       eventId: selectedEvent,
       typeId: 'open',
       type: 'Avoin kirjaus',
-      author: sessionUsername || 'TIKE Päivystäjä',
+      author: sessionNickname || 'TIKE Päivystäjä',
       time: timeLabel,
       summary: openKirjausText.trim(),
       attachment: fileUploadId ? { id: fileUploadId, name: fileName } : null
@@ -1226,7 +1355,7 @@ export default function App() {
       eventId: selectedEvent,
       typeId: 'firstaid',
       type: 'Ensiaputilanne',
-      author: sessionUsername || 'EA-Päivystys',
+      author: sessionNickname || 'EA-Päivystys',
       time: timeLabel,
       summary: faDesc.trim(),
       actions: faActions.trim(),
@@ -1259,7 +1388,7 @@ export default function App() {
       eventId: selectedEvent,
       typeId,
       type: title,
-      author: sessionUsername || 'TIKE Päivystäjä',
+      author: sessionNickname || 'TIKE Päivystäjä',
       time: timeLabel,
       summary: genRepDesc.trim(),
       actions: genRepActions.trim(),
@@ -4583,6 +4712,83 @@ export default function App() {
     }
   };
 
+  // Salasananvaihtomodaali — määritelty kerran ja upotettu jokaiseen alla olevaan
+  // ylätason näkymään (ne palauttavat oman JSX-puunsa erikseen, ks. ProfileMenu-
+  // painikkeen sijainnit), ettei painike jää toimimattomaksi missään näkymässä.
+  const changePasswordModal = showChangePassword ? (
+    <div
+      className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+      onClick={() => { setShowChangePassword(false); resetChangePasswordForm(); }}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl max-w-sm w-full"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-center p-5 border-b border-slate-100">
+          <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+            <KeyRound size={20} className="text-indigo-500" />
+            Vaihda salasana
+          </h2>
+          <button
+            onClick={() => { setShowChangePassword(false); resetChangePasswordForm(); }}
+            className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors"
+          >
+            <X size={22} />
+          </button>
+        </div>
+        <div className="p-5 space-y-4 text-left">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Nykyinen salasana</label>
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={currentPasswordInput}
+              onChange={(e) => setCurrentPasswordInput(e.target.value)}
+              className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Uusi salasana</label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={newPasswordInput}
+              onChange={(e) => setNewPasswordInput(e.target.value)}
+              className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="text-xs text-slate-400 mt-1">Vähintään 10 merkkiä, iso ja pieni kirjain sekä numero.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Vahvista uusi salasana</label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={confirmPasswordInput}
+              onChange={(e) => setConfirmPasswordInput(e.target.value)}
+              className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          {changePasswordError && <p className="text-sm text-rose-600">{changePasswordError}</p>}
+        </div>
+        <div className="p-4 border-t border-slate-100 flex justify-end gap-3">
+          <button
+            onClick={() => { setShowChangePassword(false); resetChangePasswordForm(); }}
+            className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-lg transition-colors"
+          >
+            Peruuta
+          </button>
+          <button
+            onClick={handleChangePassword}
+            disabled={changePasswordSubmitting}
+            className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm font-bold rounded-lg transition-colors"
+          >
+            {changePasswordSubmitting ? 'Tallennetaan…' : 'Vaihda salasana'}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   // ====================== TYÖNTEKIJÄPANKKI (koko yrityksen henkilöstörekisteri) ======================
   if (viewingEmployeeBank) {
     const filteredBankEmployees = employeeBankSearch.trim()
@@ -4604,9 +4810,13 @@ export default function App() {
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
             </div>
-            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">
-              TJ
-            </div>
+            <ProfileMenu
+              nickname={sessionNickname}
+              isAdmin={session?.role === 'admin'}
+              onChangePassword={() => setShowChangePassword(true)}
+              onManageUsers={() => setViewingUserAdmin('list')}
+              onLogout={handleLogout}
+            />
           </div>
         </nav>
 
@@ -5040,6 +5250,7 @@ export default function App() {
             )}
           </div>
         </main>
+        {changePasswordModal}
       </div>
     );
   }
@@ -5075,9 +5286,13 @@ export default function App() {
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
             </div>
-            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">
-              TJ
-            </div>
+            <ProfileMenu
+              nickname={sessionNickname}
+              isAdmin={session?.role === 'admin'}
+              onChangePassword={() => setShowChangePassword(true)}
+              onManageUsers={() => setViewingUserAdmin('list')}
+              onLogout={handleLogout}
+            />
           </div>
         </nav>
 
@@ -5165,6 +5380,7 @@ export default function App() {
             </div>
           </div>
         </main>
+        {changePasswordModal}
       </div>
     );
   }
@@ -5188,7 +5404,13 @@ export default function App() {
                 <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
               </div>
             </div>
-            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">TJ</div>
+            <ProfileMenu
+              nickname={sessionNickname}
+              isAdmin={session?.role === 'admin'}
+              onChangePassword={() => setShowChangePassword(true)}
+              onManageUsers={() => setViewingUserAdmin('list')}
+              onLogout={handleLogout}
+            />
           </nav>
 
           <main className="flex-1 p-6 md:p-10">
@@ -5310,6 +5532,7 @@ export default function App() {
               </div>
             </div>
           </main>
+          {changePasswordModal}
         </div>
       );
     }
@@ -5324,7 +5547,13 @@ export default function App() {
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
             </div>
           </div>
-          <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">TJ</div>
+          <ProfileMenu
+            nickname={sessionNickname}
+            isAdmin={session?.role === 'admin'}
+            onChangePassword={() => setShowChangePassword(true)}
+            onManageUsers={() => setViewingUserAdmin('list')}
+            onLogout={handleLogout}
+          />
         </nav>
 
         <main className="flex-1 p-6 md:p-10">
@@ -5379,6 +5608,7 @@ export default function App() {
             )}
           </div>
         </main>
+        {changePasswordModal}
       </div>
     );
   }
@@ -5421,9 +5651,13 @@ export default function App() {
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
             </div>
-            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">
-              TJ
-            </div>
+            <ProfileMenu
+              nickname={sessionNickname}
+              isAdmin={session?.role === 'admin'}
+              onChangePassword={() => setShowChangePassword(true)}
+              onManageUsers={() => setViewingUserAdmin('list')}
+              onLogout={handleLogout}
+            />
           </div>
         </nav>
 
@@ -5536,6 +5770,7 @@ export default function App() {
             </div>
           </div>
         </main>
+        {changePasswordModal}
       </div>
     );
   }
@@ -5554,7 +5789,13 @@ export default function App() {
             <ShieldCheck className="text-indigo-400" size={28} />
             <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
           </div>
-          <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">TJ</div>
+          <ProfileMenu
+            nickname={sessionNickname}
+            isAdmin={session?.role === 'admin'}
+            onChangePassword={() => setShowChangePassword(true)}
+            onManageUsers={() => setViewingUserAdmin('list')}
+            onLogout={handleLogout}
+          />
         </nav>
 
         <main className="flex-1 p-6 md:p-10">
@@ -5959,6 +6200,7 @@ export default function App() {
             </form>
           </div>
         </main>
+        {changePasswordModal}
       </div>
     );
   }
@@ -6006,7 +6248,13 @@ export default function App() {
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
             </div>
             <div className="flex items-center gap-3 border-l border-slate-700 pl-4 sm:pl-6">
-              <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">TJ</div>
+              <ProfileMenu
+                nickname={sessionNickname}
+                isAdmin={session?.role === 'admin'}
+                onChangePassword={() => setShowChangePassword(true)}
+                onManageUsers={() => setViewingUserAdmin('list')}
+                onLogout={handleLogout}
+              />
             </div>
           </div>
         </nav>
@@ -6080,6 +6328,7 @@ export default function App() {
             </div>
           </main>
         </div>
+        {changePasswordModal}
       </div>
     );
   }
@@ -6172,9 +6421,13 @@ export default function App() {
             <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
           </div>
           <div className="flex items-center gap-3 border-l border-slate-700 pl-4 sm:pl-6">
-            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">
-              TJ
-            </div>
+            <ProfileMenu
+              nickname={sessionNickname}
+              isAdmin={session?.role === 'admin'}
+              onChangePassword={() => setShowChangePassword(true)}
+              onManageUsers={() => setViewingUserAdmin('list')}
+              onLogout={handleLogout}
+            />
           </div>
         </div>
       </nav>
@@ -6525,6 +6778,7 @@ export default function App() {
           </div>
         );
       })()}
+      {changePasswordModal}
     </div>
   );
 }

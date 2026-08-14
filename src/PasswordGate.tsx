@@ -1,29 +1,40 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { SessionContext } from './SessionContext';
+import { SessionContext, type SessionProfile } from './SessionContext';
 
 type SessionState = 'loading' | 'authed' | 'anon';
 
+async function loadSessionProfile(): Promise<SessionProfile | null> {
+  const res = await fetch('/api/session', { credentials: 'include' });
+  const data = await res.json();
+  if (!data.authenticated) return null;
+  return {
+    username: data.username,
+    nickname: data.nickname || data.username,
+    role: data.role || 'user',
+    permissions: data.permissions || {},
+  };
+}
+
 export default function PasswordGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<SessionState>('loading');
-  const [loggedInUsername, setLoggedInUsername] = useState<string | null>(null);
+  const [profile, setProfile] = useState<SessionProfile | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    fetch('/api/session', { credentials: 'include' })
-      .then((r) => r.json())
-      .then((data) => {
-        setSession(data.authenticated ? 'authed' : 'anon');
-        if (data.authenticated) setLoggedInUsername(data.username || null);
+    loadSessionProfile()
+      .then((p) => {
+        setProfile(p);
+        setSession(p ? 'authed' : 'anon');
       })
       .catch(() => setSession('anon'));
   }, []);
 
   if (session === 'loading') return null;
-  if (session === 'authed') {
-    return <SessionContext.Provider value={loggedInUsername}>{children}</SessionContext.Provider>;
+  if (session === 'authed' && profile) {
+    return <SessionContext.Provider value={profile}>{children}</SessionContext.Provider>;
   }
 
   const handleSubmit = async (e: FormEvent) => {
@@ -39,8 +50,9 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
       });
       const data = await res.json();
       if (res.ok && data.ok) {
-        setLoggedInUsername(data.username || username);
-        setSession('authed');
+        const p = await loadSessionProfile();
+        setProfile(p);
+        setSession(p ? 'authed' : 'anon');
       } else {
         setError(data.error || 'Kirjautuminen epäonnistui.');
       }
