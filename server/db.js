@@ -11,8 +11,45 @@ if (!fs.existsSync(USERS_PATH)) {
   fs.writeFileSync(USERS_PATH, JSON.stringify({ users: [] }, null, 2));
 }
 
-function readUsers() {
+// Täydentää vanhan/puuttuvan datan oletuksin, jotta jokainen kutsuja saa aina
+// samanmuotoisen käyttäjätietueen riippumatta siitä milloin tili on luotu.
+function withDefaults(user) {
+  return {
+    ...user,
+    nickname: user.nickname || user.username,
+    role: user.role || 'user',
+    permissions: user.permissions || {},
+  };
+}
+
+// Jos yksikään käyttäjä ei ole admin (esim. ensimmäinen käynnistys tämän
+// ominaisuuden käyttöönoton jälkeen), ylennetään taulukon ensimmäinen käyttäjä
+// adminiksi ja täydelliset oikeudet ('*'). Tämä tekee migraation itsestään
+// ilman että palvelimen levyllä olevaa users.json:ia pitää käsin muokata —
+// ainoa tili ennen tätä ominaisuutta saa adminoikeudet automaattisesti
+// seuraavalla palvelimen käynnistyksellä.
+function migrateUsers(rawUsers) {
+  const users = rawUsers.map(withDefaults);
+  if (users.length > 0 && !users.some((u) => u.role === 'admin')) {
+    users[0] = { ...users[0], role: 'admin', permissions: { '*': { view: true, edit: true } } };
+  }
+  return users;
+}
+
+function readRawUsers() {
   return JSON.parse(fs.readFileSync(USERS_PATH, 'utf8')).users;
+}
+
+function readUsers() {
+  const raw = readRawUsers();
+  const migrated = migrateUsers(raw);
+  // Kirjoitetaan migroitu data takaisin levylle vain jos se oikeasti muuttui
+  // (esim. admin-bootstrap tai puuttuvien kenttien täydennys), ettei jokainen
+  // pelkkä luku turhaan kirjoita tiedostoa.
+  if (JSON.stringify(migrated) !== JSON.stringify(raw)) {
+    writeUsers(migrated);
+  }
+  return migrated;
 }
 
 function writeUsers(users) {
@@ -26,13 +63,48 @@ export function findUser(username) {
   return readUsers().find((u) => u.username === username) || null;
 }
 
-export function upsertUser(username, passwordHash) {
+// Käyttäjälista ilman salasanatiivisteitä — turvallinen palauttaa suoraan APIsta.
+export function listUsers() {
+  return readUsers().map(({ password_hash, ...rest }) => rest);
+}
+
+export function upsertUser(username, passwordHash, { nickname, role } = {}) {
   const users = readUsers();
   const existing = users.find((u) => u.username === username);
   if (existing) {
     existing.password_hash = passwordHash;
+    if (nickname) existing.nickname = nickname;
+    if (role) existing.role = role;
   } else {
-    users.push({ username, password_hash: passwordHash, created_at: new Date().toISOString() });
+    users.push({
+      username,
+      password_hash: passwordHash,
+      nickname: nickname || username,
+      role: role || 'user',
+      permissions: {},
+      created_at: new Date().toISOString(),
+    });
   }
   writeUsers(users);
+}
+
+// Osittainen päivitys nimimerkille ja/tai sivukartta-oikeuksille (admin muokkaa muita käyttäjiä).
+export function updateUser(username, { nickname, permissions } = {}) {
+  const users = readUsers();
+  const existing = users.find((u) => u.username === username);
+  if (!existing) return null;
+  if (nickname !== undefined) existing.nickname = nickname;
+  if (permissions !== undefined) existing.permissions = permissions;
+  writeUsers(users);
+  return existing;
+}
+
+// Käyttäjän oman salasanan vaihto (itsepalvelu) — kutsuja vastaa nykyisen salasanan tarkistuksesta.
+export function updatePassword(username, passwordHash) {
+  const users = readUsers();
+  const existing = users.find((u) => u.username === username);
+  if (!existing) return false;
+  existing.password_hash = passwordHash;
+  writeUsers(users);
+  return true;
 }
