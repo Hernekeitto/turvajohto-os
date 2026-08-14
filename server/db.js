@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { generateBase32Secret } from './totp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -14,12 +15,20 @@ if (!fs.existsSync(USERS_PATH)) {
 // Täydentää vanhan/puuttuvan datan oletuksin, jotta jokainen kutsuja saa aina
 // samanmuotoisen käyttäjätietueen riippumatta siitä milloin tili on luotu.
 function withDefaults(user) {
-  return {
+  const withRole = {
     ...user,
     nickname: user.nickname || user.username,
     role: user.role || 'user',
     permissions: user.permissions || {},
   };
+  // Ei-adminit vaativat Authenticator-sovelluksen (TOTP) kirjautuessa — jokaiselle
+  // ei-admin-tilille luodaan salaisuus automaattisesti jos sitä ei vielä ole, jotta
+  // admin voi aina näyttää QR-koodin "Muokkaa oikeuksia" -näkymässä. Adminille ei
+  // koskaan luoda salaisuutta (ei tarvitse TOTP:tä).
+  if (withRole.role !== 'admin' && !withRole.totp_secret) {
+    withRole.totp_secret = generateBase32Secret();
+  }
+  return withRole;
 }
 
 // Jos yksikään käyttäjä ei ole admin (esim. ensimmäinen käynnistys tämän
@@ -31,7 +40,7 @@ function withDefaults(user) {
 function migrateUsers(rawUsers) {
   const users = rawUsers.map(withDefaults);
   if (users.length > 0 && !users.some((u) => u.role === 'admin')) {
-    users[0] = { ...users[0], role: 'admin', permissions: { '*': { view: true, edit: true } } };
+    users[0] = { ...users[0], role: 'admin', permissions: { '*': { view: true, edit: true } }, totp_secret: undefined };
   }
   return users;
 }
@@ -63,9 +72,28 @@ export function findUser(username) {
   return readUsers().find((u) => u.username === username) || null;
 }
 
-// Käyttäjälista ilman salasanatiivisteitä — turvallinen palauttaa suoraan APIsta.
+// Käyttäjälista ilman salasanatiivistettä tai TOTP-salaisuutta — turvallinen
+// palauttaa suoraan APIsta. TOTP-salaisuus haetaan erikseen omalla admin-reitillään.
 export function listUsers() {
-  return readUsers().map(({ password_hash: _password_hash, ...rest }) => rest);
+  return readUsers().map(({ password_hash: _password_hash, totp_secret: _totp_secret, ...rest }) => rest);
+}
+
+// Palauttaa käyttäjän TOTP-salaisuuden (luodaan automaattisesti readUsers/withDefaults
+// -migraatiossa jos puuttuu, joten tämä ei koskaan palauta null:ia ei-admin-käyttäjälle).
+export function getTotpSecret(username) {
+  const user = findUser(username);
+  return user ? user.totp_secret || null : null;
+}
+
+// Nollaa käyttäjän TOTP-salaisuuden (esim. puhelin kadonnut) — vanha Authenticator-
+// merkintä lakkaa toimimasta heti.
+export function resetTotpSecret(username) {
+  const users = readUsers();
+  const existing = users.find((u) => u.username === username);
+  if (!existing) return null;
+  existing.totp_secret = generateBase32Secret();
+  writeUsers(users);
+  return existing.totp_secret;
 }
 
 export function upsertUser(username, passwordHash, { nickname, role } = {}) {

@@ -4,14 +4,21 @@ import jwt from 'jsonwebtoken';
 import cookie from 'cookie';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
-import { findUser, listUsers, upsertUser, updateUser, updatePassword } from './db.js';
+import QRCode from 'qrcode';
+import { findUser, listUsers, upsertUser, updateUser, updatePassword, getTotpSecret, resetTotpSecret } from './db.js';
 import { readCollection, writeCollection, KNOWN_COLLECTIONS } from './store.js';
 import { isAllowedFile, saveUpload, getUploadPath } from './uploads.js';
+import { verifyTotp, buildOtpauthUri } from './totp.js';
 
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const COOKIE_NAME = 'tj_session';
-const SESSION_HOURS = 12;
+// Admin: kiinteä 12h istunto (ei automaattista uloskirjausta käyttämättömyydestä).
+// Muut käyttäjät: 1h *liukuva* istunto — jokainen kirjautunut pyyntö (requireAuth)
+// pidentää evästeen voimassaoloa uudelleen tunnilla eteenpäin, joten aktiivikäyttö
+// ei koskaan katkea, mutta tunnin käyttämättömyys kirjaa automaattisesti ulos.
+const ADMIN_SESSION_HOURS = 12;
+const USER_SESSION_MINUTES = 60;
 
 if (!JWT_SECRET) {
   console.error('JWT_SECRET puuttuu ympäristömuuttujista. Palvelinta ei käynnistetä.');
@@ -49,8 +56,9 @@ function isValidPassword(pw) {
   return typeof pw === 'string' && pw.length >= 10 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /[0-9]/.test(pw);
 }
 
-function setSessionCookie(res, username) {
-  const token = jwt.sign({ sub: username }, JWT_SECRET, { expiresIn: `${SESSION_HOURS}h` });
+function setSessionCookie(res, username, role) {
+  const maxAgeSeconds = role === 'admin' ? ADMIN_SESSION_HOURS * 60 * 60 : USER_SESSION_MINUTES * 60;
+  const token = jwt.sign({ sub: username }, JWT_SECRET, { expiresIn: maxAgeSeconds });
   res.setHeader(
     'Set-Cookie',
     cookie.serialize(COOKIE_NAME, token, {
@@ -58,7 +66,7 @@ function setSessionCookie(res, username) {
       secure: true,
       sameSite: 'lax',
       path: '/',
-      maxAge: SESSION_HOURS * 60 * 60,
+      maxAge: maxAgeSeconds,
     })
   );
 }
@@ -82,8 +90,14 @@ function getSessionUser(req) {
   }
 }
 
+// Kirjautuminen kahdessa vaiheessa ei-admin-käyttäjille: käyttäjätunnus+salasana
+// riittävät admin-tilille (ei koskaan vaadi TOTP:tä), mutta muille tarvitaan lisäksi
+// voimassa oleva 6-numeroinen Authenticator-koodi. Toteutettu yhtenä tilattomana
+// reittinä — jos totpCode puuttuu (tai on väärä), vastataan requiresTotp:true eikä
+// evästettä aseteta; frontend näyttää silloin koodikentän ja lähettää saman
+// käyttäjätunnuksen+salasanan uudelleen koodin kera.
 app.post('/api/login', loginLimiter, (req, res) => {
-  const { username, password } = req.body || {};
+  const { username, password, totpCode } = req.body || {};
   if (typeof username !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ ok: false, error: 'Käyttäjätunnus ja salasana vaaditaan.' });
   }
@@ -95,7 +109,16 @@ app.post('/api/login', loginLimiter, (req, res) => {
     return res.status(401).json({ ok: false, error: 'Väärä käyttäjätunnus tai salasana.' });
   }
 
-  setSessionCookie(res, user.username);
+  if (user.role !== 'admin') {
+    if (!totpCode) {
+      return res.json({ ok: true, requiresTotp: true, username: user.username });
+    }
+    if (!verifyTotp(user.totp_secret, totpCode)) {
+      return res.status(401).json({ ok: false, requiresTotp: true, error: 'Väärä tai vanhentunut Authenticator-koodi.' });
+    }
+  }
+
+  setSessionCookie(res, user.username, user.role);
   res.json({ ok: true, username: user.username });
 });
 
@@ -112,6 +135,10 @@ app.get('/api/session', (req, res) => {
   // käyttäjän pitää kirjautua uudelleen — muutos näkyy seuraavalla sivunlatauksella.
   const user = findUser(username);
   if (!user) return res.json({ authenticated: false, username: null });
+  // Frontin käyttämättömyysvahti kutsuu tätä reittiä aina kun se havaitsee aktiivisuutta
+  // (hiiri/näppäimistö) — tämä pitää ei-adminin liukuvan istunnon voimassa niin kauan
+  // kuin sovellusta oikeasti käytetään.
+  if (user.role !== 'admin') setSessionCookie(res, user.username, user.role);
   res.json({
     authenticated: true,
     username: user.username,
@@ -124,7 +151,14 @@ app.get('/api/session', (req, res) => {
 function requireAuth(req, res, next) {
   const username = getSessionUser(req);
   if (!username) return res.status(401).json({ ok: false, error: 'Kirjaudu sisään.' });
+  const user = findUser(username);
+  if (!user) return res.status(401).json({ ok: false, error: 'Kirjaudu sisään.' });
   req.username = username;
+  req.role = user.role;
+  // Liukuva istunto: jokainen onnistunut kirjautunut pyyntö ei-adminilta pidentää
+  // evästeen voimassaoloa uudelleen USER_SESSION_MINUTES eteenpäin. Admin pysyy
+  // kiinteässä 12h istunnossa, ei koske automaattinen käyttämättömyyskatkaisu.
+  if (user.role !== 'admin') setSessionCookie(res, user.username, user.role);
   next();
 }
 
@@ -206,6 +240,37 @@ app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
     permissions,
   });
   res.json({ ok: true });
+});
+
+// Authenticator-sovelluksen (TOTP) käyttöönottotiedot — vain admin, näytetään
+// "Muokkaa oikeuksia" -sivulla QR-koodina ja tekstimuodossa. Salaisuus itsessään ei
+// koskaan päädy /api/users-listaukseen, ainoastaan tälle omalle reitilleen.
+app.get('/api/users/:username/totp', requireAuth, requireAdmin, async (req, res) => {
+  const { username } = req.params;
+  const user = findUser(username);
+  if (!user) return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
+  if (user.role === 'admin') {
+    return res.status(400).json({ ok: false, error: 'Pääkäyttäjä ei käytä Authenticator-tunnistautumista.' });
+  }
+  const secret = getTotpSecret(username);
+  const otpauthUri = buildOtpauthUri(secret, username);
+  const qrDataUri = await QRCode.toDataURL(otpauthUri, { width: 220, margin: 1 });
+  res.json({ ok: true, secret, otpauthUri, qrDataUri });
+});
+
+// Nollaa käyttäjän TOTP-salaisuuden (esim. puhelin kadonnut) — vanha Authenticator-
+// merkintä lakkaa toimimasta heti, uusi QR pitää skannata.
+app.post('/api/users/:username/totp/reset', requireAuth, requireAdmin, async (req, res) => {
+  const { username } = req.params;
+  const user = findUser(username);
+  if (!user) return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
+  if (user.role === 'admin') {
+    return res.status(400).json({ ok: false, error: 'Pääkäyttäjä ei käytä Authenticator-tunnistautumista.' });
+  }
+  const secret = resetTotpSecret(username);
+  const otpauthUri = buildOtpauthUri(secret, username);
+  const qrDataUri = await QRCode.toDataURL(otpauthUri, { width: 220, margin: 1 });
+  res.json({ ok: true, secret, otpauthUri, qrDataUri });
 });
 
 app.post('/api/change-password', requireAuth, loginLimiter, (req, res) => {
