@@ -1261,7 +1261,10 @@ export default function App() {
                       <MessageSquare className="text-indigo-500" size={20} />
                       TIKE Loki (Viimeisimmät)
                     </h2>
-                    <button className="px-4 py-2 bg-indigo-50 text-indigo-700 text-sm font-medium rounded-lg hover:bg-indigo-100 transition-colors">
+                    <button
+                      onClick={() => setActiveTab('report_tike')}
+                      className="px-4 py-2 bg-indigo-50 text-indigo-700 text-sm font-medium rounded-lg hover:bg-indigo-100 transition-colors"
+                    >
                       + Uusi Kirjaus
                     </button>
                   </div>
@@ -1270,7 +1273,11 @@ export default function App() {
                       <p className="text-sm text-slate-500 py-4 text-center">Ei vielä TIKE-kirjauksia.</p>
                     ) : (
                       tikeLogPageItems.map(rep => (
-                        <div key={rep.id} className="flex gap-4 p-3 hover:bg-slate-50 rounded-lg transition-colors border-b border-slate-50 last:border-0">
+                        <div
+                          key={rep.id}
+                          onClick={() => setOpenedReport(rep)}
+                          className="flex gap-4 p-3 hover:bg-slate-50 rounded-lg transition-colors border-b border-slate-50 last:border-0 cursor-pointer"
+                        >
                           <div className="text-sm font-mono text-slate-400 w-16 pt-0.5">{rep.time}</div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-slate-800 line-clamp-1">{rep.summary}</p>
@@ -1741,7 +1748,7 @@ export default function App() {
             <div className="mb-8 border-b border-slate-100 pb-4">
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                 <Activity className="text-emerald-500" size={24} />
-                TIKE:n raportointi ja seuranta
+                TIKE raportointi
               </h2>
               <p className="text-sm text-slate-500 mt-1">Valitse uuden kirjauksen tai toimenpiteen tyyppi aloittaaksesi.</p>
             </div>
