@@ -51,7 +51,10 @@ import {
   Languages,
   BadgeCheck,
   HardHat,
-  KeyRound
+  KeyRound,
+  QrCode,
+  Smartphone,
+  RefreshCw
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -647,6 +650,10 @@ export default function App() {
   const [permNickname, setPermNickname] = useState('');
   const [permSaveError, setPermSaveError] = useState('');
   const [permSaving, setPermSaving] = useState(false);
+  const [permTotpInfo, setPermTotpInfo] = useState(null); // { secret, otpauthUri, qrDataUri }
+  const [permTotpLoading, setPermTotpLoading] = useState(false);
+  const [permTotpError, setPermTotpError] = useState('');
+  const [permTotpResetting, setPermTotpResetting] = useState(false);
 
   // Työntekijäpankki: yrityksen koko henkilöstörekisteri (yhteinen tila, tallennetaan palvelimelle)
   const [employees, setEmployees] = useState(initialEmployees);
@@ -779,6 +786,42 @@ export default function App() {
   useEffect(() => {
     if (viewingUserAdmin === 'list') fetchUserAdminList();
   }, [viewingUserAdmin]);
+
+  // Automaattinen uloskirjaus 1h käyttämättömyyden jälkeen — ei koske pääkäyttäjää.
+  // Palvelimen istunto on jo itsessään liukuva (ks. server/index.js requireAuth), tämä
+  // antaa lisäksi välittömän palautteen (kirjaa ulos heti ilman että pitää odottaa
+  // seuraavaa epäonnistuvaa API-kutsua) ja pitää palvelimen istunnon voimassa
+  // pingaamalla /api/session kun oikeaa aktiivisuutta havaitaan.
+  useEffect(() => {
+    if (isAdminUser) return;
+    const IDLE_MS = 60 * 60 * 1000; // 1h
+    const TOUCH_INTERVAL_MS = 5 * 60 * 1000; // pidä palvelimen istunto elossa enintään 5 min välein
+    let idleTimer: ReturnType<typeof setTimeout>;
+    let lastTouch = 0;
+
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => { handleLogout(); }, IDLE_MS);
+    };
+
+    const onActivity = () => {
+      resetIdleTimer();
+      const now = Date.now();
+      if (now - lastTouch > TOUCH_INTERVAL_MS) {
+        lastTouch = now;
+        fetch('/api/session', { credentials: 'include' }).catch(() => {});
+      }
+    };
+
+    const events = ['mousemove', 'keydown', 'mousedown', 'scroll', 'touchstart'];
+    events.forEach((evt) => window.addEventListener(evt, onActivity, { passive: true }));
+    resetIdleTimer();
+
+    return () => {
+      clearTimeout(idleTimer);
+      events.forEach((evt) => window.removeEventListener(evt, onActivity));
+    };
+  }, [isAdminUser]);
 
   // Ladataan tapahtumat palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
   useEffect(() => {
@@ -1209,12 +1252,50 @@ export default function App() {
     }
   };
 
+  const fetchPermTotpInfo = (username) => {
+    setPermTotpLoading(true);
+    setPermTotpError('');
+    fetch(`/api/users/${encodeURIComponent(username)}/totp`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok) setPermTotpInfo(data);
+        else setPermTotpError(data.error || 'Authenticator-tietojen haku epäonnistui.');
+      })
+      .catch(() => setPermTotpError('Yhteysvirhe.'))
+      .finally(() => setPermTotpLoading(false));
+  };
+
   const handleOpenPermissions = (user) => {
     setEditingPermUser(user);
     setPermDraft(user.permissions || {});
     setPermNickname(user.nickname || '');
     setPermSaveError('');
+    setPermTotpInfo(null);
+    setPermTotpError('');
     setViewingUserAdmin('permissions');
+    if (user.role !== 'admin') fetchPermTotpInfo(user.username);
+  };
+
+  const handleResetTotp = () => {
+    if (!editingPermUser) return;
+    const confirmed = window.confirm(
+      `Nollataanko "${editingPermUser.nickname}" (${editingPermUser.username}) Authenticator-käyttöönotto?\n\n` +
+      'Vanha koodi lakkaa toimimasta heti ja uusi QR-koodi pitää skannata puhelimeen.'
+    );
+    if (!confirmed) return;
+    setPermTotpResetting(true);
+    setPermTotpError('');
+    fetch(`/api/users/${encodeURIComponent(editingPermUser.username)}/totp/reset`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok) setPermTotpInfo(data);
+        else setPermTotpError(data.error || 'Nollaus epäonnistui.');
+      })
+      .catch(() => setPermTotpError('Yhteysvirhe.'))
+      .finally(() => setPermTotpResetting(false));
   };
 
   const handleTogglePerm = (nodeId, field, value) => {
@@ -5641,7 +5722,7 @@ export default function App() {
                     Uusi käyttäjä
                   </h2>
                   <p className="text-sm text-slate-500 mt-1">
-                    Uudella käyttäjällä ei ole oletuksena mitään sivukartta-oikeuksia — aseta ne luonnin jälkeen "Muokkaa oikeuksia" -kohdasta.
+                    Uudella käyttäjällä ei ole oletuksena mitään sivukartta-oikeuksia, ja hän tarvitsee Authenticator-sovelluksen kirjautuakseen — hoida molemmat luonnin jälkeen "Muokkaa oikeuksia" -kohdasta.
                   </p>
                 </div>
                 <form className="space-y-4 text-left max-w-md" onSubmit={(e) => e.preventDefault()}>
@@ -5721,6 +5802,50 @@ export default function App() {
                     className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
+
+                {editingPermUser.role !== 'admin' && (
+                  <div className="mb-6 bg-slate-50 border border-slate-200 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-1">
+                      <Smartphone size={18} className="text-slate-400" />
+                      Authenticator-sovellus (TOTP)
+                    </h3>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Käyttäjä tarvitsee tämän kirjautuakseen. Skannaa QR-koodi Google Authenticatorilla (tai vastaavalla) käyttäjän puhelimeen, tai syötä tekstisalaisuus käsin.
+                    </p>
+                    {permTotpLoading ? (
+                      <p className="text-sm text-slate-500">Ladataan…</p>
+                    ) : permTotpInfo ? (
+                      <div className="flex flex-col sm:flex-row gap-5 items-start">
+                        <img
+                          src={permTotpInfo.qrDataUri}
+                          alt="Authenticator-sovelluksen QR-koodi"
+                          className="w-40 h-40 rounded-lg border border-slate-200 bg-white p-2 shrink-0"
+                        />
+                        <div className="flex-1 min-w-0 space-y-3">
+                          <div>
+                            <label className="block text-xs text-slate-400 uppercase tracking-wide mb-1 flex items-center gap-1.5">
+                              <QrCode size={12} />
+                              Tekstisalaisuus (jos QR ei skannaudu)
+                            </label>
+                            <code className="block bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono tracking-wide break-all">
+                              {permTotpInfo.secret}
+                            </code>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={permTotpResetting}
+                            onClick={handleResetTotp}
+                            className="flex items-center gap-2 text-xs font-bold text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 disabled:opacity-60 px-3 py-2 rounded-lg transition-colors"
+                          >
+                            <RefreshCw size={14} />
+                            {permTotpResetting ? 'Nollataan…' : 'Nollaa Authenticator (esim. puhelin kadonnut)'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                    {permTotpError && <p className="text-sm text-rose-600 mt-3">{permTotpError}</p>}
+                  </div>
+                )}
 
                 {editingPermUser.role === 'admin' ? (
                   <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
