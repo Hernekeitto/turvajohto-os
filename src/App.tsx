@@ -448,6 +448,20 @@ function collectDescendantIds(node, out = []) {
   return out;
 }
 
+// Etsii solmun esi-isien id:t (ei sisällä solmua itseään) — käytetään siihen että
+// näkyvyysoikeuden myöntäminen alasivulle myöntää automaattisesti näkyvyyden myös
+// sen yläsivuille, muuten se ei koskaan näy valikoissa.
+function findAncestorIds(nodeId, nodes = SITEMAP, path = []) {
+  for (const node of nodes) {
+    if (node.id === nodeId) return path;
+    if (node.children) {
+      const found = findAncestorIds(nodeId, node.children, [...path, node.id]);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 // perms['*'] on admin-oikotie: kaikki näkyy ja on muokattavissa riippumatta
 // yksittäisistä solmumerkinnöistä.
 function canView(perms, nodeId) {
@@ -1204,7 +1218,18 @@ export default function App() {
   };
 
   const handleTogglePerm = (nodeId, field, value) => {
-    setPermDraft((prev) => ({ ...prev, [nodeId]: { ...prev[nodeId], [field]: value } }));
+    setPermDraft((prev) => {
+      const next = { ...prev, [nodeId]: { ...prev[nodeId], [field]: value } };
+      // Näkyvyyden myöntäminen alasivulle myöntää sen automaattisesti myös kaikille
+      // yläsivuille — muuten myönnetty oikeus ei koskaan näy valikossa, koska
+      // yläsivun kortti/valikko olisi itse piilossa. Ei koske muokkausoikeutta eikä
+      // oikeuden poistamista (se voi jättää muille alasivuille tarpeellisen yläsivun rauhaan).
+      if (field === 'view' && value) {
+        const ancestorIds = findAncestorIds(nodeId) || [];
+        for (const id of ancestorIds) next[id] = { ...next[id], view: true };
+      }
+      return next;
+    });
   };
 
   const handleCascadePerm = (node, field, value) => {
