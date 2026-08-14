@@ -11,6 +11,7 @@ const COLLECTIONS = {
   reports: 'reports.json',
   events: 'events.json',
   riskAssessments: 'riskAssessments.json',
+  employees: 'employees.json',
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });

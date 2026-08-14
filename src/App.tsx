@@ -65,6 +65,19 @@ const mockEmployees = [
   "Lahtinen Oskari Juhani Tapio"
 ];
 
+// Työntekijäpankin alkuarvo ensimmäistä latausta varten — todellinen rekisteri
+// tulee palvelimelta (ks. `employees`-tila) samaan tapaan kuin tapahtumat/raportit.
+const emptyEmpForm = {
+  name: '', personalId: '', email: '', phone: '', address: '', postalCode: '',
+  jvCard: '', guardCard: '', gasPermit: '',
+  trainingForce: false, trainingGas: false, trainingBaton: false, trainingRefresherUntil: ''
+};
+const initialEmployees = mockEmployees.map((name, idx) => ({
+  ...emptyEmpForm,
+  id: `emp-seed-${idx}`,
+  name,
+}));
+
 // Tapahtumat — jaettu perustieto, käytetään sekä tapahtumavalinnassa että
 // tapahtumariippumattomassa raporttinäkymässä (nimen näyttämiseen).
 // Tämä on vain alkuarvo ensimmäistä latausta varten — todellinen lista tulee
@@ -335,6 +348,18 @@ export default function App() {
   const [checkedInEmployees, setCheckedInEmployees] = useState(initialCheckedInEmployees);
   const [checkinsLoaded, setCheckinsLoaded] = useState(false);
 
+  // Työntekijäpankki: yrityksen koko henkilöstörekisteri (yhteinen tila, tallennetaan palvelimelle)
+  const [employees, setEmployees] = useState(initialEmployees);
+  const [employeesLoaded, setEmployeesLoaded] = useState(false);
+  const [viewingEmployeeBank, setViewingEmployeeBank] = useState(null); // null | 'list' | 'form'
+  const [employeeBankSearch, setEmployeeBankSearch] = useState('');
+  const [empForm, setEmpForm] = useState(emptyEmpForm);
+
+  // "Lisää tapahtumaan työntekijä" -näkymän tila (per-tapahtuma monivalinta rekisteristä)
+  const [addEmpSearch, setAddEmpSearch] = useState('');
+  const [addEmpSelectedIds, setAddEmpSelectedIds] = useState([]);
+  const [addEmpRole, setAddEmpRole] = useState('Järjestyksenvalvoja');
+
   // Kirjaukset ja raportit (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
   const [reports, setReports] = useState(initialReports);
   const [reportsLoaded, setReportsLoaded] = useState(false);
@@ -525,6 +550,31 @@ export default function App() {
     });
   }, [checkedInEmployees, checkinsLoaded]);
 
+  // Ladataan työntekijäpankki palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
+  useEffect(() => {
+    fetch('/api/data/employees', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && Array.isArray(res.data)) setEmployees(res.data);
+      })
+      .catch(() => {
+        // Verkkovirhe: jatketaan alkutilalla, seuraava tallennusyritys näyttää virheen
+      })
+      .finally(() => setEmployeesLoaded(true));
+  }, []);
+
+  useEffect(() => {
+    if (!employeesLoaded) return;
+    fetch('/api/data/employees', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(employees),
+    }).catch(() => {
+      // Tallennus epäonnistui (esim. yhteysongelma) — muutos jää vain tämän selaimen muistiin toistaiseksi
+    });
+  }, [employees, employeesLoaded]);
+
   // Ladataan kirjaukset/raportit palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
   useEffect(() => {
     fetch('/api/data/reports', { credentials: 'include' })
@@ -670,6 +720,72 @@ export default function App() {
     // Viiteyhtäläisyys (=== ) on turvallisempi kuin id:n vertailu.
     setRiskAssessments(prev => prev.filter(r => r !== ra));
     setOpenedRiskAssessment(null);
+  };
+
+  const updEmpForm = (key, value) => setEmpForm(prev => ({ ...prev, [key]: value }));
+
+  const getEmployeeId = () => `emp-${Date.now()}`;
+
+  const handleSaveEmployee = () => {
+    if (!empForm.name.trim()) {
+      alert('Kirjaa vähintään työntekijän nimi.');
+      return;
+    }
+    if (editingEmp) {
+      setEmployees(prev => prev.map(e => (e.id === editingEmp.id
+        ? { ...empForm, id: editingEmp.id, name: empForm.name.trim() }
+        : e)));
+    } else {
+      setEmployees(prev => [...prev, { ...empForm, id: getEmployeeId(), name: empForm.name.trim() }]);
+    }
+    setEditingEmp(null);
+    setEmpForm(emptyEmpForm);
+    setViewingEmployeeBank('list');
+  };
+
+  const handleDeleteEmployee = (emp) => {
+    const confirmed = window.confirm(
+      `Haluatko varmasti poistaa työntekijän "${emp.name}" työntekijäpankista?\n\n` +
+      'Poistoa ei voi perua. Jo tehdyt sisäänkirjaukset tapahtumiin säilyvät ennallaan.'
+    );
+    if (!confirmed) return;
+    // Viiteyhtäläisyys (=== ) on turvallisempi kuin id:n vertailu.
+    setEmployees(prev => prev.filter(e => e !== emp));
+    setEditingEmp(null);
+    setEmpForm(emptyEmpForm);
+    setViewingEmployeeBank('list');
+  };
+
+  const toggleAddEmpSelected = (id) => {
+    setAddEmpSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const handleAddSelectedEmployees = () => {
+    if (addEmpSelectedIds.length === 0) return;
+    const now = new Date();
+    const localNow = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    const checkInDateVal = localNow.toISOString().split('T')[0];
+    const checkInTimeVal = localNow.toISOString().slice(11, 16);
+    const toAdd = employees.filter(e => addEmpSelectedIds.includes(e.id));
+    setCheckedInEmployees(prev => [
+      ...prev,
+      ...toAdd.map((e, idx) => ({
+        id: Date.now() + idx,
+        eventId: selectedEvent,
+        name: e.name,
+        role: addEmpRole,
+        vest: false,
+        badge: '',
+        headset: false,
+        radio: '',
+        comment: '',
+        checkInDate: checkInDateVal,
+        checkInTime: checkInTimeVal
+      }))
+    ]);
+    setAddEmpSearch('');
+    setAddEmpSelectedIds([]);
+    setActiveTab('planning_employees');
   };
 
   const handleTamaPvm = () => {
@@ -1068,8 +1184,8 @@ export default function App() {
     setReadinessChecks(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const filteredEmployees = empSearch.length >= 3 
-    ? mockEmployees.filter(e => 
+  const filteredEmployees = empSearch.length >= 3
+    ? employees.map(e => e.name).filter(e =>
         e.toLowerCase().includes(empSearch.toLowerCase()) &&
         !currentEventCheckedIn.some(c => c.name === e))
     : [];
@@ -1082,7 +1198,7 @@ export default function App() {
   const jvaNameOptions = jvaSearch.length >= 3
     ? Array.from(new Set([
         ...currentEventCheckedIn.filter(e => e.role === jvaRole).map(e => e.name),
-        ...mockEmployees
+        ...employees.map(e => e.name)
       ])).filter(n => n.toLowerCase().includes(jvaSearch.toLowerCase()))
     : [];
 
@@ -3099,9 +3215,9 @@ export default function App() {
               <p className="text-sm text-slate-500 mt-1">Suunnittelu, varautuminen ja henkilöstöhallinto.</p>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Avausvalmius Card */}
-              <button 
+              <button
                 onClick={() => setActiveTab('planning_readiness')}
                 className={`bg-white p-6 rounded-xl border shadow-sm transition-all text-left group hover:shadow-md ${isReadyForOpening ? 'border-emerald-200 hover:border-emerald-300' : isLate ? 'border-rose-200 hover:border-rose-300' : 'border-slate-200 hover:border-blue-300'}`}
               >
@@ -3116,7 +3232,7 @@ export default function App() {
               </button>
 
               {/* Työntekijärekisteri Card */}
-              <button 
+              <button
                 onClick={() => setActiveTab('planning_employees')}
                 className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all text-left group"
               >
@@ -3128,21 +3244,6 @@ export default function App() {
                 </div>
                 <h3 className="text-lg font-bold text-slate-800 mb-1">Tapahtuman työntekijät</h3>
                 <p className="text-sm text-slate-500 line-clamp-2">Henkilöstörekisteri, pätevyydet ja osallistuvat työntekijät.</p>
-              </button>
-
-              {/* Uusi työntekijä Card */}
-              <button 
-                onClick={() => { setEditingEmp(null); setActiveTab('planning_employee_new'); }}
-                className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all text-left group"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="p-3 bg-emerald-50 text-emerald-600 rounded-lg group-hover:bg-emerald-100 transition-colors">
-                    <UserPlus size={24} />
-                  </div>
-                  <ChevronRight className="text-slate-400 group-hover:text-emerald-500 transition-colors" size={20} />
-                </div>
-                <h3 className="text-lg font-bold text-slate-800 mb-1">Kirjaa uusi työntekijä</h3>
-                <p className="text-sm text-slate-500 line-clamp-2">Lisää työntekijä rekisteriin ja tarkista luvat sekä koulutukset.</p>
               </button>
             </div>
           </div>
@@ -3352,15 +3453,15 @@ export default function App() {
                   Tapahtuman työntekijät
                 </h2>
                 <p className="text-sm text-slate-500 mt-1">
-                  Sisäänkirjattuna {currentEventCheckedIn.length} hlö (JV {jvCount}, vartijat {guardCount}). Rekisterissä {mockEmployees.length} hlö.
+                  Sisäänkirjattuna {currentEventCheckedIn.length} hlö (JV {jvCount}, vartijat {guardCount}). Rekisterissä {employees.length} hlö.
                 </p>
               </div>
-              <button 
-                onClick={() => { setEditingEmp(null); setActiveTab('planning_employee_new'); }}
+              <button
+                onClick={() => { setAddEmpSearch(''); setAddEmpSelectedIds([]); setActiveTab('planning_employee_add'); }}
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-sm"
               >
                 <UserPlus size={16} />
-                Lisää uusi
+                Lisää tapahtumaan työntekijä
               </button>
             </div>
 
@@ -3403,8 +3504,14 @@ export default function App() {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex justify-end gap-2">
-                          <button 
-                            onClick={() => { setEditingEmp(emp); setActiveTab('planning_employee_new'); }}
+                          <button
+                            onClick={() => {
+                              const reg = employees.find(x => x.name === emp.name);
+                              setEditingEmp(reg || null);
+                              setEmpForm(reg ? { ...emptyEmpForm, ...reg } : { ...emptyEmpForm, name: emp.name });
+                              setViewingEmployeeBank('form');
+                            }}
+                            title="Työntekijän tiedot muokataan työntekijäpankissa"
                             className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
                           >
                             Muokkaa
@@ -3424,145 +3531,137 @@ export default function App() {
             </div>
           </div>
         );
-      case 'planning_employee_new':
+      case 'planning_employee_add': {
+        const availableEmployees = employees.filter(e => !currentEventCheckedIn.some(c => c.name === e.name));
+        const visibleAddEmployees = addEmpSearch.trim()
+          ? availableEmployees.filter(e => e.name.toLowerCase().includes(addEmpSearch.trim().toLowerCase()))
+          : availableEmployees;
+        const allVisibleSelected = visibleAddEmployees.length > 0 && visibleAddEmployees.every(e => addEmpSelectedIds.includes(e.id));
+
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
-            <button 
-              onClick={() => { setEditingEmp(null); setActiveTab('planning_employees'); }}
+            <button
+              onClick={() => { setAddEmpSearch(''); setAddEmpSelectedIds([]); setActiveTab('planning_employees'); }}
               className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
             >
               <ArrowLeft size={16} />
               Takaisin työntekijälistaan
             </button>
-            
+
             <div className="mb-6 border-b border-slate-100 pb-4">
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                {editingEmp ? <UserCheck className="text-indigo-500" size={24} /> : <UserPlus className="text-emerald-500" size={24} />}
-                {editingEmp ? 'Muokkaa työntekijää' : 'Kirjaa uusi työntekijä'}
+                <UserPlus className="text-indigo-500" size={24} />
+                Lisää tapahtumaan työntekijä
               </h2>
               <p className="text-sm text-slate-500 mt-1">
-                {editingEmp ? 'Päivitä työntekijän perustiedot, luvat ja suoritetut koulutukset.' : 'Lisää työntekijän perustiedot, pätevyydet ja suoritetut koulutukset rekisteriin.'}
+                Valitse työntekijäpankista yksi tai useampi henkilö ja kirjaa heidät kerralla sisään tähän tapahtumaan.
               </p>
             </div>
 
-            <form className="space-y-8 text-left">
-              {/* Osa 1: Yhteys- ja henkilötiedot */}
-              <div className="space-y-4">
-                <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                  <Contact size={18} className="text-slate-400"/>
-                  1. Henkilö- ja yhteystiedot
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Koko nimi (Sukunimi Etunimi Toiset nimet)</label>
-                    <input type="text" defaultValue={editingEmp ? editingEmp.name : ''} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. Korhonen Elli Marja Orvokki" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Henkilötunnus</label>
-                    <input type="text" defaultValue={editingEmp ? '121280-123X' : ''} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="PPKKVV-XXXX" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Sähköposti</label>
-                    <input type="email" className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="etunimi.sukunimi@esimerkki.fi" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Matkapuhelin</label>
-                    <input type="tel" className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="040 123 4567" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                     <div className="col-span-2 sm:col-span-1">
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Katuosoite</label>
-                      <input type="text" className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esimerkkikatu 1 A 2" />
-                    </div>
-                    <div className="col-span-2 sm:col-span-1">
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Postinumero</label>
-                      <input type="text" className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="00100" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Osa 2: Luvat ja kortit */}
-              <div className="space-y-4">
-                <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                  <IdCard size={18} className="text-slate-400"/>
-                  2. Pätevyydet ja kortit
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <label className="block text-sm font-bold text-slate-800 mb-2">Järjestyksenvalvojakortti</label>
-                    <input type="text" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Kortin numero" />
-                  </div>
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <label className="block text-sm font-bold text-slate-800 mb-2">Vartijakortti</label>
-                    <input type="text" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Kortin numero" />
-                  </div>
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <label className="block text-sm font-bold text-slate-800 mb-2">Kaasusumuttimen hallussapito</label>
-                    <input type="text" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Lupanumero" />
-                  </div>
-                </div>
-              </div>
-
-              {/* Osa 3: Erityiskoulutukset */}
-              <div className="space-y-4">
-                <div className="flex justify-between items-end border-b pb-2">
-                  <h3 className="text-md font-semibold text-slate-700 flex items-center gap-2">
-                    <UserCheck size={18} className="text-slate-400"/>
-                    3. Erityiskoulutukset
-                  </h3>
-                  <span className="text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded">Ruksaa vain jos suoritettu ja todistus mukana</span>
-                </div>
-                
-                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
-                  <label className="flex items-center gap-4 p-4 cursor-pointer hover:bg-slate-50 transition-colors">
-                    <input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
-                    <div>
-                      <span className="block text-sm font-bold text-slate-800">Järjestyksenvalvojan voimankäytön lisäkoulutus</span>
-                      <span className="block text-xs text-slate-500 mt-0.5">Oikeuttaa kantaa voimankäyttövälineitä (jos muut luvat kunnossa).</span>
-                    </div>
-                  </label>
-                  <label className="flex items-center gap-4 p-4 cursor-pointer hover:bg-slate-50 transition-colors">
-                    <input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
-                    <span className="text-sm font-bold text-slate-800">Kaasusumutinkoulutus</span>
-                  </label>
-                  <label className="flex items-center gap-4 p-4 cursor-pointer hover:bg-slate-50 transition-colors">
-                    <input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
-                    <span className="text-sm font-bold text-slate-800">Teleskooppipatukkakoulutus</span>
-                  </label>
-                  
-                  <div className="p-4 bg-slate-50 flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
-                    <div>
-                      <span className="block text-sm font-bold text-slate-800">Voimankäyttövälineiden kertauskoulutus</span>
-                      <span className="block text-xs text-slate-500 mt-0.5">Vuosittainen kertaus. Kirjaa mihin asti todistus on voimassa.</span>
-                    </div>
-                    <div className="min-w-[200px]">
-                      <input type="date" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-6 flex justify-end gap-3 border-t border-slate-100">
-                <button 
-                  type="button" 
-                  onClick={() => { setEditingEmp(null); setActiveTab('planning_employees'); }}
-                  className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+            {employees.length === 0 ? (
+              <div className="text-center py-12 text-sm text-slate-500">
+                Työntekijäpankki on tyhjä.
+                <button
+                  onClick={() => { setEditingEmp(null); setEmpForm(emptyEmpForm); setViewingEmployeeBank('form'); }}
+                  className="block mx-auto mt-3 text-indigo-600 hover:text-indigo-800 font-medium"
                 >
-                  Peruuta
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => { setEditingEmp(null); setActiveTab('planning_employees'); }}
-                  className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                >
-                  <CheckCircle size={18} />
-                  {editingEmp ? 'Tallenna muutokset' : 'Tallenna työntekijä'}
+                  Lisää työntekijöitä työntekijäpankkiin →
                 </button>
               </div>
-            </form>
+            ) : (
+              <>
+                <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
+                    <input
+                      type="text"
+                      value={addEmpSearch}
+                      onChange={(e) => setAddEmpSearch(e.target.value)}
+                      placeholder="Hae nimellä..."
+                      className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 text-sm"
+                    />
+                  </div>
+                  <div className="flex items-center gap-4 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2">
+                    <span className="text-sm font-bold text-slate-700 shrink-0">Rooli valituille</span>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" name="addEmpRole" checked={addEmpRole === 'Järjestyksenvalvoja'} onChange={() => setAddEmpRole('Järjestyksenvalvoja')} className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" />
+                      <span className="text-sm text-slate-700">JV</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" name="addEmpRole" checked={addEmpRole === 'Vartija'} onChange={() => setAddEmpRole('Vartija')} className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" />
+                      <span className="text-sm text-slate-700">Vartija</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="p-3 w-10">
+                          <input
+                            type="checkbox"
+                            checked={allVisibleSelected}
+                            onChange={() => {
+                              if (allVisibleSelected) {
+                                setAddEmpSelectedIds(prev => prev.filter(id => !visibleAddEmployees.some(e => e.id === id)));
+                              } else {
+                                setAddEmpSelectedIds(prev => Array.from(new Set([...prev, ...visibleAddEmployees.map(e => e.id)])));
+                              }
+                            }}
+                            className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                          />
+                        </th>
+                        <th className="p-3">Nimi</th>
+                        <th className="p-3">Yhteystiedot</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 bg-white">
+                      {visibleAddEmployees.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="p-8 text-center text-sm text-slate-500">
+                            {addEmpSearch.trim() ? 'Ei hakua vastaavia työntekijöitä.' : 'Kaikki rekisterin työntekijät on jo kirjattu sisään tähän tapahtumaan.'}
+                          </td>
+                        </tr>
+                      ) : visibleAddEmployees.map((emp) => (
+                        <tr
+                          key={emp.id}
+                          onClick={() => toggleAddEmpSelected(emp.id)}
+                          className="hover:bg-slate-50 transition-colors cursor-pointer"
+                        >
+                          <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={addEmpSelectedIds.includes(emp.id)}
+                              onChange={() => toggleAddEmpSelected(emp.id)}
+                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                            />
+                          </td>
+                          <td className="p-3 font-medium text-slate-800">{emp.name}</td>
+                          <td className="p-3 text-slate-500 text-xs">{[emp.email, emp.phone].filter(Boolean).join(' · ') || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="pt-6 mt-2 flex justify-between items-center border-t border-slate-100">
+                  <span className="text-sm text-slate-500">{addEmpSelectedIds.length} valittu</span>
+                  <button
+                    type="button"
+                    disabled={addEmpSelectedIds.length === 0}
+                    onClick={handleAddSelectedEmployees}
+                    className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                  >
+                    <CheckCircle size={18} />
+                    Lisää valitut tapahtumaan
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         );
+      }
       case 'documents': {
         const documentOptions = [
           { id: 'forms', label: 'Täytettävät lomakkeet', icon: Clipboard, color: 'text-indigo-600', bg: 'bg-indigo-50', desc: 'Tapahtumailmoitukset, tarkastuslistat ja viranomaislomakkeet.' },
@@ -4286,6 +4385,280 @@ export default function App() {
     }
   };
 
+  // ====================== TYÖNTEKIJÄPANKKI (koko yrityksen henkilöstörekisteri) ======================
+  if (viewingEmployeeBank) {
+    const filteredBankEmployees = employeeBankSearch.trim()
+      ? employees.filter(e => e.name.toLowerCase().includes(employeeBankSearch.trim().toLowerCase()))
+      : employees;
+
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
+        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="text-indigo-400" size={28} />
+            <div>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Työntekijäpankki</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
+              <Clock size={16} className="text-indigo-400" />
+              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
+            </div>
+            <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-sm">
+              TJ
+            </div>
+          </div>
+        </nav>
+
+        <main className="flex-1 p-6 md:p-10">
+          <div className="max-w-5xl mx-auto">
+            <button
+              onClick={() => {
+                if (viewingEmployeeBank === 'form') {
+                  setViewingEmployeeBank('list');
+                  setEditingEmp(null);
+                  setEmpForm(emptyEmpForm);
+                } else {
+                  setViewingEmployeeBank(null);
+                }
+              }}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              {viewingEmployeeBank === 'form' ? 'Takaisin työntekijälistaan' : 'Takaisin'}
+            </button>
+
+            {viewingEmployeeBank === 'form' ? (
+              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
+                <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-start">
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                      {editingEmp ? <UserCheck className="text-indigo-500" size={24} /> : <UserPlus className="text-emerald-500" size={24} />}
+                      {editingEmp ? 'Muokkaa työntekijää' : 'Kirjaa uusi työntekijä'}
+                    </h2>
+                    <p className="text-sm text-slate-500 mt-1">
+                      {editingEmp ? 'Päivitä työntekijän perustiedot, luvat ja suoritetut koulutukset.' : 'Lisää työntekijän perustiedot, pätevyydet ja suoritetut koulutukset rekisteriin.'}
+                    </p>
+                  </div>
+                  {editingEmp && (
+                    <button
+                      onClick={() => handleDeleteEmployee(editingEmp)}
+                      title="Poista työntekijä"
+                      className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-lg transition-colors shrink-0"
+                    >
+                      <Trash2 size={20} />
+                    </button>
+                  )}
+                </div>
+
+                <form className="space-y-8 text-left" onSubmit={(e) => e.preventDefault()}>
+                  {/* Osa 1: Yhteys- ja henkilötiedot */}
+                  <div className="space-y-4">
+                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
+                      <Contact size={18} className="text-slate-400"/>
+                      1. Henkilö- ja yhteystiedot
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Koko nimi (Sukunimi Etunimi Toiset nimet)</label>
+                        <input type="text" value={empForm.name} onChange={(e) => updEmpForm('name', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. Korhonen Elli Marja Orvokki" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Henkilötunnus</label>
+                        <input type="text" value={empForm.personalId} onChange={(e) => updEmpForm('personalId', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="PPKKVV-XXXX" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Sähköposti</label>
+                        <input type="email" value={empForm.email} onChange={(e) => updEmpForm('email', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="etunimi.sukunimi@esimerkki.fi" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Matkapuhelin</label>
+                        <input type="tel" value={empForm.phone} onChange={(e) => updEmpForm('phone', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="040 123 4567" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                         <div className="col-span-2 sm:col-span-1">
+                          <label className="block text-sm font-medium text-slate-700 mb-1">Katuosoite</label>
+                          <input type="text" value={empForm.address} onChange={(e) => updEmpForm('address', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esimerkkikatu 1 A 2" />
+                        </div>
+                        <div className="col-span-2 sm:col-span-1">
+                          <label className="block text-sm font-medium text-slate-700 mb-1">Postinumero</label>
+                          <input type="text" value={empForm.postalCode} onChange={(e) => updEmpForm('postalCode', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="00100" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Osa 2: Luvat ja kortit */}
+                  <div className="space-y-4">
+                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
+                      <IdCard size={18} className="text-slate-400"/>
+                      2. Pätevyydet ja kortit
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                        <label className="block text-sm font-bold text-slate-800 mb-2">Järjestyksenvalvojakortti</label>
+                        <input type="text" value={empForm.jvCard} onChange={(e) => updEmpForm('jvCard', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Kortin numero" />
+                      </div>
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                        <label className="block text-sm font-bold text-slate-800 mb-2">Vartijakortti</label>
+                        <input type="text" value={empForm.guardCard} onChange={(e) => updEmpForm('guardCard', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Kortin numero" />
+                      </div>
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                        <label className="block text-sm font-bold text-slate-800 mb-2">Kaasusumuttimen hallussapito</label>
+                        <input type="text" value={empForm.gasPermit} onChange={(e) => updEmpForm('gasPermit', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Lupanumero" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Osa 3: Erityiskoulutukset */}
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-end border-b pb-2">
+                      <h3 className="text-md font-semibold text-slate-700 flex items-center gap-2">
+                        <UserCheck size={18} className="text-slate-400"/>
+                        3. Erityiskoulutukset
+                      </h3>
+                      <span className="text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded">Ruksaa vain jos suoritettu ja todistus mukana</span>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
+                      <label className="flex items-center gap-4 p-4 cursor-pointer hover:bg-slate-50 transition-colors">
+                        <input type="checkbox" checked={empForm.trainingForce} onChange={(e) => updEmpForm('trainingForce', e.target.checked)} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
+                        <div>
+                          <span className="block text-sm font-bold text-slate-800">Järjestyksenvalvojan voimankäytön lisäkoulutus</span>
+                          <span className="block text-xs text-slate-500 mt-0.5">Oikeuttaa kantaa voimankäyttövälineitä (jos muut luvat kunnossa).</span>
+                        </div>
+                      </label>
+                      <label className="flex items-center gap-4 p-4 cursor-pointer hover:bg-slate-50 transition-colors">
+                        <input type="checkbox" checked={empForm.trainingGas} onChange={(e) => updEmpForm('trainingGas', e.target.checked)} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
+                        <span className="text-sm font-bold text-slate-800">Kaasusumutinkoulutus</span>
+                      </label>
+                      <label className="flex items-center gap-4 p-4 cursor-pointer hover:bg-slate-50 transition-colors">
+                        <input type="checkbox" checked={empForm.trainingBaton} onChange={(e) => updEmpForm('trainingBaton', e.target.checked)} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
+                        <span className="text-sm font-bold text-slate-800">Teleskooppipatukkakoulutus</span>
+                      </label>
+
+                      <div className="p-4 bg-slate-50 flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
+                        <div>
+                          <span className="block text-sm font-bold text-slate-800">Voimankäyttövälineiden kertauskoulutus</span>
+                          <span className="block text-xs text-slate-500 mt-0.5">Vuosittainen kertaus. Kirjaa mihin asti todistus on voimassa.</span>
+                        </div>
+                        <div className="min-w-[200px]">
+                          <input type="date" value={empForm.trainingRefresherUntil} onChange={(e) => updEmpForm('trainingRefresherUntil', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-6 flex justify-end gap-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => { setViewingEmployeeBank('list'); setEditingEmp(null); setEmpForm(emptyEmpForm); }}
+                      className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                    >
+                      Peruuta
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveEmployee}
+                      className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                    >
+                      <CheckCircle size={18} />
+                      {editingEmp ? 'Tallenna muutokset' : 'Tallenna työntekijä'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-800">Työntekijäpankki</h2>
+                    <p className="text-sm text-slate-500 mt-1">
+                      Kaikki yrityksen työntekijät ({employees.length} kpl). Täältä luodaan, muokataan ja poistetaan työntekijät.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => { setEditingEmp(null); setEmpForm(emptyEmpForm); setViewingEmployeeBank('form'); }}
+                    className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors shadow-sm shrink-0"
+                  >
+                    <UserPlus size={16} />
+                    Uusi työntekijä
+                  </button>
+                </div>
+
+                <div className="relative mb-4 max-w-sm">
+                  <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
+                  <input
+                    type="text"
+                    value={employeeBankSearch}
+                    onChange={(e) => setEmployeeBankSearch(e.target.value)}
+                    placeholder="Hae nimellä..."
+                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 text-sm"
+                  />
+                </div>
+
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="p-4">Nimi</th>
+                        <th className="p-4">Henkilötunnus</th>
+                        <th className="p-4">Kortit</th>
+                        <th className="p-4">Yhteystiedot</th>
+                        <th className="p-4 text-right">Toiminnot</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {filteredBankEmployees.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="p-8 text-center text-sm text-slate-500">
+                            {employeeBankSearch.trim() ? 'Ei hakua vastaavia työntekijöitä.' : 'Ei vielä työntekijöitä rekisterissä.'}
+                          </td>
+                        </tr>
+                      ) : filteredBankEmployees.map((emp) => (
+                        <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-4 font-medium text-slate-800">{emp.name}</td>
+                          <td className="p-4 font-mono text-xs text-slate-600">{emp.personalId || '—'}</td>
+                          <td className="p-4">
+                            <div className="flex flex-wrap gap-1">
+                              {emp.jvCard && <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">JV</span>}
+                              {emp.guardCard && <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded">Vartija</span>}
+                              {emp.gasPermit && <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded">Kaasu</span>}
+                              {!emp.jvCard && !emp.guardCard && !emp.gasPermit && <span className="text-xs text-slate-400">-</span>}
+                            </div>
+                          </td>
+                          <td className="p-4 text-slate-500 text-xs">{[emp.email, emp.phone].filter(Boolean).join(' · ') || '—'}</td>
+                          <td className="p-4 text-right">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => { setEditingEmp(emp); setEmpForm({ ...emptyEmpForm, ...emp }); setViewingEmployeeBank('form'); }}
+                                className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
+                              >
+                                Muokkaa
+                              </button>
+                              <button
+                                onClick={() => handleDeleteEmployee(emp)}
+                                className="text-rose-600 hover:text-rose-800 font-medium text-xs bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
+                              >
+                                Poista
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   // ====================== TALLENNETUT RAPORTIT (kaikki tapahtumat) ======================
   if (viewingAllReports) {
     const sortedAllReports = [...reports].sort((a, b) => {
@@ -4652,6 +5025,13 @@ export default function App() {
               <Archive size={16} className="text-indigo-400" />
               Tallennetut tapahtumat
             </button>
+            <button
+              onClick={() => setViewingEmployeeBank('list')}
+              className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              <IdCard size={16} className="text-indigo-400" />
+              Työntekijäpankki
+            </button>
             <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
@@ -4684,6 +5064,13 @@ export default function App() {
               >
                 <Archive size={16} />
                 Tallennetut tapahtumat
+              </button>
+              <button
+                onClick={() => setViewingEmployeeBank('list')}
+                className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+              >
+                <IdCard size={16} />
+                Työntekijäpankki
               </button>
             </div>
 
