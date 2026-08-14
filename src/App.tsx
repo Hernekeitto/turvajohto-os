@@ -790,6 +790,27 @@ export default function App() {
     if (viewingUserAdmin === 'list') fetchUserAdminList();
   }, [viewingUserAdmin]);
 
+  // Istunto voi mitätöityä palvelimella milloin tahansa ilman että selain tietää siitä
+  // etukäteen (admin painoi "Kirjaa käyttäjä ulos", liukuva istunto ehti vanhentua,
+  // JWT_SECRET vaihtui palvelimen uudelleenkäynnistyksessä, jne.) — jokainen requireAuth-
+  // suojattu reitti vastaa silloin 401:llä. Tämä huomaa sen HETI seuraavassa API-kutsussa
+  // riippumatta mistä toiminnosta se tulee (ei vain 5 min välein pingaavasta
+  // käyttämättömyysvahdista), ja palauttaa kirjautumisnäkymään sen sijaan että
+  // toiminto epäonnistuisi huomaamattomasti taustalla.
+  useEffect(() => {
+    const originalFetch = window.fetch;
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      const url = typeof args[0] === 'string' ? args[0] : (args[0] as Request)?.url || '';
+      if (response.status === 401 && url.startsWith('/api/') && !url.startsWith('/api/login')) {
+        try { sessionStorage.setItem('tj_session_expired', '1'); } catch { /* ei kriittinen */ }
+        window.location.reload();
+      }
+      return response;
+    };
+    return () => { window.fetch = originalFetch; };
+  }, []);
+
   // Automaattinen uloskirjaus 1h käyttämättömyyden jälkeen — ei koske pääkäyttäjää.
   // Palvelimen istunto on jo itsessään liukuva (ks. server/index.js requireAuth), tämä
   // antaa lisäksi välittömän palautteen (kirjaa ulos heti ilman että pitää odottaa

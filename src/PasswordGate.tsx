@@ -26,9 +26,19 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
   const [totpCode, setTotpCode] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Näytetään kerran jos tänne palattiin siksi että istunto mitätöityi taustalla
+  // (admin painoi "Kirjaa käyttäjä ulos", käyttämättömyyskatkaisu ehti, tms.) —
+  // ilman tätä käyttäjä näkisi vain tyhjän kirjautumislomakkeen selittämättä miksi.
+  const [expiredNotice, setExpiredNotice] = useState(false);
   const totpInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    try {
+      if (sessionStorage.getItem('tj_session_expired')) {
+        setExpiredNotice(true);
+        sessionStorage.removeItem('tj_session_expired');
+      }
+    } catch { /* ei kriittinen */ }
     loadSessionProfile()
       .then((p) => {
         setProfile(p);
@@ -92,6 +102,12 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
         className="w-full max-w-sm bg-white border border-slate-200 rounded-xl shadow-sm p-6"
       >
         <h1 className="text-lg font-semibold text-slate-800 mb-1">Turvajohto OS</h1>
+
+        {expiredNotice && (
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+            Istuntosi päättyi. Kirjaudu uudelleen jatkaaksesi.
+          </p>
+        )}
 
         {!totpRequired ? (
           <>
