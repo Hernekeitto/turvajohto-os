@@ -461,6 +461,12 @@ function canEdit(perms, nodeId) {
   return !!perms[nodeId]?.edit;
 }
 
+// "Lisää tapahtumaan työntekijä" ei ole oma sivukartta-solmu — se kuuluu samaan
+// oikeuteen kuin "Tapahtuman työntekijät" (planning_employees), josta se avataan.
+function sitemapIdForTab(tab) {
+  return tab === 'planning_employee_add' ? 'planning_employees' : tab;
+}
+
 // Sivukartan yksi rivi (+ lapset rekursiivisesti) admin-oikeuseditorissa.
 const SitemapPermissionRow = ({ node, depth, permDraft, onToggle, onCascade }) => {
   const perm = permDraft[node.id] || {};
@@ -535,7 +541,13 @@ export default function App() {
   // Nimimerkki on se, mikä näkyy raporteissa "Laatija"-kenttänä (esim. "Turva 1",
   // "TIKE Päivystäjä") — käyttäjätunnus itsessään ei näy käyttäjille.
   const sessionNickname = session?.nickname || sessionUsername;
+  // Sivukartta-oikeudet: admin ohittaa aina kaikki tarkistukset (ks. canView/canEdit,
+  // perms['*']). Muilla oletusarvo on "ei mitään näkyvissä" kunnes admin asettaa oikeudet
+  // "Muokkaa käyttäjiä" -näkymässä.
+  const isAdminUser = session?.role === 'admin';
+  const perms = session?.permissions;
   const [activeTab, setActiveTab] = useState('landing');
+  const [openedReportSource, setOpenedReportSource] = useState(null); // 'overview' | 'report_list' — mistä avoin raportti-modaali avattiin, muokkausoikeuden tarkistusta varten
 
   // Tapahtumavalinta: null = valintasivu, 'fesx' = tuotantotapahtuma,
   // 'feso' = mallitapahtuma, 'new' = uuden tapahtuman lomake
@@ -1768,6 +1780,17 @@ export default function App() {
   }
 
   const renderContent = () => {
+    // Suoja tilanteille joissa aiemmin sallitun sivun activeTab jää voimaan sen jälkeen
+    // kun admin on rajannut oikeuksia — pelkkä valikoiden piilottaminen ei riitä.
+    if (!isAdminUser && !canView(perms, sitemapIdForTab(activeTab))) {
+      return (
+        <div className="bg-white p-10 rounded-xl shadow-sm border border-slate-100 text-center max-w-lg mx-auto">
+          <ShieldAlert className="text-rose-400 mx-auto mb-4" size={40} />
+          <h2 className="text-lg font-bold text-slate-800 mb-1">Ei käyttöoikeutta</h2>
+          <p className="text-sm text-slate-500">Sinulla ei ole oikeutta tähän sivuun. Ota yhteyttä pääkäyttäjään jos tarvitset pääsyn.</p>
+        </div>
+      );
+    }
     switch (activeTab) {
       case 'landing':
         return (
@@ -1867,7 +1890,7 @@ export default function App() {
                       tikeLogPageItems.map(rep => (
                         <div
                           key={rep.id}
-                          onClick={() => setOpenedReport(rep)}
+                          onClick={() => { setOpenedReport(rep); setOpenedReportSource('overview'); }}
                           className="flex gap-4 p-3 hover:bg-slate-50 rounded-lg transition-colors border-b border-slate-50 last:border-0 cursor-pointer"
                         >
                           <div className="text-sm font-mono text-slate-400 w-16 pt-0.5">{rep.time}</div>
@@ -1950,7 +1973,7 @@ export default function App() {
                         {currentEventReports.slice(0, 8).map((rep, idx) => (
                           <div
                             key={idx}
-                            onClick={() => setOpenedReport(rep)}
+                            onClick={() => { setOpenedReport(rep); setOpenedReportSource('overview'); }}
                             className="flex flex-col gap-1 p-3 rounded-lg bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors cursor-pointer"
                           >
                             <div className="flex justify-between items-center">
@@ -2007,49 +2030,55 @@ export default function App() {
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* JV Card */}
-              <button 
-                onClick={() => setActiveTab('report_jv')}
-                className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all text-left group"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg group-hover:bg-indigo-100 transition-colors">
-                    <ShieldCheck size={24} />
+              {(isAdminUser || canView(perms, 'report_jv')) && (
+                <button
+                  onClick={() => setActiveTab('report_jv')}
+                  className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all text-left group"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg group-hover:bg-indigo-100 transition-colors">
+                      <ShieldCheck size={24} />
+                    </div>
+                    <ChevronRight className="text-slate-400 group-hover:text-indigo-500 transition-colors" size={20} />
                   </div>
-                  <ChevronRight className="text-slate-400 group-hover:text-indigo-500 transition-colors" size={20} />
-                </div>
-                <h3 className="text-lg font-bold text-slate-800 mb-1">Järjestyksenvalvojan tapahtumailmoitus</h3>
-                <p className="text-sm text-slate-500 line-clamp-2">Lakisääteinen ilmoitus kiinniotto- ja voimankäyttötilanteista (LYTP 33 §).</p>
-              </button>
+                  <h3 className="text-lg font-bold text-slate-800 mb-1">Järjestyksenvalvojan tapahtumailmoitus</h3>
+                  <p className="text-sm text-slate-500 line-clamp-2">Lakisääteinen ilmoitus kiinniotto- ja voimankäyttötilanteista (LYTP 33 §).</p>
+                </button>
+              )}
 
               {/* TIKE Card */}
-              <button 
-                onClick={() => setActiveTab('report_tike')}
-                className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all text-left group"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="p-3 bg-emerald-50 text-emerald-600 rounded-lg group-hover:bg-emerald-100 transition-colors">
-                    <Activity size={24} />
+              {(isAdminUser || canView(perms, 'report_tike')) && (
+                <button
+                  onClick={() => setActiveTab('report_tike')}
+                  className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all text-left group"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-3 bg-emerald-50 text-emerald-600 rounded-lg group-hover:bg-emerald-100 transition-colors">
+                      <Activity size={24} />
+                    </div>
+                    <ChevronRight className="text-slate-400 group-hover:text-emerald-500 transition-colors" size={20} />
                   </div>
-                  <ChevronRight className="text-slate-400 group-hover:text-emerald-500 transition-colors" size={20} />
-                </div>
-                <h3 className="text-lg font-bold text-slate-800 mb-1">TIKE:n raportointi</h3>
-                <p className="text-sm text-slate-500 line-clamp-2">Tilannekeskuksen seuranta, kirjaukset ja laajemmat poikkeamaraportit.</p>
-              </button>
+                  <h3 className="text-lg font-bold text-slate-800 mb-1">TIKE:n raportointi</h3>
+                  <p className="text-sm text-slate-500 line-clamp-2">Tilannekeskuksen seuranta, kirjaukset ja laajemmat poikkeamaraportit.</p>
+                </button>
+              )}
 
-               {/* Raportit Arkisto Card */}
-               <button 
-                onClick={() => setActiveTab('report_list')}
-                className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-300 transition-all text-left group"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="p-3 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-100 transition-colors">
-                    <Archive size={24} />
+              {/* Raportit Arkisto Card */}
+              {(isAdminUser || canView(perms, 'report_list')) && (
+                <button
+                  onClick={() => setActiveTab('report_list')}
+                  className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-300 transition-all text-left group"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-3 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-100 transition-colors">
+                      <Archive size={24} />
+                    </div>
+                    <ChevronRight className="text-slate-400 group-hover:text-blue-500 transition-colors" size={20} />
                   </div>
-                  <ChevronRight className="text-slate-400 group-hover:text-blue-500 transition-colors" size={20} />
-                </div>
-                <h3 className="text-lg font-bold text-slate-800 mb-1">Tallennetut raportit</h3>
-                <p className="text-sm text-slate-500 line-clamp-2">Selaa, hae ja tarkastele kaikkia järjestelmään luotuja raportteja.</p>
-              </button>
+                  <h3 className="text-lg font-bold text-slate-800 mb-1">Tallennetut raportit</h3>
+                  <p className="text-sm text-slate-500 line-clamp-2">Selaa, hae ja tarkastele kaikkia järjestelmään luotuja raportteja.</p>
+                </button>
+              )}
             </div>
           </div>
         );
@@ -2120,7 +2149,7 @@ export default function App() {
                       <tr
                         key={idx}
                         className="hover:bg-white transition-colors cursor-pointer"
-                        onClick={() => setOpenedReport(rep)}
+                        onClick={() => { setOpenedReport(rep); setOpenedReportSource('report_list'); }}
                       >
                         <td className="p-4 font-mono text-xs text-slate-500">{rep.id}</td>
                         <td className="p-4 font-medium text-slate-800">{rep.time}</td>
@@ -2133,7 +2162,7 @@ export default function App() {
                         <td className="p-4 text-slate-600 line-clamp-1 max-w-[200px]">{rep.summary}</td>
                         <td className="p-4 text-right">
                           <button
-                            onClick={(e) => { e.stopPropagation(); setOpenedReport(rep); }}
+                            onClick={(e) => { e.stopPropagation(); setOpenedReport(rep); setOpenedReportSource('report_list'); }}
                             className="text-blue-600 hover:text-blue-900 font-medium text-xs bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md transition-colors"
                           >
                             Avaa
@@ -2279,10 +2308,12 @@ export default function App() {
                 <button type="button" className="px-5 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
                   Tyhjennä
                 </button>
-                <button type="button" className="px-5 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2">
-                  <CheckCircle size={16} />
-                  Tallenna ilmoitus
-                </button>
+                {(isAdminUser || canEdit(perms, 'report_jv')) && (
+                  <button type="button" className="px-5 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2">
+                    <CheckCircle size={16} />
+                    Tallenna ilmoitus
+                  </button>
+                )}
               </div>
 
               {/* TIKE-osio */}
@@ -2346,7 +2377,7 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {tikeOptions.map((option) => {
+              {tikeOptions.filter((option) => isAdminUser || canView(perms, `tike_form_${option.id}`)).map((option) => {
                 const Icon = option.icon;
                 return (
                   <button
@@ -2624,14 +2655,16 @@ export default function App() {
                     >
                       Peruuta
                     </button>
-                    <button 
-                      type="button" 
-                      onClick={handleSaveCheckIn}
-                      className="px-5 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center gap-2"
-                    >
-                      <CheckCircle size={16} />
-                      Tallenna kirjaus
-                    </button>
+                    {(isAdminUser || canEdit(perms, 'tike_form_in')) && (
+                      <button
+                        type="button"
+                        onClick={handleSaveCheckIn}
+                        className="px-5 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        <CheckCircle size={16} />
+                        Tallenna kirjaus
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -2820,7 +2853,9 @@ export default function App() {
 
                   {/* Toiminnot */}
                   <div className="pt-2">
-                    {!showOutTimeInput ? (
+                    {!(isAdminUser || canEdit(perms, 'tike_form_out')) ? (
+                      <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">Ei muokkausoikeutta tähän toimintoon.</p>
+                    ) : !showOutTimeInput ? (
                       <div className="flex flex-col sm:flex-row gap-3">
                         <button 
                           type="button" 
@@ -2996,14 +3031,16 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                <button
-                  type="button"
-                  onClick={handleSaveOpenKirjaus}
-                  className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                >
-                  <CheckCircle size={18} />
-                  Tallenna kirjaus
-                </button>
+                {(isAdminUser || canEdit(perms, 'tike_form_open')) && (
+                  <button
+                    type="button"
+                    onClick={handleSaveOpenKirjaus}
+                    className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                  >
+                    <CheckCircle size={18} />
+                    Tallenna kirjaus
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -3159,14 +3196,16 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                <button
-                  type="button"
-                  onClick={handleSaveFirstAid}
-                  className="px-5 py-2.5 text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                >
-                  <CheckCircle size={18} />
-                  Tallenna EA-kirjaus
-                </button>
+                {(isAdminUser || canEdit(perms, 'tike_form_firstaid')) && (
+                  <button
+                    type="button"
+                    onClick={handleSaveFirstAid}
+                    className="px-5 py-2.5 text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                  >
+                    <CheckCircle size={18} />
+                    Tallenna EA-kirjaus
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -3568,14 +3607,16 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                <button
-                  type="button"
-                  onClick={handleSaveJvaReport}
-                  className="px-5 py-2.5 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                >
-                  <CheckCircle size={18} />
-                  Tallenna toimenpidekirjaus
-                </button>
+                {(isAdminUser || canEdit(perms, 'tike_form_jvaction')) && (
+                  <button
+                    type="button"
+                    onClick={handleSaveJvaReport}
+                    className="px-5 py-2.5 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                  >
+                    <CheckCircle size={18} />
+                    Tallenna toimenpidekirjaus
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -3735,14 +3776,16 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleSaveGenericReport(activeTab.replace('tike_form_', ''), config.title)}
-                  className={`px-5 py-2.5 text-sm font-bold text-white rounded-lg transition-colors flex items-center gap-2 shadow-sm ${config.btnBg}`}
-                >
-                  <CheckCircle size={18} />
-                  Tallenna kirjaus
-                </button>
+                {(isAdminUser || canEdit(perms, activeTab)) && (
+                  <button
+                    type="button"
+                    onClick={() => handleSaveGenericReport(activeTab.replace('tike_form_', ''), config.title)}
+                    className={`px-5 py-2.5 text-sm font-bold text-white rounded-lg transition-colors flex items-center gap-2 shadow-sm ${config.btnBg}`}
+                  >
+                    <CheckCircle size={18} />
+                    Tallenna kirjaus
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -3895,14 +3938,16 @@ export default function App() {
 
               {/* Toiminnot */}
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
-                <button 
-                  type="button" 
-                  onClick={() => setActiveTab('planning')}
-                  className="px-6 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                >
-                  <CheckCircle size={18} />
-                  Tallenna ja sulje
-                </button>
+                {(isAdminUser || canEdit(perms, 'planning_readiness')) && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('planning')}
+                    className="px-6 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                  >
+                    <CheckCircle size={18} />
+                    Tallenna ja sulje
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -4016,13 +4061,15 @@ export default function App() {
                   Merkitty tapahtumaan {currentEventCheckedIn.length} hlö, sisäänkirjattuna {jvCount + guardCount} hlö (JV {jvCount}, vartijat {guardCount}). Rekisterissä {employees.length} hlö.
                 </p>
               </div>
-              <button
-                onClick={() => { setAddEmpSearch(''); setAddEmpSelectedIds([]); setActiveTab('planning_employee_add'); }}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-              >
-                <UserPlus size={16} />
-                Lisää tapahtumaan työntekijä
-              </button>
+              {(isAdminUser || canEdit(perms, 'planning_employees')) && (
+                <button
+                  onClick={() => { setAddEmpSearch(''); setAddEmpSelectedIds([]); setActiveTab('planning_employee_add'); }}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                >
+                  <UserPlus size={16} />
+                  Lisää tapahtumaan työntekijä
+                </button>
+              )}
             </div>
 
             <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
@@ -4064,25 +4111,29 @@ export default function App() {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex justify-end gap-2">
-                          <button
-                            onClick={() => {
-                              const reg = employees.find(x => x.name === emp.name);
-                              setEditingEmp(reg || null);
-                              setEmpForm(employeeToFormState(reg || { name: emp.name }));
-                              setViewingEmployeeBank('form');
-                            }}
-                            title="Työntekijän tiedot muokataan työntekijäpankissa"
-                            className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
-                          >
-                            Muokkaa
-                          </button>
-                          <button
-                            onClick={() => handleRemoveFromEventRoster(emp)}
-                            title="Poistaa työntekijän tapahtumasta — ei ole uloskirjaus"
-                            className="text-rose-600 hover:text-rose-800 font-medium text-xs bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
-                          >
-                            Poista tapahtumasta
-                          </button>
+                          {(isAdminUser || canEdit(perms, 'global_employee_bank')) && (
+                            <button
+                              onClick={() => {
+                                const reg = employees.find(x => x.name === emp.name);
+                                setEditingEmp(reg || null);
+                                setEmpForm(employeeToFormState(reg || { name: emp.name }));
+                                setViewingEmployeeBank('form');
+                              }}
+                              title="Työntekijän tiedot muokataan työntekijäpankissa"
+                              className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
+                            >
+                              Muokkaa
+                            </button>
+                          )}
+                          {(isAdminUser || canEdit(perms, 'planning_employees')) && (
+                            <button
+                              onClick={() => handleRemoveFromEventRoster(emp)}
+                              title="Poistaa työntekijän tapahtumasta — ei ole uloskirjaus"
+                              className="text-rose-600 hover:text-rose-800 font-medium text-xs bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
+                            >
+                              Poista tapahtumasta
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -4208,6 +4259,7 @@ export default function App() {
 
                 <div className="pt-6 mt-2 flex justify-between items-center border-t border-slate-100">
                   <span className="text-sm text-slate-500">{addEmpSelectedIds.length} valittu</span>
+                  {(isAdminUser || canEdit(perms, 'planning_employees')) && (
                   <button
                     type="button"
                     disabled={addEmpSelectedIds.length === 0}
@@ -4217,6 +4269,7 @@ export default function App() {
                     <CheckCircle size={18} />
                     Lisää valitut tapahtumaan
                   </button>
+                  )}
                 </div>
               </>
             )}
@@ -4243,7 +4296,7 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {documentOptions.map((option) => {
+              {documentOptions.filter((option) => isAdminUser || canView(perms, `documents_${option.id}`)).map((option) => {
                 const Icon = option.icon;
                 return (
                   <button
@@ -4288,7 +4341,7 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {riskOptions.map((option) => {
+              {riskOptions.filter((option) => isAdminUser || canView(perms, `documents_${option.id}`)).map((option) => {
                 const Icon = option.icon;
                 return (
                   <button
@@ -4663,14 +4716,16 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                <button
-                  type="button"
-                  onClick={handleSaveRiskAssessment}
-                  className="px-5 py-2.5 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                >
-                  <CheckCircle size={18} />
-                  Tallenna riskiarvio
-                </button>
+                {(isAdminUser || canEdit(perms, 'documents_risk_new')) && (
+                  <button
+                    type="button"
+                    onClick={handleSaveRiskAssessment}
+                    className="px-5 py-2.5 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                  >
+                    <CheckCircle size={18} />
+                    Tallenna riskiarvio
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -5084,7 +5139,7 @@ export default function App() {
                       {editingEmp ? 'Päivitä työntekijän perustiedot, luvat ja suoritetut koulutukset.' : 'Lisää työntekijän perustiedot, pätevyydet ja suoritetut koulutukset rekisteriin.'}
                     </p>
                   </div>
-                  {editingEmp && (
+                  {editingEmp && (isAdminUser || canEdit(perms, 'global_employee_bank')) && (
                     <button
                       onClick={() => handleDeleteEmployee(editingEmp)}
                       title="Poista työntekijä"
@@ -5388,14 +5443,16 @@ export default function App() {
                     >
                       Peruuta
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleSaveEmployee}
-                      className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                    >
-                      <CheckCircle size={18} />
-                      {editingEmp ? 'Tallenna muutokset' : 'Tallenna työntekijä'}
-                    </button>
+                    {(isAdminUser || canEdit(perms, 'global_employee_bank')) && (
+                      <button
+                        type="button"
+                        onClick={handleSaveEmployee}
+                        className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                      >
+                        <CheckCircle size={18} />
+                        {editingEmp ? 'Tallenna muutokset' : 'Tallenna työntekijä'}
+                      </button>
+                    )}
                   </div>
                 </form>
               </div>
@@ -5408,13 +5465,15 @@ export default function App() {
                       Kaikki yrityksen työntekijät ({employees.length} kpl). Täältä luodaan, muokataan ja poistetaan työntekijät.
                     </p>
                   </div>
-                  <button
-                    onClick={() => { setEditingEmp(null); setEmpForm(emptyEmpForm); setViewingEmployeeBank('form'); }}
-                    className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors shadow-sm shrink-0"
-                  >
-                    <UserPlus size={16} />
-                    Uusi työntekijä
-                  </button>
+                  {(isAdminUser || canEdit(perms, 'global_employee_bank')) && (
+                    <button
+                      onClick={() => { setEditingEmp(null); setEmpForm(emptyEmpForm); setViewingEmployeeBank('form'); }}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors shadow-sm shrink-0"
+                    >
+                      <UserPlus size={16} />
+                      Uusi työntekijä
+                    </button>
+                  )}
                 </div>
 
                 <div className="relative mb-4 max-w-sm">
@@ -5467,12 +5526,14 @@ export default function App() {
                               >
                                 Muokkaa
                               </button>
-                              <button
-                                onClick={() => handleDeleteEmployee(emp)}
-                                className="text-rose-600 hover:text-rose-800 font-medium text-xs bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
-                              >
-                                Poista
-                              </button>
+                              {(isAdminUser || canEdit(perms, 'global_employee_bank')) && (
+                                <button
+                                  onClick={() => handleDeleteEmployee(emp)}
+                                  className="text-rose-600 hover:text-rose-800 font-medium text-xs bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
+                                >
+                                  Poista
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -6116,27 +6177,33 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => setViewingAllReports(true)}
-              className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-            >
-              <FileText size={16} className="text-indigo-400" />
-              Tallennetut raportit
-            </button>
-            <button
-              onClick={() => setViewingArchivedEvents(true)}
-              className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-            >
-              <Archive size={16} className="text-indigo-400" />
-              Tallennetut tapahtumat
-            </button>
-            <button
-              onClick={() => setViewingEmployeeBank('list')}
-              className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-            >
-              <IdCard size={16} className="text-indigo-400" />
-              Työntekijäpankki
-            </button>
+            {(isAdminUser || canView(perms, 'global_reports')) && (
+              <button
+                onClick={() => setViewingAllReports(true)}
+                className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                <FileText size={16} className="text-indigo-400" />
+                Tallennetut raportit
+              </button>
+            )}
+            {(isAdminUser || canView(perms, 'global_archived_events')) && (
+              <button
+                onClick={() => setViewingArchivedEvents(true)}
+                className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                <Archive size={16} className="text-indigo-400" />
+                Tallennetut tapahtumat
+              </button>
+            )}
+            {(isAdminUser || canView(perms, 'global_employee_bank')) && (
+              <button
+                onClick={() => setViewingEmployeeBank('list')}
+                className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                <IdCard size={16} className="text-indigo-400" />
+                Työntekijäpankki
+              </button>
+            )}
             <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
@@ -6160,27 +6227,33 @@ export default function App() {
                   Avaa olemassa oleva tapahtuma tai luo uusi toimeksianto. Kaikki kirjaukset kohdistuvat valittuun tapahtumaan.
                 </p>
               </div>
-              <button
-                onClick={() => setViewingAllReports(true)}
-                className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
-              >
-                <FileText size={16} />
-                Tallennetut raportit
-              </button>
-              <button
-                onClick={() => setViewingArchivedEvents(true)}
-                className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
-              >
-                <Archive size={16} />
-                Tallennetut tapahtumat
-              </button>
-              <button
-                onClick={() => setViewingEmployeeBank('list')}
-                className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
-              >
-                <IdCard size={16} />
-                Työntekijäpankki
-              </button>
+              {(isAdminUser || canView(perms, 'global_reports')) && (
+                <button
+                  onClick={() => setViewingAllReports(true)}
+                  className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+                >
+                  <FileText size={16} />
+                  Tallennetut raportit
+                </button>
+              )}
+              {(isAdminUser || canView(perms, 'global_archived_events')) && (
+                <button
+                  onClick={() => setViewingArchivedEvents(true)}
+                  className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+                >
+                  <Archive size={16} />
+                  Tallennetut tapahtumat
+                </button>
+              )}
+              {(isAdminUser || canView(perms, 'global_employee_bank')) && (
+                <button
+                  onClick={() => setViewingEmployeeBank('list')}
+                  className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+                >
+                  <IdCard size={16} />
+                  Työntekijäpankki
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -6927,55 +7000,69 @@ export default function App() {
         {isSidebarOpen && (
           <aside className="w-full md:w-64 bg-white border-r border-slate-200 flex-shrink-0 flex flex-col">
             <div className="p-4 space-y-1">
-              <button 
-                onClick={() => setActiveTab('landing')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'landing' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
-              >
-                <Home size={18} />
-                Aloitussivu
-              </button>
-              <button 
-                onClick={() => setActiveTab('overview')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'overview' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
-              >
-                <Activity size={18} />
-                Tilannekuva
-              </button>
-              <button 
-                onClick={() => setActiveTab('reporting')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${(activeTab.startsWith('report') || activeTab.startsWith('tike_')) ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
-              >
-                <FileText size={18} />
-                Raportointi
-              </button>
-              <button 
-                onClick={() => setActiveTab('planning')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab.startsWith('planning') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
-              >
-                <Calendar size={18} />
-                Ennen Tapahtumaa
-              </button>
-               <button 
-                onClick={() => setActiveTab('postevent')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'postevent' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
-              >
-                <Layers size={18} />
-                FestivaaliX
-              </button>
-              <button 
-                onClick={() => setActiveTab('documents')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'documents' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
-              >
-                <FileText size={18} />
-                Lomakekartoitus
-              </button>
-              <button 
-                onClick={() => setActiveTab('settings')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'settings' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
-              >
-                <Settings size={18} />
-                Asetukset
-              </button>
+              {(isAdminUser || canView(perms, 'landing')) && (
+                <button
+                  onClick={() => setActiveTab('landing')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'landing' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <Home size={18} />
+                  Aloitussivu
+                </button>
+              )}
+              {(isAdminUser || canView(perms, 'overview')) && (
+                <button
+                  onClick={() => setActiveTab('overview')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'overview' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <Activity size={18} />
+                  Tilannekuva
+                </button>
+              )}
+              {(isAdminUser || canView(perms, 'reporting')) && (
+                <button
+                  onClick={() => setActiveTab('reporting')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${(activeTab.startsWith('report') || activeTab.startsWith('tike_')) ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <FileText size={18} />
+                  Raportointi
+                </button>
+              )}
+              {(isAdminUser || canView(perms, 'planning')) && (
+                <button
+                  onClick={() => setActiveTab('planning')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab.startsWith('planning') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <Calendar size={18} />
+                  Ennen Tapahtumaa
+                </button>
+              )}
+              {(isAdminUser || canView(perms, 'postevent')) && (
+                <button
+                  onClick={() => setActiveTab('postevent')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'postevent' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <Layers size={18} />
+                  FestivaaliX
+                </button>
+              )}
+              {(isAdminUser || canView(perms, 'documents')) && (
+                <button
+                  onClick={() => setActiveTab('documents')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'documents' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <FileText size={18} />
+                  Lomakekartoitus
+                </button>
+              )}
+              {(isAdminUser || canView(perms, 'settings')) && (
+                <button
+                  onClick={() => setActiveTab('settings')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'settings' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <Settings size={18} />
+                  Asetukset
+                </button>
+              )}
             </div>
           </aside>
         )}
@@ -7061,13 +7148,15 @@ export default function App() {
                 <p className="text-xs font-mono text-slate-400 mt-0.5">{openedReport.id}</p>
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                <button
-                  onClick={() => handleDeleteReport(openedReport)}
-                  title="Poista raportti"
-                  className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded-lg transition-colors"
-                >
-                  <Trash2 size={20} />
-                </button>
+                {(isAdminUser || canEdit(perms, openedReportSource || 'overview')) && (
+                  <button
+                    onClick={() => handleDeleteReport(openedReport)}
+                    title="Poista raportti"
+                    className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded-lg transition-colors"
+                  >
+                    <Trash2 size={20} />
+                  </button>
+                )}
                 <button
                   onClick={() => setOpenedReport(null)}
                   className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors"
@@ -7159,13 +7248,15 @@ export default function App() {
                   <p className="text-xs font-mono text-slate-400 mt-0.5">{ra.id}</p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => handleDeleteRiskAssessment(ra)}
-                    title="Poista riskiarvio"
-                    className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded-lg transition-colors"
-                  >
-                    <Trash2 size={20} />
-                  </button>
+                  {(isAdminUser || canEdit(perms, 'documents_risk_done')) && (
+                    <button
+                      onClick={() => handleDeleteRiskAssessment(ra)}
+                      title="Poista riskiarvio"
+                      className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded-lg transition-colors"
+                    >
+                      <Trash2 size={20} />
+                    </button>
+                  )}
                   <button
                     onClick={() => setOpenedRiskAssessment(null)}
                     className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors"
