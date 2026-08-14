@@ -391,6 +391,115 @@ const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onManageUsers, onLog
   );
 };
 
+// Sivukartta: sovelluksen sivut/valikot solmupuuna. Id:t ovat pääosin olemassa
+// olevia activeTab-arvoja (uudelleenkäyttö) — backend ei tunne tätä puuta, se
+// tallentaa vain geneerisen { [id]: { view, edit } } -olion.
+const SITEMAP = [
+  { id: 'landing', label: 'Aloitussivu' },
+  { id: 'overview', label: 'Tilannekuva' },
+  { id: 'reporting', label: 'Raportointi', children: [
+    { id: 'report_jv', label: 'Järjestyksenvalvojan tapahtumailmoitus' },
+    { id: 'report_tike', label: 'TIKE:n raportointi', children: [
+      { id: 'tike_form_in', label: 'Työntekijän sisäänkirjaus' },
+      { id: 'tike_form_out', label: 'Työntekijän uloskirjaus' },
+      { id: 'tike_form_jvaction', label: 'JV:n tai vartijan toimenpide' },
+      { id: 'tike_form_open', label: 'Avoin kirjaus' },
+      { id: 'tike_form_firstaid', label: 'Ensiaputilanne' },
+      { id: 'tike_form_threat', label: 'Uhkatilanne' },
+      { id: 'tike_form_fence', label: 'Aitojen ylitys / luvaton sisäänpääsy' },
+      { id: 'tike_form_damage', label: 'Omaisuusvaurio' },
+      { id: 'tike_form_lostfound', label: 'Löytötavara' },
+      { id: 'tike_form_patrol', label: 'Kierrosraportti' },
+      { id: 'tike_form_queue', label: 'Portin jonon odotusaika' },
+      { id: 'tike_form_weather', label: 'Sääraportti' },
+      { id: 'tike_form_briefing', label: 'Briefing' },
+      { id: 'tike_form_management', label: 'Johdon tilannekatsaus' },
+    ] },
+    { id: 'report_list', label: 'Tallennetut raportit (tapahtuma)' },
+  ] },
+  { id: 'planning', label: 'Ennen tapahtumaa', children: [
+    { id: 'planning_readiness', label: 'Avausvalmius' },
+    { id: 'planning_employees', label: 'Tapahtuman työntekijät' },
+  ] },
+  { id: 'postevent', label: 'Tapahtuman yleiskatsaus' },
+  { id: 'documents', label: 'Lomakekartoitus', children: [
+    { id: 'documents_forms', label: 'Täytettävät lomakkeet' },
+    { id: 'documents_pdf', label: 'Raporttien PDF-versiot' },
+    { id: 'documents_trash', label: 'Roskakori' },
+    { id: 'documents_emergency', label: 'Hätätilanneohjeet' },
+    { id: 'documents_risk', label: 'Riskiarviointi', children: [
+      { id: 'documents_risk_done', label: 'Tehdyt riskiarviot' },
+      { id: 'documents_risk_new', label: 'Riskin arviointi' },
+    ] },
+  ] },
+  { id: 'settings', label: 'Asetukset' },
+  { id: 'global_reports', label: 'Tallennetut raportit (kaikki tapahtumat)' },
+  { id: 'global_archived_events', label: 'Tallennetut tapahtumat' },
+  { id: 'global_employee_bank', label: 'Työntekijäpankki' },
+];
+
+function collectDescendantIds(node, out = []) {
+  if (node.children) {
+    for (const child of node.children) {
+      out.push(child.id);
+      collectDescendantIds(child, out);
+    }
+  }
+  return out;
+}
+
+// perms['*'] on admin-oikotie: kaikki näkyy ja on muokattavissa riippumatta
+// yksittäisistä solmumerkinnöistä.
+function canView(perms, nodeId) {
+  if (!perms) return false;
+  if (perms['*']?.view) return true;
+  return !!perms[nodeId]?.view;
+}
+function canEdit(perms, nodeId) {
+  if (!perms) return false;
+  if (perms['*']?.edit) return true;
+  return !!perms[nodeId]?.edit;
+}
+
+// Sivukartan yksi rivi (+ lapset rekursiivisesti) admin-oikeuseditorissa.
+const SitemapPermissionRow = ({ node, depth, permDraft, onToggle, onCascade }) => {
+  const perm = permDraft[node.id] || {};
+  const hasChildren = !!(node.children && node.children.length > 0);
+  return (
+    <div>
+      <div
+        className={`flex items-center gap-3 py-2 pr-2 ${depth > 0 ? 'border-l-2 border-slate-100' : ''}`}
+        style={{ paddingLeft: `${depth * 20 + 8}px` }}
+      >
+        <span className={`flex-1 text-sm truncate ${hasChildren ? 'font-bold text-slate-800' : 'font-medium text-slate-600'}`}>
+          {node.label}
+        </span>
+        <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer shrink-0 w-28">
+          <input
+            type="checkbox"
+            checked={!!perm.view}
+            onChange={(e) => { onToggle(node.id, 'view', e.target.checked); if (hasChildren) onCascade(node, 'view', e.target.checked); }}
+            className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+          />
+          Näkyy
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer shrink-0 w-32">
+          <input
+            type="checkbox"
+            checked={!!perm.edit}
+            onChange={(e) => { onToggle(node.id, 'edit', e.target.checked); if (hasChildren) onCascade(node, 'edit', e.target.checked); }}
+            className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+          />
+          Muokattavissa
+        </label>
+      </div>
+      {hasChildren && node.children.map((child) => (
+        <SitemapPermissionRow key={child.id} node={child} depth={depth + 1} permDraft={permDraft} onToggle={onToggle} onCascade={onCascade} />
+      ))}
+    </div>
+  );
+};
+
 const AlertBanner = ({ alert }) => {
   const colors = {
     critical: 'bg-rose-50 border-rose-200 text-rose-800',
@@ -499,6 +608,19 @@ export default function App() {
   const [changePasswordError, setChangePasswordError] = useState('');
   const [changePasswordSubmitting, setChangePasswordSubmitting] = useState(false);
   const [viewingUserAdmin, setViewingUserAdmin] = useState(null); // null | 'list' | 'new' | 'permissions'
+  const [userAdminList, setUserAdminList] = useState([]);
+  const [userAdminLoading, setUserAdminLoading] = useState(false);
+  const [userAdminError, setUserAdminError] = useState('');
+  const [newUserUsername, setNewUserUsername] = useState('');
+  const [newUserNickname, setNewUserNickname] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserError, setNewUserError] = useState('');
+  const [newUserSubmitting, setNewUserSubmitting] = useState(false);
+  const [editingPermUser, setEditingPermUser] = useState(null);
+  const [permDraft, setPermDraft] = useState({});
+  const [permNickname, setPermNickname] = useState('');
+  const [permSaveError, setPermSaveError] = useState('');
+  const [permSaving, setPermSaving] = useState(false);
 
   // Työntekijäpankki: yrityksen koko henkilöstörekisteri (yhteinen tila, tallennetaan palvelimelle)
   const [employees, setEmployees] = useState(initialEmployees);
@@ -625,6 +747,12 @@ export default function App() {
   useEffect(() => {
     setTikeLogPage(0);
   }, [selectedEvent]);
+
+  // Ladataan käyttäjälista aina kun "Muokkaa käyttäjiä" -listanäkymä avataan (myös
+  // paluu luonti-/oikeuslomakkeelta), jotta lista pysyy tuoreena.
+  useEffect(() => {
+    if (viewingUserAdmin === 'list') fetchUserAdminList();
+  }, [viewingUserAdmin]);
 
   // Ladataan tapahtumat palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
   useEffect(() => {
@@ -996,6 +1124,112 @@ export default function App() {
       setChangePasswordError('Yhteysvirhe. Yritä uudelleen.');
     } finally {
       setChangePasswordSubmitting(false);
+    }
+  };
+
+  const fetchUserAdminList = () => {
+    setUserAdminLoading(true);
+    setUserAdminError('');
+    fetch('/api/users', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok) setUserAdminList(data.users);
+        else setUserAdminError(data.error || 'Käyttäjien haku epäonnistui.');
+      })
+      .catch(() => setUserAdminError('Yhteysvirhe.'))
+      .finally(() => setUserAdminLoading(false));
+  };
+
+  const resetNewUserForm = () => {
+    setNewUserUsername('');
+    setNewUserNickname('');
+    setNewUserPassword('');
+    setNewUserError('');
+  };
+
+  const handleCreateUser = async () => {
+    setNewUserError('');
+    if (!newUserUsername.trim() || !newUserNickname.trim()) {
+      setNewUserError('Käyttäjätunnus ja nimimerkki vaaditaan.');
+      return;
+    }
+    if (!isValidPasswordClient(newUserPassword)) {
+      setNewUserError('Salasanan tulee olla vähintään 10 merkkiä ja sisältää iso kirjain, pieni kirjain ja numero.');
+      return;
+    }
+    setNewUserSubmitting(true);
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          username: newUserUsername.trim(),
+          nickname: newUserNickname.trim(),
+          password: newUserPassword,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        resetNewUserForm();
+        setViewingUserAdmin('list');
+      } else {
+        setNewUserError(data.error || 'Käyttäjän luonti epäonnistui.');
+      }
+    } catch {
+      setNewUserError('Yhteysvirhe. Yritä uudelleen.');
+    } finally {
+      setNewUserSubmitting(false);
+    }
+  };
+
+  const handleOpenPermissions = (user) => {
+    setEditingPermUser(user);
+    setPermDraft(user.permissions || {});
+    setPermNickname(user.nickname || '');
+    setPermSaveError('');
+    setViewingUserAdmin('permissions');
+  };
+
+  const handleTogglePerm = (nodeId, field, value) => {
+    setPermDraft((prev) => ({ ...prev, [nodeId]: { ...prev[nodeId], [field]: value } }));
+  };
+
+  const handleCascadePerm = (node, field, value) => {
+    const ids = collectDescendantIds(node);
+    setPermDraft((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[id] = { ...next[id], [field]: value };
+      return next;
+    });
+  };
+
+  const handleSavePermissions = async () => {
+    if (!editingPermUser) return;
+    setPermSaveError('');
+    if (!permNickname.trim()) {
+      setPermSaveError('Nimimerkki ei voi olla tyhjä.');
+      return;
+    }
+    setPermSaving(true);
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(editingPermUser.username)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ nickname: permNickname.trim(), permissions: permDraft }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setEditingPermUser(null);
+        setViewingUserAdmin('list');
+      } else {
+        setPermSaveError(data.error || 'Tallennus epäonnistui.');
+      }
+    } catch {
+      setPermSaveError('Yhteysvirhe. Yritä uudelleen.');
+    } finally {
+      setPermSaving(false);
     }
   };
 
@@ -5240,6 +5474,262 @@ export default function App() {
                                 Poista
                               </button>
                             </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        </main>
+        {changePasswordModal}
+      </div>
+    );
+  }
+
+  // ====================== MUOKKAA KÄYTTÄJIÄ (vain admin) ======================
+  if (viewingUserAdmin) {
+    const isAdmin = session?.role === 'admin';
+    const roleBadge = (role) => (
+      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${role === 'admin' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'}`}>
+        {role === 'admin' ? 'Pääkäyttäjä' : 'Käyttäjä'}
+      </span>
+    );
+
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
+        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="text-indigo-400" size={28} />
+            <div>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Käyttäjähallinta</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
+              <Clock size={16} className="text-indigo-400" />
+              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
+            </div>
+            <ProfileMenu
+              nickname={sessionNickname}
+              isAdmin={isAdmin}
+              onChangePassword={() => setShowChangePassword(true)}
+              onManageUsers={() => setViewingUserAdmin('list')}
+              onLogout={handleLogout}
+            />
+          </div>
+        </nav>
+
+        <main className="flex-1 p-6 md:p-10">
+          <div className="max-w-4xl mx-auto">
+            <button
+              onClick={() => {
+                if (viewingUserAdmin === 'list') {
+                  setViewingUserAdmin(null);
+                } else {
+                  setViewingUserAdmin('list');
+                  resetNewUserForm();
+                  setEditingPermUser(null);
+                }
+              }}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              {viewingUserAdmin === 'list' ? 'Takaisin' : 'Takaisin käyttäjälistaan'}
+            </button>
+
+            {!isAdmin ? (
+              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-10 text-center">
+                <ShieldAlert className="text-rose-400 mx-auto mb-4" size={40} />
+                <h2 className="text-lg font-bold text-slate-800 mb-1">Ei käyttöoikeutta</h2>
+                <p className="text-sm text-slate-500">Käyttäjähallinta on vain pääkäyttäjille.</p>
+              </div>
+            ) : viewingUserAdmin === 'new' ? (
+              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8">
+                <div className="mb-6 border-b border-slate-100 pb-4">
+                  <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <UserPlus className="text-emerald-500" size={24} />
+                    Uusi käyttäjä
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Uudella käyttäjällä ei ole oletuksena mitään sivukartta-oikeuksia — aseta ne luonnin jälkeen "Muokkaa oikeuksia" -kohdasta.
+                  </p>
+                </div>
+                <form className="space-y-4 text-left max-w-md" onSubmit={(e) => e.preventDefault()}>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Käyttäjä</label>
+                    <input
+                      type="text"
+                      autoComplete="username"
+                      value={newUserUsername}
+                      onChange={(e) => setNewUserUsername(e.target.value)}
+                      className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                      placeholder="esim. tikepvst"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Nimimerkki</label>
+                    <input
+                      type="text"
+                      value={newUserNickname}
+                      onChange={(e) => setNewUserNickname(e.target.value)}
+                      className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                      placeholder="esim. TIKE Päivystäjä"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Näkyy mm. raporttien "Laatija"-kenttänä.</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Salasana</label>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      value={newUserPassword}
+                      onChange={(e) => setNewUserPassword(e.target.value)}
+                      className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Vähintään 10 merkkiä, iso ja pieni kirjain sekä numero.</p>
+                  </div>
+                  {newUserError && <p className="text-sm text-rose-600">{newUserError}</p>}
+                  <div className="pt-2 flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setViewingUserAdmin('list'); resetNewUserForm(); }}
+                      className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                    >
+                      Peruuta
+                    </button>
+                    <button
+                      type="button"
+                      disabled={newUserSubmitting}
+                      onClick={handleCreateUser}
+                      className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                    >
+                      <CheckCircle size={18} />
+                      {newUserSubmitting ? 'Luodaan…' : 'Luo käyttäjä'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : viewingUserAdmin === 'permissions' && editingPermUser ? (
+              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8">
+                <div className="mb-6 border-b border-slate-100 pb-4 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                      <IdCard className="text-indigo-500" size={24} />
+                      Käyttöoikeudet: {editingPermUser.username}
+                    </h2>
+                    <p className="text-sm text-slate-500 mt-1">Valitse mitkä sivut käyttäjä näkee ja voi muokata.</p>
+                  </div>
+                  {roleBadge(editingPermUser.role)}
+                </div>
+
+                <div className="mb-6 max-w-sm">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Nimimerkki</label>
+                  <input
+                    type="text"
+                    value={permNickname}
+                    onChange={(e) => setPermNickname(e.target.value)}
+                    className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                {editingPermUser.role === 'admin' ? (
+                  <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                    Pääkäyttäjällä on aina täydet oikeudet kaikkeen — sivukarttaa ei tarvitse (eikä voi) rajata.
+                  </p>
+                ) : (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="flex items-center gap-3 py-2 pr-2 bg-slate-100 border-b border-slate-200">
+                      <span className="flex-1 text-xs font-bold text-slate-500 uppercase tracking-wide pl-2">Sivu</span>
+                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-28">Näkyy</span>
+                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-32">Muokattavissa</span>
+                    </div>
+                    <div className="bg-white divide-y divide-slate-50 max-h-[28rem] overflow-y-auto">
+                      {SITEMAP.map((node) => (
+                        <SitemapPermissionRow
+                          key={node.id}
+                          node={node}
+                          depth={0}
+                          permDraft={permDraft}
+                          onToggle={handleTogglePerm}
+                          onCascade={handleCascadePerm}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {permSaveError && <p className="text-sm text-rose-600 mt-4">{permSaveError}</p>}
+
+                <div className="pt-6 mt-2 flex justify-end gap-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => { setViewingUserAdmin('list'); setEditingPermUser(null); }}
+                    className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                  >
+                    Peruuta
+                  </button>
+                  <button
+                    type="button"
+                    disabled={permSaving}
+                    onClick={handleSavePermissions}
+                    className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                  >
+                    <CheckCircle size={18} />
+                    {permSaving ? 'Tallennetaan…' : 'Tallenna oikeudet'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-800">Muokkaa käyttäjiä</h2>
+                    <p className="text-sm text-slate-500 mt-1">Kaikki sovelluksen käyttäjätunnukset ja niiden sivukartta-oikeudet.</p>
+                  </div>
+                  <button
+                    onClick={() => { resetNewUserForm(); setViewingUserAdmin('new'); }}
+                    className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors shadow-sm shrink-0"
+                  >
+                    <UserPlus size={16} />
+                    Uusi käyttäjä
+                  </button>
+                </div>
+
+                {userAdminError && <p className="text-sm text-rose-600 mb-4">{userAdminError}</p>}
+
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="p-4">Nimimerkki</th>
+                        <th className="p-4">Käyttäjätunnus</th>
+                        <th className="p-4">Rooli</th>
+                        <th className="p-4">Luotu</th>
+                        <th className="p-4 text-right">Toiminnot</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {userAdminLoading ? (
+                        <tr><td colSpan={5} className="p-8 text-center text-sm text-slate-500">Ladataan…</td></tr>
+                      ) : userAdminList.length === 0 ? (
+                        <tr><td colSpan={5} className="p-8 text-center text-sm text-slate-500">Ei käyttäjiä.</td></tr>
+                      ) : userAdminList.map((u) => (
+                        <tr key={u.username} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-4 font-medium text-slate-800">{u.nickname}</td>
+                          <td className="p-4 font-mono text-xs text-slate-600">{u.username}</td>
+                          <td className="p-4">{roleBadge(u.role)}</td>
+                          <td className="p-4 text-slate-500 text-xs">{u.created_at ? new Date(u.created_at).toLocaleDateString('fi-FI') : '—'}</td>
+                          <td className="p-4 text-right">
+                            <button
+                              onClick={() => handleOpenPermissions(u)}
+                              className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
+                            >
+                              Muokkaa oikeuksia
+                            </button>
                           </td>
                         </tr>
                       ))}
