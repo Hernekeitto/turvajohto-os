@@ -50,23 +50,11 @@ import {
 } from 'lucide-react';
 
 // --- MOCK DATA ---
-const mockAlerts = [
-  { id: 1, type: 'critical', message: 'Main Stage crowd density > 4 hlö/m²', time: '10:42', location: 'Main Stage' },
-  { id: 2, type: 'warning', message: 'Gate 2 throughput dropping, queue 15m', time: '10:35', location: 'Gate 2' },
-  { id: 3, type: 'info', message: 'Weather update: rain expected at 14:00', time: '10:15', location: 'All Areas' }
-];
-
 const mockChecklist = [
   { id: 1, task: 'Riskienarviointi päivitetty', status: 'done', category: 'Suunnittelu' },
   { id: 2, task: 'Pelastussuunnitelma lähetetty', status: 'done', category: 'Luvat' },
   { id: 3, task: 'JV-mitoitus vahvistettu', status: 'pending', category: 'Resurssit' },
   { id: 4, task: 'Ensiapupisteet pystytetty', status: 'in-progress', category: 'Operatiivinen' }
-];
-
-const mockLogs = [
-  { id: 101, time: '10:30', user: 'TIKE', action: 'Portit avattu yleisölle' },
-  { id: 102, time: '10:35', user: 'Gate 1', action: 'Kapasiteetti 1500/h saavutettu' },
-  { id: 103, time: '10:42', user: 'Spotter A', action: 'Ilmoitus ruuhkasta Main Stagen edessä' }
 ];
 
 const mockEmployees = [
@@ -327,6 +315,7 @@ export default function App() {
   
   // Overview Tab State
   const [overviewCardTab, setOverviewCardTab] = useState('checklist'); // 'checklist' | 'reports'
+  const [tikeLogPage, setTikeLogPage] = useState(0);
 
   // JV Form State
   const [eventDate, setEventDate] = useState('');
@@ -454,6 +443,11 @@ export default function App() {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Palautetaan TIKE-lokin sivutus alkuun kun vaihdetaan tapahtumaa
+  useEffect(() => {
+    setTikeLogPage(0);
+  }, [selectedEvent]);
 
   // Ladataan tapahtumat palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
   useEffect(() => {
@@ -1142,6 +1136,17 @@ export default function App() {
       location: ra.target
     }));
 
+  // TIKE-loki: kaikki tehdyt TIKE-kirjaukset paitsi työntekijän sisään-/uloskirjaukset
+  // (ne täyttäisivät lokin nopeasti). currentEventReports on jo uusin ensin -järjestyksessä.
+  const tikeLogReports = currentEventReports.filter(r => r.typeId !== 'in' && r.typeId !== 'out');
+  const tikeLogPageSize = 5;
+  const tikeLogPageCount = Math.max(1, Math.ceil(tikeLogReports.length / tikeLogPageSize));
+  const tikeLogPageSafe = Math.min(tikeLogPage, tikeLogPageCount - 1);
+  const tikeLogPageItems = tikeLogReports.slice(
+    tikeLogPageSafe * tikeLogPageSize,
+    tikeLogPageSafe * tikeLogPageSize + tikeLogPageSize
+  );
+
   // Readiness logic computations
   const completedChecksCount = Object.values(readinessChecks).filter(Boolean).length;
   const missingChecksCount = 5 - completedChecksCount;
@@ -1260,16 +1265,42 @@ export default function App() {
                       + Uusi Kirjaus
                     </button>
                   </div>
-                  <div className="space-y-4 flex-1">
-                    {mockLogs.map(log => (
-                      <div key={log.id} className="flex gap-4 p-3 hover:bg-slate-50 rounded-lg transition-colors border-b border-slate-50 last:border-0">
-                        <div className="text-sm font-mono text-slate-400 w-16 pt-0.5">{log.time}</div>
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-slate-800">{log.action}</p>
-                          <p className="text-xs text-slate-500 mt-1">Kirjaaja: {log.user}</p>
+                  <div className="space-y-1 flex-1">
+                    {tikeLogPageItems.length === 0 ? (
+                      <p className="text-sm text-slate-500 py-4 text-center">Ei vielä TIKE-kirjauksia.</p>
+                    ) : (
+                      tikeLogPageItems.map(rep => (
+                        <div key={rep.id} className="flex gap-4 p-3 hover:bg-slate-50 rounded-lg transition-colors border-b border-slate-50 last:border-0">
+                          <div className="text-sm font-mono text-slate-400 w-16 pt-0.5">{rep.time}</div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-slate-800 line-clamp-1">{rep.summary}</p>
+                            <p className="text-xs text-slate-500 mt-1">Kirjaaja: {rep.author}</p>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
+                  </div>
+                  <div className="flex justify-between items-center pt-3 mt-2 border-t border-slate-100">
+                    <span className="text-xs text-slate-500">{tikeLogReports.length} raporttia yhteensä</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={tikeLogPageSafe === 0}
+                        onClick={() => setTikeLogPage(p => Math.max(0, p - 1))}
+                        className="px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Edellinen
+                      </button>
+                      <span className="text-xs text-slate-400">{tikeLogPageSafe + 1}/{tikeLogPageCount}</span>
+                      <button
+                        type="button"
+                        disabled={tikeLogPageSafe >= tikeLogPageCount - 1}
+                        onClick={() => setTikeLogPage(p => Math.min(tikeLogPageCount - 1, p + 1))}
+                        className="px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Seuraava
+                      </button>
+                    </div>
                   </div>
               </div>
 
@@ -1353,9 +1384,13 @@ export default function App() {
                 <button className="text-sm text-indigo-600 font-medium hover:text-indigo-700">Näytä Kaikki</button>
               </div>
               <div className="space-y-1">
-                {[...riskAlerts, ...mockAlerts].map(alert => (
-                  <AlertBanner key={alert.id} alert={alert} />
-                ))}
+                {riskAlerts.length === 0 ? (
+                  <p className="text-sm text-slate-500 py-4 text-center">Ei aktiivisia hälytyksiä. Riskiluokan 3-5 riskiarviot näkyvät täällä automaattisesti.</p>
+                ) : (
+                  riskAlerts.map(alert => (
+                    <AlertBanner key={alert.id} alert={alert} />
+                  ))
+                )}
               </div>
             </div>
           </div>
