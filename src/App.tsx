@@ -48,8 +48,9 @@ import {
   Pencil,
   Trash2,
   Landmark,
-  Car,
-  Languages
+  Languages,
+  BadgeCheck,
+  HardHat
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -80,8 +81,11 @@ const emptyEmpForm = {
   // 4. Ajokortti ja yleiset luvat
   drivingLicense: '',
   adrPermit: false, alcoholPass: false, hygienePass: false,
-  craneCard: false, electricalWorkCard: false,
-  firstAidEA1: false, firstAidEA2: false, firstAidEA3: false,
+  craneCard: false, craneCardUntil: '',
+  electricalWorkCard: false, electricalWorkCardUntil: '',
+  firstAidEA1: false, firstAidEA1Until: '',
+  firstAidEA2: false, firstAidEA2Until: '',
+  firstAidEA3: false, firstAidEA3Until: '',
   // 5. Turvallisuusalan kortit (numero + voimassa kuukausi/vuosi)
   jvCard: '', jvCardValidUntil: '',
   guardCard: '', guardCardValidUntil: '',
@@ -4735,28 +4739,55 @@ export default function App() {
                   {/* Osa 4: Ajokortti ja yleiset luvat */}
                   <div className="space-y-4">
                     <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <Car size={18} className="text-slate-400"/>
+                      <BadgeCheck size={18} className="text-slate-400"/>
                       4. Ajokortti ja yleiset luvat
                     </h3>
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-1">Ajokortti</label>
                       <input type="text" value={empForm.drivingLicense} onChange={(e) => updEmpForm('drivingLicense', e.target.value)} className="w-full md:w-1/3 rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. B" />
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+
+                    {/* Pelkkä kyllä/ei, ei voimassaoloa */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       {[
                         ['adrPermit', 'ADR-lupa'],
                         ['alcoholPass', 'Alkoholipassi'],
                         ['hygienePass', 'Hygieniapassi'],
-                        ['craneCard', 'Nosturikortti'],
-                        ['electricalWorkCard', 'Sähkötyökortti'],
-                        ['firstAidEA1', 'Ensiapukortti (EA1)'],
-                        ['firstAidEA2', 'Ensiapukortti (EA2)'],
-                        ['firstAidEA3', 'Ensiapukortti (EA3)'],
                       ].map(([key, label]) => (
                         <label key={key} className="flex items-center gap-2.5 p-3 bg-slate-50 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors">
                           <input type="checkbox" checked={empForm[key]} onChange={(e) => updEmpForm(key, e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0" />
                           <span className="text-sm font-medium text-slate-700">{label}</span>
                         </label>
+                      ))}
+                    </div>
+
+                    {/* Kyllä/ei + voimassa kuukausi/vuosi jos kyllä */}
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
+                      <div className="hidden sm:flex items-center justify-end px-4 pt-2">
+                        <span className="text-xs font-medium text-slate-400 uppercase tracking-wide sm:w-40">Voimassa</span>
+                      </div>
+                      {[
+                        ['craneCard', 'craneCardUntil', 'Nosturikortti'],
+                        ['electricalWorkCard', 'electricalWorkCardUntil', 'Sähkötyökortti'],
+                        ['firstAidEA1', 'firstAidEA1Until', 'Ensiapukortti (EA1)'],
+                        ['firstAidEA2', 'firstAidEA2Until', 'Ensiapukortti (EA2)'],
+                        ['firstAidEA3', 'firstAidEA3Until', 'Ensiapukortti (EA3)'],
+                      ].map(([boolKey, untilKey, label]) => (
+                        <div key={boolKey} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 hover:bg-slate-50 transition-colors">
+                          <label className="flex items-center gap-3 flex-1 cursor-pointer">
+                            <input type="checkbox" checked={empForm[boolKey]} onChange={(e) => updEmpForm(boolKey, e.target.checked)} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
+                            <span className="text-sm font-bold text-slate-800">{label}</span>
+                          </label>
+                          <div className="sm:w-40">
+                            <input
+                              type="month"
+                              disabled={!empForm[boolKey]}
+                              value={empForm[untilKey]}
+                              onChange={(e) => updEmpForm(untilKey, e.target.value)}
+                              className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
+                            />
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -4788,10 +4819,13 @@ export default function App() {
                   {/* Osa 6: Työturvallisuuskortit */}
                   <div className="space-y-4">
                     <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <ShieldAlert size={18} className="text-slate-400"/>
+                      <HardHat size={18} className="text-slate-400"/>
                       6. Työturvallisuuskortit
                     </h3>
                     <div className="bg-white border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
+                      <div className="hidden sm:flex items-center justify-end px-4 pt-2">
+                        <span className="text-xs font-medium text-slate-400 uppercase tracking-wide sm:w-48">Voimassa</span>
+                      </div>
                       {[
                         ['roadSafetyCard', 'roadSafetyCardUntil', 'Tieturvakortti'],
                         ['forkliftCard', 'forkliftCardUntil', 'Trukkikortti'],
