@@ -322,6 +322,17 @@ const EMP_STATUS_META = {
 };
 const getEmpStatus = (emp) => emp.status || 'checked_in';
 
+// Sisäänkirjausrivin kommentit listana ({id, text, author, date, time}) — vanha data
+// tunsi vain yhden merkkijonokentän (comment), joka näytetään taannehtivasti yhtenä
+// "legacy"-kommenttina kunnes se korvautuu uudella listalla.
+const getEmpComments = (emp) => {
+  if (Array.isArray(emp.comments)) return emp.comments;
+  if (emp.comment) {
+    return [{ id: 'legacy', text: emp.comment, author: '', date: emp.checkInDate || '', time: emp.checkInTime || '' }];
+  }
+  return [];
+};
+
 const EmpStatusBadge = ({ emp }) => {
   const status = getEmpStatus(emp);
   const meta = EMP_STATUS_META[status];
@@ -1599,12 +1610,15 @@ export default function App() {
       badge: checkInBadge,
       headset: checkInHeadset,
       radio: checkInRadio,
-      comment: checkInComment,
       checkInDate: checkInDateVal,
       checkInTime: checkInTimeVal,
       checkOutDate: '',
       checkOutTime: '',
-      status: 'checked_in'
+      status: 'checked_in',
+      // Muokkaustilassa kommentit hallitaan erikseen "Kommentit"-osiossa (ks.
+      // handleAddEmpComment) — pääpainike ei enää ylikirjoita niitä. Tuoreessa
+      // sisäänkirjauksessa yksittäinen kommenttikenttä tallentuu edelleen tässä.
+      ...(editingCheckIn ? {} : { comment: checkInComment }),
     };
     setCheckedInEmployees(prev => {
       if (editingCheckIn) {
@@ -1620,6 +1634,67 @@ export default function App() {
     });
     resetCheckInForm();
     setActiveTab('planning_employees');
+  };
+
+  // Lisää nykyisen kommenttiluonnoksen uutena kommenttina muokattavan sisäänkirjausrivin
+  // "Kommentit"-listaan (samaan riviin kuin esim. radiopuhelimen numero — ei erillistä
+  // tallennuspyyntöä pääpainikkeen kanssa). Samalle henkilölle/tapahtumalle voi kertyä
+  // useita kommentteja ajan mittaan.
+  const handleAddEmpComment = () => {
+    if (!editingCheckIn) return;
+    const text = checkInComment.trim();
+    if (!text) return;
+    const now = new Date();
+    const localNow = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    const newComment = {
+      id: `c-${Date.now()}`,
+      text,
+      author: sessionNickname || 'TIKE Päivystäjä',
+      date: localNow.toISOString().split('T')[0],
+      time: localNow.toISOString().slice(11, 16),
+    };
+    setCheckedInEmployees(prev => prev.map(e => (
+      e.id === editingCheckIn.id
+        ? { ...e, comments: [...getEmpComments(e), newComment], comment: '' }
+        : e
+    )));
+    setCheckInComment('');
+  };
+
+  const handleDeleteEmpComment = (commentId) => {
+    if (!editingCheckIn) return;
+    const confirmed = window.confirm('Haluatko varmasti poistaa tämän kommentin?\n\nPoistoa ei voi perua.');
+    if (!confirmed) return;
+    setCheckedInEmployees(prev => prev.map(e => (
+      e.id === editingCheckIn.id
+        ? { ...e, comments: getEmpComments(e).filter(c => c.id !== commentId), comment: '' }
+        : e
+    )));
+  };
+
+  // Tallentaa nykyisen kommenttiluonnoksen TIKE:n "Avoin kirjaus" -tyylisenä
+  // poikkeamaraporttina arkistoon (samaan reports-kokoelmaan), merkiten automaattisesti
+  // kenestä työntekijästä on kyse. Ei kosketa sisäänkirjausrivin omaa kommenttilistaa.
+  const handleSaveCommentAsReport = () => {
+    const text = checkInComment.trim();
+    if (!text) {
+      alert('Kirjoita kommentti ennen tallennusta.');
+      return;
+    }
+    const now = new Date();
+    const timeLabel = checkInTime || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+    setReports(prev => [{
+      id: getDynamicId(),
+      eventId: selectedEvent,
+      typeId: 'open',
+      type: 'Avoin kirjaus',
+      author: sessionNickname || 'TIKE Päivystäjä',
+      time: timeLabel,
+      summary: `${selectedEmp}: ${text}`,
+    }, ...prev]);
+    setRunningNumber(prev => prev + 1);
+    setCheckInComment('');
+    alert('Poikkeamaraportti tallennettu TIKE-arkistoon.');
   };
 
   const handleCheckOut = () => {
@@ -2597,7 +2672,15 @@ export default function App() {
             </div>
           </div>
         );
-      case 'tike_form_in':
+      case 'tike_form_in': {
+        // Kun muokataan olemassa olevaa riviä, luetaan sen tuoreimmat tiedot suoraan
+        // checkedInEmployees-tilasta (ei jäädytetystä editingCheckIn-otoksesta), jotta
+        // esim. juuri lisätty/poistettu kommentti näkyy heti listassa.
+        const editingCheckInLive = editingCheckIn
+          ? currentEventCheckedIn.find(e => e.id === editingCheckIn.id) || editingCheckIn
+          : null;
+        const empComments = editingCheckInLive ? getEmpComments(editingCheckInLive) : [];
+
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
             <button
@@ -2629,6 +2712,8 @@ export default function App() {
               </div>
             </div>
 
+            {!editingCheckIn && (
+            <>
             {/* Info Boxes / Työntekijätilanne */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-8">
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center flex flex-col justify-center">
@@ -2694,48 +2779,58 @@ export default function App() {
                 </div>
               )}
             </div>
+            </>
+            )}
 
             <form className="space-y-8 text-left">
-              {/* Haku */}
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">Työntekijän haku (Sukunimi Etunimi...)</label>
-                <div className="relative">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-3 text-slate-400" size={18} />
-                    <input 
-                      type="text" 
-                      value={empSearch}
-                      onChange={(e) => {
-                        setEmpSearch(e.target.value);
-                        setSelectedEmp('');
-                      }}
-                      className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-sm font-medium" 
-                      placeholder="Kirjoita vähintään 3 merkkiä hakeaksesi..."
-                    />
-                  </div>
-                  
-                  {empSearch.length >= 3 && !selectedEmp && (
-                    <ul className="absolute z-10 bg-white border border-slate-200 rounded-lg shadow-lg w-full mt-1 max-h-60 overflow-y-auto">
-                      {filteredEmployees.length > 0 ? (
-                        filteredEmployees.map((emp, idx) => (
-                          <li 
-                            key={idx} 
-                            onClick={() => {
-                              setSelectedEmp(emp);
-                              setEmpSearch(emp);
-                            }}
-                            className="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium text-slate-700 border-b border-slate-100 last:border-0"
-                          >
-                            {emp}
-                          </li>
-                        ))
-                      ) : (
-                        <li className="px-4 py-3 text-sm text-slate-500">Ei osumia työntekijärekisteristä.</li>
-                      )}
-                    </ul>
-                  )}
+              {editingCheckIn ? (
+                /* Muokkaustilassa ei hakua — henkilö on jo tiedossa, näytetään nimi otsikkona. */
+                <div className="flex items-center gap-2 pb-2">
+                  <UserCheck size={20} className="text-indigo-500" />
+                  <h3 className="text-lg font-bold text-slate-800">{editingCheckInLive?.name}</h3>
                 </div>
-              </div>
+              ) : (
+                /* Haku */
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Työntekijän haku (Sukunimi Etunimi...)</label>
+                  <div className="relative">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-3 text-slate-400" size={18} />
+                      <input
+                        type="text"
+                        value={empSearch}
+                        onChange={(e) => {
+                          setEmpSearch(e.target.value);
+                          setSelectedEmp('');
+                        }}
+                        className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 text-sm font-medium"
+                        placeholder="Kirjoita vähintään 3 merkkiä hakeaksesi..."
+                      />
+                    </div>
+
+                    {empSearch.length >= 3 && !selectedEmp && (
+                      <ul className="absolute z-10 bg-white border border-slate-200 rounded-lg shadow-lg w-full mt-1 max-h-60 overflow-y-auto">
+                        {filteredEmployees.length > 0 ? (
+                          filteredEmployees.map((emp, idx) => (
+                            <li
+                              key={idx}
+                              onClick={() => {
+                                setSelectedEmp(emp);
+                                setEmpSearch(emp);
+                              }}
+                              className="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium text-slate-700 border-b border-slate-100 last:border-0"
+                            >
+                              {emp}
+                            </li>
+                          ))
+                        ) : (
+                          <li className="px-4 py-3 text-sm text-slate-500">Ei osumia työntekijärekisteristä.</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Kirjauslomake (näytetään vain kun työntekijä on valittu) */}
               {selectedEmp && (
@@ -2846,21 +2941,54 @@ export default function App() {
                   {/* Poikkeamakommentit */}
                   <div className="space-y-4">
                     <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex justify-between items-end">
-                      <span>Avoin poikkeamakommentti</span>
+                      <span>{editingCheckIn ? 'Kommentti' : 'Avoin poikkeamakommentti'}</span>
                       <span className="text-xs font-normal text-slate-500">Nämä kirjaukset näkyvät etusivun tilastoissa</span>
                     </h3>
                     <div>
-                      <textarea 
-                        rows="3" 
+                      <textarea
+                        rows="3"
                         value={checkInComment}
                         onChange={(e) => setCheckInComment(e.target.value)}
-                        className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-emerald-500" 
+                        className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-emerald-500"
                         placeholder="Esim. työntekijä joutuu lähtemään ennen työvuoron loppua, varustepuutteet tai muu huomionarvoinen asia..."
                       ></textarea>
                     </div>
                   </div>
 
-                  <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
+                  {editingCheckIn && (
+                    <div className="space-y-3">
+                      <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
+                        <MessageSquare size={18} className="text-slate-400" />
+                        Kommentit{empComments.length > 0 ? ` (${empComments.length})` : ''}
+                      </h3>
+                      {empComments.length === 0 ? (
+                        <p className="text-sm text-slate-500">Ei vielä kommentteja.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {empComments.map((c) => (
+                            <div key={c.id} className="flex items-start justify-between gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                              <div className="min-w-0">
+                                <p className="text-sm text-slate-700 whitespace-pre-wrap">{c.text}</p>
+                                <p className="text-xs text-slate-400 mt-1">{[c.author, c.date, c.time].filter(Boolean).join(' · ') || '—'}</p>
+                              </div>
+                              {(isAdminUser || canEdit(perms, 'tike_form_in')) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteEmpComment(c.id)}
+                                  title="Poista kommentti"
+                                  className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-colors shrink-0"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="pt-4 flex flex-wrap justify-end gap-3 border-t border-slate-100">
                     <button
                       type="button"
                       onClick={() => {
@@ -2885,12 +3013,35 @@ export default function App() {
                         {editingCheckIn ? 'Tallenna muutokset' : 'Tallenna kirjaus'}
                       </button>
                     )}
+                    {editingCheckIn && (isAdminUser || canEdit(perms, 'tike_form_in')) && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={!checkInComment.trim()}
+                          onClick={handleSaveCommentAsReport}
+                          className="px-5 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+                        >
+                          <AlertTriangle size={16} />
+                          Tallenna poikkeamaraporttina
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!checkInComment.trim()}
+                          onClick={handleAddEmpComment}
+                          className="px-5 py-2 text-sm font-medium text-white bg-slate-700 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+                        >
+                          <Plus size={16} />
+                          Tallenna kommentti
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
             </form>
           </div>
         );
+      }
       case 'tike_form_out':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
