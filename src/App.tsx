@@ -678,6 +678,9 @@ export default function App() {
   const [reportSearchQuery, setReportSearchQuery] = useState('');
   const [empSearch, setEmpSearch] = useState('');
   const [selectedEmp, setSelectedEmp] = useState('');
+  // Kun muokataan olemassa olevaa sisäänkirjausriviä "Tapahtuman työntekijät" -sivulta
+  // (eikä tehdä uutta sisäänkirjausta) — kohdistaa tallennuksen tähän tiettyyn riviin id:llä.
+  const [editingCheckIn, setEditingCheckIn] = useState(null);
   const [checkInDate, setCheckInDate] = useState('');
   const [checkInTime, setCheckInTime] = useState('');
   const [checkInRole, setCheckInRole] = useState('Järjestyksenvalvoja');
@@ -1473,6 +1476,7 @@ export default function App() {
     setCheckInHeadset(false);
     setCheckInRadio('');
     setCheckInComment('');
+    setEditingCheckIn(null);
   };
 
   const formatFiDate = (isoDate) => {
@@ -1578,7 +1582,10 @@ export default function App() {
 
   const handleSaveCheckIn = () => {
     if (!selectedEmp) return;
-    if (currentEventCheckedIn.some(e => e.name === selectedEmp && getEmpStatus(e) === 'checked_in')) {
+    // Muokataan tiettyä olemassa olevaa riviä (avattu "Tapahtuman työntekijät" ->
+    // Muokkaa) — kohdistetaan id:llä eikä "jo sisäänkirjattuna" -esto koske tätä,
+    // koska juuri sitä ollaan tarkoituksella korjaamassa.
+    if (!editingCheckIn && currentEventCheckedIn.some(e => e.name === selectedEmp && getEmpStatus(e) === 'checked_in')) {
       alert('Työntekijä on jo sisäänkirjattuna.');
       return;
     }
@@ -1586,23 +1593,26 @@ export default function App() {
     const localNow = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
     const checkInDateVal = checkInDate || localNow.toISOString().split('T')[0];
     const checkInTimeVal = checkInTime || localNow.toISOString().slice(11, 16);
-    // Jos työntekijä on jo merkitty tapahtumaan (odottaa tai on uloskirjattu),
-    // päivitetään sama rivi sisäänkirjatuksi sen sijaan että luotaisiin kaksoiskappale.
+    const updated = {
+      role: checkInRole,
+      vest: checkInVest,
+      badge: checkInBadge,
+      headset: checkInHeadset,
+      radio: checkInRadio,
+      comment: checkInComment,
+      checkInDate: checkInDateVal,
+      checkInTime: checkInTimeVal,
+      checkOutDate: '',
+      checkOutTime: '',
+      status: 'checked_in'
+    };
     setCheckedInEmployees(prev => {
+      if (editingCheckIn) {
+        return prev.map(e => (e.id === editingCheckIn.id ? { ...e, ...updated } : e));
+      }
+      // Jos työntekijä on jo merkitty tapahtumaan (odottaa tai on uloskirjattu),
+      // päivitetään sama rivi sisäänkirjatuksi sen sijaan että luotaisiin kaksoiskappale.
       const existing = prev.find(e => e.name === selectedEmp && (e.eventId || 'fesx') === selectedEvent && getEmpStatus(e) !== 'checked_in');
-      const updated = {
-        role: checkInRole,
-        vest: checkInVest,
-        badge: checkInBadge,
-        headset: checkInHeadset,
-        radio: checkInRadio,
-        comment: checkInComment,
-        checkInDate: checkInDateVal,
-        checkInTime: checkInTimeVal,
-        checkOutDate: '',
-        checkOutTime: '',
-        status: 'checked_in'
-      };
       if (existing) {
         return prev.map(e => (e === existing ? { ...e, ...updated } : e));
       }
@@ -2590,21 +2600,32 @@ export default function App() {
       case 'tike_form_in':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
-            <button 
-              onClick={() => { setActiveTab('report_tike'); setSelectedEmp(''); setEmpSearch(''); }}
+            <button
+              onClick={() => {
+                if (editingCheckIn) {
+                  resetCheckInForm();
+                  setActiveTab('planning_employees');
+                } else {
+                  setActiveTab('report_tike');
+                  setSelectedEmp('');
+                  setEmpSearch('');
+                }
+              }}
               className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
             >
               <ArrowLeft size={16} />
-              Takaisin TIKE-valikkoon
+              {editingCheckIn ? 'Takaisin työntekijälistaan' : 'Takaisin TIKE-valikkoon'}
             </button>
 
             <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end">
               <div>
                 <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                   <LogIn className="text-emerald-500" size={24} />
-                  Työntekijän sisäänkirjaus
+                  {editingCheckIn ? 'Muokkaa työntekijän kirjausta' : 'Työntekijän sisäänkirjaus'}
                 </h2>
-                <p className="text-sm text-slate-500 mt-1">Kirjaa työntekijä sisään ja merkitse luovutetut välineet.</p>
+                <p className="text-sm text-slate-500 mt-1">
+                  {editingCheckIn ? 'Korjaa roolia, luovutettuja välineitä tai kirjausaikaa.' : 'Kirjaa työntekijä sisään ja merkitse luovutetut välineet.'}
+                </p>
               </div>
             </div>
 
@@ -2840,9 +2861,16 @@ export default function App() {
                   </div>
 
                   <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
-                    <button 
-                      type="button" 
-                      onClick={resetCheckInForm}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (editingCheckIn) {
+                          resetCheckInForm();
+                          setActiveTab('planning_employees');
+                        } else {
+                          resetCheckInForm();
+                        }
+                      }}
                       className="px-5 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                     >
                       Peruuta
@@ -2854,7 +2882,7 @@ export default function App() {
                         className="px-5 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center gap-2"
                       >
                         <CheckCircle size={16} />
-                        Tallenna kirjaus
+                        {editingCheckIn ? 'Tallenna muutokset' : 'Tallenna kirjaus'}
                       </button>
                     )}
                   </div>
@@ -4303,15 +4331,23 @@ export default function App() {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex justify-end gap-2">
-                          {(isAdminUser || canEdit(perms, 'global_employee_bank')) && (
+                          {(isAdminUser || canEdit(perms, 'tike_form_in')) && (
                             <button
                               onClick={() => {
-                                const reg = employees.find(x => x.name === emp.name);
-                                setEditingEmp(reg || null);
-                                setEmpForm(employeeToFormState(reg || { name: emp.name }));
-                                setViewingEmployeeBank('form');
+                                setEditingCheckIn(emp);
+                                setSelectedEmp(emp.name);
+                                setEmpSearch(emp.name);
+                                setCheckInRole(emp.role || 'Järjestyksenvalvoja');
+                                setCheckInVest(!!emp.vest);
+                                setCheckInBadge(emp.badge || '');
+                                setCheckInHeadset(!!emp.headset);
+                                setCheckInRadio(emp.radio || '');
+                                setCheckInComment(emp.comment || '');
+                                setCheckInDate(emp.checkInDate || '');
+                                setCheckInTime(emp.checkInTime || '');
+                                setActiveTab('tike_form_in');
                               }}
-                              title="Työntekijän tiedot muokataan työntekijäpankissa"
+                              title="Muokkaa työntekijän sisäänkirjaustietoja"
                               className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
                             >
                               Muokkaa
