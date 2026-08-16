@@ -20,6 +20,11 @@ function withDefaults(user) {
     nickname: user.nickname || user.username,
     role: user.role || 'user',
     permissions: user.permissions || {},
+    // Tapahtumarajaus: tyhjä taulukko (tai puuttuva kenttä) = ei rajoitusta, käyttäjä näkee
+    // kaikki tapahtumat kuten tähänkin asti — admin voi rajata tietyt käyttäjät näkemään vain
+    // valitsemansa tapahtumat (ks. permissions.js: eventScoped-kokoelmat). Näin olemassa olevat
+    // käyttäjät eivät menetä mitään pääsyä kun tämä kenttä otetaan käyttöön.
+    eventAccess: Array.isArray(user.eventAccess) ? user.eventAccess : [],
   };
   // Ei-adminit vaativat Authenticator-sovelluksen (TOTP) kirjautuessa — jokaiselle
   // ei-admin-tilille luodaan salaisuus automaattisesti jos sitä ei vielä ole, jotta
@@ -144,19 +149,22 @@ export function upsertUser(username, passwordHash, { nickname, role } = {}) {
       nickname: nickname || username,
       role: role || 'user',
       permissions: {},
+      eventAccess: [],
       created_at: new Date().toISOString(),
     });
   }
   writeUsers(users);
 }
 
-// Osittainen päivitys nimimerkille ja/tai sivukartta-oikeuksille (admin muokkaa muita käyttäjiä).
-export function updateUser(username, { nickname, permissions } = {}) {
+// Osittainen päivitys nimimerkille ja/tai sivukartta-oikeuksille ja/tai tapahtumarajaukselle
+// (admin muokkaa muita käyttäjiä).
+export function updateUser(username, { nickname, permissions, eventAccess } = {}) {
   const users = readUsers();
   const existing = users.find((u) => u.username === username);
   if (!existing) return null;
   if (nickname !== undefined) existing.nickname = nickname;
   if (permissions !== undefined) existing.permissions = permissions;
+  if (eventAccess !== undefined) existing.eventAccess = eventAccess;
   writeUsers(users);
   return existing;
 }

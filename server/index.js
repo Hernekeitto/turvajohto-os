@@ -19,6 +19,14 @@ import {
 import { readCollection, writeCollection, KNOWN_COLLECTIONS } from './store.js';
 import { isAllowedFile, saveUpload, getUploadPath } from './uploads.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
+import {
+  COLLECTION_NAMES,
+  canReadCollection,
+  filterByEventAccess,
+  authorizeWrite,
+  canReadAttachment,
+  canUploadAttachment,
+} from './permissions.js';
 
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -33,6 +41,17 @@ const USER_SESSION_MINUTES = 60;
 if (!JWT_SECRET) {
   console.error('JWT_SECRET puuttuu ympäristömuuttujista. Palvelinta ei käynnistetä.');
   process.exit(1);
+}
+
+// Varmistaa käynnistyksessä ettei store.js:ään voi jäädä lisätä kokoelma jolle
+// permissions.js:stä puuttuu oikeussäännöt — muuten uusi kokoelma päätyisi vahingossa
+// suojaamattomaksi (sama virhe kuin tämän tarkistuksen alkuperäinen puuttuminen).
+{
+  const missingRules = KNOWN_COLLECTIONS.filter((name) => !COLLECTION_NAMES.includes(name));
+  if (missingRules.length > 0) {
+    console.error(`permissions.js: puuttuvat oikeussäännöt kokoelmille: ${missingRules.join(', ')}. Palvelinta ei käynnistetä.`);
+    process.exit(1);
+  }
 }
 
 const app = express();
@@ -164,6 +183,7 @@ app.get('/api/session', (req, res) => {
     nickname: user.nickname,
     role: user.role,
     permissions: user.permissions,
+    eventAccess: user.eventAccess,
   });
 });
 
@@ -174,6 +194,10 @@ function requireAuth(req, res, next) {
   if (!user) return res.status(401).json({ ok: false, error: 'Kirjaudu sisään.' });
   req.username = username;
   req.role = user.role;
+  // Sivukartta-oikeudet ja tapahtumarajaus tuoreena samasta luvusta — käytetään /api/data
+  // ja /api/uploads -reittien palvelinpuolen oikeustarkistuksissa (ks. permissions.js).
+  req.permissions = user.permissions;
+  req.eventAccess = user.eventAccess;
   // Liukuva istunto: jokainen onnistunut kirjautunut pyyntö ei-adminilta pidentää
   // evästeen voimassaoloa uudelleen USER_SESSION_MINUTES eteenpäin. Admin pysyy
   // kiinteässä 12h istunnossa, ei koske automaattinen käyttämättömyyskatkaisu.
@@ -194,12 +218,22 @@ function requireAdmin(req, res, next) {
 // kesken jaettuna palvelimella. Huom: kaksi samanaikaista tallentajaa voi ylikirjoittaa
 // toisensa muutokset (viimeisin voittaa) — riittää pienelle tiimille, mutta ei ole
 // rakennettu ristiriitojen yhdistämiseen.
+// Sivukartta-oikeudet JA tapahtumarajaus (eventAccess) tarkistetaan tässä palvelinpuolella
+// (ks. permissions.js) — frontin canView/canEdit suodattavat vain käyttöliittymän, eivät
+// suojaa itse dataa. Jokainen kokoelma vaatii vähintään yhden sen alaan kuuluvan sivukartta-
+// solmun näkyvyysoikeuden GET:iin (minkä jälkeen tapahtumarajattu vastaus suodatetaan vielä
+// eventAccess-listan mukaan), ja PUT tarkistetaan tietue kerrallaan sen mukaan mitä oikeasti
+// muuttuu.
 app.get('/api/data/:name', requireAuth, (req, res) => {
   const { name } = req.params;
   if (!KNOWN_COLLECTIONS.includes(name)) {
     return res.status(404).json({ ok: false, error: 'Tuntematon kokoelma.' });
   }
-  res.json({ ok: true, data: readCollection(name) });
+  if (!canReadCollection(req.role, req.permissions, name)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän tiedon lukemiseen.' });
+  }
+  const data = filterByEventAccess(req.role, name, readCollection(name), req.eventAccess);
+  res.json({ ok: true, data });
 });
 
 app.put('/api/data/:name', requireAuth, (req, res) => {
@@ -210,7 +244,12 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   if (!Array.isArray(req.body)) {
     return res.status(400).json({ ok: false, error: 'Odotettiin taulukkoa.' });
   }
-  writeCollection(name, req.body);
+  const current = readCollection(name) || [];
+  const verdict = authorizeWrite(req.role, req.permissions, req.eventAccess, name, current, req.body);
+  if (!verdict.ok) {
+    return res.status(403).json(verdict);
+  }
+  writeCollection(name, verdict.data);
   res.json({ ok: true });
 });
 
@@ -244,7 +283,7 @@ app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
 
 app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
   const { username } = req.params;
-  const { nickname, permissions } = req.body || {};
+  const { nickname, permissions, eventAccess } = req.body || {};
   if (!findUser(username)) {
     return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
   }
@@ -254,9 +293,13 @@ app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
   if (permissions !== undefined && (typeof permissions !== 'object' || permissions === null || Array.isArray(permissions))) {
     return res.status(400).json({ ok: false, error: 'Virheellinen oikeusmuoto.' });
   }
+  if (eventAccess !== undefined && (!Array.isArray(eventAccess) || !eventAccess.every((id) => typeof id === 'string'))) {
+    return res.status(400).json({ ok: false, error: 'Virheellinen tapahtumarajaus.' });
+  }
   updateUser(username, {
     nickname: nickname !== undefined ? nickname.trim() : undefined,
     permissions,
+    eventAccess,
   });
   res.json({ ok: true });
 });
@@ -346,6 +389,9 @@ app.post('/api/change-password', requireAuth, loginLimiter, (req, res) => {
 // Lomakkeiden "Ota kuva" / "Liitä tiedosto" -liitteet. Tallennetaan levylle
 // (ei git-repoon, ei muihin kokoelmiin) ja viitataan raportissa pelkällä id:llä.
 app.post('/api/uploads', requireAuth, uploadLimiter, (req, res) => {
+  if (!canUploadAttachment(req.role, req.permissions)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia liitteiden lähettämiseen.' });
+  }
   upload.single('file')(req, res, (err) => {
     if (err) {
       const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Tiedosto on liian suuri (max 15 Mt).' : 'Tiedoston lähetys epäonnistui.';
@@ -365,6 +411,12 @@ app.post('/api/uploads', requireAuth, uploadLimiter, (req, res) => {
 app.get('/api/uploads/:id', requireAuth, (req, res) => {
   const filePath = getUploadPath(req.params.id);
   if (!filePath) return res.status(404).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
+  // Liite itsessään ei tiedä oikeuksia — omistava raportti (ja sen typeId) etsitään
+  // reports-kokoelmasta ja tarkistetaan sen lukuoikeus, ks. permissions.js.
+  const reportsArr = readCollection('reports') || [];
+  if (!canReadAttachment(req.role, req.permissions, req.eventAccess, req.params.id, reportsArr)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän liitteen lataamiseen.' });
+  }
   res.sendFile(filePath);
 });
 

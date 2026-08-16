@@ -658,6 +658,9 @@ export default function App() {
   const [newUserSubmitting, setNewUserSubmitting] = useState(false);
   const [editingPermUser, setEditingPermUser] = useState(null);
   const [permDraft, setPermDraft] = useState({});
+  // Tapahtumarajaus: tyhjä = ei rajoitusta (näkee kaikki tapahtumat), muuten lista
+  // tapahtuma-id:itä joihin käyttäjä on rajattu (ks. server/permissions.js: eventAccess).
+  const [permEventAccess, setPermEventAccess] = useState([]);
   const [permNickname, setPermNickname] = useState('');
   const [permSaveError, setPermSaveError] = useState('');
   const [permSaving, setPermSaving] = useState(false);
@@ -1320,6 +1323,7 @@ export default function App() {
   const handleOpenPermissions = (user) => {
     setEditingPermUser(user);
     setPermDraft(user.permissions || {});
+    setPermEventAccess(user.eventAccess || []);
     setPermNickname(user.nickname || '');
     setPermSaveError('');
     setPermTotpInfo(null);
@@ -1422,6 +1426,14 @@ export default function App() {
     });
   };
 
+  // Tapahtumarajauksen valintaruudun kytkin — sama "lista mukana / pois" -periaate kuin
+  // muuallakin sovelluksessa (ks. esim. toggleAddEmpSelected).
+  const handleToggleEventAccess = (eventId) => {
+    setPermEventAccess((prev) => (
+      prev.includes(eventId) ? prev.filter((id) => id !== eventId) : [...prev, eventId]
+    ));
+  };
+
   const handleSavePermissions = async () => {
     if (!editingPermUser) return;
     setPermSaveError('');
@@ -1435,7 +1447,7 @@ export default function App() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ nickname: permNickname.trim(), permissions: permDraft }),
+        body: JSON.stringify({ nickname: permNickname.trim(), permissions: permDraft, eventAccess: permEventAccess }),
       });
       const data = await res.json();
       if (res.ok && data.ok) {
@@ -6180,6 +6192,47 @@ export default function App() {
                         />
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {editingPermUser.role !== 'admin' && (
+                  <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
+                      <Layers className="text-indigo-500" size={16} />
+                      Tapahtumarajaus
+                    </h3>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Jos yhtään tapahtumaa ei ole valittu, käyttäjä näkee kaikkien tapahtumien datan
+                      normaaliin tapaan (ei rajoitusta). Valitsemalla tapahtumia käyttäjä näkee ja voi
+                      muokata vain niiden kirjauksia, raportteja ja riskiarviointeja — Sivukartta-
+                      oikeudet määräävät edelleen mitä sivuja hän ylipäätään näkee, tämä vain mitkä
+                      tapahtumat niillä sivuilla näkyvät.
+                    </p>
+                    {events.length === 0 ? (
+                      <p className="text-sm text-slate-500">Ei tapahtumia.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {events.map((ev) => (
+                          <label
+                            key={ev.id}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer transition-colors ${
+                              permEventAccess.includes(ev.id)
+                                ? 'bg-indigo-50 border-indigo-300 text-indigo-800'
+                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={permEventAccess.includes(ev.id)}
+                              onChange={() => handleToggleEventAccess(ev.id)}
+                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                            />
+                            {ev.name}
+                            {ev.archived && <span className="text-xs text-slate-400">(arkistoitu)</span>}
+                          </label>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
