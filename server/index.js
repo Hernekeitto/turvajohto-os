@@ -27,6 +27,7 @@ import {
   canUploadAttachment,
 } from './permissions.js';
 import { logAudit, readAuditLog } from './audit.js';
+import { validateRecords, wouldWipeNonEmptyCollection } from './validation.js';
 
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -252,10 +253,25 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   if (!Array.isArray(req.body)) {
     return res.status(400).json({ ok: false, error: 'Odotettiin taulukkoa.' });
   }
+  // Rakennevalidointi ennen oikeustarkistusta/kirjoitusta — ks. validation.js.
+  const recordCheck = validateRecords(req.body);
+  if (!recordCheck.ok) {
+    return res.status(400).json(recordCheck);
+  }
   const current = readCollection(name) || [];
   const verdict = authorizeWrite(req.role, req.permissions, req.eventAccess, name, current, req.body);
   if (!verdict.ok) {
     return res.status(403).json(verdict);
+  }
+  // Romahdussuoja: tarkistetaan levylle päätyvä lopullinen data (verdict.data, joka
+  // tapahtumarajatulle käyttäjälle voi sisältää outOfScope-osan) — ei suoraan
+  // req.bodyä, koska rajatun käyttäjän tyhjä lähetys ei välttämättä tyhjennä koko
+  // kokoelmaa levyllä.
+  if (wouldWipeNonEmptyCollection(current, verdict.data)) {
+    return res.status(409).json({
+      ok: false,
+      error: 'Tallennus hylätty: yrität korvata olemassa olevan datan tyhjällä. Jos tarkoitus on poistaa kaikki tietueet, poista ne yksitellen.',
+    });
   }
   writeCollection(name, verdict.data);
   // Lokitetaan vasta kirjoituksen onnistuttua — ei koskaan lokiin muutosta joka ei

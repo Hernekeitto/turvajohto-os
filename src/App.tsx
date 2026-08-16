@@ -961,12 +961,19 @@ export default function App() {
     fetch('/api/data/events', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
       .then((res) => {
-        if (res && Array.isArray(res.data)) setEvents(res.data);
+        // loaded asetetaan true:ksi VAIN onnistuneella vastauksella (res.ok===true on
+        // API:n oma ok-kenttä, ei HTTP-statusta) — muuten epäonnistunut haku (verkkovirhe,
+        // ei oikeutta) voisi laukaista tallennus-useEffectin tyhjällä/alkutilalla ja
+        // pyyhkiä koko kokoelman palvelimelta. Ks. myös server/validation.js:n
+        // romahdussuoja, joka estää tämän myös jos tämä tarkistus jostain syystä pettäisi.
+        if (res && res.ok === true) {
+          if (Array.isArray(res.data)) setEvents(res.data);
+          setEventsLoaded(true);
+        }
       })
       .catch(() => {
-        // Verkkovirhe: jatketaan alkutilalla, seuraava tallennusyritys näyttää virheen
-      })
-      .finally(() => setEventsLoaded(true));
+        // Verkkovirhe: loaded EI asetu true:ksi (ks. yllä) — tallennus ei laukea tyhjällä.
+      });
   }, []);
 
   useEffect(() => {
@@ -986,12 +993,16 @@ export default function App() {
     fetch('/api/data/riskAssessments', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
       .then((res) => {
-        if (res && Array.isArray(res.data)) setRiskAssessments(res.data);
+        // loaded asetetaan true:ksi VAIN onnistuneella vastauksella — ks. events-lohkon
+        // kommentti yllä samasta syystä.
+        if (res && res.ok === true) {
+          if (Array.isArray(res.data)) setRiskAssessments(res.data);
+          setRiskAssessmentsLoaded(true);
+        }
       })
       .catch(() => {
-        // Verkkovirhe: jatketaan alkutilalla, seuraava tallennusyritys näyttää virheen
-      })
-      .finally(() => setRiskAssessmentsLoaded(true));
+        // Verkkovirhe: loaded EI asetu true:ksi (ks. yllä) — tallennus ei laukea tyhjällä.
+      });
   }, []);
 
   useEffect(() => {
@@ -1011,12 +1022,16 @@ export default function App() {
     fetch('/api/data/checkins', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
       .then((res) => {
-        if (res && Array.isArray(res.data)) setCheckedInEmployees(res.data);
+        // loaded asetetaan true:ksi VAIN onnistuneella vastauksella — ks. events-lohkon
+        // kommentti yllä samasta syystä.
+        if (res && res.ok === true) {
+          if (Array.isArray(res.data)) setCheckedInEmployees(res.data);
+          setCheckinsLoaded(true);
+        }
       })
       .catch(() => {
-        // Verkkovirhe: jatketaan alkutilalla, seuraava tallennusyritys näyttää virheen
-      })
-      .finally(() => setCheckinsLoaded(true));
+        // Verkkovirhe: loaded EI asetu true:ksi (ks. yllä) — tallennus ei laukea tyhjällä.
+      });
   }, []);
 
   // Tallennetaan muutokset palvelimelle (ei ensimmäisellä renderillä, ettei alkutila ylikirjoita jo tallennettua dataa)
@@ -1037,12 +1052,16 @@ export default function App() {
     fetch('/api/data/employees', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
       .then((res) => {
-        if (res && Array.isArray(res.data)) setEmployees(res.data);
+        // loaded asetetaan true:ksi VAIN onnistuneella vastauksella — ks. events-lohkon
+        // kommentti yllä samasta syystä.
+        if (res && res.ok === true) {
+          if (Array.isArray(res.data)) setEmployees(res.data);
+          setEmployeesLoaded(true);
+        }
       })
       .catch(() => {
-        // Verkkovirhe: jatketaan alkutilalla, seuraava tallennusyritys näyttää virheen
-      })
-      .finally(() => setEmployeesLoaded(true));
+        // Verkkovirhe: loaded EI asetu true:ksi (ks. yllä) — tallennus ei laukea tyhjällä.
+      });
   }, []);
 
   useEffect(() => {
@@ -1062,12 +1081,16 @@ export default function App() {
     fetch('/api/data/reports', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
       .then((res) => {
-        if (res && Array.isArray(res.data)) setReports(res.data);
+        // loaded asetetaan true:ksi VAIN onnistuneella vastauksella — ks. events-lohkon
+        // kommentti yllä samasta syystä.
+        if (res && res.ok === true) {
+          if (Array.isArray(res.data)) setReports(res.data);
+          setReportsLoaded(true);
+        }
       })
       .catch(() => {
-        // Verkkovirhe: jatketaan alkutilalla, seuraava tallennusyritys näyttää virheen
-      })
-      .finally(() => setReportsLoaded(true));
+        // Verkkovirhe: loaded EI asetu true:ksi (ks. yllä) — tallennus ei laukea tyhjällä.
+      });
   }, []);
 
   useEffect(() => {
