@@ -476,17 +476,41 @@ function findAncestorIds(nodeId, nodes = SITEMAP, path = []) {
   return null;
 }
 
-// perms['*'] on admin-oikotie: kaikki näkyy ja on muokattavissa riippumatta
-// yksittäisistä solmumerkinnöistä.
-function canView(perms, nodeId) {
-  if (!perms) return false;
-  if (perms['*']?.view) return true;
-  return !!perms[nodeId]?.view;
+// Oikeudet tallennetaan kaksitasoisena: { __default__: {node:{view,edit}}, [eventId]:
+// {node:{view,edit}} } — sama muoto kuin server/permissions.js:ssä (pidettävä synkassa).
+// __default__ on aina läsnä ja toimii oletuksena tapahtumille joilla ei ole omaa
+// erillistä asetusta (ks. Käyttöoikeudet-näkymä).
+const DEFAULT_BUCKET = '__default__';
+
+// Nämä solmut EIVÄT ole sidottu yhteen tapahtumaan — haetaan aina __default__-asetuksesta
+// riippumatta mille tapahtumalle tarkistus muuten tehtäisiin (sama lista kuin
+// server/permissions.js:n GLOBAL_NODES, ks. sen kommentti täydestä perustelusta).
+const GLOBAL_NODES = new Set([
+  'landing',
+  'settings',
+  'global_reports',
+  'global_archived_events',
+  'global_employee_bank',
+]);
+
+function bucketFor(permissions, eventId, nodeId) {
+  const perms = permissions || {};
+  if (!GLOBAL_NODES.has(nodeId) && eventId && perms[eventId]) return perms[eventId];
+  return perms[DEFAULT_BUCKET] || {};
 }
-function canEdit(perms, nodeId) {
-  if (!perms) return false;
-  if (perms['*']?.edit) return true;
-  return !!perms[nodeId]?.edit;
+
+// perms[bucket]['*'] on admin-oikotie kyseisessä bucketissa: kaikki näkyy ja on
+// muokattavissa riippumatta yksittäisistä solmumerkinnöistä. eventId kertoo minkä
+// tapahtuman kontekstissa tarkistus tehdään (globaaleille solmuille sillä ei ole väliä).
+function canView(permissions, eventId, nodeId) {
+  const bucket = bucketFor(permissions, eventId, nodeId);
+  if (bucket['*']?.view) return true;
+  return !!bucket[nodeId]?.view;
+}
+function canEdit(permissions, eventId, nodeId) {
+  const bucket = bucketFor(permissions, eventId, nodeId);
+  if (bucket['*']?.edit) return true;
+  return !!bucket[nodeId]?.edit;
 }
 
 // "Lisää tapahtumaan työntekijä" ei ole oma sivukartta-solmu — se kuuluu samaan
@@ -657,7 +681,14 @@ export default function App() {
   const [newUserError, setNewUserError] = useState('');
   const [newUserSubmitting, setNewUserSubmitting] = useState(false);
   const [editingPermUser, setEditingPermUser] = useState(null);
-  const [permDraft, setPermDraft] = useState({});
+  // permDraft on nyt kaksitasoinen: { __default__: {node:{view,edit}}, [eventId]:
+  // {node:{view,edit}} } — ks. DEFAULT_BUCKET-kommentti. permEditingBucket kertoo kumpaa
+  // niistä Sivukartta-taulukko juuri nyt näyttää/muokkaa (oletuksena __default__ eli
+  // "Yleiset").
+  const [permDraft, setPermDraft] = useState({ [DEFAULT_BUCKET]: {} });
+  const [permEditingBucket, setPermEditingBucket] = useState(DEFAULT_BUCKET);
+  // "Kopioi oikeudet myös näihin tapahtumiin" -valinta (ks. handleCopyPermsToEvents).
+  const [permCopyTargets, setPermCopyTargets] = useState([]);
   // Tapahtumarajaus: tyhjä = ei rajoitusta (näkee kaikki tapahtumat), muuten lista
   // tapahtuma-id:itä joihin käyttäjä on rajattu (ks. server/permissions.js: eventAccess).
   const [permEventAccess, setPermEventAccess] = useState([]);
@@ -1322,7 +1353,13 @@ export default function App() {
 
   const handleOpenPermissions = (user) => {
     setEditingPermUser(user);
-    setPermDraft(user.permissions || {});
+    // Varmistetaan että __default__ on aina läsnä vaikka käyttäjän tallennettu data olisi
+    // jostain syystä vanhaa/puutteellista muotoa — palvelin migroi tämän aina, mutta
+    // frontin ei kannata kaatua siihen jos jokin poikkeustapaus livahtaisi läpi.
+    const savedPerms = user.permissions || {};
+    setPermDraft({ ...savedPerms, [DEFAULT_BUCKET]: savedPerms[DEFAULT_BUCKET] || {} });
+    setPermEditingBucket(DEFAULT_BUCKET);
+    setPermCopyTargets([]);
     setPermEventAccess(user.eventAccess || []);
     setPermNickname(user.nickname || '');
     setPermSaveError('');
@@ -1402,9 +1439,15 @@ export default function App() {
       .finally(() => setPermForceLogoutSubmitting(false));
   };
 
+  // Molemmat muokkaavat AINA vain sitä bucketia joka on juuri nyt valittuna
+  // (permEditingBucket — "Yleiset" eli __default__, tai jokin tietty tapahtuma). Jos
+  // valitulla tapahtumalla ei vielä ole omaa erillistä asetusta, se "materialisoituu"
+  // tässä ensimmäisen muokkauksen yhteydessä kopiona nykyisestä __default__-arvosta —
+  // muut bucketit (__default__ mukaan lukien) eivät koskaan muutu tästä.
   const handleTogglePerm = (nodeId, field, value) => {
     setPermDraft((prev) => {
-      const next = { ...prev, [nodeId]: { ...prev[nodeId], [field]: value } };
+      const bucket = { ...(prev[permEditingBucket] || prev[DEFAULT_BUCKET] || {}) };
+      const next = { ...bucket, [nodeId]: { ...bucket[nodeId], [field]: value } };
       // Näkyvyyden myöntäminen alasivulle myöntää sen automaattisesti myös kaikille
       // yläsivuille — muuten myönnetty oikeus ei koskaan näy valikossa, koska
       // yläsivun kortti/valikko olisi itse piilossa. Ei koske muokkausoikeutta eikä
@@ -1413,23 +1456,49 @@ export default function App() {
         const ancestorIds = findAncestorIds(nodeId) || [];
         for (const id of ancestorIds) next[id] = { ...next[id], view: true };
       }
-      return next;
+      return { ...prev, [permEditingBucket]: next };
     });
   };
 
   const handleCascadePerm = (node, field, value) => {
     const ids = collectDescendantIds(node);
     setPermDraft((prev) => {
-      const next = { ...prev };
+      const bucket = { ...(prev[permEditingBucket] || prev[DEFAULT_BUCKET] || {}) };
+      const next = { ...bucket };
       for (const id of ids) next[id] = { ...next[id], [field]: value };
+      return { ...prev, [permEditingBucket]: next };
+    });
+  };
+
+  // "Kopioi oikeudet myös näihin tapahtumiin" -painike: ottaa juuri muokatun bucketin
+  // (permEditingBucket) NYKYISEN vaikuttavan arvon (oma asetus jos on, muuten __default__)
+  // ja kirjoittaa sen sellaisenaan jokaiselle permCopyTargets-listan tapahtumalle. Vain
+  // luonnostilassa (permDraft) — ei tallennu levylle ennen "Tallenna oikeudet" -painiketta,
+  // kuten mikään muukaan tällä lomakkeella.
+  const handleCopyPermsToEvents = () => {
+    if (permCopyTargets.length === 0) return;
+    setPermDraft((prev) => {
+      const effective = prev[permEditingBucket] || prev[DEFAULT_BUCKET] || {};
+      const next = { ...prev };
+      for (const eventId of permCopyTargets) {
+        next[eventId] = JSON.parse(JSON.stringify(effective));
+      }
       return next;
     });
+    setPermCopyTargets([]);
   };
 
   // Tapahtumarajauksen valintaruudun kytkin — sama "lista mukana / pois" -periaate kuin
   // muuallakin sovelluksessa (ks. esim. toggleAddEmpSelected).
   const handleToggleEventAccess = (eventId) => {
     setPermEventAccess((prev) => (
+      prev.includes(eventId) ? prev.filter((id) => id !== eventId) : [...prev, eventId]
+    ));
+  };
+
+  // "Kopioi oikeudet myös näihin tapahtumiin" -kohdevalinnan kytkin.
+  const handleTogglePermCopyTarget = (eventId) => {
+    setPermCopyTargets((prev) => (
       prev.includes(eventId) ? prev.filter((id) => id !== eventId) : [...prev, eventId]
     ));
   };
@@ -2071,7 +2140,7 @@ export default function App() {
   const renderContent = () => {
     // Suoja tilanteille joissa aiemmin sallitun sivun activeTab jää voimaan sen jälkeen
     // kun admin on rajannut oikeuksia — pelkkä valikoiden piilottaminen ei riitä.
-    if (!isAdminUser && !canView(perms, sitemapIdForTab(activeTab))) {
+    if (!isAdminUser && !canView(perms, selectedEvent, sitemapIdForTab(activeTab))) {
       return (
         <div className="bg-white p-10 rounded-xl shadow-sm border border-slate-100 text-center max-w-lg mx-auto">
           <ShieldAlert className="text-rose-400 mx-auto mb-4" size={40} />
@@ -2319,7 +2388,7 @@ export default function App() {
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* JV Card */}
-              {(isAdminUser || canView(perms, 'report_jv')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'report_jv')) && (
                 <button
                   onClick={() => setActiveTab('report_jv')}
                   className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all text-left group"
@@ -2336,7 +2405,7 @@ export default function App() {
               )}
 
               {/* TIKE Card */}
-              {(isAdminUser || canView(perms, 'report_tike')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'report_tike')) && (
                 <button
                   onClick={() => setActiveTab('report_tike')}
                   className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all text-left group"
@@ -2353,7 +2422,7 @@ export default function App() {
               )}
 
               {/* Raportit Arkisto Card */}
-              {(isAdminUser || canView(perms, 'report_list')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'report_list')) && (
                 <button
                   onClick={() => setActiveTab('report_list')}
                   className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-300 transition-all text-left group"
@@ -2597,7 +2666,7 @@ export default function App() {
                 <button type="button" className="px-5 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
                   Tyhjennä
                 </button>
-                {(isAdminUser || canEdit(perms, 'report_jv')) && (
+                {(isAdminUser || canEdit(perms, selectedEvent, 'report_jv')) && (
                   <button type="button" className="px-5 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2">
                     <CheckCircle size={16} />
                     Tallenna ilmoitus
@@ -2666,7 +2735,7 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {tikeOptions.filter((option) => isAdminUser || canView(perms, `tike_form_${option.id}`)).map((option) => {
+              {tikeOptions.filter((option) => isAdminUser || canView(perms, selectedEvent, `tike_form_${option.id}`)).map((option) => {
                 const Icon = option.icon;
                 return (
                   <button
@@ -2983,7 +3052,7 @@ export default function App() {
                                 <p className="text-sm text-slate-700 whitespace-pre-wrap">{c.text}</p>
                                 <p className="text-xs text-slate-400 mt-1">{[c.author, c.date, c.time].filter(Boolean).join(' · ') || '—'}</p>
                               </div>
-                              {(isAdminUser || canEdit(perms, 'tike_form_in')) && (
+                              {(isAdminUser || canEdit(perms, selectedEvent, 'tike_form_in')) && (
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteEmpComment(c.id)}
@@ -3015,7 +3084,7 @@ export default function App() {
                     >
                       Peruuta
                     </button>
-                    {(isAdminUser || canEdit(perms, 'tike_form_in')) && (
+                    {(isAdminUser || canEdit(perms, selectedEvent, 'tike_form_in')) && (
                       <button
                         type="button"
                         onClick={handleSaveCheckIn}
@@ -3025,7 +3094,7 @@ export default function App() {
                         {editingCheckIn ? 'Tallenna muutokset' : 'Tallenna kirjaus'}
                       </button>
                     )}
-                    {editingCheckIn && (isAdminUser || canEdit(perms, 'tike_form_in')) && (
+                    {editingCheckIn && (isAdminUser || canEdit(perms, selectedEvent, 'tike_form_in')) && (
                       <>
                         <button
                           type="button"
@@ -3236,7 +3305,7 @@ export default function App() {
 
                   {/* Toiminnot */}
                   <div className="pt-2">
-                    {!(isAdminUser || canEdit(perms, 'tike_form_out')) ? (
+                    {!(isAdminUser || canEdit(perms, selectedEvent, 'tike_form_out')) ? (
                       <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">Ei muokkausoikeutta tähän toimintoon.</p>
                     ) : !showOutTimeInput ? (
                       <div className="flex flex-col sm:flex-row gap-3">
@@ -3414,7 +3483,7 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                {(isAdminUser || canEdit(perms, 'tike_form_open')) && (
+                {(isAdminUser || canEdit(perms, selectedEvent, 'tike_form_open')) && (
                   <button
                     type="button"
                     onClick={handleSaveOpenKirjaus}
@@ -3579,7 +3648,7 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                {(isAdminUser || canEdit(perms, 'tike_form_firstaid')) && (
+                {(isAdminUser || canEdit(perms, selectedEvent, 'tike_form_firstaid')) && (
                   <button
                     type="button"
                     onClick={handleSaveFirstAid}
@@ -3990,7 +4059,7 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                {(isAdminUser || canEdit(perms, 'tike_form_jvaction')) && (
+                {(isAdminUser || canEdit(perms, selectedEvent, 'tike_form_jvaction')) && (
                   <button
                     type="button"
                     onClick={handleSaveJvaReport}
@@ -4159,7 +4228,7 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                {(isAdminUser || canEdit(perms, activeTab)) && (
+                {(isAdminUser || canEdit(perms, selectedEvent, activeTab)) && (
                   <button
                     type="button"
                     onClick={() => handleSaveGenericReport(activeTab.replace('tike_form_', ''), config.title)}
@@ -4321,7 +4390,7 @@ export default function App() {
 
               {/* Toiminnot */}
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
-                {(isAdminUser || canEdit(perms, 'planning_readiness')) && (
+                {(isAdminUser || canEdit(perms, selectedEvent, 'planning_readiness')) && (
                   <button
                     type="button"
                     onClick={() => setActiveTab('planning')}
@@ -4444,7 +4513,7 @@ export default function App() {
                   Merkitty tapahtumaan {currentEventCheckedIn.length} hlö, sisäänkirjattuna {jvCount + guardCount} hlö (JV {jvCount}, vartijat {guardCount}). Rekisterissä {employees.length} hlö.
                 </p>
               </div>
-              {(isAdminUser || canEdit(perms, 'planning_employees')) && (
+              {(isAdminUser || canEdit(perms, selectedEvent, 'planning_employees')) && (
                 <button
                   onClick={() => { setAddEmpSearch(''); setAddEmpSelectedIds([]); setActiveTab('planning_employee_add'); }}
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-sm"
@@ -4494,7 +4563,7 @@ export default function App() {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex justify-end gap-2">
-                          {(isAdminUser || canEdit(perms, 'tike_form_in')) && (
+                          {(isAdminUser || canEdit(perms, selectedEvent, 'tike_form_in')) && (
                             <button
                               onClick={() => {
                                 setEditingCheckIn(emp);
@@ -4516,7 +4585,7 @@ export default function App() {
                               Muokkaa
                             </button>
                           )}
-                          {(isAdminUser || canEdit(perms, 'planning_employees')) && (
+                          {(isAdminUser || canEdit(perms, selectedEvent, 'planning_employees')) && (
                             <button
                               onClick={() => handleRemoveFromEventRoster(emp)}
                               title="Poistaa työntekijän tapahtumasta — ei ole uloskirjaus"
@@ -4650,7 +4719,7 @@ export default function App() {
 
                 <div className="pt-6 mt-2 flex justify-between items-center border-t border-slate-100">
                   <span className="text-sm text-slate-500">{addEmpSelectedIds.length} valittu</span>
-                  {(isAdminUser || canEdit(perms, 'planning_employees')) && (
+                  {(isAdminUser || canEdit(perms, selectedEvent, 'planning_employees')) && (
                   <button
                     type="button"
                     disabled={addEmpSelectedIds.length === 0}
@@ -4687,7 +4756,7 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {documentOptions.filter((option) => isAdminUser || canView(perms, `documents_${option.id}`)).map((option) => {
+              {documentOptions.filter((option) => isAdminUser || canView(perms, selectedEvent, `documents_${option.id}`)).map((option) => {
                 const Icon = option.icon;
                 return (
                   <button
@@ -4732,7 +4801,7 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {riskOptions.filter((option) => isAdminUser || canView(perms, `documents_${option.id}`)).map((option) => {
+              {riskOptions.filter((option) => isAdminUser || canView(perms, selectedEvent, `documents_${option.id}`)).map((option) => {
                 const Icon = option.icon;
                 return (
                   <button
@@ -5107,7 +5176,7 @@ export default function App() {
                 >
                   Peruuta
                 </button>
-                {(isAdminUser || canEdit(perms, 'documents_risk_new')) && (
+                {(isAdminUser || canEdit(perms, selectedEvent, 'documents_risk_new')) && (
                   <button
                     type="button"
                     onClick={handleSaveRiskAssessment}
@@ -5530,7 +5599,7 @@ export default function App() {
                       {editingEmp ? 'Päivitä työntekijän perustiedot, luvat ja suoritetut koulutukset.' : 'Lisää työntekijän perustiedot, pätevyydet ja suoritetut koulutukset rekisteriin.'}
                     </p>
                   </div>
-                  {editingEmp && (isAdminUser || canEdit(perms, 'global_employee_bank')) && (
+                  {editingEmp && (isAdminUser || canEdit(perms, selectedEvent, 'global_employee_bank')) && (
                     <button
                       onClick={() => handleDeleteEmployee(editingEmp)}
                       title="Poista työntekijä"
@@ -5834,7 +5903,7 @@ export default function App() {
                     >
                       Peruuta
                     </button>
-                    {(isAdminUser || canEdit(perms, 'global_employee_bank')) && (
+                    {(isAdminUser || canEdit(perms, selectedEvent, 'global_employee_bank')) && (
                       <button
                         type="button"
                         onClick={handleSaveEmployee}
@@ -5856,7 +5925,7 @@ export default function App() {
                       Kaikki yrityksen työntekijät ({employees.length} kpl). Täältä luodaan, muokataan ja poistetaan työntekijät.
                     </p>
                   </div>
-                  {(isAdminUser || canEdit(perms, 'global_employee_bank')) && (
+                  {(isAdminUser || canEdit(perms, selectedEvent, 'global_employee_bank')) && (
                     <button
                       onClick={() => { setEditingEmp(null); setEmpForm(emptyEmpForm); setViewingEmployeeBank('form'); }}
                       className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors shadow-sm shrink-0"
@@ -5917,7 +5986,7 @@ export default function App() {
                               >
                                 Muokkaa
                               </button>
-                              {(isAdminUser || canEdit(perms, 'global_employee_bank')) && (
+                              {(isAdminUser || canEdit(perms, selectedEvent, 'global_employee_bank')) && (
                                 <button
                                   onClick={() => handleDeleteEmployee(emp)}
                                   className="text-rose-600 hover:text-rose-800 font-medium text-xs bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
@@ -6174,25 +6243,113 @@ export default function App() {
                     Pääkäyttäjällä on aina täydet oikeudet kaikkeen — sivukarttaa ei tarvitse (eikä voi) rajata.
                   </p>
                 ) : (
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="flex items-center gap-3 py-2 pr-2 bg-slate-100 border-b border-slate-200">
-                      <span className="flex-1 text-xs font-bold text-slate-500 uppercase tracking-wide pl-2">Sivu</span>
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-28">Näkyy</span>
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-32">Muokattavissa</span>
+                  <>
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Muokattava tapahtuma</label>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPermEditingBucket(DEFAULT_BUCKET)}
+                          className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                            permEditingBucket === DEFAULT_BUCKET
+                              ? 'bg-indigo-600 border-indigo-600 text-white'
+                              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          Yleiset (oletus)
+                        </button>
+                        {events.map((ev) => (
+                          <button
+                            key={ev.id}
+                            type="button"
+                            onClick={() => setPermEditingBucket(ev.id)}
+                            className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                              permEditingBucket === ev.id
+                                ? 'bg-indigo-600 border-indigo-600 text-white'
+                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            {ev.name}
+                            {ev.archived && <span className="text-xs opacity-70">(arkistoitu)</span>}
+                            {permDraft[ev.id] && (
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${permEditingBucket === ev.id ? 'bg-white' : 'bg-indigo-500'}`}
+                                title="Tällä tapahtumalla on oma erillinen oikeusasetus"
+                              />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-2">
+                        {permEditingBucket === DEFAULT_BUCKET
+                          ? 'Yleiset oikeudet koskevat jokaista tapahtumaa jolle ei ole asetettu omaa erillistä oikeutta.'
+                          : permDraft[permEditingBucket]
+                            ? 'Tällä tapahtumalla on oma erillinen oikeusasetus — poikkeaa Yleisistä.'
+                            : 'Ei vielä omaa asetusta — näyttää Yleiset-oikeudet kunnes jotain muutetaan alla.'}
+                      </p>
                     </div>
-                    <div className="bg-white divide-y divide-slate-50 max-h-[28rem] overflow-y-auto">
-                      {SITEMAP.map((node) => (
-                        <SitemapPermissionRow
-                          key={node.id}
-                          node={node}
-                          depth={0}
-                          permDraft={permDraft}
-                          onToggle={handleTogglePerm}
-                          onCascade={handleCascadePerm}
-                        />
-                      ))}
+
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="flex items-center gap-3 py-2 pr-2 bg-slate-100 border-b border-slate-200">
+                        <span className="flex-1 text-xs font-bold text-slate-500 uppercase tracking-wide pl-2">Sivu</span>
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-28">Näkyy</span>
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-32">Muokattavissa</span>
+                      </div>
+                      <div className="bg-white divide-y divide-slate-50 max-h-[28rem] overflow-y-auto">
+                        {SITEMAP.map((node) => (
+                          <SitemapPermissionRow
+                            key={node.id}
+                            node={node}
+                            depth={0}
+                            permDraft={permDraft[permEditingBucket] || permDraft[DEFAULT_BUCKET] || {}}
+                            onToggle={handleTogglePerm}
+                            onCascade={handleCascadePerm}
+                          />
+                        ))}
+                      </div>
                     </div>
-                  </div>
+
+                    {events.length > 0 && (
+                      <div className="mt-4 bg-indigo-50/60 border border-indigo-100 rounded-xl p-5">
+                        <h3 className="text-sm font-bold text-slate-800 mb-1">Kopioi nämä oikeudet myös muihin tapahtumiin</h3>
+                        <p className="text-xs text-slate-500 mb-3">
+                          Ottaa {permEditingBucket === DEFAULT_BUCKET ? '"Yleiset"' : `"${findEventName(permEditingBucket, events)}"`}-välilehden
+                          nykyiset oikeudet ja asettaa ne sellaisenaan valituille kohteille alla. Ei vaikuta mihinkään ennen
+                          "Tallenna oikeudet" -painiketta.
+                        </p>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {[{ id: DEFAULT_BUCKET, name: 'Yleiset (oletus)' }, ...events]
+                            .filter((ev) => ev.id !== permEditingBucket)
+                            .map((ev) => (
+                              <label
+                                key={ev.id}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm cursor-pointer transition-colors ${
+                                  permCopyTargets.includes(ev.id)
+                                    ? 'bg-indigo-100 border-indigo-300 text-indigo-800'
+                                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={permCopyTargets.includes(ev.id)}
+                                  onChange={() => handleTogglePermCopyTarget(ev.id)}
+                                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                                />
+                                {ev.name}
+                              </label>
+                            ))}
+                        </div>
+                        <button
+                          type="button"
+                          disabled={permCopyTargets.length === 0}
+                          onClick={handleCopyPermsToEvents}
+                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+                        >
+                          Kopioi valittuihin{permCopyTargets.length > 0 ? ` (${permCopyTargets.length})` : ''}
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {editingPermUser.role !== 'admin' && (
@@ -6690,7 +6847,7 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {(isAdminUser || canView(perms, 'global_reports')) && (
+            {(isAdminUser || canView(perms, selectedEvent, 'global_reports')) && (
               <button
                 onClick={() => setViewingAllReports(true)}
                 className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
@@ -6699,7 +6856,7 @@ export default function App() {
                 Tallennetut raportit
               </button>
             )}
-            {(isAdminUser || canView(perms, 'global_archived_events')) && (
+            {(isAdminUser || canView(perms, selectedEvent, 'global_archived_events')) && (
               <button
                 onClick={() => setViewingArchivedEvents(true)}
                 className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
@@ -6708,7 +6865,7 @@ export default function App() {
                 Tallennetut tapahtumat
               </button>
             )}
-            {(isAdminUser || canView(perms, 'global_employee_bank')) && (
+            {(isAdminUser || canView(perms, selectedEvent, 'global_employee_bank')) && (
               <button
                 onClick={() => setViewingEmployeeBank('list')}
                 className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
@@ -6740,7 +6897,7 @@ export default function App() {
                   Avaa olemassa oleva tapahtuma tai luo uusi toimeksianto. Kaikki kirjaukset kohdistuvat valittuun tapahtumaan.
                 </p>
               </div>
-              {(isAdminUser || canView(perms, 'global_reports')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'global_reports')) && (
                 <button
                   onClick={() => setViewingAllReports(true)}
                   className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
@@ -6749,7 +6906,7 @@ export default function App() {
                   Tallennetut raportit
                 </button>
               )}
-              {(isAdminUser || canView(perms, 'global_archived_events')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'global_archived_events')) && (
                 <button
                   onClick={() => setViewingArchivedEvents(true)}
                   className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
@@ -6758,7 +6915,7 @@ export default function App() {
                   Tallennetut tapahtumat
                 </button>
               )}
-              {(isAdminUser || canView(perms, 'global_employee_bank')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'global_employee_bank')) && (
                 <button
                   onClick={() => setViewingEmployeeBank('list')}
                   className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
@@ -7513,7 +7670,7 @@ export default function App() {
         {isSidebarOpen && (
           <aside className="w-full md:w-64 bg-white border-r border-slate-200 flex-shrink-0 flex flex-col">
             <div className="p-4 space-y-1">
-              {(isAdminUser || canView(perms, 'landing')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'landing')) && (
                 <button
                   onClick={() => setActiveTab('landing')}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'landing' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
@@ -7522,7 +7679,7 @@ export default function App() {
                   Aloitussivu
                 </button>
               )}
-              {(isAdminUser || canView(perms, 'overview')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'overview')) && (
                 <button
                   onClick={() => setActiveTab('overview')}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'overview' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
@@ -7531,7 +7688,7 @@ export default function App() {
                   Tilannekuva
                 </button>
               )}
-              {(isAdminUser || canView(perms, 'reporting')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'reporting')) && (
                 <button
                   onClick={() => setActiveTab('reporting')}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${(activeTab.startsWith('report') || activeTab.startsWith('tike_')) ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
@@ -7540,7 +7697,7 @@ export default function App() {
                   Raportointi
                 </button>
               )}
-              {(isAdminUser || canView(perms, 'planning')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'planning')) && (
                 <button
                   onClick={() => setActiveTab('planning')}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab.startsWith('planning') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
@@ -7549,7 +7706,7 @@ export default function App() {
                   Ennen Tapahtumaa
                 </button>
               )}
-              {(isAdminUser || canView(perms, 'postevent')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'postevent')) && (
                 <button
                   onClick={() => setActiveTab('postevent')}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'postevent' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
@@ -7558,7 +7715,7 @@ export default function App() {
                   FestivaaliX
                 </button>
               )}
-              {(isAdminUser || canView(perms, 'documents')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'documents')) && (
                 <button
                   onClick={() => setActiveTab('documents')}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'documents' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
@@ -7567,7 +7724,7 @@ export default function App() {
                   Lomakekartoitus
                 </button>
               )}
-              {(isAdminUser || canView(perms, 'settings')) && (
+              {(isAdminUser || canView(perms, selectedEvent, 'settings')) && (
                 <button
                   onClick={() => setActiveTab('settings')}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'settings' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
@@ -7661,7 +7818,7 @@ export default function App() {
                 <p className="text-xs font-mono text-slate-400 mt-0.5">{openedReport.id}</p>
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                {(isAdminUser || canEdit(perms, openedReportSource || 'overview')) && (
+                {(isAdminUser || canEdit(perms, selectedEvent, openedReportSource || 'overview')) && (
                   <button
                     onClick={() => handleDeleteReport(openedReport)}
                     title="Poista raportti"
@@ -7761,7 +7918,7 @@ export default function App() {
                   <p className="text-xs font-mono text-slate-400 mt-0.5">{ra.id}</p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  {(isAdminUser || canEdit(perms, 'documents_risk_done')) && (
+                  {(isAdminUser || canEdit(perms, selectedEvent, 'documents_risk_done')) && (
                     <button
                       onClick={() => handleDeleteRiskAssessment(ra)}
                       title="Poista riskiarvio"

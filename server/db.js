@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateBase32Secret } from './totp.js';
+import { DEFAULT_BUCKET } from './permissions.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -12,6 +13,18 @@ if (!fs.existsSync(USERS_PATH)) {
   fs.writeFileSync(USERS_PATH, JSON.stringify({ users: [] }, null, 2));
 }
 
+// Sivukartta-oikeudet ovat nyt tapahtumakohtaisia: { __default__: {node:{view,edit}},
+// [eventId]: {node:{view,edit}} }. __default__ on aina läsnä ja toimii oletuksena
+// tapahtumille joilla ei ole omaa erillistä asetusta. Vanha (tätä ominaisuutta edeltävä)
+// tallennusmuoto oli tasainen { node: {view,edit} } suoraan — sellainen tunnistetaan
+// siitä ettei __default__-avainta ole, ja käärittäköön sellaisenaan __default__:ksi,
+// jotta olemassa olevat oikeudet eivät katoa kun tämä otetaan käyttöön.
+function migratePermissions(permissions) {
+  const raw = permissions || {};
+  if (Object.prototype.hasOwnProperty.call(raw, DEFAULT_BUCKET)) return raw;
+  return { [DEFAULT_BUCKET]: raw };
+}
+
 // Täydentää vanhan/puuttuvan datan oletuksin, jotta jokainen kutsuja saa aina
 // samanmuotoisen käyttäjätietueen riippumatta siitä milloin tili on luotu.
 function withDefaults(user) {
@@ -19,7 +32,7 @@ function withDefaults(user) {
     ...user,
     nickname: user.nickname || user.username,
     role: user.role || 'user',
-    permissions: user.permissions || {},
+    permissions: migratePermissions(user.permissions),
     // Tapahtumarajaus: tyhjä taulukko (tai puuttuva kenttä) = ei rajoitusta, käyttäjä näkee
     // kaikki tapahtumat kuten tähänkin asti — admin voi rajata tietyt käyttäjät näkemään vain
     // valitsemansa tapahtumat (ks. permissions.js: eventScoped-kokoelmat). Näin olemassa olevat
@@ -53,7 +66,7 @@ function migrateUsers(rawUsers) {
     users[0] = {
       ...users[0],
       role: 'admin',
-      permissions: { '*': { view: true, edit: true } },
+      permissions: { [DEFAULT_BUCKET]: { '*': { view: true, edit: true } } },
       totp_secret: undefined,
       totp_required: undefined,
     };
@@ -148,7 +161,7 @@ export function upsertUser(username, passwordHash, { nickname, role } = {}) {
       password_hash: passwordHash,
       nickname: nickname || username,
       role: role || 'user',
-      permissions: {},
+      permissions: { [DEFAULT_BUCKET]: {} },
       eventAccess: [],
       created_at: new Date().toISOString(),
     });

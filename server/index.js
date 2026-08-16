@@ -21,8 +21,7 @@ import { isAllowedFile, saveUpload, getUploadPath } from './uploads.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
 import {
   COLLECTION_NAMES,
-  canReadCollection,
-  filterByEventAccess,
+  readableData,
   authorizeWrite,
   canReadAttachment,
   canUploadAttachment,
@@ -220,20 +219,21 @@ function requireAdmin(req, res, next) {
 // rakennettu ristiriitojen yhdistämiseen.
 // Sivukartta-oikeudet JA tapahtumarajaus (eventAccess) tarkistetaan tässä palvelinpuolella
 // (ks. permissions.js) — frontin canView/canEdit suodattavat vain käyttöliittymän, eivät
-// suojaa itse dataa. Jokainen kokoelma vaatii vähintään yhden sen alaan kuuluvan sivukartta-
-// solmun näkyvyysoikeuden GET:iin (minkä jälkeen tapahtumarajattu vastaus suodatetaan vielä
-// eventAccess-listan mukaan), ja PUT tarkistetaan tietue kerrallaan sen mukaan mitä oikeasti
-// muuttuu.
+// suojaa itse dataa. Oikeudet voivat nyt vaihdella tapahtumittain (sama käyttäjä voi nähdä/
+// muokata eri asioita FestivaaliX:ssä kuin FestivaaliÖ:ssä), joten GET suodattaa jokaisen
+// tapahtumasidotun kokoelman tietue kerrallaan (eventAccess JA kyseisen tietueen oman
+// tapahtuman Sivukartta-oikeus yhdessä), ja PUT tarkistetaan samoin tietue kerrallaan sen
+// mukaan mitä oikeasti muuttuu.
 app.get('/api/data/:name', requireAuth, (req, res) => {
   const { name } = req.params;
   if (!KNOWN_COLLECTIONS.includes(name)) {
     return res.status(404).json({ ok: false, error: 'Tuntematon kokoelma.' });
   }
-  if (!canReadCollection(req.role, req.permissions, name)) {
+  const result = readableData(req.role, req.permissions, req.eventAccess, name, readCollection(name));
+  if (!result.ok) {
     return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän tiedon lukemiseen.' });
   }
-  const data = filterByEventAccess(req.role, name, readCollection(name), req.eventAccess);
-  res.json({ ok: true, data });
+  res.json({ ok: true, data: result.data });
 });
 
 app.put('/api/data/:name', requireAuth, (req, res) => {

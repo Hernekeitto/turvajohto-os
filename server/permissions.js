@@ -1,6 +1,5 @@
 // Palvelinpuolen peilikuva frontin Sivukartta-oikeuksista (src/App.tsx: SITEMAP, canView,
-// canEdit) — PLUS tapahtumarajaus (eventAccess), jolla admin voi lisäksi rajata tietyn
-// käyttäjän näkemään/muokkaamaan vain valittujen tapahtumien (esim. FestivaaliX) dataa.
+// canEdit) — PLUS tapahtumarajaus (eventAccess) JA tapahtumakohtaiset Sivukartta-oikeudet.
 // Frontti suodattaa AINOASTAAN käyttöliittymän — tämä tiedosto on se oikea portti, jota
 // vasten jokainen /api/data/:name- ja /api/uploads-pyyntö tarkistetaan ennen luku/kirjoitusta
 // (ks. index.js). Ilman tätä kirjautunut mutta oikeudeton käyttäjä pääsisi devtoolsin/curlin
@@ -12,29 +11,58 @@
 // pysyvät synkassa (ks. myös index.js:n käynnistystarkistus joka vertaa tätä store.js:n
 // KNOWN_COLLECTIONS-listaan).
 
-// perms['*'] on admin-oikotie — kaikki näkyy ja on muokattavissa riippumatta yksittäisistä
-// solmumerkinnöistä. Sama logiikka kuin src/App.tsx:n canView/canEdit. role === 'admin'
-// ohitetaan lisäksi kokonaan kutsuvassa koodissa (ks. alla), samaan tapaan kuin frontin
-// kaikkialla toistuva `isAdminUser || canView(...)` -kaava. HUOM: '*' on vain Sivukartta-
-// oikotie — se EI ohita tapahtumarajausta (eventAccess), ks. eventAllowed().
-export function canView(permissions, nodeId) {
-  if (!permissions) return false;
-  if (permissions['*']?.view) return true;
-  return !!permissions[nodeId]?.view;
+// Oikeudet tallennetaan kaksitasoisena: { __default__: {node:{view,edit}}, [eventId]:
+// {node:{view,edit}} }. __default__ on aina läsnä (ks. db.js: migratePermissions) ja
+// toimii oletuksena tapahtumille joilla ei ole omaa erillistä asetusta admin-editorissa.
+// Jos jollekin tapahtumalle ON oma asetus, sitä käytetään SELLAISENAAN (ei yhdistetä
+// __default__:in kanssa solmu kerrallaan) — admin-editori esitäyttää sen __default__:in
+// (tai jo olemassa olevan oman asetuksen) arvoilla kun tapahtuma valitaan muokattavaksi,
+// joten käytännössä admin ei koskaan aloita tyhjästä.
+export const DEFAULT_BUCKET = '__default__';
+
+// Nämä sivukartta-solmut EIVÄT ole sidottu yhteen tapahtumaan — ne joko näyttävät dataa
+// kaikista tapahtumista (global_reports, global_archived_events), eivät liity mihinkään
+// tapahtumaan lainkaan (global_employee_bank: koko yrityksen henkilöstörekisteri; settings),
+// tai koskevat itse tapahtumavalitsinta (landing). Näiden oikeus haetaan AINA __default__-
+// asetuksesta riippumatta siitä minkä tapahtuman kontekstissa tarkistus tehdään.
+const GLOBAL_NODES = new Set([
+  'landing',
+  'settings',
+  'global_reports',
+  'global_archived_events',
+  'global_employee_bank',
+]);
+
+function bucketFor(permissions, eventId, nodeId) {
+  const perms = permissions || {};
+  if (!GLOBAL_NODES.has(nodeId) && eventId && perms[eventId]) return perms[eventId];
+  return perms[DEFAULT_BUCKET] || {};
 }
 
-export function canEdit(permissions, nodeId) {
-  if (!permissions) return false;
-  if (permissions['*']?.edit) return true;
-  return !!permissions[nodeId]?.edit;
+// perms[jokinBucket]['*'] on admin-oikotie sen bucketin sisällä — kaikki näkyy ja on
+// muokattavissa riippumatta yksittäisistä solmumerkinnöistä KYSEISESSÄ tapahtumassa (tai
+// __default__:ssa). Sama logiikka kuin src/App.tsx:n canView/canEdit, nyt vain per bucket.
+// role === 'admin' ohitetaan lisäksi kokonaan kutsuvassa koodissa, samaan tapaan kuin
+// frontin kaikkialla toistuva `isAdminUser || canView(...)` -kaava. HUOM: '*' ei ohita
+// tapahtumarajausta (eventAccess) — ks. eventAllowed().
+export function canView(permissions, eventId, nodeId) {
+  const bucket = bucketFor(permissions, eventId, nodeId);
+  if (bucket['*']?.view) return true;
+  return !!bucket[nodeId]?.view;
 }
 
-function hasAnyView(permissions, nodeIds) {
-  return nodeIds.some((id) => canView(permissions, id));
+export function canEdit(permissions, eventId, nodeId) {
+  const bucket = bucketFor(permissions, eventId, nodeId);
+  if (bucket['*']?.edit) return true;
+  return !!bucket[nodeId]?.edit;
 }
 
-function hasAnyEdit(permissions, nodeIds) {
-  return nodeIds.some((id) => canEdit(permissions, id));
+function hasAnyView(permissions, eventId, nodeIds) {
+  return nodeIds.some((id) => canView(permissions, eventId, id));
+}
+
+function hasAnyEdit(permissions, eventId, nodeIds) {
+  return nodeIds.some((id) => canEdit(permissions, eventId, id));
 }
 
 // Tyhjä (tai puuttuva) eventAccess = ei rajoitusta, käyttäjä näkee kaikki tapahtumat —
@@ -54,7 +82,8 @@ const TIKE_FORM_NODES = [
 
 // Lomaketyypit joilla on liitetiedostomahdollisuus ("Ota kuva" / "Liitä tiedosto" — ks.
 // src/App.tsx: uploadAttachment-kutsut). Käytetään POST /api/uploads -reitillä: mihin
-// tahansa näistä riittävä muokkausoikeus oikeuttaa liitteen lähettämisen.
+// tahansa näistä riittävä muokkausoikeus (missä tahansa bucketissa) oikeuttaa liitteen
+// lähettämisen.
 const REPORT_ATTACHMENT_NODES = [
   'tike_form_open', 'tike_form_firstaid', 'tike_form_threat', 'tike_form_fence', 'tike_form_damage',
   'tike_form_lostfound', 'tike_form_patrol', 'tike_form_queue', 'tike_form_weather',
@@ -67,41 +96,41 @@ const legacyEventId = (item) => item?.eventId || 'fesx';
 
 // Kokoelmakohtaiset oikeussäännöt.
 //
-// `view`: sivukartta-solmut jotka oikeuttavat GET-luvun — yksikin riittää. Vastaa sitä
-// mistä sivuista kyseistä kokoelmaa oikeasti luetaan frontissa (ei vain missä sitä
-// muokataan) — esim. "reports" näkyy kymmenillä eri TIKE-lomakkeilla ja koonti/yleiskuva-
-// sivuilla, vaikka yksittäinen käyttäjä saisi muokata vain yhtä niistä.
+// `view`: sivukartta-solmut jotka oikeuttavat GET-luvun (kunkin tapahtuman kontekstissa
+// erikseen tapahtumasidotuille kokoelmille) — yksikin riittää. Vastaa sitä mistä sivuista
+// kyseistä kokoelmaa oikeasti luetaan frontissa. Globaalit solmut (ks. GLOBAL_NODES) tässä
+// listassa toimivat tarkoituksella "ohituksena" kaikkiin tapahtumiin — esim. "Tallennetut
+// raportit (kaikki tapahtumat)" -oikeus näyttää minkä tahansa tapahtuman raportit siitä
+// riippumatta onko sillä tapahtumalla omaa erillistä report_list/tike_form_*-asetusta.
 //
 // `touch(item, phase)`: sivukartta-solmut jotka oikeuttavat KYSEISEN YKSITTÄISEN tietueen
-// lisäämisen/poistamisen/muuttamisen PUT:in yhteydessä — yksikin riittää. `phase` on
-// 'add' tai 'remove'. Näitä käytetään authorizeWrite()-funktiossa, joka vertaa PUT:in
-// mukana tullutta taulukkoa tallennettuun ja vaatii oikeuden vain niille tietueille jotka
-// oikeasti muuttuvat — koskemattomat tietueet eivät vaadi mitään oikeutta.
+// lisäämisen/poistamisen/muuttamisen PUT:in yhteydessä (tietueen OMAN tapahtuman
+// kontekstissa) — yksikin riittää. `phase` on 'add' tai 'remove'.
 //
 // `eventScoped` + `eventIdOf(item)`: jos true, kokoelman tietueet kuuluvat aina johonkin
-// tapahtumaan ja niitä suodatetaan/rajataan myös käyttäjän eventAccess-listan mukaan (ks.
-// filterByEventAccess ja authorizeWrite). "employees" (henkilöstöpankki) EI ole tähän
-// sidottu — se on koko yrityksen yhteinen rekisteri, ei minkään yksittäisen tapahtuman.
+// tapahtumaan ja niitä suodatetaan/rajataan sekä käyttäjän eventAccess-listan että
+// kyseisen tapahtuman Sivukartta-oikeuksien mukaan. "employees" (henkilöstöpankki) EI ole
+// tähän sidottu — se on koko yrityksen yhteinen rekisteri, ei minkään yksittäisen
+// tapahtuman, ja sen ainoa oikeussolmu (global_employee_bank) on joka tapauksessa globaali.
 //
-// Tämä per-tietue-tarkistus ei ole vain tarkkuutta varten: /api/data/:name PUT korvaa
-// AINA koko kokoelman (ks. store.js), ja frontti lataa jokaisen kokoelman kokonaisuudessaan
-// jo sivun avautuessa ja tallentaa sen automaattisesti takaisin heti kun lataus on
-// päättynyt (myös silloin kun GET on evätty/suodatettu ja tila jäi vajaaksi tai frontin
-// oletus-/esimerkkidataan!). Ilman per-tietue-tarkistusta yksikin puutteellisilla oikeuksilla
-// tai tapahtumarajauksella varustettu käyttäjä voisi siis hiljaa hukata muiden käyttäjien/
+// Per-tietue-tarkistus ei ole vain tarkkuutta varten: /api/data/:name PUT korvaa AINA koko
+// kokoelman (ks. store.js), ja frontti lataa jokaisen kokoelman kokonaisuudessaan jo sivun
+// avautuessa ja tallentaa sen automaattisesti takaisin heti kun lataus on päättynyt (myös
+// silloin kun GET on evätty/suodatettu ja tila jäi vajaaksi tai frontin oletus-/
+// esimerkkidataan!). Ilman per-tietue-tarkistusta yksikin puutteellisilla oikeuksilla tai
+// tapahtumarajauksella varustettu käyttäjä voisi siis hiljaa hukata muiden käyttäjien/
 // tapahtumien dataa pelkällä sivun avaamisella.
 const COLLECTIONS = {
   employees: {
-    // Työntekijäpankki: yrityksen koko henkilöstörekisteri henkilötunnuksineen — vain
-    // "Työntekijäpankki"-sivun oma oikeus, ei esim. "Tapahtuman työntekijät" (joka vain
-    // näyttää nimen/roolin valintaa varten, ei koko tietuetta). Ei tapahtumasidottu.
     view: ['global_employee_bank'],
     touch: () => ['global_employee_bank'],
     eventScoped: false,
   },
   events: {
     // Tapahtumien luonti/muokkaus/poisto tehdään kaikki "Aloitussivulta" (landing), eikä
-    // frontissa ole tälle erillistä muokkausoikeus-solmua — sama peilataan tässä.
+    // frontissa ole tälle erillistä muokkausoikeus-solmua — sama peilataan tässä. 'landing'
+    // on globaali solmu, joten tämä ei tosiasiassa vaihtele tapahtumittain (tarkoituksella
+    // — "kuka näkee tapahtumavalitsimen" ei ole järkevää asettaa per tapahtuma).
     view: ['landing'],
     touch: () => ['landing'],
     eventScoped: true,
@@ -143,23 +172,29 @@ const COLLECTIONS = {
 
 export const COLLECTION_NAMES = Object.keys(COLLECTIONS);
 
-export function canReadCollection(role, permissions, name) {
-  if (role === 'admin') return true;
+// Palauttaa GET:in käyttäjälle näkyvän datan, tai null jos kokoelmaan ei ole minkäänlaista
+// oikeutta (-> 403). Tapahtumasidotuille kokoelmille (checkins/reports/riskAssessments/
+// events) EI palauteta 403:a pelkän tyhjän tuloksen takia — tapahtumakohtaiset oikeudet
+// tarkoittavat ettei ole enää yhtä yksiselitteistä "on/ei ole oikeutta kokoelmaan"
+// -vastausta, joten data suodatetaan aina tietue kerrallaan (tapahtumarajaus JA kyseisen
+// tapahtuman sivukartta-oikeus yhdessä) ja tyhjä taulukko on validi, ei virhe. employees
+// (ei tapahtumasidottu, yksi globaali solmu) säilyttää selkeän 403-käytöksen.
+export function readableData(role, permissions, eventAccess, name, data) {
   const rule = COLLECTIONS[name];
-  if (!rule) return false;
-  return hasAnyView(permissions, rule.view);
-}
+  if (!rule) return { ok: false };
+  if (role === 'admin') return { ok: true, data };
 
-// Suodattaa GET-vastauksen käyttäjän eventAccess-rajauksen mukaan (ei-tapahtumasidotuille
-// kokoelmille tai rajoittamattomille/admin-käyttäjille palauttaa datan sellaisenaan). Tämä
-// on erillinen askel canReadCollection()-portin JÄLKEEN: Sivukartta päättää pääseekö
-// kokoelmaan käsiksi lainkaan, eventAccess päättää minkä osan siitä näkee.
-export function filterByEventAccess(role, name, data, eventAccess) {
-  if (role === 'admin' || !Array.isArray(data)) return data;
-  const rule = COLLECTIONS[name];
-  if (!rule || !rule.eventScoped) return data;
-  if (!Array.isArray(eventAccess) || eventAccess.length === 0) return data;
-  return data.filter((item) => eventAllowed(eventAccess, rule.eventIdOf(item)));
+  if (!rule.eventScoped) {
+    if (!hasAnyView(permissions, null, rule.view)) return { ok: false };
+    return { ok: true, data };
+  }
+
+  const safeData = Array.isArray(data) ? data : [];
+  const filtered = safeData.filter((item) => {
+    const eventId = rule.eventIdOf(item);
+    return eventAllowed(eventAccess, eventId) && hasAnyView(permissions, eventId, rule.view);
+  });
+  return { ok: true, data: filtered };
 }
 
 // Tarkistaa PUT:in oikeudet JA palauttaa levylle kirjoitettavan lopullisen taulukon.
@@ -193,7 +228,14 @@ export function authorizeWrite(role, permissions, eventAccess, name, oldArr, new
   }
 
   const oldById = new Map(scopedOld.map((item) => [String(item?.id ?? ''), item]));
-  const allowed = (item, phase) => rule.touch(item, phase).some((node) => canEdit(permissions, node));
+  // Jokainen tarkistus tehdään TIETUEEN OMAN tapahtuman (eventIdOf) kontekstissa — kahdella
+  // eri tapahtumalla voi olla eri Sivukartta-oikeudet samalle käyttäjälle, ks. tiedoston
+  // alun kommentti. Ei-tapahtumasidotuille kokoelmille (employees) eventId on aina null,
+  // mikä ei haittaa koska niiden ainoa solmu on joka tapauksessa globaali (GLOBAL_NODES).
+  const allowed = (item, phase) => {
+    const eventId = rule.eventScoped ? rule.eventIdOf(item) : null;
+    return rule.touch(item, phase).some((node) => canEdit(permissions, eventId, node));
+  };
 
   // Käydään UUSI taulukko läpi sellaisenaan (ei Map:in kautta deduplikoituna) — muuten
   // kaksi tietuetta samalla (tai puuttuvalla) id:llä voisi piilottaa jälkimmäisen
@@ -228,25 +270,29 @@ export function authorizeWrite(role, permissions, eventAccess, name, oldArr, new
 
 // /api/uploads/:id -reitin oikeustarkistus: liite ei itsessään tiedä kenen, minkä raportin
 // tai minkä tapahtuman se on — etsitään omistava raportti reports-kokoelmasta ja vaaditaan
-// sekä sama oikeus että sama tapahtumarajaus kuin sen raportin (typeId:n) lukeminen vaatisi.
-// Jos mikään raportti ei viittaa liitteeseen, se evätään aina (ei tunnettua omistajaa jonka
-// oikeuksia vasten tarkistaa).
+// sekä sama tapahtumarajaus että sama sen tapahtuman Sivukartta-oikeus kuin sen raportin
+// (typeId:n) lukeminen vaatisi. Jos mikään raportti ei viittaa liitteeseen, se evätään
+// aina (ei tunnettua omistajaa jonka oikeuksia vasten tarkistaa).
 export function canReadAttachment(role, permissions, eventAccess, attachmentId, reportsArr) {
   if (role === 'admin') return true;
   const owner = (Array.isArray(reportsArr) ? reportsArr : []).find((r) => r?.attachment?.id === attachmentId);
   if (!owner) return false;
-  if (!eventAllowed(eventAccess, legacyEventId(owner))) return false;
+  const eventId = legacyEventId(owner);
+  if (!eventAllowed(eventAccess, eventId)) return false;
   const nodes = owner.typeId
     ? [`tike_form_${owner.typeId}`, 'report_list', 'overview', 'documents_pdf', 'global_reports', 'global_archived_events']
     : ['report_list', 'overview', 'documents_pdf', 'global_reports', 'global_archived_events'];
-  return hasAnyView(permissions, nodes);
+  return hasAnyView(permissions, eventId, nodes);
 }
 
 // POST /api/uploads -reitin oikeustarkistus: liite ladataan aina osana jonkin raportin
-// täyttöä, joten mihin tahansa liitteellisen lomaketyypin muokkausoikeuteen riittää. Ei
-// tapahtumarajausta tässä vaiheessa — pyyntö ei sisällä eventId:tä, se ratkeaa vasta kun
-// liite liitetään raporttiin (jota reports-kokoelman authorizeWrite jo suojaa).
+// täyttöä, mutta pyynnössä ei ole vielä tietoa MINKÄ tapahtuman raportista on kyse (se
+// ratkeaa vasta kun liite liitetään raporttiin, jota reports-kokoelman authorizeWrite jo
+// suojaa tapahtumakohtaisesti). Siksi tässä riittää että käyttäjällä on liitteellisen
+// lomaketyypin muokkausoikeus JOSSAKIN bucketissa — __default__:ssa tai missä tahansa
+// tapahtumassa jolle hänellä on oma asetus.
 export function canUploadAttachment(role, permissions) {
   if (role === 'admin') return true;
-  return hasAnyEdit(permissions, REPORT_ATTACHMENT_NODES);
+  const bucketKeys = permissions ? Object.keys(permissions) : [];
+  return bucketKeys.some((eventId) => hasAnyEdit(permissions, eventId, REPORT_ATTACHMENT_NODES));
 }
