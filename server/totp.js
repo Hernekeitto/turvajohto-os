@@ -89,3 +89,68 @@ export function buildOtpauthUri(base32Secret, username, issuer = 'Turvajohto OS'
   });
   return `otpauth://totp/${label}?${params.toString()}`;
 }
+
+// --- TOTP-salaisuuden salaus levyllä (AES-256-GCM) ---
+//
+// TOTP-salaisuudet olivat aiemmin users.json:ssa selväkielisenä. Tietosuojalain 29 §
+// edellyttää henkilötietoa suojaaville tunnistautumismekanismeille asianmukaisia
+// teknisiä suojatoimia, joten salaisuus salataan nyt levyllä. Avain tulee ympäristö-
+// muuttujasta (ei koskaan levyllä samassa tiedostossa kuin data), ja puuttuva/väärän-
+// mittainen avain kaataa palvelimen käynnistyksessä (ks. requireEncryptionKey) — ei
+// haluta vahingossa ajaa ilman salausta tai avaimella joka ei toimisi oikein.
+//
+// db.js:n readUsers()/writeUsers() ovat ainoa paikka joka kutsuu näitä: readUsers()
+// purkaa aina, writeUsers() salaa aina, joten muu koodi (index.js mukaan lukien
+// suora user.totp_secret-luku login-reitillä) näkee aina selväkielisen arvon eikä
+// tarvitse tietää salauksesta mitään.
+const ENC_PREFIX = 'enc:';
+const IV_LENGTH = 12; // GCM-suositus
+const AUTH_TAG_LENGTH = 16;
+
+let cachedKey = null;
+
+function requireEncryptionKey() {
+  if (cachedKey) return cachedKey;
+  const hex = process.env.TOTP_ENCRYPTION_KEY;
+  if (!hex || !/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error(
+      'TOTP_ENCRYPTION_KEY puuttuu tai on väärän muotoinen ympäristömuuttujista (pitää olla 64 hex-merkkiä / 32 tavua). Palvelinta ei käynnistetä.'
+    );
+  }
+  cachedKey = Buffer.from(hex, 'hex');
+  return cachedKey;
+}
+
+// Kaaataan heti moduulin latauksessa jos avain puuttuu — samaan tapaan kuin
+// JWT_SECRET-tarkistus index.js:ssä, ettei palvelin jää hiljaa pyörimään ilman salausta.
+requireEncryptionKey();
+
+export function encryptSecret(plainSecret) {
+  const key = requireEncryptionKey();
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(String(plainSecret), 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return ENC_PREFIX + Buffer.concat([iv, authTag, encrypted]).toString('base64');
+}
+
+// Palauttaa arvon sellaisenaan jos se ei ole tunnistettavasti salattu — näin vanha
+// (tätä ominaisuutta edeltävä) selväkielinen secret toimii saumattomasti kunnes
+// db.js kirjoittaa sen salattuna takaisin levylle (ks. db.js: needsTotpMigration).
+export function decryptSecret(stored) {
+  if (!stored || typeof stored !== 'string' || !stored.startsWith(ENC_PREFIX)) {
+    return stored;
+  }
+  const key = requireEncryptionKey();
+  const raw = Buffer.from(stored.slice(ENC_PREFIX.length), 'base64');
+  const iv = raw.subarray(0, IV_LENGTH);
+  const authTag = raw.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
+  const ciphertext = raw.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+}
+
+export function isEncryptedSecret(stored) {
+  return typeof stored === 'string' && stored.startsWith(ENC_PREFIX);
+}

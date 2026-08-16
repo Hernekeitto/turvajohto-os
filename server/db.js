@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generateBase32Secret } from './totp.js';
+import { generateBase32Secret, encryptSecret, decryptSecret, isEncryptedSecret } from './totp.js';
 import { DEFAULT_BUCKET } from './permissions.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -78,22 +78,48 @@ function readRawUsers() {
   return JSON.parse(fs.readFileSync(USERS_PATH, 'utf8')).users;
 }
 
+// totp_secret on levyllä aina salattuna (ks. totp.js). Kaikki muu koodi (mukaan
+// lukien index.js:n suora user.totp_secret-luku login-reitillä) näkee vain
+// selväkielisen arvon tämän kautta — readUsers() purkaa aina, writeUsers() salaa
+// aina, joten muualla ei koskaan tarvitse tietää salauksesta mitään.
+function withPlainTotp(user) {
+  if (!user.totp_secret) return user;
+  return { ...user, totp_secret: decryptSecret(user.totp_secret) };
+}
+
+// Vanha (tätä ominaisuutta edeltävä) data saattaa sisältää selväkielisiä
+// totp_secret-arvoja levyllä — tunnistetaan enc:-etuliitteen puuttumisesta.
+function needsTotpEncryption(rawUsers) {
+  return rawUsers.some((u) => u.totp_secret && !isEncryptedSecret(u.totp_secret));
+}
+
 function readUsers() {
   const raw = readRawUsers();
   const migrated = migrateUsers(raw);
-  // Kirjoitetaan migroitu data takaisin levylle vain jos se oikeasti muuttui
-  // (esim. admin-bootstrap tai puuttuvien kenttien täydennys), ettei jokainen
-  // pelkkä luku turhaan kirjoita tiedostoa.
-  if (JSON.stringify(migrated) !== JSON.stringify(raw)) {
-    writeUsers(migrated);
+  const structureChanged = JSON.stringify(migrated) !== JSON.stringify(raw);
+  const totpNeedsEncryption = needsTotpEncryption(raw);
+  const plain = migrated.map(withPlainTotp);
+  // Kirjoitetaan takaisin levylle vain jos rakenne oikeasti muuttui (esim. admin-
+  // bootstrap, puuttuvien kenttien täydennys) tai jokin totp_secret oli vielä
+  // selväkielisenä — ei jokaisella pelkällä luvulla (writeUsers salaa aina uudella
+  // satunnaisella IV:llä, joten sama secret näyttäisi joka kerta eri salatekstiltä).
+  if (structureChanged || totpNeedsEncryption) {
+    writeUsers(plain);
   }
-  return migrated;
+  return plain;
 }
 
+// users-parametrissa totp_secret on selväkielisenä (readUsers()-muodossa) — tämä
+// funktio EI muuta users-parametria paikallaan, vaan kirjoittaa oman salatun
+// kopion levylle. Tärkeää: kutsuja pitää edelleen käytössään selväkielisen olion
+// (esim. resetTotpSecret palauttaa juuri luodun secretin QR-koodia varten) eikä se
+// saa muuttua salatuksi tämän kutsun sivuvaikutuksena.
 function writeUsers(users) {
-  // kirjoitetaan väliaikaiseen tiedostoon ja siirretään atomisesti, ettei tiedosto koskaan jää kesken
+  const forStorage = users.map((u) =>
+    u.totp_secret ? { ...u, totp_secret: encryptSecret(u.totp_secret) } : u
+  );
   const tmp = `${USERS_PATH}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify({ users }, null, 2));
+  fs.writeFileSync(tmp, JSON.stringify({ users: forStorage }, null, 2));
   fs.renameSync(tmp, USERS_PATH);
 }
 
@@ -107,8 +133,9 @@ export function listUsers() {
   return readUsers().map(({ password_hash: _password_hash, totp_secret: _totp_secret, ...rest }) => rest);
 }
 
-// Palauttaa käyttäjän TOTP-salaisuuden (luodaan automaattisesti readUsers/withDefaults
-// -migraatiossa jos puuttuu, joten tämä ei koskaan palauta null:ia ei-admin-käyttäjälle).
+// Palauttaa käyttäjän TOTP-salaisuuden selväkielisenä (luodaan automaattisesti
+// readUsers/withDefaults-migraatiossa jos puuttuu, joten tämä ei koskaan palauta
+// null:ia ei-admin-käyttäjälle).
 export function getTotpSecret(username) {
   const user = findUser(username);
   return user ? user.totp_secret || null : null;
