@@ -54,7 +54,8 @@ import {
   KeyRound,
   QrCode,
   Smartphone,
-  RefreshCw
+  RefreshCw,
+  History
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -355,7 +356,7 @@ const getInitials = (name) => {
 
 // Yläpalkin profiilipainike + pudotusvalikko. Korvaa aiemman kovakoodatun "TJ"-badgen
 // kaikissa nav-palkeissa (ks. käyttöpaikat renderöinnin puolella).
-const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onManageUsers, onLogout }) => {
+const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onManageUsers, onViewAuditLog, onLogout }) => {
   const [open, setOpen] = useState(false);
   return (
     <div className="relative">
@@ -388,6 +389,15 @@ const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onManageUsers, onLog
               >
                 <Users size={16} className="text-slate-400" />
                 Muokkaa käyttäjiä
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                onClick={() => { setOpen(false); onViewAuditLog(); }}
+                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
+              >
+                <History size={16} className="text-slate-400" />
+                Audit-loki
               </button>
             )}
             <div className="border-t border-slate-100 my-1" />
@@ -675,6 +685,14 @@ export default function App() {
   const [userAdminList, setUserAdminList] = useState([]);
   const [userAdminLoading, setUserAdminLoading] = useState(false);
   const [userAdminError, setUserAdminError] = useState('');
+  // Audit-loki: kuka teki mitä milloin (data-kokoelmien luonti/muokkaus/poisto,
+  // käyttäjähallinnan muutokset, kirjautumiset) — vain admin, ks. server/audit.js.
+  const [viewingAuditLog, setViewingAuditLog] = useState(false);
+  const [auditEntries, setAuditEntries] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState('');
+  const [auditHasMore, setAuditHasMore] = useState(false);
+  const [auditFilters, setAuditFilters] = useState({ user: '', action: '', collection: '' });
   const [newUserUsername, setNewUserUsername] = useState('');
   const [newUserNickname, setNewUserNickname] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
@@ -837,6 +855,35 @@ export default function App() {
   useEffect(() => {
     if (viewingUserAdmin === 'list') fetchUserAdminList();
   }, [viewingUserAdmin]);
+
+  // before annettuna haetaan "lisää" edellisen sivun jatkoksi (append), muuten
+  // tuore ensimmäinen sivu suodattimilla (replace).
+  const fetchAuditLog = (before) => {
+    setAuditLoading(true);
+    setAuditError('');
+    const params = new URLSearchParams({ limit: '50' });
+    if (before) params.set('before', before);
+    if (auditFilters.user.trim()) params.set('user', auditFilters.user.trim());
+    if (auditFilters.action) params.set('action', auditFilters.action);
+    if (auditFilters.collection) params.set('collection', auditFilters.collection);
+    fetch(`/api/audit?${params.toString()}`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.ok) {
+          setAuditEntries((prev) => (before ? [...prev, ...data.entries] : data.entries));
+          setAuditHasMore(data.hasMore);
+        } else {
+          setAuditError(data.error || 'Lokin haku epäonnistui.');
+        }
+      })
+      .catch(() => setAuditError('Yhteysvirhe.'))
+      .finally(() => setAuditLoading(false));
+  };
+
+  // Ladataan loki tuoreena aina kun näkymä avataan.
+  useEffect(() => {
+    if (viewingAuditLog) fetchAuditLog();
+  }, [viewingAuditLog]);
 
   // Istunto voi mitätöityä palvelimella milloin tahansa ilman että selain tietää siitä
   // etukäteen (admin painoi "Kirjaa käyttäjä ulos", liukuva istunto ehti vanhentua,
@@ -5564,6 +5611,7 @@ export default function App() {
               isAdmin={session?.role === 'admin'}
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
+              onViewAuditLog={() => setViewingAuditLog(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -6039,6 +6087,7 @@ export default function App() {
               isAdmin={isAdmin}
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
+              onViewAuditLog={() => setViewingAuditLog(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -6476,6 +6525,190 @@ export default function App() {
     );
   }
 
+  // ====================== AUDIT-LOKI (vain admin) ======================
+  if (viewingAuditLog) {
+    const isAdmin = session?.role === 'admin';
+    const actionLabels = {
+      create: 'Luotu',
+      update: 'Muokattu',
+      delete: 'Poistettu',
+      login_success: 'Kirjautui sisään',
+      login_failed: 'Epäonnistunut kirjautuminen',
+      user_create: 'Loi käyttäjän',
+      user_update: 'Muokkasi käyttäjää',
+      totp_reset: 'Nollasi Authenticatorin',
+      totp_required_change: 'Muutti Authenticator-vaatimusta',
+      force_logout: 'Pakotti uloskirjautumaan',
+      password_change: 'Vaihtoi salasanan',
+    };
+    const collectionLabels = {
+      checkins: 'Sisäänkirjaukset',
+      reports: 'Raportit',
+      events: 'Tapahtumat',
+      riskAssessments: 'Riskiarviot',
+      employees: 'Työntekijäpankki',
+    };
+    const isFailedLogin = (a) => a === 'login_failed';
+    const targetLabel = (e) => {
+      if (e.collection) {
+        const label = collectionLabels[e.collection] || e.collection;
+        return e.recordId ? `${label} (${e.recordId})` : label;
+      }
+      if (e.targetUser) return e.targetUser;
+      return '—';
+    };
+
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
+        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="text-indigo-400" size={28} />
+            <div>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Audit-loki</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
+              <Clock size={16} className="text-indigo-400" />
+              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
+            </div>
+            <ProfileMenu
+              nickname={sessionNickname}
+              isAdmin={isAdmin}
+              onChangePassword={() => setShowChangePassword(true)}
+              onManageUsers={() => setViewingUserAdmin('list')}
+              onViewAuditLog={() => setViewingAuditLog(true)}
+              onLogout={handleLogout}
+            />
+          </div>
+        </nav>
+
+        <main className="flex-1 p-6 md:p-10">
+          <div className="max-w-5xl mx-auto">
+            <button
+              onClick={() => setViewingAuditLog(false)}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin
+            </button>
+
+            {!isAdmin ? (
+              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-10 text-center">
+                <ShieldAlert className="text-rose-400 mx-auto mb-4" size={40} />
+                <h2 className="text-lg font-bold text-slate-800 mb-1">Ei käyttöoikeutta</h2>
+                <p className="text-sm text-slate-500">Audit-loki on vain pääkäyttäjille.</p>
+              </div>
+            ) : (
+              <>
+                <div className="mb-6">
+                  <h2 className="text-2xl font-bold text-slate-800">Audit-loki</h2>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Kuka teki mitä milloin — luonnit, muokkaukset, poistot, käyttäjähallinta ja kirjautumiset.
+                  </p>
+                </div>
+
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 mb-4 flex flex-wrap gap-3 items-end">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Käyttäjä</label>
+                    <input
+                      type="text"
+                      value={auditFilters.user}
+                      onChange={(e) => setAuditFilters((f) => ({ ...f, user: e.target.value }))}
+                      placeholder="esim. Johto1"
+                      className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-40"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Toiminto</label>
+                    <select
+                      value={auditFilters.action}
+                      onChange={(e) => setAuditFilters((f) => ({ ...f, action: e.target.value }))}
+                      className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm"
+                    >
+                      <option value="">Kaikki</option>
+                      {Object.entries(actionLabels).map(([id, label]) => (
+                        <option key={id} value={id}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Kokoelma</label>
+                    <select
+                      value={auditFilters.collection}
+                      onChange={(e) => setAuditFilters((f) => ({ ...f, collection: e.target.value }))}
+                      className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm"
+                    >
+                      <option value="">Kaikki</option>
+                      {Object.entries(collectionLabels).map(([id, label]) => (
+                        <option key={id} value={id}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    onClick={() => fetchAuditLog()}
+                    className="px-4 py-1.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
+                  >
+                    Suodata
+                  </button>
+                </div>
+
+                {auditError && <p className="text-sm text-rose-600 mb-4">{auditError}</p>}
+
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="p-4">Ajankohta</th>
+                        <th className="p-4">Käyttäjä</th>
+                        <th className="p-4">Toiminto</th>
+                        <th className="p-4">Kohde</th>
+                        <th className="p-4">Tapahtuma</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {auditLoading && auditEntries.length === 0 ? (
+                        <tr><td colSpan={5} className="p-8 text-center text-sm text-slate-500">Ladataan…</td></tr>
+                      ) : auditEntries.length === 0 ? (
+                        <tr><td colSpan={5} className="p-8 text-center text-sm text-slate-500">Ei lokirivejä.</td></tr>
+                      ) : auditEntries.map((e, i) => (
+                        <tr key={i} className={`hover:bg-slate-50 transition-colors ${isFailedLogin(e.action) ? 'bg-rose-50/50' : ''}`}>
+                          <td className="p-4 text-slate-500 text-xs whitespace-nowrap">{new Date(e.ts).toLocaleString('fi-FI')}</td>
+                          <td className="p-4 font-mono text-xs text-slate-700">{e.user || '—'}</td>
+                          <td className="p-4">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isFailedLogin(e.action) ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
+                              {actionLabels[e.action] || e.action}
+                            </span>
+                          </td>
+                          <td className="p-4 text-slate-700 text-xs">{targetLabel(e)}</td>
+                          <td className="p-4 text-slate-500 text-xs">{e.eventId ? findEventName(e.eventId, events) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {auditHasMore && (
+                  <div className="text-center mt-4">
+                    <button
+                      onClick={() => fetchAuditLog(auditEntries[auditEntries.length - 1]?.ts)}
+                      disabled={auditLoading}
+                      className="px-4 py-2 text-sm font-medium text-indigo-600 bg-white border border-slate-200 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-60"
+                    >
+                      {auditLoading ? 'Ladataan…' : 'Lataa lisää'}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </main>
+        {changePasswordModal}
+      </div>
+    );
+  }
+
   // ====================== TALLENNETUT RAPORTIT (kaikki tapahtumat) ======================
   if (viewingAllReports) {
     const sortedAllReports = [...reports].sort((a, b) => {
@@ -6512,6 +6745,7 @@ export default function App() {
               isAdmin={session?.role === 'admin'}
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
+              onViewAuditLog={() => setViewingAuditLog(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -6630,6 +6864,7 @@ export default function App() {
               isAdmin={session?.role === 'admin'}
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
+              onViewAuditLog={() => setViewingAuditLog(true)}
               onLogout={handleLogout}
             />
           </nav>
@@ -6883,6 +7118,7 @@ export default function App() {
               isAdmin={session?.role === 'admin'}
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
+              onViewAuditLog={() => setViewingAuditLog(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -7486,6 +7722,7 @@ export default function App() {
                 isAdmin={session?.role === 'admin'}
                 onChangePassword={() => setShowChangePassword(true)}
                 onManageUsers={() => setViewingUserAdmin('list')}
+              onViewAuditLog={() => setViewingAuditLog(true)}
                 onLogout={handleLogout}
               />
             </div>
@@ -7659,6 +7896,7 @@ export default function App() {
               isAdmin={session?.role === 'admin'}
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
+              onViewAuditLog={() => setViewingAuditLog(true)}
               onLogout={handleLogout}
             />
           </div>

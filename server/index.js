@@ -26,6 +26,7 @@ import {
   canReadAttachment,
   canUploadAttachment,
 } from './permissions.js';
+import { logAudit, readAuditLog } from './audit.js';
 
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -133,6 +134,10 @@ function getSessionUser(req) {
 // reittinä — jos totpCode puuttuu (tai on väärä), vastataan requiresTotp:true eikä
 // evästettä aseteta; frontend näyttää silloin koodikentän ja lähettää saman
 // käyttäjätunnuksen+salasanan uudelleen koodin kera.
+//
+// Kirjautumisyritykset lokitetaan audit-lokiin (onnistuneet ja epäonnistuneet) —
+// tietoturvamielessä oleellinen tieto, ja rate limiter (10/15min/IP) pitää lokin
+// koon kurissa vaikka joku yrittäisi arvata salasanoja.
 app.post('/api/login', loginLimiter, (req, res) => {
   const { username, password, totpCode } = req.body || {};
   if (typeof username !== 'string' || typeof password !== 'string') {
@@ -143,6 +148,7 @@ app.post('/api/login', loginLimiter, (req, res) => {
   const valid = user ? bcrypt.compareSync(password, user.password_hash) : false;
 
   if (!valid) {
+    logAudit({ user: username, action: 'login_failed', reason: 'bad_credentials', ip: req.ip });
     return res.status(401).json({ ok: false, error: 'Väärä käyttäjätunnus tai salasana.' });
   }
 
@@ -151,10 +157,12 @@ app.post('/api/login', loginLimiter, (req, res) => {
       return res.json({ ok: true, requiresTotp: true, username: user.username });
     }
     if (!verifyTotp(user.totp_secret, totpCode)) {
+      logAudit({ user: username, action: 'login_failed', reason: 'bad_totp', ip: req.ip });
       return res.status(401).json({ ok: false, requiresTotp: true, error: 'Väärä tai vanhentunut Authenticator-koodi.' });
     }
   }
 
+  logAudit({ user: username, action: 'login_success', ip: req.ip });
   setSessionCookie(res, user.username, user.role);
   res.json({ ok: true, username: user.username });
 });
@@ -250,6 +258,19 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
     return res.status(403).json(verdict);
   }
   writeCollection(name, verdict.data);
+  // Lokitetaan vasta kirjoituksen onnistuttua — ei koskaan lokiin muutosta joka ei
+  // oikeasti mennyt levylle. Yksi rivi per tietue (ei yksi rivi per PUT-pyyntö),
+  // koska sama pyyntö voi sisältää usean tietueen muutoksia kerralla.
+  for (const change of verdict.changes || []) {
+    logAudit({
+      user: req.username,
+      role: req.role,
+      action: change.action,
+      collection: name,
+      recordId: change.id,
+      eventId: change.eventId,
+    });
+  }
   res.json({ ok: true });
 });
 
@@ -278,6 +299,7 @@ app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
   }
   const hash = bcrypt.hashSync(password, 12);
   upsertUser(trimmedUsername, hash, { nickname: nickname.trim(), role: 'user' });
+  logAudit({ user: req.username, action: 'user_create', targetUser: trimmedUsername });
   res.json({ ok: true });
 });
 
@@ -301,6 +323,15 @@ app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
     permissions,
     eventAccess,
   });
+  // Ei tallenneta permissions/eventAccess-sisältöä itseään lokiin (iso, nested rakenne,
+  // ei kovin luettava sellaisenaan) — vain mitkä kentät koskivat, samaan tapaan kuin
+  // muukin lokitus keskittyy "mitä tapahtui" -metadataan sisällön sijaan.
+  const changedFields = [
+    nickname !== undefined && 'nickname',
+    permissions !== undefined && 'permissions',
+    eventAccess !== undefined && 'eventAccess',
+  ].filter(Boolean);
+  logAudit({ user: req.username, action: 'user_update', targetUser: username, fields: changedFields });
   res.json({ ok: true });
 });
 
@@ -330,6 +361,7 @@ app.post('/api/users/:username/totp/reset', requireAuth, requireAdmin, async (re
     return res.status(400).json({ ok: false, error: 'Pääkäyttäjä ei käytä Authenticator-tunnistautumista.' });
   }
   const secret = resetTotpSecret(username);
+  logAudit({ user: req.username, action: 'totp_reset', targetUser: username });
   const otpauthUri = buildOtpauthUri(secret, username);
   const qrDataUri = await QRCode.toDataURL(otpauthUri, { width: 220, margin: 1 });
   res.json({ ok: true, secret, otpauthUri, qrDataUri, totpRequired: user.totp_required !== false });
@@ -349,6 +381,7 @@ app.put('/api/users/:username/totp', requireAuth, requireAdmin, (req, res) => {
     return res.status(400).json({ ok: false, error: 'Virheellinen pyyntö.' });
   }
   setTotpRequired(username, required);
+  logAudit({ user: req.username, action: 'totp_required_change', targetUser: username, required });
   res.json({ ok: true, totpRequired: required });
 });
 
@@ -362,6 +395,7 @@ app.post('/api/users/:username/logout', requireAuth, requireAdmin, (req, res) =>
     return res.status(400).json({ ok: false, error: 'Pääkäyttäjää ei voi kirjata ulos tästä näkymästä.' });
   }
   forceLogout(username);
+  logAudit({ user: req.username, action: 'force_logout', targetUser: username });
   res.json({ ok: true });
 });
 
@@ -383,7 +417,25 @@ app.post('/api/change-password', requireAuth, loginLimiter, (req, res) => {
   }
   const hash = bcrypt.hashSync(newPassword, 12);
   updatePassword(req.username, hash);
+  logAudit({ user: req.username, action: 'password_change' });
   res.json({ ok: true });
+});
+
+// Audit-loki (vain admin): kuka teki mitä milloin — data-kokoelmien luonti/muokkaus/
+// poisto, käyttäjähallinnan muutokset, kirjautumiset. Sivutettu (limit/before) koska
+// loki kasvaa ajan myötä eikä koskaan katkaista automaattisesti.
+app.get('/api/audit', requireAuth, requireAdmin, (req, res) => {
+  const { limit, before, user, action, collection, eventId } = req.query;
+  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  const result = readAuditLog({
+    limit: parsedLimit,
+    before: typeof before === 'string' ? before : undefined,
+    user: typeof user === 'string' ? user : undefined,
+    action: typeof action === 'string' ? action : undefined,
+    collection: typeof collection === 'string' ? collection : undefined,
+    eventId: typeof eventId === 'string' ? eventId : undefined,
+  });
+  res.json({ ok: true, ...result });
 });
 
 // Lomakkeiden "Ota kuva" / "Liitä tiedosto" -liitteet. Tallennetaan levylle

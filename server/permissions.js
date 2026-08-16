@@ -203,13 +203,38 @@ export function readableData(role, permissions, eventAccess, name, data) {
 // muiden tapahtumien tietueita — ne on tässä liitetty takaisin muuttumattomina levyn
 // nykyisestä tilasta, jotta rajattu käyttäjä ei voi (edes vahingossa, tyhjän välimuistin
 // automaattitallennuksella) hukata tapahtumia joita ei koskaan nähnytkään.
+//
+// Palauttaa onnistuessaan myös `changes`: lista { action: 'create'|'update'|'delete', id,
+// eventId } audit-lokitusta varten (ks. index.js). Lasketaan AINA (myös adminille), jotta
+// audit-loki kattaa kaikki käyttäjät — admin ei tarvitse per-tietue-oikeustarkistusta,
+// mutta hänenkin tekemänsä muutokset pitää silti pystyä jäljittämään jälkikäteen.
 export function authorizeWrite(role, permissions, eventAccess, name, oldArr, newArr) {
   const rule = COLLECTIONS[name];
   if (!rule) return { ok: false, error: 'Tuntematon kokoelma.' };
-  if (role === 'admin') return { ok: true, data: newArr };
 
   const safeOld = Array.isArray(oldArr) ? oldArr : [];
   const safeNew = Array.isArray(newArr) ? newArr : [];
+  const eventIdOfChange = (item) => (rule.eventScoped ? rule.eventIdOf(item) : null);
+
+  if (role === 'admin') {
+    const changes = [];
+    const oldByIdAdmin = new Map(safeOld.map((item) => [String(item?.id ?? ''), item]));
+    const seenIdsAdmin = new Set();
+    for (const item of safeNew) {
+      const id = String(item?.id ?? '');
+      seenIdsAdmin.add(id);
+      const before = id && oldByIdAdmin.has(id) ? oldByIdAdmin.get(id) : null;
+      if (!before) {
+        changes.push({ action: 'create', id, eventId: eventIdOfChange(item) });
+      } else if (JSON.stringify(before) !== JSON.stringify(item)) {
+        changes.push({ action: 'update', id, eventId: eventIdOfChange(item) });
+      }
+    }
+    for (const [id, item] of oldByIdAdmin) {
+      if (!seenIdsAdmin.has(id)) changes.push({ action: 'delete', id, eventId: eventIdOfChange(item) });
+    }
+    return { ok: true, data: newArr, changes };
+  }
 
   const isRestricted = rule.eventScoped && Array.isArray(eventAccess) && eventAccess.length > 0;
   let scopedOld = safeOld;
@@ -240,6 +265,7 @@ export function authorizeWrite(role, permissions, eventAccess, name, oldArr, new
   // Käydään UUSI taulukko läpi sellaisenaan (ei Map:in kautta deduplikoituna) — muuten
   // kaksi tietuetta samalla (tai puuttuvalla) id:llä voisi piilottaa jälkimmäisen
   // tarkistuksen ohi, vaikka molemmat päätyisivät levylle asti.
+  const changes = [];
   const seenIds = new Set();
   for (const item of safeNew) {
     const id = String(item?.id ?? '');
@@ -249,6 +275,7 @@ export function authorizeWrite(role, permissions, eventAccess, name, oldArr, new
       if (!allowed(item, 'add')) {
         return { ok: false, error: 'Ei oikeuksia lisätä joitakin lähetetyistä tietueista.' };
       }
+      changes.push({ action: 'create', id, eventId: eventIdOfChange(item) });
     } else if (JSON.stringify(before) !== JSON.stringify(item)) {
       // Muokkaus paikallaan: kummankin "puolen" (vanha ja uusi muoto) pitää olla katettu.
       // Yksikään nykyisistä kokoelmista ei tue tätä käyttöliittymästä, joten tämä on
@@ -256,16 +283,20 @@ export function authorizeWrite(role, permissions, eventAccess, name, oldArr, new
       if (!allowed(before, 'remove') || !allowed(item, 'add')) {
         return { ok: false, error: 'Ei oikeuksia muokata joitakin lähetetyistä tietueista.' };
       }
+      changes.push({ action: 'update', id, eventId: eventIdOfChange(item) });
     }
   }
   for (const [id, item] of oldById) {
-    if (!seenIds.has(id) && !allowed(item, 'remove')) {
-      return { ok: false, error: 'Ei oikeuksia poistaa joitakin tietueista.' };
+    if (!seenIds.has(id)) {
+      if (!allowed(item, 'remove')) {
+        return { ok: false, error: 'Ei oikeuksia poistaa joitakin tietueista.' };
+      }
+      changes.push({ action: 'delete', id, eventId: eventIdOfChange(item) });
     }
   }
 
   const data = isRestricted ? [...outOfScope, ...safeNew] : safeNew;
-  return { ok: true, data };
+  return { ok: true, data, changes };
 }
 
 // /api/uploads/:id -reitin oikeustarkistus: liite ei itsessään tiedä kenen, minkä raportin
