@@ -35,9 +35,16 @@ const COLLECTIONS = {
 // tarkoituksella varovainen valinta: väärä suunta olisi jättää voimankäyttö- ja
 // kiinniottoraporttien teksti selväkieliseksi siksi että se "yleensä" ei sisällä
 // henkilötunnusta.
+// Raporttien salattavat kentät ovat kaikki niitä joihin kirjoitetaan vapaata tekstiä:
+// summary (yhteenveto/kuvaus), description (järjestyksenvalvojan vapaa kuvaus),
+// actions (tehdyt toimenpiteet), resources (käytetyt resurssit) ja employees
+// (paikalla olleet työntekijät, eli nimiä). typeId, eventId, author, time ja
+// numeeriset/totuusarvoiset kentät jäävät selväkielisiksi: niitä käytetään
+// suodatukseen ja oikeustarkistuksiin (mm. canReadAttachment lukee typeId:n ja
+// eventId:n), eivätkä ne sisällä vapaata tekstiä.
 const ENCRYPTED_FIELDS = {
   employees: ['personalId'],
-  reports: ['summary'],
+  reports: ['summary', 'description', 'actions', 'resources', 'employees'],
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });

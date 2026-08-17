@@ -176,6 +176,7 @@ function findEventName(eventId, eventsList) {
 // Raporttien tyyppikohtaiset lisäkentät ihmisluettavaksi "Avaa raportti" -näkymässä.
 // id/eventId/typeId/type/author/time/summary/attachment näytetään erikseen kiinteässä muodossa.
 const REPORT_DETAIL_FIELDS = [
+  { key: 'description', label: 'Vapaa kuvaus' },
   { key: 'actions', label: 'Tehdyt toimenpiteet' },
   { key: 'resources', label: 'Käytetyt resurssit' },
   { key: 'employees', label: 'Paikalla olleet työntekijät' },
@@ -1940,6 +1941,11 @@ export default function App() {
       author: jvaName,
       time: timeLabel,
       summary: `${jvaLocation ? jvaLocation + ': ' : ''}${parts.join(', ')}`,
+      // Järjestyksenvalvojan kirjoittama vapaa kuvaus tilanteen kulusta. Tämä jäi
+      // aiemmin kokonaan tallentumatta: jvaDesc luettiin lomakkeelta mutta sitä ei
+      // koskaan liitetty tietueeseen, joten kuvaus katosi Tallenna-painalluksessa.
+      // Salataan levyllä (ks. server/store.js ENCRYPTED_FIELDS).
+      description: jvaDesc.trim(),
       denied: jvaDenied ? (Number(jvaDeniedCount) || 1) : 0,
       removed: jvaRemoved ? (Number(jvaRemovedCount) || 1) : 0,
       detained: jvaDetained ? (Number(jvaDetainedCount) || 1) : 0,

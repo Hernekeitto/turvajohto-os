@@ -216,6 +216,68 @@ test('raportti ilman summary-kenttää ei kaada salausta', () => {
   assert.equal(read[0].author, 'Testi');
 });
 
+// Kaikki raportin vapaat tekstikentät salataan, ei vain summary: description on
+// järjestyksenvalvojan oma kuvaus, actions/resources tulevat ensiapu- ja
+// yleislomakkeista ja employees sisältää paikalla olleiden nimet.
+const VAPAAT_KENTAT = ['summary', 'description', 'actions', 'resources', 'employees'];
+
+test('kaikki raportin vapaat tekstikentät salataan levylle', () => {
+  writeCollection('reports', [
+    {
+      id: 'r4',
+      eventId: 'fesx',
+      typeId: 'jvaction',
+      author: 'Korhonen Elli',
+      time: '13:45',
+      summary: 'Portti 2: kiinniotettu 1',
+      description: 'Kohde Meikäläinen Matti 010190-123A yritti päästä sisään ilman lippua.',
+      actions: 'Kiinniotto ja luovutus poliisille',
+      resources: 'Partio 2, käsiraudat',
+      employees: 'Korhonen Elli, Mäkinen Kalle',
+      detained: 1,
+      force: true,
+    },
+  ]);
+  const text = fs.readFileSync(REPORTS_FILE, 'utf8');
+  assert.ok(!text.includes('010190-123A'), 'henkilötunnus jäi levylle vapaaseen kuvaukseen');
+  assert.ok(!text.includes('Meikäläinen'), 'kohdehenkilön nimi jäi levylle');
+  assert.ok(!text.includes('käsiraudat'), 'resources jäi levylle selväkielisenä');
+  assert.ok(!text.includes('Mäkinen Kalle'), 'employees-kentän nimet jäivät levylle');
+  const stored = rawReports()[0];
+  for (const kentta of VAPAAT_KENTAT) assert.match(stored[kentta], /^enc:/, `${kentta} ei ollut salattu`);
+  // author-kenttä jää tarkoituksella selväkieliseksi (suodatus ja näyttö)
+  assert.equal(stored.author, 'Korhonen Elli');
+  assert.equal(stored.detained, 1);
+  assert.equal(stored.force, true);
+});
+
+test('kaikki vapaat tekstikentät purkautuvat luettaessa oikein', () => {
+  const rec = {
+    id: 'r5',
+    eventId: 'fesx',
+    typeId: 'firstaid',
+    summary: 'Ensiapu annettu',
+    description: 'Vapaa kuvaus tilanteesta',
+    actions: 'Sidonta',
+    resources: 'EA-laukku',
+    employees: 'Virtanen Väinö',
+  };
+  writeCollection('reports', [rec]);
+  assert.deepEqual(readCollection('reports'), [rec]);
+});
+
+test('vanhat raportit joilta puuttuu osa tekstikentistä migroituvat oikein', () => {
+  // Tuotannon vanhoissa raporteissa on vain summary — muut kentät puuttuvat kokonaan.
+  fs.writeFileSync(
+    REPORTS_FILE,
+    JSON.stringify([{ id: 'r6', eventId: 'fesx', typeId: 'patrol', summary: 'Kierros tehty' }], null, 2)
+  );
+  const read = readCollection('reports');
+  assert.equal(read[0].summary, 'Kierros tehty');
+  assert.equal('description' in read[0], false);
+  assert.match(rawReports()[0].summary, /^enc:/);
+});
+
 // --- Virhetilanteet erillisissä prosesseissa (avain luetaan moduulin latauksessa,
 // joten sitä ei voi vaihtaa saman prosessin sisällä) ---
 
