@@ -25,8 +25,19 @@ const COLLECTIONS = {
 //
 // Huom: employees.address on tästä tarkoituksella pois — se on henkilötietoa mutta ei
 // henkilötunnus. Jos se halutaan mukaan, riittää lisätä 'address' tähän taulukkoon.
+//
+// reports.summary on mukana toisesta syystä kuin employees.personalId. LYTP ja sen
+// nojalla annettu asetus oikeuttavat kirjaamaan tapahtumailmoitukseen toimenpiteiden
+// kohteena olleiden sukunimen, etunimet, henkilötunnuksen ja osoitetiedot sekä
+// tuntomerkit. Kun laki nimenomaisesti sallii sen, raportin vapaa teksti on
+// oletettava tällaista tietoa sisältäväksi — eikä kenttäkohtainen salaus voi tietää
+// mitä vapaaseen tekstiin on kirjoitettu, joten koko kenttä salataan. Tämä on
+// tarkoituksella varovainen valinta: väärä suunta olisi jättää voimankäyttö- ja
+// kiinniottoraporttien teksti selväkieliseksi siksi että se "yleensä" ei sisällä
+// henkilötunnusta.
 const ENCRYPTED_FIELDS = {
   employees: ['personalId'],
+  reports: ['summary'],
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });

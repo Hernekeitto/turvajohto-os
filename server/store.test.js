@@ -146,6 +146,76 @@ test('puuttuva tiedosto palauttaa yhä null', () => {
   assert.equal(readCollection('riskAssessments'), null);
 });
 
+// --- reports.summary: tapahtumailmoituksen vapaa teksti (LYTP sallii kirjata
+// kohdehenkilön nimen, henkilötunnuksen ja osoitteen, joten teksti on oletettava
+// tällaista tietoa sisältäväksi) ---
+
+const REPORTS_FILE = path.join(DATA_DIR, 'reports.json');
+const rawReports = () => JSON.parse(fs.readFileSync(REPORTS_FILE, 'utf8'));
+const REPORTS = [
+  {
+    id: '26/FesX/1108/098',
+    eventId: 'fesx',
+    typeId: 'jvaction',
+    type: 'JV:n tai vartijan toimenpide',
+    author: 'Korhonen Elli',
+    time: '13:45',
+    summary: 'Portti 2: kiinniotettu 1, voimakeinoja käytetty. Kohde: Meikäläinen Matti, 010190-123A, Testikatu 1.',
+    denied: 0,
+    removed: 1,
+    detained: 1,
+    force: true,
+    tools: true,
+    firearm: false,
+    firstAid: false,
+  },
+  { id: 'r2', eventId: 'fesx', typeId: 'patrol', type: 'Partiointi', author: 'Mäkinen Kalle', time: '11:50', summary: 'Kierros tehty, ei havaintoja.' },
+];
+
+test('raportin vapaa teksti ei tallennu levylle selväkielisenä', () => {
+  writeCollection('reports', REPORTS);
+  const text = fs.readFileSync(REPORTS_FILE, 'utf8');
+  assert.ok(!text.includes('010190-123A'), 'henkilötunnus jäi levylle raportin tekstiin');
+  assert.ok(!text.includes('Meikäläinen Matti'), 'kohdehenkilön nimi jäi levylle');
+  assert.ok(!text.includes('Kierros tehty'), 'raportin teksti jäi levylle selväkielisenä');
+  for (const r of rawReports()) assert.match(r.summary, /^enc:/);
+});
+
+test('raportit palautuvat luettaessa täsmälleen alkuperäisinä', () => {
+  writeCollection('reports', REPORTS);
+  assert.deepEqual(readCollection('reports'), REPORTS);
+});
+
+// Liitteiden oikeustarkistus (index.js /api/uploads/:id -> canReadAttachment) lukee
+// raporteista typeId:n ja eventId:n, joten näiden on säilyttävä koskemattomina.
+test('raportin muut kentät säilyvät levyllä selväkielisinä ja ennallaan', () => {
+  writeCollection('reports', REPORTS);
+  const stored = rawReports();
+  assert.equal(stored[0].typeId, 'jvaction');
+  assert.equal(stored[0].eventId, 'fesx');
+  assert.equal(stored[0].author, 'Korhonen Elli');
+  assert.equal(stored[0].detained, 1);
+  assert.equal(stored[0].force, true);
+  assert.equal(stored[0].firearm, false);
+});
+
+test('vanhat selväkieliset raportit migroituvat ensimmäisellä luvulla', () => {
+  fs.writeFileSync(REPORTS_FILE, JSON.stringify(REPORTS, null, 2));
+  const read = readCollection('reports');
+  assert.deepEqual(read, REPORTS, 'migraation aikana luettu data oli väärä');
+  const text = fs.readFileSync(REPORTS_FILE, 'utf8');
+  assert.ok(!text.includes('010190-123A'), 'henkilötunnus jäi levylle migraation jälkeen');
+  for (const r of rawReports()) assert.match(r.summary, /^enc:/);
+});
+
+test('raportti ilman summary-kenttää ei kaada salausta', () => {
+  writeCollection('reports', [{ id: 'r3', eventId: 'fesx', typeId: 'open', author: 'Testi' }]);
+  const read = readCollection('reports');
+  assert.equal(read.length, 1);
+  assert.equal('summary' in read[0], false);
+  assert.equal(read[0].author, 'Testi');
+});
+
 // --- Virhetilanteet erillisissä prosesseissa (avain luetaan moduulin latauksessa,
 // joten sitä ei voi vaihtaa saman prosessin sisällä) ---
 
