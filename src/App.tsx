@@ -55,7 +55,9 @@ import {
   QrCode,
   Smartphone,
   RefreshCw,
-  History
+  History,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -184,8 +186,14 @@ const REPORT_DETAIL_FIELDS = [
   { key: 'licenseHolder', label: 'Turvallisuusalan elinkeinoluvan haltija' },
   { key: 'subjectLastName', label: 'Kohdehenkilön sukunimi' },
   { key: 'subjectFirstNames', label: 'Kohdehenkilön etunimet' },
-  { key: 'subjectPersonalId', label: 'Kohdehenkilön henkilötunnus' },
-  { key: 'subjectAddress', label: 'Kohdehenkilön osoitetiedot' },
+  // masked: arvo näytetään avatussa raportissa peitettynä ja paljastetaan vain
+  // erikseen silmäpainikkeesta. Suora tunniste ei näy sivusilmällä esim. silloin kun
+  // raporttia selataan muiden läsnä ollessa tai ruutu on jaettuna. Tämä on
+  // näyttötason suoja, ei pääsynhallinta: sillä käyttäjällä joka näkee raportin on
+  // oikeus myös näihin kenttiin (ks. server/permissions.js) ja arvo tulee joka
+  // tapauksessa APIsta selaimeen.
+  { key: 'subjectPersonalId', label: 'Kohdehenkilön henkilötunnus', masked: true },
+  { key: 'subjectAddress', label: 'Kohdehenkilön osoitetiedot', masked: true },
   { key: 'subjectFeatures', label: 'Tuntomerkit' },
   { key: 'subjectObservations', label: 'Havainnot käyttäytymisestä ja tilasta' },
   { key: 'description', label: 'Vapaa kuvaus' },
@@ -663,6 +671,13 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [openedReport, setOpenedReport] = useState(null);
+  // Mitkä peitetyt kentät on paljastettu juuri avatussa raportissa ({ kenttä: true }).
+  // Nollataan aina kun avattu raportti vaihtuu tai modaali suljetaan, jottei paljastus
+  // vahingossa periydy seuraavalle raportille.
+  const [revealedFields, setRevealedFields] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    setRevealedFields({});
+  }, [openedReport]);
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
@@ -8344,12 +8359,32 @@ export default function App() {
               {REPORT_DETAIL_FIELDS.filter(f => {
                 const v = openedReport[f.key];
                 return f.bool ? !!v : (v !== undefined && v !== null && String(v).trim() !== '' && String(v) !== '0');
-              }).map(f => (
-                <div key={f.key}>
-                  <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">{f.label}</p>
-                  <p className="text-slate-700">{f.bool ? 'Kyllä' : openedReport[f.key]}</p>
-                </div>
-              ))}
+              }).map(f => {
+                const revealed = !f.masked || !!revealedFields[f.key];
+                return (
+                  <div key={f.key}>
+                    <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">{f.label}</p>
+                    {f.masked ? (
+                      <div className="flex items-center gap-2">
+                        <p className={revealed ? 'text-slate-700' : 'text-slate-700 font-mono tracking-widest select-none'}>
+                          {revealed ? openedReport[f.key] : '••••••••'}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setRevealedFields(prev => ({ ...prev, [f.key]: !prev[f.key] }))}
+                          className="text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded p-1 transition-colors"
+                          title={revealed ? 'Piilota' : 'Näytä'}
+                          aria-label={revealed ? `Piilota ${f.label}` : `Näytä ${f.label}`}
+                        >
+                          {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-slate-700">{f.bool ? 'Kyllä' : openedReport[f.key]}</p>
+                    )}
+                  </div>
+                );
+              })}
 
               {openedReport.attachment && (
                 <div>
