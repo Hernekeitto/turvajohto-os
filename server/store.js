@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { encryptValue, decryptValue, isEncryptedValue } from './fieldcrypto.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -14,18 +15,95 @@ const COLLECTIONS = {
   employees: 'employees.json',
 };
 
+// Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
+// suora tunniste jonka selväkielinen säilytys on erikseen lain piirissä
+// (tietosuojalaki 29 §, henkilötunnus) — ei kaikkea henkilötietoa, koska jokainen
+// salattu kenttä on kenttä jolla ei voi enää hakea, lajitella eikä suodattaa levyn
+// tasolla, ja jonka avaimen menetys tarkoittaa kentän menetystä. Kenttiä voi lisätä
+// tähän listaan yksi rivi kerrallaan: migraatio (selväkielinen -> salattu ensimmäisellä
+// luvulla) toimii sen jälkeen automaattisesti myös uudelle kentälle.
+//
+// Huom: employees.address on tästä tarkoituksella pois — se on henkilötietoa mutta ei
+// henkilötunnus. Jos se halutaan mukaan, riittää lisätä 'address' tähän taulukkoon.
+const ENCRYPTED_FIELDS = {
+  employees: ['personalId'],
+};
+
 fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// Käy läpi kokoelman salattavat kentät ja palauttaa UUDEN taulukon muunnetuin arvoin.
+// Ei koskaan muuta parametrina saatuja olioita paikallaan: kutsuja (esim. index.js:n
+// PUT-reitti, joka lokittaa ja palauttaa saman datan) pitää edelleen käytössään
+// selväkielisen version. Tämä on sama sudenkuoppa joka väistettiin db.js:n
+// writeUsers()-funktiossa TOTP-salauksen kanssa.
+function mapEncryptedFields(name, records, transform) {
+  const fields = ENCRYPTED_FIELDS[name];
+  if (!fields || !Array.isArray(records)) return records;
+  return records.map((record) => {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) return record;
+    let copy = null; // luodaan vain jos jokin kenttä oikeasti muuttuu
+    for (const field of fields) {
+      const value = record[field];
+      // Tyhjä tai puuttuva arvo jätetään koskematta: ei haluta tallentaa salattua
+      // tyhjää merkkijonoa, joka näyttäisi levyllä täytetyltä kentältä.
+      if (typeof value !== 'string' || value === '') continue;
+      const next = transform(value);
+      if (next === value) continue;
+      if (!copy) copy = { ...record };
+      copy[field] = next;
+    }
+    return copy || record;
+  });
+}
+
+// Onko levyllä vielä selväkielisiä arvoja salattavissa kentissä (eli tarvitaanko
+// kertaluonteinen migraatio). Tunnistetaan enc:-etuliitteen puuttumisesta, samaan
+// tapaan kuin db.js:n needsTotpEncryption.
+function hasPlaintextFields(name, records) {
+  const fields = ENCRYPTED_FIELDS[name];
+  if (!fields || !Array.isArray(records)) return false;
+  return records.some(
+    (record) =>
+      record &&
+      typeof record === 'object' &&
+      fields.some((field) => typeof record[field] === 'string' && record[field] !== '' && !isEncryptedValue(record[field]))
+  );
+}
 
 export function readCollection(name) {
   const file = COLLECTIONS[name];
   if (!file) throw new Error(`Tuntematon kokoelma: ${name}`);
   const p = path.join(DATA_DIR, file);
   if (!fs.existsSync(p)) return null; // null = ei vielä tallennettua dataa, käytä oletusarvoja frontissa
+  let parsed;
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf8'));
+    parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
   } catch {
     return null;
   }
+  // Salauksen purku on tarkoituksella try/catchin ULKOPUOLELLA: jos purku epäonnistuu
+  // (väärä avain, vioittunut tavu), pyynnön pitää kaatua näkyvästi. Jos palauttaisimme
+  // tässä null/tyhjän, kokoelma näyttäisi tyhjältä — ja koska romahdussuoja
+  // (wouldWipeNonEmptyCollection) vertaa uutta dataa nimenomaan nykyiseen, tyhjä
+  // nykytila avaisi tien sille että seuraava tallennus ylikirjoittaa koko kokoelman.
+  // Näkyvä 500 on aina parempi kuin hiljainen datan menetys.
+  const plain = mapEncryptedFields(name, parsed, decryptValue);
+  // Kertaluonteinen migraatio: tätä ominaisuutta edeltävä data on levyllä
+  // selväkielisenä, ja se salataan heti ensimmäisellä luvulla. Ei kirjoiteta joka
+  // luvulla — writeCollection salaa aina uudella satunnaisella IV:llä, joten sama
+  // henkilötunnus tuottaisi joka kerta eri salatekstin ja levylle kirjoitettaisiin
+  // turhaan jokaisella GET-pyynnöllä.
+  if (hasPlaintextFields(name, parsed)) {
+    try {
+      writeCollection(name, plain);
+    } catch (err) {
+      // Migraation epäonnistuminen ei saa estää datan lukemista — kutsuja saa oikean
+      // selväkielisen datan joka tapauksessa, ja migraatiota yritetään uudelleen
+      // seuraavalla luvulla.
+      console.error(`Kenttäsalauksen migraatio epäonnistui kokoelmalle ${name}:`, err.message);
+    }
+  }
+  return plain;
 }
 
 export function writeCollection(name, data) {
@@ -33,7 +111,13 @@ export function writeCollection(name, data) {
   if (!file) throw new Error(`Tuntematon kokoelma: ${name}`);
   const p = path.join(DATA_DIR, file);
   const tmp = `${p}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  // Jo salattu arvo jätetään ennalleen: kahteen kertaan salaaminen olisi hiljainen
+  // datan korruptio (yksi purku palauttaisi yhä "enc:"-alkuisen merkkijonon, joka
+  // näkyisi käyttöliittymässä henkilötunnuksen paikalla).
+  const forStorage = mapEncryptedFields(name, data, (value) =>
+    isEncryptedValue(value) ? value : encryptValue(value)
+  );
+  fs.writeFileSync(tmp, JSON.stringify(forStorage, null, 2));
   fs.renameSync(tmp, p);
 }
 
