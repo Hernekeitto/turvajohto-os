@@ -151,9 +151,19 @@ const COLLECTIONS = {
     eventIdOf: legacyEventId,
   },
   reports: {
-    view: ['overview', 'report_list', 'report_tike', 'documents_pdf', 'global_reports', 'global_archived_events', ...TIKE_FORM_NODES],
+    // 'report_jv' on mukana koska järjestyksenvalvojan tapahtumailmoitus tallentuu tähän
+    // samaan kokoelmaan omalta sivultaan: ilman lukuoikeutta frontti ei saisi kokoelmaa
+    // ladattua eikä siis myöskään tallennettua sitä takaisin, joten pelkän report_jv-
+    // oikeuden saanut järjestyksenvalvoja ei voisi kirjata ilmoitusta lainkaan.
+    view: ['overview', 'report_list', 'report_tike', 'documents_pdf', 'global_reports', 'global_archived_events', 'report_jv', ...TIKE_FORM_NODES],
     touch: (item, phase) => {
       const typeId = item?.typeId;
+      // Järjestyksenvalvojan tapahtumailmoitus (typeId 'jvreport') on oma sivunsa
+      // TIKE-lomakkeiden ulkopuolella, joten sen oikeussolmu on 'report_jv' eikä
+      // 'tike_form_jvreport' (jota ei ole olemassa sivukartassa).
+      if (typeId === 'jvreport') {
+        return phase === 'remove' ? ['report_jv', 'report_list', 'overview'] : ['report_jv'];
+      }
       const typeNodes = typeId ? [`tike_form_${typeId}`] : [];
       // "Avoin kirjaus" (typeId 'open') voidaan luoda myös työntekijän sisäänkirjauksen
       // muokkausnäkymän "Tallenna kommentti raportiksi" -toiminnolla — ks. src/App.tsx:

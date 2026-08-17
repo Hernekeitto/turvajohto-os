@@ -266,6 +266,72 @@ test('kaikki vapaat tekstikentät purkautuvat luettaessa oikein', () => {
   assert.deepEqual(readCollection('reports'), [rec]);
 });
 
+// Järjestyksenvalvojan tapahtumailmoitus (typeId 'jvreport'): LYTP:n mukaiset
+// kohdehenkilön tiedot. Nämä ovat suoria tunnisteita ja kertovat kenelle on tehty
+// voimankäyttö- tai kiinniottotoimenpide.
+test('tapahtumailmoituksen kohdehenkilön tiedot salataan levylle', () => {
+  const ilmoitus = {
+    id: 'jvr1',
+    eventId: 'fesx',
+    typeId: 'jvreport',
+    type: 'Järjestyksenvalvojan tapahtumailmoitus',
+    author: 'Korhonen Elli',
+    licenseHolder: 'Turva Oy',
+    date: '2026-08-17',
+    time: '22:15',
+    place: 'Main Stage, portti 2',
+    summary: 'Main Stage, portti 2: otettu kiinni tai käytetty voimakeinoja',
+    subjectLastName: 'Meikäläinen',
+    subjectFirstNames: 'Matti Ville',
+    subjectPersonalId: '010190-123A',
+    subjectAddress: 'Testikatu 1, 00100 Helsinki',
+    subjectFeatures: 'Noin 180 cm, tumma takki, parta',
+    subjectObservations: 'Aggressiivinen, vahvasti päihtynyt',
+    description: 'Kohde yritti päästä anniskelualueelle ja kävi käsiksi järjestyksenvalvojaan.',
+    detainedOrForce: true,
+    tools: true,
+    firearm: false,
+    firstAid: false,
+  };
+  writeCollection('reports', [ilmoitus]);
+  const text = fs.readFileSync(REPORTS_FILE, 'utf8');
+  for (const arkaluonteinen of [
+    'Meikäläinen',
+    'Matti Ville',
+    '010190-123A',
+    'Testikatu 1',
+    'tumma takki',
+    'vahvasti päihtynyt',
+    'kävi käsiksi',
+  ]) {
+    assert.ok(!text.includes(arkaluonteinen), `levylle jäi selväkielisenä: ${arkaluonteinen}`);
+  }
+  const stored = rawReports()[0];
+  // Nämä jäävät tarkoituksella selväkielisiksi
+  assert.equal(stored.typeId, 'jvreport');
+  assert.equal(stored.eventId, 'fesx');
+  assert.equal(stored.author, 'Korhonen Elli');
+  assert.equal(stored.licenseHolder, 'Turva Oy');
+  assert.equal(stored.place, 'Main Stage, portti 2');
+  assert.equal(stored.date, '2026-08-17');
+  assert.equal(stored.detainedOrForce, true);
+  // ja koko tietue palautuu luettaessa ennallaan
+  assert.deepEqual(readCollection('reports'), [ilmoitus]);
+});
+
+test('tapahtumailmoituksen tyhjät kohdehenkilökentät eivät salaudu turhaan', () => {
+  writeCollection('reports', [
+    { id: 'jvr2', eventId: 'fesx', typeId: 'jvreport', author: 'Testi', summary: 'ei toimenpiteitä kirjattu', subjectLastName: '', subjectPersonalId: '', description: 'Vain kuvaus' },
+  ]);
+  const stored = rawReports()[0];
+  assert.equal(stored.subjectLastName, '');
+  assert.equal(stored.subjectPersonalId, '');
+  assert.match(stored.description, /^enc:/);
+  const read = readCollection('reports');
+  assert.equal(read[0].subjectLastName, '');
+  assert.equal(read[0].description, 'Vain kuvaus');
+});
+
 test('vanhat raportit joilta puuttuu osa tekstikentistä migroituvat oikein', () => {
   // Tuotannon vanhoissa raporteissa on vain summary — muut kentät puuttuvat kokonaan.
   fs.writeFileSync(

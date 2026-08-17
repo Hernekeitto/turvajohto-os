@@ -175,7 +175,19 @@ function findEventName(eventId, eventsList) {
 
 // Raporttien tyyppikohtaiset lisäkentät ihmisluettavaksi "Avaa raportti" -näkymässä.
 // id/eventId/typeId/type/author/time/summary/attachment näytetään erikseen kiinteässä muodossa.
+// Tyhjät kentät jätetään näyttämättä (ks. suodatin openedReport-modaalissa), joten
+// sama lista kattaa kaikki raporttityypit: järjestyksenvalvojan tapahtumailmoituksen
+// kohdehenkilökentät näkyvät vain niissä raporteissa joissa ne on täytetty.
 const REPORT_DETAIL_FIELDS = [
+  { key: 'date', label: 'Päivämäärä' },
+  { key: 'place', label: 'Tapahtumapaikka' },
+  { key: 'licenseHolder', label: 'Turvallisuusalan elinkeinoluvan haltija' },
+  { key: 'subjectLastName', label: 'Kohdehenkilön sukunimi' },
+  { key: 'subjectFirstNames', label: 'Kohdehenkilön etunimet' },
+  { key: 'subjectPersonalId', label: 'Kohdehenkilön henkilötunnus' },
+  { key: 'subjectAddress', label: 'Kohdehenkilön osoitetiedot' },
+  { key: 'subjectFeatures', label: 'Tuntomerkit' },
+  { key: 'subjectObservations', label: 'Havainnot käyttäytymisestä ja tilasta' },
   { key: 'description', label: 'Vapaa kuvaus' },
   { key: 'actions', label: 'Tehdyt toimenpiteet' },
   { key: 'resources', label: 'Käytetyt resurssit' },
@@ -183,6 +195,7 @@ const REPORT_DETAIL_FIELDS = [
   { key: 'denied', label: 'Estetty pääsy (hlö)' },
   { key: 'removed', label: 'Poistettu alueelta (hlö)' },
   { key: 'detained', label: 'Kiinniotettu (hlö)' },
+  { key: 'detainedOrForce', label: 'Otettu kiinni tai käytetty voimakeinoja', bool: true },
   { key: 'force', label: 'Voimakeinoja käytetty', bool: true },
   { key: 'tools', label: 'Voimankäyttövälineitä käytetty', bool: true },
   { key: 'firearm', label: 'Ampuma-ase esillä tai käytetty', bool: true },
@@ -658,8 +671,29 @@ export default function App() {
   const [tikeLogPage, setTikeLogPage] = useState(0);
 
   // JV Form State
+  // Järjestyksenvalvojan tapahtumailmoitus (report_jv). eventDate/eventTimeStr ovat
+  // tämän lomakkeen tapahtuma-aika (ei käytössä muualla). Loput kentät olivat aiemmin
+  // sidottomia <input>-elementtejä, joten koko lomake oli toimimaton kuori: mitään ei
+  // tallentunut ja Tallenna-painikkeelta puuttui käsittelijä kokonaan.
   const [eventDate, setEventDate] = useState('');
   const [eventTimeStr, setEventTimeStr] = useState('');
+  const [jvrGuardName, setJvrGuardName] = useState('');
+  const [jvrLicenseHolder, setJvrLicenseHolder] = useState('');
+  const [jvrPlace, setJvrPlace] = useState('');
+  const [jvrDetainedForce, setJvrDetainedForce] = useState(false);
+  const [jvrTools, setJvrTools] = useState(false);
+  const [jvrFirearm, setJvrFirearm] = useState(false);
+  const [jvrFirstAid, setJvrFirstAid] = useState(false);
+  // LYTP ja sen nojalla annettu asetus oikeuttavat kirjaamaan toimenpiteiden kohteena
+  // olleiden sukunimen, etunimet, henkilötunnuksen ja osoitetiedot sekä tuntomerkit.
+  // Nämä kentät salataan levyllä (ks. server/store.js ENCRYPTED_FIELDS).
+  const [jvrLastName, setJvrLastName] = useState('');
+  const [jvrFirstNames, setJvrFirstNames] = useState('');
+  const [jvrPersonalId, setJvrPersonalId] = useState('');
+  const [jvrAddress, setJvrAddress] = useState('');
+  const [jvrFeatures, setJvrFeatures] = useState('');
+  const [jvrObservations, setJvrObservations] = useState('');
+  const [jvrDesc, setJvrDesc] = useState('');
   const timeInputRef = useRef(null);
 
   // Tapahtumat (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
@@ -1913,6 +1947,76 @@ export default function App() {
     setJvaReporterFiled(false);
   };
 
+  const handleClearJvReport = () => {
+    setJvrGuardName('');
+    setJvrLicenseHolder('');
+    setJvrPlace('');
+    setEventDate('');
+    setEventTimeStr('');
+    setJvrDetainedForce(false);
+    setJvrTools(false);
+    setJvrFirearm(false);
+    setJvrFirstAid(false);
+    setJvrLastName('');
+    setJvrFirstNames('');
+    setJvrPersonalId('');
+    setJvrAddress('');
+    setJvrFeatures('');
+    setJvrObservations('');
+    setJvrDesc('');
+  };
+
+  // Järjestyksenvalvojan tapahtumailmoitus tallentuu reports-kokoelmaan omalla
+  // typeId:llä 'jvreport'. Palvelinpuolen oikeustarkistus (server/permissions.js)
+  // johtaa vaadittavan sivukartta-solmun typeId:stä, ja 'jvreport' on siellä
+  // erikseen liitetty report_jv-solmuun — ei tike_form_*-solmuun, koska tämä
+  // lomake on oma sivunsa TIKE-lomakkeiden ulkopuolella.
+  const handleSaveJvReport = () => {
+    if (!jvrGuardName.trim()) {
+      alert('Kirjaa järjestyksenvalvojan nimi.');
+      return;
+    }
+    if (!jvrDetainedForce && !jvrTools && !jvrFirearm && !jvrFirstAid && !jvrDesc.trim()) {
+      alert('Valitse vähintään yksi toimenpide tai kirjoita vapaa kuvaus tapahtumasta.');
+      return;
+    }
+    const now = new Date();
+    const timeLabel = eventTimeStr || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+    const parts: string[] = [];
+    if (jvrDetainedForce) parts.push('otettu kiinni tai käytetty voimakeinoja');
+    if (jvrTools) parts.push('voimankäyttövälineitä käytetty');
+    if (jvrFirearm) parts.push('ampuma-ase esillä tai käytetty');
+    if (jvrFirstAid) parts.push('ensiapu tai ensihoito');
+
+    setReports(prev => [{
+      id: getDynamicId(),
+      eventId: selectedEvent,
+      typeId: 'jvreport',
+      type: 'Järjestyksenvalvojan tapahtumailmoitus',
+      author: jvrGuardName.trim(),
+      licenseHolder: jvrLicenseHolder.trim(),
+      date: eventDate || now.toLocaleDateString('sv-SE'),
+      time: timeLabel,
+      place: jvrPlace.trim(),
+      summary: `${jvrPlace.trim() ? jvrPlace.trim() + ': ' : ''}${parts.join(', ') || 'ei toimenpiteitä kirjattu'}`,
+      subjectLastName: jvrLastName.trim(),
+      subjectFirstNames: jvrFirstNames.trim(),
+      subjectPersonalId: jvrPersonalId.trim(),
+      subjectAddress: jvrAddress.trim(),
+      subjectFeatures: jvrFeatures.trim(),
+      subjectObservations: jvrObservations.trim(),
+      description: jvrDesc.trim(),
+      detainedOrForce: jvrDetainedForce,
+      tools: jvrTools,
+      firearm: jvrFirearm,
+      firstAid: jvrFirstAid,
+    }, ...prev]);
+
+    setRunningNumber(prev => prev + 1);
+    handleClearJvReport();
+    alert('Tapahtumailmoitus tallennettu.');
+  };
+
   const handleSaveJvaReport = () => {
     if (!jvaName.trim()) {
       alert('Kirjaa toimenpiteen suorittaneen henkilön nimi.');
@@ -2645,11 +2749,23 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Järjestyksenvalvojan nimi</label>
-                    <input type="text" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Etunimi Sukunimi" />
+                    <input
+                      type="text"
+                      value={jvrGuardName}
+                      onChange={(e) => setJvrGuardName(e.target.value)}
+                      className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Etunimi Sukunimi"
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Turvallisuusalan elinkeinoluvan haltija</label>
-                    <input type="text" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. Turva Oy" />
+                    <input
+                      type="text"
+                      value={jvrLicenseHolder}
+                      onChange={(e) => setJvrLicenseHolder(e.target.value)}
+                      className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Esim. Turva Oy"
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Tapahtuma-aika</label>
@@ -2687,7 +2803,13 @@ export default function App() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Tapahtumapaikka</label>
-                    <input type="text" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. Main Stage, portti 2..." />
+                    <input
+                      type="text"
+                      value={jvrPlace}
+                      onChange={(e) => setJvrPlace(e.target.value)}
+                      className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Esim. Main Stage, portti 2..."
+                    />
                   </div>
                 </div>
               </div>
@@ -2697,19 +2819,39 @@ export default function App() {
                 <h3 className="text-md font-semibold text-slate-700 border-b pb-2">2. Toimenpiteet</h3>
                 <div className="space-y-3">
                   <label className="flex items-center gap-3">
-                    <input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
+                    <input
+                      type="checkbox"
+                      checked={jvrDetainedForce}
+                      onChange={(e) => setJvrDetainedForce(e.target.checked)}
+                      className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                    />
                     <span className="text-sm font-medium text-slate-700">Otettu kiinni tai käytetty voimakeinoja</span>
                   </label>
                   <label className="flex items-center gap-3">
-                    <input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
+                    <input
+                      type="checkbox"
+                      checked={jvrTools}
+                      onChange={(e) => setJvrTools(e.target.checked)}
+                      className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                    />
                     <span className="text-sm font-medium text-slate-700">Käytetty voimankäyttövälineitä (esim. käsiraudat, patukka, kaasu)</span>
                   </label>
                   <label className="flex items-center gap-3">
-                    <input type="checkbox" className="w-5 h-5 text-rose-600 rounded border-slate-300 focus:ring-rose-500" />
+                    <input
+                      type="checkbox"
+                      checked={jvrFirearm}
+                      onChange={(e) => setJvrFirearm(e.target.checked)}
+                      className="w-5 h-5 text-rose-600 rounded border-slate-300 focus:ring-rose-500"
+                    />
                     <span className="text-sm font-medium text-slate-700">Otettu esille tai käytetty ampuma-asetta</span>
                   </label>
                   <label className="flex items-center gap-3">
-                    <input type="checkbox" className="w-5 h-5 text-amber-500 rounded border-slate-300 focus:ring-amber-500" />
+                    <input
+                      type="checkbox"
+                      checked={jvrFirstAid}
+                      onChange={(e) => setJvrFirstAid(e.target.checked)}
+                      className="w-5 h-5 text-amber-500 rounded border-slate-300 focus:ring-amber-500"
+                    />
                     <span className="text-sm font-medium text-slate-700">Kohdehenkilö on viety ensiapuun tai ensihoitoa on käytetty tilanteessa</span>
                   </label>
                 </div>
@@ -2719,13 +2861,72 @@ export default function App() {
               <div className="space-y-4">
                 <h3 className="text-md font-semibold text-slate-700 border-b pb-2">3. Kohdehenkilö ja havainnot (Havaintotiedot)</h3>
                 <div className="space-y-4">
+                  <p className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-lg p-3">
+                    LYTP ja sen nojalla annettu asetus oikeuttavat kirjaamaan toimenpiteiden kohteena olleiden
+                    sukunimen, etunimet, henkilötunnuksen ja osoitetiedot. Täytä vain ne tiedot jotka ovat
+                    tiedossa ja tarpeen — kentät tallennetaan salattuna.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Kohdehenkilön sukunimi</label>
+                      <input
+                        type="text"
+                        value={jvrLastName}
+                        onChange={(e) => setJvrLastName(e.target.value)}
+                        className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                        placeholder="Sukunimi"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Etunimet</label>
+                      <input
+                        type="text"
+                        value={jvrFirstNames}
+                        onChange={(e) => setJvrFirstNames(e.target.value)}
+                        className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                        placeholder="Etunimet"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Henkilötunnus</label>
+                      <input
+                        type="text"
+                        value={jvrPersonalId}
+                        onChange={(e) => setJvrPersonalId(e.target.value)}
+                        className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                        placeholder="ppkkvv-1234"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Osoitetiedot</label>
+                      <input
+                        type="text"
+                        value={jvrAddress}
+                        onChange={(e) => setJvrAddress(e.target.value)}
+                        className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                        placeholder="Katuosoite, postinumero ja -toimipaikka"
+                      />
+                    </div>
+                  </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Kohdehenkilön tuntomerkit (tunnistamista varten)</label>
-                    <textarea rows="2" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Pituus, vartalonrakenne, vaatetus, erityistuntomerkit..."></textarea>
+                    <textarea
+                      rows="2"
+                      value={jvrFeatures}
+                      onChange={(e) => setJvrFeatures(e.target.value)}
+                      className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Pituus, vartalonrakenne, vaatetus, erityistuntomerkit..."
+                    ></textarea>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Havainnot käyttäytymisestä ja tilasta</label>
-                    <textarea rows="2" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. aggressiivinen, sekava, vahvasti päihtynyt, yhteistyökykyinen..."></textarea>
+                    <textarea
+                      rows="2"
+                      value={jvrObservations}
+                      onChange={(e) => setJvrObservations(e.target.value)}
+                      className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Esim. aggressiivinen, sekava, vahvasti päihtynyt, yhteistyökykyinen..."
+                    ></textarea>
                   </div>
                 </div>
               </div>
@@ -2734,16 +2935,30 @@ export default function App() {
               <div className="space-y-4">
                 <h3 className="text-md font-semibold text-slate-700 border-b pb-2">4. Vapaa kuvaus ja lisätiedot</h3>
                 <div>
-                  <textarea rows="4" className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Tarkempi kuvaus tilanteen kulusta, toimenpiteistä, ensihoidon antamista tiedoista yms..."></textarea>
+                  <textarea
+                    rows="4"
+                    value={jvrDesc}
+                    onChange={(e) => setJvrDesc(e.target.value)}
+                    className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                    placeholder="Tarkempi kuvaus tilanteen kulusta, toimenpiteistä, ensihoidon antamista tiedoista yms..."
+                  ></textarea>
                 </div>
               </div>
 
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
-                <button type="button" className="px-5 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+                <button
+                  type="button"
+                  onClick={handleClearJvReport}
+                  className="px-5 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                >
                   Tyhjennä
                 </button>
                 {(isAdminUser || canEdit(perms, selectedEvent, 'report_jv')) && (
-                  <button type="button" className="px-5 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveJvReport}
+                    className="px-5 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2"
+                  >
                     <CheckCircle size={16} />
                     Tallenna ilmoitus
                   </button>

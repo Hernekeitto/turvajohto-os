@@ -42,9 +42,28 @@ const COLLECTIONS = {
 // numeeriset/totuusarvoiset kentät jäävät selväkielisiksi: niitä käytetään
 // suodatukseen ja oikeustarkistuksiin (mm. canReadAttachment lukee typeId:n ja
 // eventId:n), eivätkä ne sisällä vapaata tekstiä.
+// Järjestyksenvalvojan tapahtumailmoituksen (typeId 'jvreport') kohdehenkilökentät ovat
+// suoria tunnisteita: LYTP ja sen nojalla annettu asetus oikeuttavat kirjaamaan
+// toimenpiteiden kohteena olleiden sukunimen, etunimet, henkilötunnuksen ja
+// osoitetiedot sekä tuntomerkit. Nämä ovat arkaluonteisempia kuin työntekijöiden omat
+// tiedot: ne kertovat kenelle on tehty voimankäyttö- tai kiinniottotoimenpide.
+// Selväkielisiksi jäävät place, licenseHolder, date ja time (eivät henkilötietoa) sekä
+// author, typeId ja eventId (suodatus ja oikeustarkistukset).
 const ENCRYPTED_FIELDS = {
   employees: ['personalId'],
-  reports: ['summary', 'description', 'actions', 'resources', 'employees'],
+  reports: [
+    'summary',
+    'description',
+    'actions',
+    'resources',
+    'employees',
+    'subjectLastName',
+    'subjectFirstNames',
+    'subjectPersonalId',
+    'subjectAddress',
+    'subjectFeatures',
+    'subjectObservations',
+  ],
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
