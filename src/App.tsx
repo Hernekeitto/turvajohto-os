@@ -327,6 +327,42 @@ const jaotteleSailytysajan = (raportit: any[], nyt = new Date()) => {
   return { vanhentuneet, voimassa, paivamaaraPuuttuu };
 };
 
+// Arkistoidun tapahtuman poistoaikataulu. Tapahtuman tiedot voi hävittää vasta kun
+// sen VIIMEISENKIN ilmoituksen säilytysaika on umpeutunut — siksi maksimi eikä
+// minimi. Hävitys on tehtävä viipymättä ja viimeistään kuukauden kuluessa, joten
+// takaraja on kuukausi myöhemmin. Säilytysaika päättyy aina 31.12., joten kuukauden
+// lisäys osuu 31.1. eikä kalenterilaskenta voi yllättää (esim. 31.1. + 1 kk
+// venyisi maaliskuulle).
+const tapahtumanPoistoaikataulu = (tapahtuma: any, raportit: any[], nyt = new Date()) => {
+  const omat = (raportit || []).filter((r) => (r?.eventId || 'fesx') === tapahtuma?.id);
+  const paattymiset = omat.map((r) => sailytysaikaPaattyy(r?.createdAt));
+  const tiedossa = paattymiset.filter((p) => p !== null) as Date[];
+  const puuttuvia = paattymiset.length - tiedossa.length;
+  const voiPoistaa = tiedossa.length > 0 ? new Date(Math.max(...tiedossa.map((d) => d.getTime()))) : null;
+  const pitaaPoistaa = voiPoistaa
+    ? new Date(voiPoistaa.getFullYear(), voiPoistaa.getMonth() + 1, voiPoistaa.getDate())
+    : null;
+  return {
+    ilmoituksia: omat.length,
+    puuttuvia,
+    voiPoistaa,
+    pitaaPoistaa,
+    // Tapahtuma jolla ei ole yhtään ilmoitusta on poistettavissa heti: säilytettävää
+    // ei ole.
+    //
+    // Jos yhdenkin ilmoituksen laatimisaika puuttuu, tapahtumaa EI merkitä
+    // poistettavaksi eikä myöhässä olevaksi, vaikka tiedossa olevien ilmoitusten
+    // säilytysaika olisi umpeutunut: päivämäärätön ilmoitus voi olla uudempi kuin
+    // mikään tiedossa oleva, jolloin todellinen säilytysaika on vielä voimassa.
+    // Väärä suunta olisi kehottaa poistamaan dataa jota laki vaatii säilyttämään,
+    // joten epävarmuus näytetään epävarmuutena (voiPoistaa on tällöin aikaisin
+    // mahdollinen ajankohta, ei varma).
+    epavarma: puuttuvia > 0,
+    poistettavissa: puuttuvia > 0 ? false : voiPoistaa ? nyt > voiPoistaa : omat.length === 0,
+    myohassa: puuttuvia > 0 ? false : pitaaPoistaa ? nyt > pitaaPoistaa : false,
+  };
+};
+
 const muotoileTavut = (tavua: number) => {
   if (!Number.isFinite(tavua)) return '—';
   const gb = tavua / (1024 * 1024 * 1024);
@@ -789,6 +825,8 @@ export default function App() {
   // käyttäjähallinnan muutokset, kirjautumiset) — vain admin, ks. server/audit.js.
   const [viewingAuditLog, setViewingAuditLog] = useState(false);
   const [viewingSettings, setViewingSettings] = useState(false);
+  // Säilytysaika-osio on oletuksena kiinni: Asetukset-näkymän pitää avautua tiiviinä.
+  const [sailytysAvattu, setSailytysAvattu] = useState(false);
   const [storageInfo, setStorageInfo] = useState<any>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [auditEntries, setAuditEntries] = useState([]);
@@ -7046,6 +7084,10 @@ export default function App() {
 
   if (viewingSettings) {
     const sailytys = jaotteleSailytysajan(reports);
+    const arkistoidutAikataulut = events
+      .filter((e: any) => e.archived)
+      .map((tapahtuma: any) => ({ tapahtuma, aikataulu: tapahtumanPoistoaikataulu(tapahtuma, reports) }));
+    const arkistoidutPoistettavissa = arkistoidutAikataulut.filter(({ aikataulu }: any) => aikataulu.poistettavissa).length;
     const kaytettyProsentti = storageInfo ? storageInfo.usedPercent : null;
     const mittariVari =
       kaytettyProsentti === null
@@ -7133,112 +7175,227 @@ export default function App() {
               )}
             </div>
 
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <History size={18} className="text-indigo-500" />
-                Tapahtumailmoitusten säilytysajat
-              </h3>
-              <p className="text-sm text-slate-600 mt-2">
-                Tapahtumailmoitukset on säilytettävä kaksi vuotta niiden laatimispäivän kalenterivuoden
-                päättymisen jälkeen, minkä jälkeen henkilötietoja sisältävät ilmoitukset on hävitettävä
-                viipymättä ja viimeistään kuukauden kuluessa.
-              </p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5">
-                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-slate-800">{sailytys.voimassa.length}</div>
-                  <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">
-                    Säilytysaika voimassa
-                  </div>
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setSailytysAvattu((o) => !o)}
+                className="w-full flex items-center justify-between gap-3 p-6 text-left hover:bg-slate-50 transition-colors rounded-xl"
+              >
+                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                  <History size={18} className="text-indigo-500" />
+                  Tapahtumailmoitusten säilytysajat
+                </h3>
+                <div className="flex items-center gap-3 shrink-0">
+                  {/* Hävitettävien määrä näkyy myös suljettuna, jottei se jää huomaamatta */}
+                  {sailytys.vanhentuneet.length > 0 && (
+                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-rose-100 text-rose-700">
+                      {sailytys.vanhentuneet.length} hävitettävää
+                    </span>
+                  )}
+                  {arkistoidutPoistettavissa > 0 && (
+                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">
+                      {arkistoidutPoistettavissa} tapahtumaa poistettavissa
+                    </span>
+                  )}
+                  {sailytysAvattu ? (
+                    <ChevronDown size={20} className="text-slate-400" />
+                  ) : (
+                    <ChevronRight size={20} className="text-slate-400" />
+                  )}
                 </div>
-                <div
-                  className={
-                    sailytys.vanhentuneet.length > 0
-                      ? 'border rounded-lg p-4 text-center bg-rose-50 border-rose-200'
-                      : 'border rounded-lg p-4 text-center bg-slate-50 border-slate-200'
-                  }
-                >
-                  <div
-                    className={
-                      sailytys.vanhentuneet.length > 0
-                        ? 'text-2xl font-bold text-rose-700'
-                        : 'text-2xl font-bold text-slate-800'
-                    }
-                  >
-                    {sailytys.vanhentuneet.length}
-                  </div>
-                  <div
-                    className={
-                      sailytys.vanhentuneet.length > 0
-                        ? 'text-xs font-medium uppercase tracking-wide mt-1 text-rose-600'
-                        : 'text-xs font-medium uppercase tracking-wide mt-1 text-slate-500'
-                    }
-                  >
-                    Hävitettävä
-                  </div>
-                </div>
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-amber-700">{sailytys.paivamaaraPuuttuu.length}</div>
-                  <div className="text-xs text-amber-600 font-medium uppercase tracking-wide mt-1">
-                    Päivämäärä puuttuu
-                  </div>
-                </div>
-              </div>
+              </button>
 
-              {sailytys.paivamaaraPuuttuu.length > 0 && (
-                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
-                  {sailytys.paivamaaraPuuttuu.length} ilmoituksesta ei löydy laatimisaikaa (createdAt-kenttä
-                  otettiin käyttöön 18.8.2026). Niiden säilytysaikaa ei voi laskea, joten niitä ei myöskään
-                  poisteta automaattisesti — käy ne läpi käsin.
-                </p>
-              )}
+              {sailytysAvattu && (
+                <div className="px-6 pb-6">
+                  <p className="text-sm text-slate-600">
+                    Tapahtumailmoitukset on säilytettävä kaksi vuotta niiden laatimispäivän kalenterivuoden
+                    päättymisen jälkeen, minkä jälkeen henkilötietoja sisältävät ilmoitukset on hävitettävä
+                    viipymättä ja viimeistään kuukauden kuluessa.
+                  </p>
 
-              {sailytys.vanhentuneet.length > 0 ? (
-                <div className="mt-5">
-                  <div className="border border-slate-200 rounded-lg overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                        <tr>
-                          <th className="p-3 text-left font-semibold">Tunniste</th>
-                          <th className="p-3 text-left font-semibold">Tyyppi</th>
-                          <th className="p-3 text-left font-semibold">Laadittu</th>
-                          <th className="p-3 text-left font-semibold">Säilytysaika päättyi</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {sailytys.vanhentuneet.slice(0, 50).map((r: any) => (
-                          <tr key={r.id}>
-                            <td className="p-3 font-mono text-xs text-slate-600">{r.id}</td>
-                            <td className="p-3 text-slate-700">{r.type}</td>
-                            <td className="p-3 text-slate-600">
-                              {new Date(r.createdAt).toLocaleDateString('fi-FI')}
-                            </td>
-                            <td className="p-3 text-slate-600">
-                              {sailytysaikaPaattyy(r.createdAt)?.toLocaleDateString('fi-FI')}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5">
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-slate-800">{sailytys.voimassa.length}</div>
+                      <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">
+                        Säilytysaika voimassa
+                      </div>
+                    </div>
+                    <div
+                      className={
+                        sailytys.vanhentuneet.length > 0
+                          ? 'border rounded-lg p-4 text-center bg-rose-50 border-rose-200'
+                          : 'border rounded-lg p-4 text-center bg-slate-50 border-slate-200'
+                      }
+                    >
+                      <div
+                        className={
+                          sailytys.vanhentuneet.length > 0
+                            ? 'text-2xl font-bold text-rose-700'
+                            : 'text-2xl font-bold text-slate-800'
+                        }
+                      >
+                        {sailytys.vanhentuneet.length}
+                      </div>
+                      <div
+                        className={
+                          sailytys.vanhentuneet.length > 0
+                            ? 'text-xs font-medium uppercase tracking-wide mt-1 text-rose-600'
+                            : 'text-xs font-medium uppercase tracking-wide mt-1 text-slate-500'
+                        }
+                      >
+                        Hävitettävä
+                      </div>
+                    </div>
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center">
+                      <div className="text-2xl font-bold text-amber-700">{sailytys.paivamaaraPuuttuu.length}</div>
+                      <div className="text-xs text-amber-600 font-medium uppercase tracking-wide mt-1">
+                        Päivämäärä puuttuu
+                      </div>
+                    </div>
                   </div>
-                  {sailytys.vanhentuneet.length > 50 && (
-                    <p className="text-xs text-slate-500 mt-2">
-                      Näytetään 50 ensimmäistä {sailytys.vanhentuneet.length} ilmoituksesta.
+
+                  {sailytys.paivamaaraPuuttuu.length > 0 && (
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
+                      {sailytys.paivamaaraPuuttuu.length} ilmoituksesta ei löydy laatimisaikaa (createdAt-kenttä
+                      otettiin käyttöön 18.8.2026). Niiden säilytysaikaa ei voi laskea, joten niitä ei myöskään
+                      poisteta automaattisesti — käy ne läpi käsin.
                     </p>
                   )}
-                  <button
-                    type="button"
-                    onClick={handleDeleteExpiredReports}
-                    className="mt-4 px-5 py-2 text-sm font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-2"
-                  >
-                    <Trash2 size={16} />
-                    Hävitä {sailytys.vanhentuneet.length} vanhentunut ilmoitus
-                  </button>
+
+                  {sailytys.vanhentuneet.length > 0 ? (
+                    <div className="mt-5">
+                      <h4 className="text-sm font-bold text-slate-700 mb-2">Hävitettävät ilmoitukset</h4>
+                      <div className="border border-slate-200 rounded-lg overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                            <tr>
+                              <th className="p-3 text-left font-semibold">Tunniste</th>
+                              <th className="p-3 text-left font-semibold">Tyyppi</th>
+                              <th className="p-3 text-left font-semibold">Laadittu</th>
+                              <th className="p-3 text-left font-semibold">Säilytysaika päättyi</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {sailytys.vanhentuneet.slice(0, 50).map((r: any) => (
+                              <tr key={r.id}>
+                                <td className="p-3 font-mono text-xs text-slate-600">{r.id}</td>
+                                <td className="p-3 text-slate-700">{r.type}</td>
+                                <td className="p-3 text-slate-600">
+                                  {new Date(r.createdAt).toLocaleDateString('fi-FI')}
+                                </td>
+                                <td className="p-3 text-slate-600">
+                                  {sailytysaikaPaattyy(r.createdAt)?.toLocaleDateString('fi-FI')}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {sailytys.vanhentuneet.length > 50 && (
+                        <p className="text-xs text-slate-500 mt-2">
+                          Näytetään 50 ensimmäistä {sailytys.vanhentuneet.length} ilmoituksesta.
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleDeleteExpiredReports}
+                        className="mt-4 px-5 py-2 text-sm font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        <Trash2 size={16} />
+                        Hävitä {sailytys.vanhentuneet.length} vanhentunut ilmoitus
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-3 mt-5">
+                      Yhdenkään ilmoituksen säilytysaika ei ole umpeutunut — hävitettävää ei ole.
+                    </p>
+                  )}
+
+                  {/* Arkistoidut tapahtumat ja niiden poistoaikataulu */}
+                  <div className="mt-8 pt-6 border-t border-slate-100">
+                    <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                      <Archive size={16} className="text-slate-400" />
+                      Arkistoidut tapahtumat
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Tapahtuman tiedot voi hävittää kun sen viimeisenkin ilmoituksen säilytysaika on
+                      umpeutunut, ja hävitys on tehtävä kuukauden kuluessa siitä. Poisto tehdään
+                      Tallennetut tapahtumat -näkymästä.
+                    </p>
+
+                    {arkistoidutAikataulut.length === 0 ? (
+                      <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3 mt-3">
+                        Arkistossa ei ole tapahtumia.
+                      </p>
+                    ) : (
+                      <div className="border border-slate-200 rounded-lg overflow-hidden mt-3">
+                        <table className="w-full text-sm">
+                          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                            <tr>
+                              <th className="p-3 text-left font-semibold">Tapahtuma</th>
+                              <th className="p-3 text-left font-semibold">Ilmoituksia</th>
+                              <th className="p-3 text-left font-semibold">Voi poistaa</th>
+                              <th className="p-3 text-left font-semibold">Poistettava viimeistään</th>
+                              <th className="p-3 text-left font-semibold">Tila</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {arkistoidutAikataulut.map(({ tapahtuma, aikataulu }: any) => (
+                              <tr key={tapahtuma.id} className={aikataulu.myohassa ? 'bg-rose-50' : undefined}>
+                                <td className="p-3">
+                                  <div className="font-medium text-slate-800">{tapahtuma.name}</div>
+                                  <div className="text-xs text-slate-500">{tapahtuma.client}</div>
+                                </td>
+                                <td className="p-3 text-slate-600">
+                                  {aikataulu.ilmoituksia}
+                                  {aikataulu.puuttuvia > 0 && (
+                                    <span className="text-xs text-amber-600 block">
+                                      {aikataulu.puuttuvia} ilman päivämäärää
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-3 text-slate-600">
+                                  {aikataulu.voiPoistaa ? (
+                                    <span title={aikataulu.epavarma ? 'Osalta ilmoituksia puuttuu laatimispäivä, joten tämä on aikaisin mahdollinen ajankohta — ei varma.' : undefined}>
+                                      {aikataulu.epavarma ? 'aikaisintaan ' : ''}
+                                      {aikataulu.voiPoistaa.toLocaleDateString('fi-FI')}
+                                    </span>
+                                  ) : aikataulu.ilmoituksia === 0 ? (
+                                    'heti'
+                                  ) : (
+                                    '—'
+                                  )}
+                                </td>
+                                <td className="p-3 text-slate-600">
+                                  {aikataulu.pitaaPoistaa ? aikataulu.pitaaPoistaa.toLocaleDateString('fi-FI') : '—'}
+                                </td>
+                                <td className="p-3">
+                                  {aikataulu.epavarma ? (
+                                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">
+                                      Päivämäärä puuttuu
+                                    </span>
+                                  ) : aikataulu.myohassa ? (
+                                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-rose-100 text-rose-700">
+                                      Myöhässä
+                                    </span>
+                                  ) : aikataulu.poistettavissa ? (
+                                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">
+                                      Poistettavissa
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">
+                                      Säilytysaika voimassa
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              ) : (
-                <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-3 mt-5">
-                  Yhdenkään ilmoituksen säilytysaika ei ole umpeutunut — hävitettävää ei ole.
-                </p>
               )}
             </div>
           </div>
