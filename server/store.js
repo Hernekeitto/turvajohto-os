@@ -163,18 +163,24 @@ export const KNOWN_COLLECTIONS = Object.keys(COLLECTIONS);
 // Datahakemiston tiedostojärjestelmän tilanne (Asetukset-näkymän tallennustilamittari).
 // Tämä moduuli tuntee DATA_DIRin, joten levytilan luku kuuluu tänne eikä reitille.
 // fs.statfsSync eikä ulkoinen df: ei riipu shellistä eikä sen tulosteen muodosta.
+//
+// Luvut lasketaan TÄSMÄLLEEN samalla tavalla kuin df, jotta käyttöliittymä ja
+// palvelimelta ajettu `df -h` eivät ole eri mieltä (se näyttäisi bugilta):
+//   used  = (blocks - bfree) * bsize   -> myös rootille varattu osuus on "vapaana"
+//   avail = bavail * bsize             -> mitä tavallinen käyttäjä voi kirjoittaa
+//   %     = used / (used + avail)      -> ei used/total, koska varattu osuus
+//                                         ei kuulu kumpaankaan
+// Ero on tässä ~3 prosenttiyksikköä (ext4 varaa oletuksena 5 % rootille).
 export function getStorageUsage() {
   const st = fs.statfsSync(DATA_DIR);
-  // bavail = tavalliselle käyttäjälle vapaana. bfree sisältää myös rootille varatun
-  // osuuden, jota sovellus (joka ajetaan käyttäjänä git) ei voi käyttää — bavail
-  // vastaa siis paremmin todellista tilannetta.
   const total = st.blocks * st.bsize;
+  const used = (st.blocks - st.bfree) * st.bsize;
   const free = st.bavail * st.bsize;
-  const used = total - free;
+  const nayttoTila = used + free;
   return {
     total,
     used,
     free,
-    usedPercent: total > 0 ? Math.round((used / total) * 1000) / 10 : 0,
+    usedPercent: nayttoTila > 0 ? Math.round((used / nayttoTila) * 1000) / 10 : 0,
   };
 }
