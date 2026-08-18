@@ -718,7 +718,7 @@ export default function App() {
   const [eventsLoaded, setEventsLoaded] = useState(false);
 
   // Riskiarvioinnit (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
-  const [riskAssessments, setRiskAssessments] = useState([]);
+  const [riskAssessments, setRiskAssessments] = useState<any[]>([]);
   const [riskAssessmentsLoaded, setRiskAssessmentsLoaded] = useState(false);
   const [openedRiskAssessment, setOpenedRiskAssessment] = useState(null);
 
@@ -1780,6 +1780,62 @@ export default function App() {
     );
     if (!confirmed) return;
     setEvents(prev => prev.map(e => (e.id === ev.id ? { ...e, archived: true, archivedAt: new Date().toISOString() } : e)));
+  };
+
+  // Arkistoidun tapahtuman PYSYVÄ poisto: poistaa tapahtuman ja kaiken siihen
+  // liittyvän datan. handleDeleteEvent yllä vain arkistoi (archived: true) — tämä on
+  // se lopullinen poisto, jota ei voi perua.
+  //
+  // Vain adminille: poisto koskee neljää eri kokoelmaa, joista jokainen tarkistetaan
+  // palvelimella erikseen omilla sivukartta-solmuillaan (ks. server/permissions.js).
+  // Jos käyttäjällä olisi oikeus vain osaan niistä, poisto onnistuisi osittain ja
+  // jättäisi tapahtuman datan orvoksi levylle. Admin ohittaa per-tietue-tarkistukset,
+  // joten lopputulos on aina eheä. Poistot kirjautuvat audit-lokiin normaalisti,
+  // koska ne kulkevat samojen PUT-reittien kautta kuin muut muutokset.
+  const handlePermanentDeleteEvent = (ev: any) => {
+    const kuuluuTapahtumaan = (x: any) => (x.eventId || 'fesx') === ev.id;
+    const poistettavatRaportit = reports.filter(kuuluuTapahtumaan);
+    const poistettavatKirjaukset = checkedInEmployees.filter(kuuluuTapahtumaan);
+    const poistettavatRiskit = riskAssessments.filter(kuuluuTapahtumaan);
+
+    const rivi = String.fromCharCode(10);
+    const luoti = String.fromCharCode(8226);
+    const vahvistus = window.prompt(
+      [
+        `POISTETAAN PYSYVÄSTI: "${ev.name}"`,
+        '',
+        'Poistetaan lopullisesti:',
+        `${luoti} tapahtuma ja sen lomaketiedot`,
+        `${luoti} ${poistettavatRaportit.length} raporttia ja tapahtumailmoitusta`,
+        `${luoti} ${poistettavatKirjaukset.length} työntekijäkirjausta`,
+        `${luoti} ${poistettavatRiskit.length} riskiarviota`,
+        '',
+        'Poistoa EI voi perua. Huomioi että tapahtumailmoituksilla ja voimankäyttö-',
+        'raporteilla voi olla lakisääteinen säilytysvelvollisuus.',
+        '',
+        'Vahvista kirjoittamalla tapahtuman nimi täsmälleen:',
+      ].join(rivi)
+    );
+    if (vahvistus === null) return;
+    if (vahvistus.trim() !== ev.name) {
+      alert('Nimi ei täsmää — mitään ei poistettu.');
+      return;
+    }
+
+    setReports(prev => prev.filter(r => !kuuluuTapahtumaan(r)));
+    setCheckedInEmployees(prev => prev.filter(e => !kuuluuTapahtumaan(e)));
+    setRiskAssessments(prev => prev.filter(r => !kuuluuTapahtumaan(r)));
+    setEvents(prev => prev.filter(e => e.id !== ev.id));
+    setArchivedEventDetailId(null);
+    alert(
+      [
+        `Tapahtuma "${ev.name}" poistettiin pysyvästi.`,
+        '',
+        `Poistettiin ${poistettavatRaportit.length} raporttia, ${poistettavatKirjaukset.length} kirjausta ja ${poistettavatRiskit.length} riskiarviota.`,
+        '',
+        'Huom: raporttien liitetiedostot jäävät palvelimelle — niiden poistoa ei ole toteutettu.',
+      ].join(rivi)
+    );
   };
 
   const handleDeleteReport = (report) => {
@@ -7111,6 +7167,7 @@ export default function App() {
     if (detailEvent) {
       const eventReports = reports.filter(r => (r.eventId || 'fesx') === detailEvent.id);
       const eventCheckins = checkedInEmployees.filter(e => (e.eventId || 'fesx') === detailEvent.id);
+      const eventRisks = riskAssessments.filter(r => (r.eventId || 'fesx') === detailEvent.id);
 
       return (
         <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
@@ -7249,6 +7306,35 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
+
+              {/* Pysyvä poisto: vain adminille, ks. handlePermanentDeleteEvent */}
+              {isAdminUser && (
+                <div className="mt-10 bg-white rounded-xl border-2 border-rose-200 shadow-sm p-6">
+                  <h3 className="text-lg font-bold text-rose-700 flex items-center gap-2">
+                    <Trash2 size={18} />
+                    Poista tapahtuma pysyvästi
+                  </h3>
+                  <p className="text-sm text-slate-600 mt-2 max-w-3xl">
+                    Poistaa tapahtuman ja kaiken siihen liittyvän datan lopullisesti:
+                    {' '}<span className="font-semibold">{eventReports.length} raporttia</span>,
+                    {' '}<span className="font-semibold">{eventCheckins.length} työntekijäkirjausta</span> ja
+                    {' '}<span className="font-semibold">{eventRisks.length} riskiarviota</span>.
+                    Poistoa ei voi perua eikä dataa saa takaisin arkistosta.
+                  </p>
+                  <p className="text-xs text-slate-500 mt-2 max-w-3xl">
+                    Huomioi ennen poistoa, onko tapahtumailmoituksilla tai voimankäyttöraporteilla
+                    vielä lakisääteinen säilytysvelvollisuus.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => handlePermanentDeleteEvent(detailEvent)}
+                    className="mt-4 px-5 py-2 text-sm font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <Trash2 size={16} />
+                    Poista pysyvästi
+                  </button>
+                </div>
+              )}
             </div>
           </main>
           {changePasswordModal}
