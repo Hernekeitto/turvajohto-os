@@ -16,7 +16,7 @@ import {
   setTotpRequired,
   forceLogout,
 } from './db.js';
-import { readCollection, writeCollection, KNOWN_COLLECTIONS } from './store.js';
+import { readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage } from './store.js';
 import { isAllowedFile, saveUpload, getUploadPath, deleteUpload, collectGarbage } from './uploads.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
 import {
@@ -465,6 +465,19 @@ app.post('/api/change-password', requireAuth, loginLimiter, (req, res) => {
 // Audit-loki (vain admin): kuka teki mitä milloin — data-kokoelmien luonti/muokkaus/
 // poisto, käyttäjähallinnan muutokset, kirjautumiset. Sivutettu (limit/before) koska
 // loki kasvaa ajan myötä eikä koskaan katkaista automaattisesti.
+// Tallennustilan tilanne (vain admin). Mittari kertoo kuinka paljon levystä on
+// käytössä — datahakemiston tiedostojärjestelmä on sama levy jolla koko palvelin on.
+// Käytetään fs.statfsSync:iä eikä ulkoista komentoa (df), jotta reitti ei riipu
+// shellistä eikä sen tulosteen muodosta.
+app.get('/api/storage', requireAuth, requireAdmin, (req, res) => {
+  try {
+    res.json({ ok: true, ...getStorageUsage() });
+  } catch (err) {
+    console.error('Tallennustilan luku epäonnistui:', err.message);
+    res.status(500).json({ ok: false, error: 'Tallennustilan lukeminen ei onnistunut.' });
+  }
+});
+
 app.get('/api/audit', requireAuth, requireAdmin, (req, res) => {
   const { limit, before, user, action, collection, eventId } = req.query;
   const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);

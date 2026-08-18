@@ -57,7 +57,8 @@ import {
   RefreshCw,
   History,
   Eye,
-  EyeOff
+  EyeOff,
+  HardDrive
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -295,6 +296,44 @@ const initialCheckedInEmployees = [
   { id: 3, eventId: 'fesx', name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05", checkInDate: "", checkInTime: "10:40", checkOutDate: "", checkOutTime: "", comment: "", status: 'checked_in' }
 ];
 
+// Lakisääteinen säilytysaika: tapahtumailmoitukset on säilytettävä kaksi vuotta
+// niiden laatimispäivän kalenterivuoden päättymisen jälkeen, minkä jälkeen
+// henkilötietoja sisältävät ilmoitukset on hävitettävä viipymättä ja viimeistään
+// kuukauden kuluessa. Vuonna 2026 laadittu ilmoitus on siis säilytettävä
+// 31.12.2028 asti ja hävitettävä tammikuun 2029 aikana.
+const SAILYTYSVUOSIA = 2;
+
+const sailytysaikaPaattyy = (createdAt: any) => {
+  if (!createdAt) return null;
+  const d = new Date(createdAt);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Date(d.getFullYear() + SAILYTYSVUOSIA, 11, 31, 23, 59, 59);
+};
+
+// Jakaa raportit säilytysajan mukaan. "paivamaaraPuuttuu" on olennainen ryhmä eikä
+// virhe: createdAt lisättiin vasta 18.8.2026, joten sitä aiemmat raportit eivät
+// kerro laatimispäiväänsä. Niiden säilytysaikaa ei voi laskea, joten niitä ei myöskään
+// poisteta automaattisesti — ne näytetään erikseen jotta ne voi käydä läpi käsin.
+const jaotteleSailytysajan = (raportit: any[], nyt = new Date()) => {
+  const vanhentuneet: any[] = [];
+  const voimassa: any[] = [];
+  const paivamaaraPuuttuu: any[] = [];
+  for (const r of raportit || []) {
+    const paattyy = sailytysaikaPaattyy(r?.createdAt);
+    if (!paattyy) paivamaaraPuuttuu.push(r);
+    else if (nyt > paattyy) vanhentuneet.push(r);
+    else voimassa.push(r);
+  }
+  return { vanhentuneet, voimassa, paivamaaraPuuttuu };
+};
+
+const muotoileTavut = (tavua: number) => {
+  if (!Number.isFinite(tavua)) return '—';
+  const gb = tavua / (1024 * 1024 * 1024);
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  return `${(tavua / (1024 * 1024)).toFixed(0)} MB`;
+};
+
 // Poikkeamiksi laskettavat kirjaustyypit
 // 'jvreport' = järjestyksenvalvojan tapahtumailmoitus (LYTP). Se on poikkeama samalla
 // perusteella kuin 'jvaction': kirjaus toimenpiteestä joka kohdistui henkilöön.
@@ -380,7 +419,7 @@ const getInitials = (name) => {
 
 // Yläpalkin profiilipainike + pudotusvalikko. Korvaa aiemman kovakoodatun "TJ"-badgen
 // kaikissa nav-palkeissa (ks. käyttöpaikat renderöinnin puolella).
-const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onManageUsers, onViewAuditLog, onLogout }) => {
+const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onManageUsers, onViewAuditLog, onOpenSettings, onLogout }) => {
   const [open, setOpen] = useState(false);
   return (
     <div className="relative">
@@ -422,6 +461,15 @@ const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onManageUsers, onVie
               >
                 <History size={16} className="text-slate-400" />
                 Audit-loki
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                onClick={() => { setOpen(false); onOpenSettings(); }}
+                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
+              >
+                <Settings size={16} className="text-slate-400" />
+                Asetukset
               </button>
             )}
             <div className="border-t border-slate-100 my-1" />
@@ -740,6 +788,9 @@ export default function App() {
   // Audit-loki: kuka teki mitä milloin (data-kokoelmien luonti/muokkaus/poisto,
   // käyttäjähallinnan muutokset, kirjautumiset) — vain admin, ks. server/audit.js.
   const [viewingAuditLog, setViewingAuditLog] = useState(false);
+  const [viewingSettings, setViewingSettings] = useState(false);
+  const [storageInfo, setStorageInfo] = useState<any>(null);
+  const [storageError, setStorageError] = useState<string | null>(null);
   const [auditEntries, setAuditEntries] = useState([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState('');
@@ -939,6 +990,19 @@ export default function App() {
     if (viewingAuditLog) fetchAuditLog();
   }, [viewingAuditLog]);
 
+  // Tallennustilan tilanne haetaan vasta kun Asetukset avataan (vain admin näkee sen).
+  useEffect(() => {
+    if (!viewingSettings) return;
+    setStorageError(null);
+    fetch('/api/storage', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && res.ok === true) setStorageInfo(res);
+        else setStorageError('Tallennustilan lukeminen ei onnistunut.');
+      })
+      .catch(() => setStorageError('Tallennustilan lukeminen ei onnistunut: ei yhteyttä palvelimeen.'));
+  }, [viewingSettings]);
+
   // Istunto voi mitätöityä palvelimella milloin tahansa ilman että selain tietää siitä
   // etukäteen (admin painoi "Kirjaa käyttäjä ulos", liukuva istunto ehti vanhentua,
   // JWT_SECRET vaihtui palvelimen uudelleenkäynnistyksessä, jne.) — jokainen requireAuth-
@@ -1036,9 +1100,9 @@ export default function App() {
   // muutoksen tallentuneelta. Se on erityisen paha poistoissa — lakisääteisesti
   // hävitettävä raportti olisi voinut jäädä levylle ilman että kukaan huomaa.
   // Nyt virhe nostetaan näkyviin (ks. saveErrorBanner) eikä sitä niellä.
-  const tallennaKokoelma = async (kokoelma: string, data: any) => {
+  const tallennaKokoelma = async (kokoelma: string, data: any, { allowEmpty = false } = {}) => {
     try {
-      const r = await fetch(`/api/data/${kokoelma}`, {
+      const r = await fetch(`/api/data/${kokoelma}${allowEmpty ? '?allowEmpty=1' : ''}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -1829,20 +1893,9 @@ export default function App() {
     // allowEmpty=1 kertoo palvelimelle että tyhjentäminen on tarkoituksellista —
     // ilman sitä romahdussuoja hylkäisi viimeisen tapahtuman poiston 409:llä
     // (ks. server/index.js).
-    const tallenna = async (kokoelma: string, data: any[]) => {
-      try {
-        const r = await fetch(`/api/data/${kokoelma}?allowEmpty=1`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(data),
-        });
-        const res = await r.json().catch(() => null);
-        return r.ok && res && res.ok === true;
-      } catch {
-        return false;
-      }
-    };
+    // Käytetään yhteistä tallennusapufunktiota allowEmpty-lipulla: se tarkistaa
+    // vastauksen ja nostaa virheen myös näkyvään banneriin.
+    const tallenna = (kokoelma: string, data: any[]) => tallennaKokoelma(kokoelma, data, { allowEmpty: true });
 
     const jaljelle = {
       reports: reports.filter(r => !kuuluuTapahtumaan(r)),
@@ -6037,6 +6090,7 @@ export default function App() {
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
+              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -6513,6 +6567,7 @@ export default function App() {
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
+              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -6951,6 +7006,248 @@ export default function App() {
   }
 
   // ====================== AUDIT-LOKI (vain admin) ======================
+  // Vanhentuneiden tapahtumailmoitusten hävittäminen. Poisto tehdään yhteisen
+  // tallennusapufunktion kautta allowEmpty-lipulla, joten se on tarkistettu:
+  // epäonnistuminen näkyy bannerissa eikä jää huomaamatta. Liitetiedostot poistuvat
+  // palvelimella samassa kirjoituksessa (ks. server/index.js).
+  const handleDeleteExpiredReports = async () => {
+    const { vanhentuneet } = jaotteleSailytysajan(reports);
+    if (vanhentuneet.length === 0) return;
+    const rivi = String.fromCharCode(10);
+    const vahvistus = window.prompt(
+      [
+        `HÄVITETÄÄN ${vanhentuneet.length} ilmoitusta pysyvästi.`,
+        '',
+        'Näiden lakisääteinen säilytysaika (2 vuotta laatimisvuoden päättymisestä)',
+        'on umpeutunut. Poistoa ei voi perua, ja myös liitetiedostot poistetaan.',
+        '',
+        'Vahvista kirjoittamalla: HÄVITÄ',
+      ].join(rivi)
+    );
+    if (vahvistus === null) return;
+    if (vahvistus.trim().toUpperCase() !== 'HÄVITÄ') {
+      alert('Vahvistus ei täsmää — mitään ei poistettu.');
+      return;
+    }
+    const poistettavat = new Set(vanhentuneet);
+    const jaljelle = reports.filter((r) => !poistettavat.has(r));
+    const ok = await tallennaKokoelma('reports', jaljelle, { allowEmpty: true });
+    if (!ok) return; // virhe näkyy bannerissa; tilaa ei muuteta jotta näkymä pysyy totuudenmukaisena
+    setReports(jaljelle);
+    alert(
+      [
+        `${vanhentuneet.length} ilmoitusta hävitettiin pysyvästi.`,
+        '',
+        'Poisto varmistettiin palvelimelta ja liitetiedostot poistettiin levyltä.',
+        'Huom: data säilyy vielä levyn varmuuskopioissa niiden säilytysajan (7 vrk) verran.',
+      ].join(rivi)
+    );
+  };
+
+  if (viewingSettings) {
+    const sailytys = jaotteleSailytysajan(reports);
+    const kaytettyProsentti = storageInfo ? storageInfo.usedPercent : null;
+    const mittariVari =
+      kaytettyProsentti === null
+        ? 'bg-slate-300'
+        : kaytettyProsentti >= 90
+          ? 'bg-rose-500'
+          : kaytettyProsentti >= 70
+            ? 'bg-amber-500'
+            : 'bg-emerald-500';
+
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
+        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="text-indigo-400" size={28} />
+            <div>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Asetukset</p>
+            </div>
+          </div>
+          <ProfileMenu
+            nickname={sessionNickname}
+            isAdmin={session?.role === 'admin'}
+            onChangePassword={() => setShowChangePassword(true)}
+            onManageUsers={() => setViewingUserAdmin('list')}
+            onViewAuditLog={() => setViewingAuditLog(true)}
+            onOpenSettings={() => setViewingSettings(true)}
+            onLogout={handleLogout}
+          />
+        </nav>
+
+        <main className="flex-1 p-6 md:p-10">
+          <div className="max-w-4xl mx-auto text-left">
+            <button
+              onClick={() => setViewingSettings(false)}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin
+            </button>
+
+            <h2 className="text-2xl font-bold text-slate-800 mb-1">Asetukset</h2>
+            <p className="text-sm text-slate-500 mb-8">Palvelimen tallennustila ja lakisääteiset säilytysajat.</p>
+
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <HardDrive size={18} className="text-indigo-500" />
+                Tallennustila
+              </h3>
+
+              {storageError ? (
+                <p className="text-sm text-rose-600 mt-3">{storageError}</p>
+              ) : !storageInfo ? (
+                <p className="text-sm text-slate-500 mt-3">Luetaan tallennustilaa...</p>
+              ) : (
+                <>
+                  <div className="mt-4 flex items-end justify-between">
+                    <span className="text-3xl font-bold text-slate-800">{storageInfo.usedPercent} %</span>
+                    <span className="text-sm text-slate-500">
+                      {muotoileTavut(storageInfo.used)} / {muotoileTavut(storageInfo.total)} käytössä
+                    </span>
+                  </div>
+                  <div className="mt-3 h-4 w-full bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={mittariVari + ' h-full transition-all'}
+                      style={{ width: Math.min(100, Math.max(0, storageInfo.usedPercent)) + '%' }}
+                    />
+                  </div>
+                  <div className="mt-3 flex justify-between text-xs text-slate-500">
+                    <span>Vapaana {muotoileTavut(storageInfo.free)}</span>
+                    <span>
+                      {storageInfo.usedPercent >= 90
+                        ? 'Tila loppumassa'
+                        : storageInfo.usedPercent >= 70
+                          ? 'Tilaa syytä seurata'
+                          : 'Tilaa riittää'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-4">
+                    Mittari kertoo palvelimen levyn tilanteen: sama levy sisältää käyttöjärjestelmän,
+                    sovelluksen ja kaiken datan. Levy on salattu, ja siitä otetaan varmuuskopio joka yö
+                    (säilytys 7 vrk).
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <History size={18} className="text-indigo-500" />
+                Tapahtumailmoitusten säilytysajat
+              </h3>
+              <p className="text-sm text-slate-600 mt-2">
+                Tapahtumailmoitukset on säilytettävä kaksi vuotta niiden laatimispäivän kalenterivuoden
+                päättymisen jälkeen, minkä jälkeen henkilötietoja sisältävät ilmoitukset on hävitettävä
+                viipymättä ja viimeistään kuukauden kuluessa.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5">
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold text-slate-800">{sailytys.voimassa.length}</div>
+                  <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">
+                    Säilytysaika voimassa
+                  </div>
+                </div>
+                <div
+                  className={
+                    sailytys.vanhentuneet.length > 0
+                      ? 'border rounded-lg p-4 text-center bg-rose-50 border-rose-200'
+                      : 'border rounded-lg p-4 text-center bg-slate-50 border-slate-200'
+                  }
+                >
+                  <div
+                    className={
+                      sailytys.vanhentuneet.length > 0
+                        ? 'text-2xl font-bold text-rose-700'
+                        : 'text-2xl font-bold text-slate-800'
+                    }
+                  >
+                    {sailytys.vanhentuneet.length}
+                  </div>
+                  <div
+                    className={
+                      sailytys.vanhentuneet.length > 0
+                        ? 'text-xs font-medium uppercase tracking-wide mt-1 text-rose-600'
+                        : 'text-xs font-medium uppercase tracking-wide mt-1 text-slate-500'
+                    }
+                  >
+                    Hävitettävä
+                  </div>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold text-amber-700">{sailytys.paivamaaraPuuttuu.length}</div>
+                  <div className="text-xs text-amber-600 font-medium uppercase tracking-wide mt-1">
+                    Päivämäärä puuttuu
+                  </div>
+                </div>
+              </div>
+
+              {sailytys.paivamaaraPuuttuu.length > 0 && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
+                  {sailytys.paivamaaraPuuttuu.length} ilmoituksesta ei löydy laatimisaikaa (createdAt-kenttä
+                  otettiin käyttöön 18.8.2026). Niiden säilytysaikaa ei voi laskea, joten niitä ei myöskään
+                  poisteta automaattisesti — käy ne läpi käsin.
+                </p>
+              )}
+
+              {sailytys.vanhentuneet.length > 0 ? (
+                <div className="mt-5">
+                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                        <tr>
+                          <th className="p-3 text-left font-semibold">Tunniste</th>
+                          <th className="p-3 text-left font-semibold">Tyyppi</th>
+                          <th className="p-3 text-left font-semibold">Laadittu</th>
+                          <th className="p-3 text-left font-semibold">Säilytysaika päättyi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {sailytys.vanhentuneet.slice(0, 50).map((r: any) => (
+                          <tr key={r.id}>
+                            <td className="p-3 font-mono text-xs text-slate-600">{r.id}</td>
+                            <td className="p-3 text-slate-700">{r.type}</td>
+                            <td className="p-3 text-slate-600">
+                              {new Date(r.createdAt).toLocaleDateString('fi-FI')}
+                            </td>
+                            <td className="p-3 text-slate-600">
+                              {sailytysaikaPaattyy(r.createdAt)?.toLocaleDateString('fi-FI')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {sailytys.vanhentuneet.length > 50 && (
+                    <p className="text-xs text-slate-500 mt-2">
+                      Näytetään 50 ensimmäistä {sailytys.vanhentuneet.length} ilmoituksesta.
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleDeleteExpiredReports}
+                    className="mt-4 px-5 py-2 text-sm font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <Trash2 size={16} />
+                    Hävitä {sailytys.vanhentuneet.length} vanhentunut ilmoitus
+                  </button>
+                </div>
+              ) : (
+                <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-3 mt-5">
+                  Yhdenkään ilmoituksen säilytysaika ei ole umpeutunut — hävitettävää ei ole.
+                </p>
+              )}
+            </div>
+          </div>
+        </main>
+        {globalOverlays}
+      </div>
+    );
+  }
+
   if (viewingAuditLog) {
     const isAdmin = session?.role === 'admin';
     const actionLabels = {
@@ -7004,6 +7301,7 @@ export default function App() {
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
+              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -7171,6 +7469,7 @@ export default function App() {
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
+              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -7291,6 +7590,7 @@ export default function App() {
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
+              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </nav>
@@ -7463,6 +7763,8 @@ export default function App() {
             isAdmin={session?.role === 'admin'}
             onChangePassword={() => setShowChangePassword(true)}
             onManageUsers={() => setViewingUserAdmin('list')}
+            onViewAuditLog={() => setViewingAuditLog(true)}
+            onOpenSettings={() => setViewingSettings(true)}
             onLogout={handleLogout}
           />
         </nav>
@@ -7574,6 +7876,7 @@ export default function App() {
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
+              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -7718,6 +8021,8 @@ export default function App() {
             isAdmin={session?.role === 'admin'}
             onChangePassword={() => setShowChangePassword(true)}
             onManageUsers={() => setViewingUserAdmin('list')}
+            onViewAuditLog={() => setViewingAuditLog(true)}
+            onOpenSettings={() => setViewingSettings(true)}
             onLogout={handleLogout}
           />
         </nav>
@@ -8178,6 +8483,7 @@ export default function App() {
                 onChangePassword={() => setShowChangePassword(true)}
                 onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
+              onOpenSettings={() => setViewingSettings(true)}
                 onLogout={handleLogout}
               />
             </div>
@@ -8352,6 +8658,7 @@ export default function App() {
               onChangePassword={() => setShowChangePassword(true)}
               onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
+              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>

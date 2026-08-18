@@ -159,3 +159,22 @@ export function writeCollection(name, data) {
 }
 
 export const KNOWN_COLLECTIONS = Object.keys(COLLECTIONS);
+
+// Datahakemiston tiedostojärjestelmän tilanne (Asetukset-näkymän tallennustilamittari).
+// Tämä moduuli tuntee DATA_DIRin, joten levytilan luku kuuluu tänne eikä reitille.
+// fs.statfsSync eikä ulkoinen df: ei riipu shellistä eikä sen tulosteen muodosta.
+export function getStorageUsage() {
+  const st = fs.statfsSync(DATA_DIR);
+  // bavail = tavalliselle käyttäjälle vapaana. bfree sisältää myös rootille varatun
+  // osuuden, jota sovellus (joka ajetaan käyttäjänä git) ei voi käyttää — bavail
+  // vastaa siis paremmin todellista tilannetta.
+  const total = st.blocks * st.bsize;
+  const free = st.bavail * st.bsize;
+  const used = total - free;
+  return {
+    total,
+    used,
+    free,
+    usedPercent: total > 0 ? Math.round((used / total) * 1000) / 10 : 0,
+  };
+}
