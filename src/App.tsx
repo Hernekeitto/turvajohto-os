@@ -1792,12 +1792,11 @@ export default function App() {
   // jättäisi tapahtuman datan orvoksi levylle. Admin ohittaa per-tietue-tarkistukset,
   // joten lopputulos on aina eheä. Poistot kirjautuvat audit-lokiin normaalisti,
   // koska ne kulkevat samojen PUT-reittien kautta kuin muut muutokset.
-  const handlePermanentDeleteEvent = (ev: any) => {
+  const handlePermanentDeleteEvent = async (ev: any) => {
     const kuuluuTapahtumaan = (x: any) => (x.eventId || 'fesx') === ev.id;
     const poistettavatRaportit = reports.filter(kuuluuTapahtumaan);
     const poistettavatKirjaukset = checkedInEmployees.filter(kuuluuTapahtumaan);
     const poistettavatRiskit = riskAssessments.filter(kuuluuTapahtumaan);
-
     const rivi = String.fromCharCode(10);
     const luoti = String.fromCharCode(8226);
     const vahvistus = window.prompt(
@@ -1811,7 +1810,7 @@ export default function App() {
         `${luoti} ${poistettavatRiskit.length} riskiarviota`,
         '',
         'Poistoa EI voi perua. Huomioi että tapahtumailmoituksilla ja voimankäyttö-',
-        'raporteilla voi olla lakisääteinen säilytysvelvollisuus.',
+        'raporteilla on lakisääteinen säilytysaika.',
         '',
         'Vahvista kirjoittamalla tapahtuman nimi täsmälleen:',
       ].join(rivi)
@@ -1822,22 +1821,80 @@ export default function App() {
       return;
     }
 
-    setReports(prev => prev.filter(r => !kuuluuTapahtumaan(r)));
-    setCheckedInEmployees(prev => prev.filter(e => !kuuluuTapahtumaan(e)));
-    setRiskAssessments(prev => prev.filter(r => !kuuluuTapahtumaan(r)));
-    setEvents(prev => prev.filter(e => e.id !== ev.id));
+    // Poisto tehdään nimenomaisilla PUT-kutsuilla eikä jätetä tilamuutosten
+    // automaattitallennuksen varaan. Automaattitallennus on "fire and forget"
+    // (tyhjä .catch), joten epäonnistunut poisto näyttäisi käyttöliittymässä
+    // täysin onnistuneelta. Lakisääteisen hävittämisen kohdalla se ei riitä:
+    // käyttäjän on saatava tietää onnistuiko poisto oikeasti.
+    //
+    // allowEmpty=1 kertoo palvelimelle että tyhjentäminen on tarkoituksellista —
+    // ilman sitä romahdussuoja hylkäisi viimeisen tapahtuman poiston 409:llä
+    // (ks. server/index.js).
+    const tallenna = async (kokoelma: string, data: any[]) => {
+      try {
+        const r = await fetch(`/api/data/${kokoelma}?allowEmpty=1`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(data),
+        });
+        const res = await r.json().catch(() => null);
+        return r.ok && res && res.ok === true;
+      } catch {
+        return false;
+      }
+    };
+
+    const jaljelle = {
+      reports: reports.filter(r => !kuuluuTapahtumaan(r)),
+      checkins: checkedInEmployees.filter(e => !kuuluuTapahtumaan(e)),
+      riskAssessments: riskAssessments.filter(r => !kuuluuTapahtumaan(r)),
+      events: events.filter(e => e.id !== ev.id),
+    };
+
+    // Tapahtuma poistetaan VASTA viimeisenä: jos jokin sen datasta jää poistumatta,
+    // data ei jää orvoksi tapahtumaan jota ei enää ole.
+    const vaiheet: [string, any[], () => void][] = [
+      ['reports', jaljelle.reports, () => setReports(jaljelle.reports)],
+      ['checkins', jaljelle.checkins, () => setCheckedInEmployees(jaljelle.checkins)],
+      ['riskAssessments', jaljelle.riskAssessments, () => setRiskAssessments(jaljelle.riskAssessments)],
+      ['events', jaljelle.events, () => setEvents(jaljelle.events)],
+    ];
+
+    const onnistuneet: string[] = [];
+    for (const [kokoelma, data, paivitaTila] of vaiheet) {
+      const ok = await tallenna(kokoelma, data);
+      if (!ok) {
+        alert(
+          [
+            'POISTO KESKEYTYI.',
+            '',
+            onnistuneet.length > 0
+              ? `Palvelimelta poistettiin: ${onnistuneet.join(', ')}.`
+              : 'Palvelimelta ei poistettu mitään.',
+            `Kohta "${kokoelma}" epäonnistui, eikä poistoa jatkettu siitä eteenpäin.`,
+            '',
+            'Lataa sivu uudelleen nähdäksesi todellisen tilanteen ja yritä sitten uudelleen.',
+          ].join(rivi)
+        );
+        return;
+      }
+      onnistuneet.push(kokoelma);
+      paivitaTila();
+    }
+
     setArchivedEventDetailId(null);
     alert(
       [
         `Tapahtuma "${ev.name}" poistettiin pysyvästi.`,
         '',
         `Poistettiin ${poistettavatRaportit.length} raporttia, ${poistettavatKirjaukset.length} kirjausta ja ${poistettavatRiskit.length} riskiarviota.`,
+        'Poisto varmistettiin palvelimelta ja raporttien liitetiedostot poistettiin levyltä.',
         '',
-        'Huom: raporttien liitetiedostot jäävät palvelimelle — niiden poistoa ei ole toteutettu.',
+        'Huom: poistettu data säilyy vielä levyn varmuuskopioissa niiden säilytysajan (7 vrk) verran.',
       ].join(rivi)
     );
   };
-
   const handleDeleteReport = (report) => {
     const confirmed = window.confirm(
       `Haluatko varmasti poistaa raportin "${report.type}" (${report.id})?\n\n` +

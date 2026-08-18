@@ -17,7 +17,7 @@ import {
   forceLogout,
 } from './db.js';
 import { readCollection, writeCollection, KNOWN_COLLECTIONS } from './store.js';
-import { isAllowedFile, saveUpload, getUploadPath } from './uploads.js';
+import { isAllowedFile, saveUpload, getUploadPath, deleteUpload, collectGarbage } from './uploads.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
 import {
   COLLECTION_NAMES,
@@ -267,13 +267,38 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   // tapahtumarajatulle käyttäjälle voi sisältää outOfScope-osan) — ei suoraan
   // req.bodyä, koska rajatun käyttäjän tyhjä lähetys ei välttämättä tyhjennä koko
   // kokoelmaa levyllä.
-  if (wouldWipeNonEmptyCollection(current, verdict.data)) {
+  // Romahdussuoja estää kokoelman tyhjentämisen. Se rakennettiin vahingon varalle:
+  // epäonnistunut GET + frontin automaattitallennus saattoi ylikirjoittaa kaiken.
+  // Tarkoituksellinen poisto on eri asia — tapahtumailmoituksia koskee lakisääteinen
+  // säilytysaika, jonka jälkeen ne on hävitettävä, joten poiston on myös oikeasti
+  // onnistuttava. allowEmpty=1 ohittaa suojan, mutta vain adminille ja vain kun
+  // kutsuja pyytää sitä nimenomaisesti (ks. src/App.tsx: handlePermanentDeleteEvent).
+  const allowEmpty = req.query.allowEmpty === '1' && req.role === 'admin';
+  if (!allowEmpty && wouldWipeNonEmptyCollection(current, verdict.data)) {
     return res.status(409).json({
       ok: false,
       error: 'Tallennus hylätty: yrität korvata olemassa olevan datan tyhjällä. Jos tarkoitus on poistaa kaikki tietueet, poista ne yksitellen.',
     });
   }
   writeCollection(name, verdict.data);
+
+  // Liitetiedostojen hävittäminen: raportin poistaminen ei aiemmin poistanut sen
+  // liitettä levyltä lainkaan, joten esim. valokuva kohdehenkilöstä jäi hakemistoon
+  // pysyvästi vaikka itse raportti oli poistettu. Tämän pyynnön irrottamat liitteet
+  // poistetaan heti (ne ovat varmasti orpoja), ja sen lisäksi siivotaan aiemmin
+  // orvoiksi jääneet tiedostot armonajan jälkeen (ks. uploads.js: collectGarbage).
+  if (name === 'reports') {
+    try {
+      const liiteIds = (arr) => (Array.isArray(arr) ? arr : []).map((r) => r?.attachment?.id).filter(Boolean);
+      const viitatutNyt = liiteIds(verdict.data);
+      const irrotetut = liiteIds(current).filter((id) => !viitatutNyt.includes(id));
+      for (const id of irrotetut) deleteUpload(id);
+      collectGarbage(viitatutNyt);
+    } catch (err) {
+      // Liitteiden siivous ei saa kaataa itse tallennusta joka jo onnistui.
+      console.error('Liitetiedostojen siivous epäonnistui:', err.message);
+    }
+  }
   // Lokitetaan vasta kirjoituksen onnistuttua — ei koskaan lokiin muutosta joka ei
   // oikeasti mennyt levylle. Yksi rivi per tietue (ei yksi rivi per PUT-pyyntö),
   // koska sama pyyntö voi sisältää usean tietueen muutoksia kerralla.
