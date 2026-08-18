@@ -788,6 +788,8 @@ export default function App() {
   // Kirjaukset ja raportit (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
   const [reports, setReports] = useState(initialReports);
   const [reportsLoaded, setReportsLoaded] = useState(false);
+  // Näkyvä ilmoitus siitä ettei muutos mennyt palvelimelle (ks. tallennaKokoelma).
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Check-in Form State
   const [reportSearchQuery, setReportSearchQuery] = useState('');
@@ -1028,16 +1030,37 @@ export default function App() {
       });
   }, []);
 
+  // Kokoelman tallennus palvelimelle. Aiemmin jokainen tallennus oli fire and forget
+  // tyhjällä .catch()-lohkolla: verkkokatko tai palvelimen hylkäys (oikeuksien puute,
+  // romahdussuoja, validointivirhe) jäi täysin huomaamatta ja käyttöliittymä näytti
+  // muutoksen tallentuneelta. Se on erityisen paha poistoissa — lakisääteisesti
+  // hävitettävä raportti olisi voinut jäädä levylle ilman että kukaan huomaa.
+  // Nyt virhe nostetaan näkyviin (ks. saveErrorBanner) eikä sitä niellä.
+  const tallennaKokoelma = async (kokoelma: string, data: any) => {
+    try {
+      const r = await fetch(`/api/data/${kokoelma}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(data),
+      });
+      const res = await r.json().catch(() => null);
+      if (r.ok && res && res.ok === true) {
+        // Onnistunut tallennus kuittaa myös aiemman virheen pois: yhteys toimii taas.
+        setSaveError(null);
+        return true;
+      }
+      setSaveError(`Muutosta ei saatu tallennettua palvelimelle (${kokoelma}): ${(res && res.error) || `virhe ${r.status}`}`);
+      return false;
+    } catch {
+      setSaveError(`Muutosta ei saatu tallennettua palvelimelle (${kokoelma}): ei yhteyttä.`);
+      return false;
+    }
+  };
+
   useEffect(() => {
     if (!eventsLoaded) return;
-    fetch('/api/data/events', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(events),
-    }).catch(() => {
-      // Tallennus epäonnistui (esim. yhteysongelma) — muutos jää vain tämän selaimen muistiin toistaiseksi
-    });
+    tallennaKokoelma('events', events);
   }, [events, eventsLoaded]);
 
   // Ladataan riskiarvioinnit palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
@@ -1059,14 +1082,7 @@ export default function App() {
 
   useEffect(() => {
     if (!riskAssessmentsLoaded) return;
-    fetch('/api/data/riskAssessments', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(riskAssessments),
-    }).catch(() => {
-      // Tallennus epäonnistui (esim. yhteysongelma) — muutos jää vain tämän selaimen muistiin toistaiseksi
-    });
+    tallennaKokoelma('riskAssessments', riskAssessments);
   }, [riskAssessments, riskAssessmentsLoaded]);
 
   // Ladataan sisäänkirjaukset palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
@@ -1089,14 +1105,7 @@ export default function App() {
   // Tallennetaan muutokset palvelimelle (ei ensimmäisellä renderillä, ettei alkutila ylikirjoita jo tallennettua dataa)
   useEffect(() => {
     if (!checkinsLoaded) return;
-    fetch('/api/data/checkins', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(checkedInEmployees),
-    }).catch(() => {
-      // Tallennus epäonnistui (esim. yhteysongelma) — muutos jää vain tämän selaimen muistiin toistaiseksi
-    });
+    tallennaKokoelma('checkins', checkedInEmployees);
   }, [checkedInEmployees, checkinsLoaded]);
 
   // Ladataan työntekijäpankki palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
@@ -1118,14 +1127,7 @@ export default function App() {
 
   useEffect(() => {
     if (!employeesLoaded) return;
-    fetch('/api/data/employees', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(employees),
-    }).catch(() => {
-      // Tallennus epäonnistui (esim. yhteysongelma) — muutos jää vain tämän selaimen muistiin toistaiseksi
-    });
+    tallennaKokoelma('employees', employees);
   }, [employees, employeesLoaded]);
 
   // Ladataan kirjaukset/raportit palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
@@ -1147,14 +1149,7 @@ export default function App() {
 
   useEffect(() => {
     if (!reportsLoaded) return;
-    fetch('/api/data/reports', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(reports),
-    }).catch(() => {
-      // Tallennus epäonnistui (esim. yhteysongelma) — muutos jää vain tämän selaimen muistiin toistaiseksi
-    });
+    tallennaKokoelma('reports', reports);
   }, [reports, reportsLoaded]);
 
   // Vain valitun tapahtuman kirjaukset — vanha data (ilman eventId-kenttää) lasketaan
@@ -1216,6 +1211,10 @@ export default function App() {
     setRaResProb(0); setRaResSev(0);
   };
 
+  // HUOM: tunniste ei ole luotettava päivämäärälähde. Se sisältää päivän ja
+  // kuukauden, mutta tapahtumakoodi on kovakoodattu "FesX" riippumatta siitä mikä
+  // tapahtuma on valittuna. Raportin luontiaika luetaan createdAt-kentästä, joka
+  // lisätään jokaiseen uuteen raporttiin (lakisääteisen säilytysajan laskenta).
   const getDynamicId = () => {
     const now = new Date();
     const yy = String(now.getFullYear()).slice(-2);
@@ -2001,6 +2000,7 @@ export default function App() {
     const timeLabel = checkInTime || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
     setReports(prev => [{
       id: getDynamicId(),
+      createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId: 'open',
       type: 'Avoin kirjaus',
@@ -2120,6 +2120,7 @@ export default function App() {
 
     setReports(prev => [{
       id: getDynamicId(),
+      createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId: 'jvreport',
       type: 'Järjestyksenvalvojan tapahtumailmoitus',
@@ -2169,6 +2170,7 @@ export default function App() {
 
     setReports(prev => [{
       id: getDynamicId(),
+      createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId: 'jvaction',
       type: 'JV:n tai vartijan toimenpide',
@@ -2234,6 +2236,7 @@ export default function App() {
 
     setReports(prev => [{
       id: getDynamicId(),
+      createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId: 'open',
       type: 'Avoin kirjaus',
@@ -2266,6 +2269,7 @@ export default function App() {
 
     setReports(prev => [{
       id: getDynamicId(),
+      createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId: 'firstaid',
       type: 'Ensiaputilanne',
@@ -2299,6 +2303,7 @@ export default function App() {
 
     setReports(prev => [{
       id: getDynamicId(),
+      createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId,
       type: title,
@@ -5961,6 +5966,50 @@ export default function App() {
     </div>
   ) : null;
 
+  // Näkyvä ilmoitus tallennusvirheestä. Näytetään kaikissa näkymissä, koska
+  // automaattitallennus voi epäonnistua missä tahansa — siksi tämä on osa
+  // globalOverlays-elementtiä joka sisällytetään joka näkymään (kuten
+  // salasanan vaihto -modaali).
+  const saveErrorBanner = saveError ? (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] w-[min(92vw,40rem)]">
+      <div className="bg-rose-600 text-white rounded-xl shadow-2xl p-4 flex items-start gap-3">
+        <AlertTriangle size={20} className="shrink-0 mt-0.5" />
+        <div className="flex-1 text-sm">
+          <p className="font-bold">Muutos ei tallentunut palvelimelle</p>
+          <p className="mt-1 text-rose-50">{saveError}</p>
+          <p className="mt-1 text-xs text-rose-100">
+            Muutos näkyy vain tässä selaimessa. Lataa sivu uudelleen nähdäksesi mikä on
+            oikeasti tallennettu, ja tee muutos sen jälkeen uudelleen.
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="px-3 py-1.5 text-xs font-bold bg-white text-rose-700 rounded-lg hover:bg-rose-50 transition-colors"
+          >
+            Lataa uudelleen
+          </button>
+          <button
+            type="button"
+            onClick={() => setSaveError(null)}
+            className="px-3 py-1.5 text-xs font-medium bg-rose-700 hover:bg-rose-800 rounded-lg transition-colors"
+          >
+            Sulje
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  // Kaikkiin näkymiin sisällytettävät päällekkäiselementit yhdessä paikassa.
+  const globalOverlays = (
+    <>
+      {changePasswordModal}
+      {saveErrorBanner}
+    </>
+  );
+
   // ====================== TYÖNTEKIJÄPANKKI (koko yrityksen henkilöstörekisteri) ======================
   if (viewingEmployeeBank) {
     const filteredBankEmployees = employeeBankSearch.trim()
@@ -6429,7 +6478,7 @@ export default function App() {
             )}
           </div>
         </main>
-        {changePasswordModal}
+        {globalOverlays}
       </div>
     );
   }
@@ -6896,7 +6945,7 @@ export default function App() {
             )}
           </div>
         </main>
-        {changePasswordModal}
+        {globalOverlays}
       </div>
     );
   }
@@ -7080,7 +7129,7 @@ export default function App() {
             )}
           </div>
         </main>
-        {changePasswordModal}
+        {globalOverlays}
       </div>
     );
   }
@@ -7211,7 +7260,7 @@ export default function App() {
             </div>
           </div>
         </main>
-        {changePasswordModal}
+        {globalOverlays}
       </div>
     );
   }
@@ -7394,7 +7443,7 @@ export default function App() {
               )}
             </div>
           </main>
-          {changePasswordModal}
+          {globalOverlays}
         </div>
       );
     }
@@ -7470,7 +7519,7 @@ export default function App() {
             )}
           </div>
         </main>
-        {changePasswordModal}
+        {globalOverlays}
       </div>
     );
   }
@@ -7645,7 +7694,7 @@ export default function App() {
             </div>
           </div>
         </main>
-        {changePasswordModal}
+        {globalOverlays}
       </div>
     );
   }
@@ -8075,7 +8124,7 @@ export default function App() {
             </form>
           </div>
         </main>
-        {changePasswordModal}
+        {globalOverlays}
       </div>
     );
   }
@@ -8204,7 +8253,7 @@ export default function App() {
             </div>
           </main>
         </div>
-        {changePasswordModal}
+        {globalOverlays}
       </div>
     );
   }
@@ -8693,7 +8742,7 @@ export default function App() {
           </div>
         );
       })()}
-      {changePasswordModal}
+      {globalOverlays}
     </div>
   );
 }
