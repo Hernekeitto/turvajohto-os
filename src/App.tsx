@@ -296,7 +296,9 @@ const initialCheckedInEmployees = [
 ];
 
 // Poikkeamiksi laskettavat kirjaustyypit
-const DEVIATION_TYPES = ['jvaction', 'firstaid', 'threat', 'fence', 'damage'];
+// 'jvreport' = järjestyksenvalvojan tapahtumailmoitus (LYTP). Se on poikkeama samalla
+// perusteella kuin 'jvaction': kirjaus toimenpiteestä joka kohdistui henkilöön.
+const DEVIATION_TYPES = ['jvaction', 'jvreport', 'firstaid', 'threat', 'fence', 'damage'];
 
 const initialReports = [
   { id: '26/FesX/1108/099', eventId: 'fesx', typeId: 'out', type: 'Työntekijän uloskirjaus', author: 'TIKE Päivystäjä', time: '14:10', summary: 'Virtanen ulos, radiopuhelin rikki.' },
@@ -2268,7 +2270,9 @@ export default function App() {
   // Ensiaputapaukset: erilliset ensiapukirjaukset ja ne toimenpiteet,
   // joissa kohdehenkilö on viety ensiapuun tai ensihoitoa on käytetty
   const firstAidReports = currentEventReports.filter(r => r.typeId === 'firstaid');
-  const firstAidInActions = currentEventReports.filter(r => r.typeId === 'jvaction' && r.firstAid);
+  const firstAidInActions = currentEventReports.filter(
+    r => (r.typeId === 'jvaction' || r.typeId === 'jvreport') && r.firstAid
+  );
   const firstAidCount = firstAidReports.length + firstAidInActions.length;
   const firstAidLastHour = [...firstAidReports, ...firstAidInActions].filter(r => withinLastHour(r.time)).length;
 
@@ -2416,7 +2420,7 @@ export default function App() {
                 title="Poikkeamat" 
                 icon={AlertTriangle} 
                 value={deviationCount} 
-                subtitle={`Toimenpiteet, ensiapu, uhkatilanteet, aitojen ylitykset ja omaisuusvauriot | Viimeisen tunnin aikana ${deviationLastHour}`}
+                subtitle={`Toimenpiteet ja tapahtumailmoitukset, ensiapu, uhkatilanteet, aitojen ylitykset ja omaisuusvauriot | Viimeisen tunnin aikana ${deviationLastHour}`}
               />
             </div>
 
