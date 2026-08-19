@@ -6416,14 +6416,9 @@ export default function App() {
           </div>
         );
       }
-      case 'settings':
-        return (
-          <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100 flex flex-col items-center justify-center min-h-[400px] text-center">
-            <Settings className="text-slate-300 mb-4" size={48} />
-            <h2 className="text-2xl font-bold text-slate-800 mb-2">Asetukset</h2>
-            <p className="text-slate-500 max-w-md">Järjestelmän asetukset, käyttäjänhallinta ja integraatiot.</p>
-          </div>
-        );
+      // 'settings' ei ole enää oma välilehtensä: sivuvalikon painike avaa saman
+      // asetusnäkymän kuin profiilivalikko (viewingSettings). Aiemmin täällä oli
+      // paikanpitäjäkortti, eli näkyvämpi kahdesta "Asetukset"-kohdasta ei tehnyt mitään.
       default:
         if (activeTab.startsWith('tike_form_')) {
           return (
@@ -7808,14 +7803,21 @@ export default function App() {
                           Näytetään 50 ensimmäistä {sailytys.vanhentuneet.length} ilmoituksesta.
                         </p>
                       )}
-                      <button
-                        type="button"
-                        onClick={handleDeleteExpiredReports}
-                        className="mt-4 px-5 py-2 text-sm font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-2"
-                      >
-                        <Trash2 size={16} />
-                        Hävitä {sailytys.vanhentuneet.length} vanhentunut ilmoitus
-                      </button>
+                      {isAdminUser ? (
+                        <button
+                          type="button"
+                          onClick={handleDeleteExpiredReports}
+                          className="mt-4 px-5 py-2 text-sm font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-2"
+                        >
+                          <Trash2 size={16} />
+                          Hävitä {sailytys.vanhentuneet.length} vanhentunut ilmoitus
+                        </button>
+                      ) : (
+                        <p className="mt-4 text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                          Hävittäminen on peruuttamatonta ja kuuluu pääkäyttäjälle. Ilmoita
+                          pääkäyttäjälle, että säilytysaika on umpeutunut.
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-3 mt-5">
@@ -9416,8 +9418,8 @@ export default function App() {
               )}
               {(isAdminUser || canView(perms, selectedEvent, 'settings')) && (
                 <button
-                  onClick={() => setActiveTab('settings')}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'settings' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                  onClick={() => setViewingSettings(true)}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors text-slate-600 hover:bg-slate-50"
                 >
                   <Settings size={18} />
                   Asetukset
