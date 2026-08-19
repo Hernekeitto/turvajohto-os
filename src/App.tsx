@@ -390,6 +390,41 @@ const initialReports = [
 
 // --- COMPONENTS ---
 
+// Avausvalmiuden kuittauskohdat. Yhdessä paikassa siksi, että sekä lomake että
+// suunnittelunäkymän tilapalkki lukevat saman listan — laskurissa oli aiemmin
+// kovakoodattu 5, joka olisi vanhentunut hiljaa jos listaan lisätään kohta.
+const READINESS_CHECKS = [
+  { key: 'exits', label: 'Hätäuloskäynnit miehitetty' },
+  { key: 'guards', label: 'Vähintään 80% järjestyksenvalvojista paikalla' },
+  { key: 'vehicles', label: 'Ajoneuvot pois alueelta' },
+  { key: 'production', label: 'Tuotanto valmis avaukseen' },
+  { key: 'security', label: 'Turvajohto valmis avaukseen' },
+];
+
+const tyhjatKuittaukset = () => Object.fromEntries(READINESS_CHECKS.map((i) => [i.key, false]));
+
+// Yhdistää <input type="date"> ja <input type="time"> -arvot paikalliseksi aikaleimaksi.
+// Palauttaa null jos kumpikaan ei kelpaa — kutsuja päättää mitä puuttuvalle ajalle tehdään.
+const yhdistaPaivaJaAika = (pvm?: string, klo?: string) => {
+  if (!pvm || !klo) return null;
+  const [v, kk, pv] = String(pvm).split('-').map(Number);
+  const [t, min] = String(klo).split(':').map(Number);
+  if ([v, kk, pv, t, min].some((n) => !Number.isFinite(n))) return null;
+  const d = new Date(v, kk - 1, pv, t, min, 0, 0);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+// Laskurin esitysmuoto: "2 pv 04:31:12" tai "04:31:12" kun alle vuorokausi.
+// Ottaa itseisarvon, joten samaa funktiota voi käyttää myös ylitetylle ajalle.
+const muotoileLaskuri = (ms: number) => {
+  const sekunnit = Math.floor(Math.abs(ms) / 1000);
+  const paivat = Math.floor(sekunnit / 86400);
+  const kello = [Math.floor((sekunnit % 86400) / 3600), Math.floor((sekunnit % 3600) / 60), sekunnit % 60]
+    .map((n) => String(n).padStart(2, '0'))
+    .join(':');
+  return paivat > 0 ? `${paivat} pv ${kello}` : kello;
+};
+
 const DashboardCard = ({ title, icon: Icon, value, subtitle, trend, trendUp }) => (
   <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col justify-between">
     <div className="flex justify-between items-start mb-4">
@@ -972,15 +1007,18 @@ export default function App() {
   // Edit Employee Form State
   const [editingEmp, setEditingEmp] = useState(null);
 
-  // Readiness Form State
-  const [targetOpeningTime, setTargetOpeningTime] = useState('16:00');
-  const [readinessChecks, setReadinessChecks] = useState({
-    exits: false,
-    guards: false,
-    vehicles: false,
-    production: false,
-    security: false
-  });
+  // Avausvalmius. Tallennettu tila tulee palvelimelta kokoelmana 'readiness'
+  // (yksi tietue per tapahtuma) — aiemmin koko näkymä oli pelkkää paikallista
+  // tilaa, joten "Tallenna ja sulje" ei tallentanut mitään ja kuittaukset
+  // katosivat sivun latauksessa sekä vuotivat tapahtumasta toiseen.
+  const [readiness, setReadiness] = useState<any[]>([]);
+  const [readinessLoaded, setReadinessLoaded] = useState(false);
+  // Alla olevat ovat lomakkeen LUONNOS: ne kirjoitetaan kokoelmaan vasta
+  // "Tallenna ja sulje" -painikkeesta (handleSaveReadiness), jotta painike
+  // vastaa sitä mitä se lupaa eikä jokainen ruksi laukaise omaa tallennustaan.
+  const [targetOpeningDate, setTargetOpeningDate] = useState('');
+  const [targetOpeningTime, setTargetOpeningTime] = useState('');
+  const [readinessChecks, setReadinessChecks] = useState(tyhjatKuittaukset);
   const [readinessComments, setReadinessComments] = useState('');
 
   useEffect(() => {
@@ -1253,6 +1291,49 @@ export default function App() {
     if (!reportsLoaded) return;
     tallennaKokoelma('reports', reports);
   }, [reports, reportsLoaded]);
+
+  // Ladataan avausvalmius palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
+  useEffect(() => {
+    fetch('/api/data/readiness', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        // loaded asetetaan true:ksi VAIN onnistuneella vastauksella — ks. events-lohkon
+        // kommentti yllä samasta syystä.
+        if (res && res.ok === true) {
+          if (Array.isArray(res.data)) setReadiness(res.data);
+          setReadinessLoaded(true);
+        }
+      })
+      .catch(() => {
+        // Verkkovirhe: loaded EI asetu true:ksi (ks. yllä) — tallennus ei laukea tyhjällä.
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!readinessLoaded) return;
+    tallennaKokoelma('readiness', readiness);
+  }, [readiness, readinessLoaded]);
+
+  // Avausvalmiuden lomakeluonnos synkataan tallennetusta tietueesta aina kun tapahtuma
+  // vaihtuu tai data saapuu palvelimelta — mutta EI silloin kun `readiness` muuttuu:
+  // oma tallennus muuttaa sitä, ja riippuvuutena se nollaisi luonnoksen kesken
+  // muokkauksen. Refit pitävät arvot tuoreina ilman riippuvuutta, jolloin
+  // riippuvuuslista on myös oikeasti täydellinen eikä kutsu "korjaamaan" itseään.
+  const readinessRef = useRef(readiness);
+  readinessRef.current = readiness;
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+
+  useEffect(() => {
+    const tallennettu = readinessRef.current.find((r) => (r.eventId || 'fesx') === selectedEvent);
+    const lomake = (eventsRef.current.find((e) => e.id === selectedEvent) as any)?.formData || {};
+    setReadinessChecks({ ...tyhjatKuittaukset(), ...(tallennettu?.checks || {}) });
+    setReadinessComments(tallennettu?.comments || '');
+    // Oletus tulee tapahtuman perustiedoista ("Aukioloajat yleisölle = portit auki"),
+    // jotta laskuri toimii heti ilman että tavoitetta tarvitsee erikseen asettaa.
+    setTargetOpeningDate(tallennettu?.targetDate || lomake.publicStartDate || '');
+    setTargetOpeningTime(tallennettu?.targetTime || lomake.publicStartTime || '');
+  }, [selectedEvent, readinessLoaded, eventsLoaded]);
 
   // Vain valitun tapahtuman kirjaukset — vanha data (ilman eventId-kenttää) lasketaan
   // kuuluvaksi FestivaaliX:ään, ettei olemassa oleva data "katoa" siirtymässä.
@@ -2096,6 +2177,7 @@ export default function App() {
       typeId: 'open',
       type: 'Avoin kirjaus',
       author: sessionNickname || 'TIKE Päivystäjä',
+      date: checkInDate || now.toLocaleDateString('sv-SE'),
       time: timeLabel,
       summary: `${selectedEmp}: ${text}`,
     }, ...prev]);
@@ -2266,6 +2348,7 @@ export default function App() {
       typeId: 'jvaction',
       type: 'JV:n tai vartijan toimenpide',
       author: jvaName,
+      date: jvaDate || now.toLocaleDateString('sv-SE'),
       time: timeLabel,
       summary: `${jvaLocation ? jvaLocation + ': ' : ''}${parts.join(', ')}`,
       // Järjestyksenvalvojan kirjoittama vapaa kuvaus tilanteen kulusta. Tämä jäi
@@ -2332,6 +2415,7 @@ export default function App() {
       typeId: 'open',
       type: 'Avoin kirjaus',
       author: sessionNickname || 'TIKE Päivystäjä',
+      date: openKirjausDate || now.toLocaleDateString('sv-SE'),
       time: timeLabel,
       summary: openKirjausText.trim(),
       attachment: fileUploadId ? { id: fileUploadId, name: fileName } : null
@@ -2365,6 +2449,7 @@ export default function App() {
       typeId: 'firstaid',
       type: 'Ensiaputilanne',
       author: sessionNickname || 'EA-Päivystys',
+      date: faDate || now.toLocaleDateString('sv-SE'),
       time: timeLabel,
       summary: faDesc.trim(),
       actions: faActions.trim(),
@@ -2399,6 +2484,7 @@ export default function App() {
       typeId,
       type: title,
       author: sessionNickname || 'TIKE Päivystäjä',
+      date: genRepDate || now.toLocaleDateString('sv-SE'),
       time: timeLabel,
       summary: genRepDesc.trim(),
       actions: genRepActions.trim(),
@@ -2426,6 +2512,24 @@ export default function App() {
     const [d, t] = now.toISOString().slice(0, 16).split('T');
     setGenRepDate(d);
     setGenRepTime(t);
+  };
+
+  // Kirjoittaa lomakeluonnoksen tapahtuman avausvalmius-tietueeksi. Kokoelman
+  // automaattitallennus (useEffect yllä) vie sen palvelimelle. Yksi tietue per
+  // tapahtuma, joten sama id ylikirjoittaa aiemman kuittauksen.
+  const handleSaveReadiness = () => {
+    const tietue = {
+      id: `readiness-${selectedEvent}`,
+      eventId: selectedEvent,
+      checks: { ...readinessChecks },
+      targetDate: targetOpeningDate,
+      targetTime: targetOpeningTime,
+      comments: readinessComments.trim(),
+      updatedAt: new Date().toISOString(),
+      updatedBy: sessionNickname || '',
+    };
+    setReadiness(prev => [...prev.filter(r => (r.eventId || 'fesx') !== selectedEvent), tietue]);
+    setActiveTab('planning');
   };
 
   const toggleReadinessCheck = (key) => {
@@ -2517,19 +2621,28 @@ export default function App() {
     tikeLogPageSafe * tikeLogPageSize + tikeLogPageSize
   );
 
-  // Readiness logic computations
-  const completedChecksCount = Object.values(readinessChecks).filter(Boolean).length;
-  const missingChecksCount = 5 - completedChecksCount;
+  // Avausvalmiuden koontitiedot luetaan TALLENNETUSTA tietueesta eikä lomakkeen
+  // luonnoksesta: muuten suunnittelunäkymän tilapalkki näyttäisi kuittauksia joita
+  // ei ole tallennettu, ja tila katoaisi sivun latauksessa.
+  const tallennettuValmius = readiness.find((r) => (r.eventId || 'fesx') === selectedEvent) || null;
+  const tallennetutKuittaukset = tallennettuValmius?.checks || {};
+  const completedChecksCount = READINESS_CHECKS.filter((i) => tallennetutKuittaukset[i.key]).length;
+  const missingChecksCount = READINESS_CHECKS.length - completedChecksCount;
   const isReadyForOpening = missingChecksCount === 0;
 
-  const checkIsLate = () => {
-    if (!targetOpeningTime) return false;
-    const [hours, minutes] = targetOpeningTime.split(':').map(Number);
-    const targetDate = new Date(currentTime);
-    targetDate.setHours(hours, minutes, 0, 0);
-    return currentTime > targetDate;
-  };
-  const isLate = checkIsLate();
+  // Tapahtuman perustiedoista: milloin portit on suunniteltu avattavaksi yleisölle.
+  const valittuTapahtumaLomake = (events.find((e) => e.id === selectedEvent) as any)?.formData || {};
+  const suunniteltuAvausPvm = valittuTapahtumaLomake.publicStartDate || '';
+  const suunniteltuAvausKlo = valittuTapahtumaLomake.publicStartTime || '';
+
+  // Tavoiteltu avaushetki = Avausvalmius-lomakkeella asetettu pvm + klo. Tähän laskuri
+  // laskee. Jos tavoitetta ei ole tallennettu, käytetään tapahtuman perustietoja.
+  const tavoiteAvausPvm = tallennettuValmius?.targetDate || suunniteltuAvausPvm;
+  const tavoiteAvausKlo = tallennettuValmius?.targetTime || suunniteltuAvausKlo;
+  const tavoiteAvausHetki = yhdistaPaivaJaAika(tavoiteAvausPvm, tavoiteAvausKlo);
+  // null = tavoiteaikaa ei ole asetettu, jolloin laskuria ei näytetä lainkaan.
+  const avaukseenMs = tavoiteAvausHetki ? tavoiteAvausHetki.getTime() - currentTime.getTime() : null;
+  const isLate = avaukseenMs !== null && avaukseenMs < 0;
 
   let readinessStatusColor = 'bg-blue-50 border-blue-200 text-blue-800';
   let readinessStatusIconColor = 'text-blue-500';
@@ -4765,19 +4878,62 @@ export default function App() {
       case 'planning':
         return (
           <div className="space-y-6 max-w-5xl">
-            {/* Status Banner */}
-            <div className={`p-4 rounded-xl border flex items-center justify-between shadow-sm ${readinessStatusColor}`}>
-              <div className="flex items-center gap-3">
-                <div className={`p-2 bg-white rounded-lg ${readinessStatusIconColor} shadow-sm`}>
-                  <DoorOpen size={24} />
+            {/* Status Banner + avauksen koonti */}
+            <div className={`rounded-xl border shadow-sm ${readinessStatusColor}`}>
+              <div className="p-4 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 bg-white rounded-lg ${readinessStatusIconColor} shadow-sm`}>
+                    <DoorOpen size={24} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg leading-tight">Avausvalmius</h3>
+                    <p className="text-sm font-medium">{readinessStatusText}</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-bold text-lg leading-tight">Avausvalmius</h3>
-                  <p className="text-sm font-medium">{readinessStatusText}</p>
+                <div className="text-3xl font-black tabular-nums tracking-tighter shrink-0">
+                  {completedChecksCount}/{READINESS_CHECKS.length}
                 </div>
               </div>
-              <div className="text-3xl font-black tabular-nums tracking-tighter">
-                {completedChecksCount}/5
+
+              <div className="border-t border-current/10 bg-white/50 px-4 py-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wide opacity-70">Tapahtuma alkaa</div>
+                  <div className="text-sm font-bold tabular-nums mt-0.5">
+                    {suunniteltuAvausPvm ? formatFiDate(suunniteltuAvausPvm) : 'Ei asetettu'}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wide opacity-70">Portit auki (suunniteltu)</div>
+                  <div className="text-sm font-bold tabular-nums mt-0.5">
+                    {suunniteltuAvausKlo || 'Ei asetettu'}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wide opacity-70">Tavoiteltu avaus</div>
+                  <div className="text-sm font-bold tabular-nums mt-0.5">
+                    {tavoiteAvausHetki
+                      ? `${formatFiDate(tavoiteAvausPvm)} klo ${tavoiteAvausKlo}`
+                      : 'Ei asetettu'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Laskuri porttien avaushetkeen. currentTime päivittyy sekunnin välein
+                  (ks. useEffect ylhäällä), joten tämä juoksee ilman omaa ajastinta. */}
+              <div className="border-t border-current/10 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Clock size={16} className="opacity-70" />
+                  {avaukseenMs === null
+                    ? 'Aseta tavoiteltu avausaika, niin laskuri käynnistyy.'
+                    : avaukseenMs >= 0
+                      ? 'Porttien avaukseen'
+                      : 'Tavoiteajasta kulunut'}
+                </div>
+                {avaukseenMs !== null && (
+                  <div className="text-2xl font-black tabular-nums tracking-tight">
+                    {avaukseenMs < 0 ? '+' : ''}{muotoileLaskuri(avaukseenMs)}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -4823,14 +4979,6 @@ export default function App() {
           </div>
         );
       case 'planning_readiness':
-        const checklistItems = [
-          { key: 'exits', label: 'Hätäuloskäynnit miehitetty' },
-          { key: 'guards', label: 'Vähintään 80% järjestyksenvalvojista paikalla' },
-          { key: 'vehicles', label: 'Ajoneuvot pois alueelta' },
-          { key: 'production', label: 'Tuotanto valmis avaukseen' },
-          { key: 'security', label: 'Turvajohto valmis avaukseen' }
-        ];
-
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-3xl mx-auto">
             <button 
@@ -4851,20 +4999,44 @@ export default function App() {
 
             <form className="space-y-8 text-left">
               {/* Tavoiteaika */}
-              <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 flex items-center justify-between gap-4 flex-wrap">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-800 mb-1">Tavoiteltu avausaika</h3>
-                  <p className="text-xs text-slate-500">Aseta kellonaika, jolloin portit on tarkoitus avata. Jos valmiutta ei ole kuitattu tähän mennessä, järjestelmä hälyttää myöhästymisestä.</p>
+              <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div className="flex-1 min-w-[260px]">
+                    <h3 className="text-sm font-bold text-slate-800 mb-1">Tavoiteltu avausaika</h3>
+                    <p className="text-xs text-slate-500">Aseta päivä ja kellonaika, jolloin portit on tarkoitus avata. Suunnittelunäkymän laskuri laskee tähän hetkeen, ja jos valmiutta ei ole kuitattu siihen mennessä, järjestelmä hälyttää myöhästymisestä.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Clock className="text-slate-400" size={18} />
+                    <input
+                      type="date"
+                      value={targetOpeningDate}
+                      onChange={(e) => setTargetOpeningDate(e.target.value)}
+                      className="rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 text-center font-bold"
+                    />
+                    <input
+                      type="time"
+                      value={targetOpeningTime}
+                      onChange={(e) => setTargetOpeningTime(e.target.value)}
+                      className="w-28 rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 text-center font-bold"
+                    />
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Clock className="text-slate-400" size={18} />
-                  <input 
-                    type="time" 
-                    value={targetOpeningTime}
-                    onChange={(e) => setTargetOpeningTime(e.target.value)}
-                    className="w-28 rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 text-center font-bold" 
-                  />
-                </div>
+                {/* Luonnoksesta laskettu vahvistus: kumpikin kenttä tarvitaan, jotta
+                    laskurilla on kohde — pelkkä kellonaika ei riitä. */}
+                <p className="text-xs mt-3 pt-3 border-t border-slate-200">
+                  {yhdistaPaivaJaAika(targetOpeningDate, targetOpeningTime) ? (
+                    <span className="text-slate-600">
+                      Laskuri laskee hetkeen <span className="font-bold">{formatFiDate(targetOpeningDate)} klo {targetOpeningTime}</span>.
+                    </span>
+                  ) : (
+                    <span className="text-amber-700">Täytä sekä päivä että kellonaika, jotta laskuri käynnistyy.</span>
+                  )}
+                </p>
+                {suunniteltuAvausPvm && suunniteltuAvausKlo && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Tapahtuman perustiedoissa portit auki {formatFiDate(suunniteltuAvausPvm)} klo {suunniteltuAvausKlo}.
+                  </p>
+                )}
               </div>
 
               {/* Tarkistuslista */}
@@ -4874,7 +5046,7 @@ export default function App() {
                   Edellytysten kuittaus
                 </h3>
                 <div className="bg-white border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
-                  {checklistItems.map(item => (
+                  {READINESS_CHECKS.map(item => (
                     <label key={item.key} className="flex items-center gap-4 p-4 cursor-pointer hover:bg-slate-50 transition-colors">
                       <div className="relative flex items-center justify-center">
                         <input 
@@ -4912,7 +5084,7 @@ export default function App() {
                 {(isAdminUser || canEdit(perms, selectedEvent, 'planning_readiness')) && (
                   <button
                     type="button"
-                    onClick={() => setActiveTab('planning')}
+                    onClick={handleSaveReadiness}
                     className="px-6 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
                   >
                     <CheckCircle size={18} />
@@ -8313,7 +8485,7 @@ export default function App() {
               <div className={sectionCls}>
                 <h3 className={headCls}><Clock size={18} className="text-indigo-500" />5. Ajankohta ja aikataulu</h3>
 
-                <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Aukioloajat yleisölle</div>
+                <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Aukioloajat yleisölle = portit auki</div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
                   <div>
                     <label className={labelCls}>Alkaa</label>

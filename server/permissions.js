@@ -144,6 +144,16 @@ const COLLECTIONS = {
     eventScoped: true,
     eventIdOf: legacyEventId,
   },
+  // Avausvalmius: yksi tietue per tapahtuma (porttien avauksen kuittaukset, tavoiteaika
+  // ja poikkeamat). Luku on sallittu myös suunnittelu- ja tilannekuvasivulta, koska
+  // niiden tilapalkki nayttaa saman koonnin — ilman lukuoikeutta frontti ei saisi
+  // kokoelmaa ladattua eika siis myoskaan tallennettua sita takaisin.
+  readiness: {
+    view: ['overview', 'planning', 'planning_readiness'],
+    touch: () => ['planning_readiness'],
+    eventScoped: true,
+    eventIdOf: legacyEventId,
+  },
   riskAssessments: {
     view: ['overview', 'documents_risk', 'documents_risk_done', 'documents_risk_new'],
     touch: (item, phase) => (phase === 'remove' ? ['documents_risk_done'] : ['documents_risk_new']),

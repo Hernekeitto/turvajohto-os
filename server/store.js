@@ -13,6 +13,7 @@ const COLLECTIONS = {
   events: 'events.json',
   riskAssessments: 'riskAssessments.json',
   employees: 'employees.json',
+  readiness: 'readiness.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
