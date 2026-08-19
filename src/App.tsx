@@ -198,6 +198,7 @@ const REPORT_DETAIL_FIELDS = [
   { key: 'subjectFeatures', label: 'Tuntomerkit' },
   { key: 'subjectObservations', label: 'Havainnot käyttäytymisestä ja tilasta' },
   { key: 'description', label: 'Vapaa kuvaus' },
+  { key: 'tikeComment', label: 'TIKE:n kommentti' },
   { key: 'actions', label: 'Tehdyt toimenpiteet' },
   { key: 'resources', label: 'Käytetyt resurssit' },
   { key: 'employees', label: 'Paikalla olleet työntekijät' },
@@ -291,9 +292,9 @@ const FORM_FIELD_GROUPS = [
 ];
 
 const initialCheckedInEmployees = [
-  { id: 1, eventId: 'fesx', name: "Korhonen Elli Marja Orvokki", role: "Järjestyksenvalvoja", vest: true, badge: "1234", headset: true, radio: "R-12", checkInDate: "", checkInTime: "10:15", checkOutDate: "", checkOutTime: "", comment: "", status: 'checked_in' },
-  { id: 2, eventId: 'fesx', name: "Virtanen Matti Johannes Antero", role: "Vartija", vest: false, badge: "5521", headset: false, radio: "", checkInDate: "", checkInTime: "10:22", checkOutDate: "", checkOutTime: "", comment: "", status: 'checked_in' },
-  { id: 3, eventId: 'fesx', name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05", checkInDate: "", checkInTime: "10:40", checkOutDate: "", checkOutTime: "", comment: "", status: 'checked_in' }
+  { id: 1, eventId: 'fesx', name: "Korhonen Elli Marja Orvokki", role: "Järjestyksenvalvoja", vest: true, badge: "1234", headset: true, radio: "R-12", checkInDate: "", checkInTime: "10:15", checkOutDate: "", checkOutTime: "", comment: "", checkOutComment: "", status: 'checked_in' },
+  { id: 2, eventId: 'fesx', name: "Virtanen Matti Johannes Antero", role: "Vartija", vest: false, badge: "5521", headset: false, radio: "", checkInDate: "", checkInTime: "10:22", checkOutDate: "", checkOutTime: "", comment: "", checkOutComment: "", status: 'checked_in' },
+  { id: 3, eventId: 'fesx', name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05", checkInDate: "", checkInTime: "10:40", checkOutDate: "", checkOutTime: "", comment: "", checkOutComment: "", status: 'checked_in' }
 ];
 
 // Lakisääteinen säilytysaika: tapahtumailmoitukset on säilytettävä kaksi vuotta
@@ -830,6 +831,9 @@ export default function App() {
   const [jvrFeatures, setJvrFeatures] = useState('');
   const [jvrObservations, setJvrObservations] = useState('');
   const [jvrDesc, setJvrDesc] = useState('');
+  // Tilannekeskuksen oma kommentti tapahtumailmoitukseen (TIKE:n muistilista -osio).
+  // Kenttä oli aiemmin sidottamaton <textarea> ilman tilaa: teksti katosi tallennuksessa.
+  const [jvrTikeComment, setJvrTikeComment] = useState('');
   const timeInputRef = useRef(null);
 
   // Tapahtumat (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
@@ -936,6 +940,9 @@ export default function App() {
   const [selectedOutEmp, setSelectedOutEmp] = useState(null);
   const [checkOutDate, setCheckOutDate] = useState('');
   const [checkOutTime, setCheckOutTime] = useState('');
+  // Vuoron päätteeksi kirjattavat huomiot (rikkoutuneet/kadonneet välineet yms.).
+  // Kenttä oli aiemmin sidottamaton <textarea>: handleCheckOut ei lukenut sitä lainkaan.
+  const [checkOutComment, setCheckOutComment] = useState('');
   const [showOutTimeInput, setShowOutTimeInput] = useState(false);
 
   // JV:n / vartijan toimenpide -lomakkeen tila
@@ -2101,6 +2108,7 @@ export default function App() {
       checkInTime: checkInTimeVal,
       checkOutDate: '',
       checkOutTime: '',
+      checkOutComment: '',
       status: 'checked_in',
       // Muokkaustilassa kommentit hallitaan erikseen "Kommentit"-osiossa (ks.
       // handleAddEmpComment) — pääpainike ei enää ylikirjoita niitä. Tuoreessa
@@ -2193,13 +2201,20 @@ export default function App() {
     const checkOutDateVal = checkOutDate || localNow.toISOString().split('T')[0];
     const checkOutTimeVal = checkOutTime || localNow.toISOString().slice(11, 16);
     setCheckedInEmployees(prev => prev.map(e => (e.id === selectedOutEmp.id
-      ? { ...e, checkOutDate: checkOutDateVal, checkOutTime: checkOutTimeVal, status: 'checked_out' }
+      ? {
+          ...e,
+          checkOutDate: checkOutDateVal,
+          checkOutTime: checkOutTimeVal,
+          checkOutComment: checkOutComment.trim(),
+          status: 'checked_out',
+        }
       : e)));
     setSelectedOutEmp(null);
     setOutEmpSearch('');
     setShowOutTimeInput(false);
     setCheckOutDate('');
     setCheckOutTime('');
+    setCheckOutComment('');
   };
 
   const handleRemoveFromEventRoster = (emp) => {
@@ -2267,6 +2282,7 @@ export default function App() {
     setJvrFeatures('');
     setJvrObservations('');
     setJvrDesc('');
+    setJvrTikeComment('');
   };
 
   // Järjestyksenvalvojan tapahtumailmoitus tallentuu reports-kokoelmaan omalla
@@ -2310,6 +2326,7 @@ export default function App() {
       subjectFeatures: jvrFeatures.trim(),
       subjectObservations: jvrObservations.trim(),
       description: jvrDesc.trim(),
+      tikeComment: jvrTikeComment.trim(),
       detainedOrForce: jvrDetainedForce,
       tools: jvrTools,
       firearm: jvrFirearm,
@@ -3320,9 +3337,11 @@ export default function App() {
                 </ul>
                 <div>
                   <label className="block text-sm font-bold text-slate-800 mb-2">TIKE:n kommentti:</label>
-                  <textarea 
-                    rows="3" 
-                    className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-indigo-500 bg-white" 
+                  <textarea
+                    rows="3"
+                    value={jvrTikeComment}
+                    onChange={(e) => setJvrTikeComment(e.target.value)}
+                    className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-indigo-500 bg-white"
                     placeholder="Kirjaa tilannekeskuksen toimenpiteet ja lisähuomiot..."
                   ></textarea>
                 </div>
@@ -3759,7 +3778,7 @@ export default function App() {
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
             <button 
-              onClick={() => { setActiveTab('report_tike'); setSelectedOutEmp(null); setOutEmpSearch(''); setShowOutTimeInput(false); }}
+              onClick={() => { setActiveTab('report_tike'); setSelectedOutEmp(null); setOutEmpSearch(''); setShowOutTimeInput(false); setCheckOutComment(''); }}
               className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
             >
               <ArrowLeft size={16} />
@@ -3826,7 +3845,7 @@ export default function App() {
                         return (
                           <tr
                             key={emp.id}
-                            onClick={selectable ? () => { setSelectedOutEmp(emp); setOutEmpSearch(emp.name); setShowOutTimeInput(false); } : undefined}
+                            onClick={selectable ? () => { setSelectedOutEmp(emp); setOutEmpSearch(emp.name); setShowOutTimeInput(false); setCheckOutComment(''); } : undefined}
                             title={selectable ? 'Valitse uloskirjattavaksi' : 'Ei ole sisäänkirjattuna'}
                             className={`transition-colors ${selectable ? 'hover:bg-rose-50 cursor-pointer' : 'opacity-60'}`}
                           >
@@ -3856,6 +3875,7 @@ export default function App() {
                         setOutEmpSearch(e.target.value);
                         setSelectedOutEmp(null);
                         setShowOutTimeInput(false);
+                        setCheckOutComment('');
                       }}
                       className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-rose-500 text-sm font-medium" 
                       placeholder="Kirjoita vähintään 3 merkkiä hakeaksesi (esim. Kor tai Vir)..."
@@ -3871,6 +3891,7 @@ export default function App() {
                             onClick={() => {
                               setSelectedOutEmp(emp);
                               setOutEmpSearch(emp.name);
+                              setCheckOutComment('');
                             }}
                             className="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium text-slate-700 border-b border-slate-100 last:border-0 flex justify-between items-center"
                           >
@@ -3928,9 +3949,11 @@ export default function App() {
                   {/* Uloskirjauksen kommentti */}
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">Uloskirjauksen kommentit ja huomiot</label>
-                    <textarea 
-                      rows="3" 
-                      className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-rose-500" 
+                    <textarea
+                      rows="3"
+                      value={checkOutComment}
+                      onChange={(e) => setCheckOutComment(e.target.value)}
+                      className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-rose-500"
                       placeholder="Kirjaa ylös jos välineitä on hajonnut, kadonnut, tai jos työntekijällä on jotain raportoitavaa vuoron päätteeksi..."
                     ></textarea>
                   </div>
@@ -5236,7 +5259,16 @@ export default function App() {
                     </tr>
                   ) : currentEventCheckedIn.map((emp) => (
                     <tr key={emp.id} className="hover:bg-white transition-colors">
-                      <td className="p-4 font-medium text-slate-800">{emp.name}</td>
+                      <td className="p-4 font-medium text-slate-800">
+                        {emp.name}
+                        {/* Uloskirjauksessa kirjatut huomiot (rikkoutuneet välineet yms.)
+                            näkyvät tässä — muuten ne tallentuisivat näkymättömiin. */}
+                        {emp.checkOutComment && (
+                          <span className="block text-xs font-normal text-slate-500 mt-1 max-w-xs">
+                            Uloskirjaus: {emp.checkOutComment}
+                          </span>
+                        )}
+                      </td>
                       <td className="p-4">
                         <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ring-1 ring-inset ${emp.role === 'Järjestyksenvalvoja' ? 'bg-indigo-50 text-indigo-700 ring-indigo-700/10' : 'bg-slate-100 text-slate-700 ring-slate-700/10'}`}>
                           {emp.role}

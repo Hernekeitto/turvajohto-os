@@ -55,6 +55,7 @@ const ENCRYPTED_FIELDS = {
   reports: [
     'summary',
     'description',
+    'tikeComment',
     'actions',
     'resources',
     'employees',
