@@ -210,6 +210,17 @@ export function updateUser(username, { nickname, permissions, eventAccess } = {}
 }
 
 // Käyttäjän oman salasanan vaihto (itsepalvelu) — kutsuja vastaa nykyisen salasanan tarkistuksesta.
+// Merkitsee kirjautumishetken käyttäjätietueeseen. Aloitussivun "Kirjautumisaika"
+// näyttää tämän — aiemmin siinä juoksi kellonaika, joka ei kertonut mitään.
+// Kirjoitetaan vain onnistuneen kirjautumisen jälkeen (ks. index.js: /api/login).
+export function recordLogin(username) {
+  const users = readUsers();
+  const existing = users.find((u) => u.username === username);
+  if (!existing) return;
+  existing.last_login_at = new Date().toISOString();
+  writeUsers(users);
+}
+
 export function updatePassword(username, passwordHash) {
   const users = readUsers();
   const existing = users.find((u) => u.username === username);

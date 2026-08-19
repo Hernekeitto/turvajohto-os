@@ -12,6 +12,7 @@ async function loadSessionProfile(): Promise<SessionProfile | null> {
     nickname: data.nickname || data.username,
     role: data.role || 'user',
     permissions: data.permissions || {},
+    lastLoginAt: data.lastLoginAt || null,
   };
 }
 

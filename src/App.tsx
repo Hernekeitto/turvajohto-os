@@ -62,13 +62,6 @@ import {
 } from 'lucide-react';
 
 // --- MOCK DATA ---
-const mockChecklist = [
-  { id: 1, task: 'Riskienarviointi päivitetty', status: 'done', category: 'Suunnittelu' },
-  { id: 2, task: 'Pelastussuunnitelma lähetetty', status: 'done', category: 'Luvat' },
-  { id: 3, task: 'JV-mitoitus vahvistettu', status: 'pending', category: 'Resurssit' },
-  { id: 4, task: 'Ensiapupisteet pystytetty', status: 'in-progress', category: 'Operatiivinen' }
-];
-
 const mockEmployees = [
   "Korhonen Elli Marja Orvokki",
   "Virtanen Matti Johannes Antero",
@@ -308,6 +301,7 @@ const REPORT_DETAIL_FIELDS = [
   { key: 'subjectObservations', label: 'Havainnot käyttäytymisestä ja tilasta' },
   { key: 'description', label: 'Vapaa kuvaus' },
   { key: 'tikeComment', label: 'TIKE:n kommentti' },
+  { key: 'taskTitle', label: 'Tehtävän otsikko' },
   { key: 'actions', label: 'Tehdyt toimenpiteet' },
   { key: 'resources', label: 'Käytetyt resurssit' },
   { key: 'employees', label: 'Paikalla olleet työntekijät' },
@@ -473,6 +467,17 @@ const tapahtumanPoistoaikataulu = (tapahtuma: any, raportit: any[], nyt = new Da
   };
 };
 
+// Kirjautumishetki aloitussivulle. Aiemmin tässä juoksi kello (formatTime(currentTime)),
+// joka näytti kellonajalta mutta kertoi vain nykyhetken — ei siis mitään istunnosta.
+const muotoileKirjautumisaika = (iso?: string | null) => {
+  if (!iso) return 'ei tiedossa';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'ei tiedossa';
+  return d.toLocaleString('fi-FI', {
+    day: 'numeric', month: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+};
+
 const muotoileTavut = (tavua: number) => {
   if (!Number.isFinite(tavua)) return '—';
   const gb = tavua / (1024 * 1024 * 1024);
@@ -485,7 +490,11 @@ const muotoileTavut = (tavua: number) => {
 // perusteella kuin 'jvaction': kirjaus toimenpiteestä joka kohdistui henkilöön.
 const DEVIATION_TYPES = ['jvaction', 'jvreport', 'firstaid', 'threat', 'fence', 'damage'];
 
-const initialReports = [
+// Raportit ovat polymorfisia: 14 eri typeId:tä, joilla kullakin omat lisäkenttänsä
+// (ks. REPORT_DETAIL_FIELDS ja server/validation.js:n sama perustelu). Siemendatan
+// muodosta johdettu tyyppi ei siksi kuvaa kokoelmaa, vaan estäisi uusien kenttien
+// lukemisen — siksi any[].
+const initialReports: any[] = [
   { id: '26/FesX/1108/099', eventId: 'fesx', typeId: 'out', type: 'Työntekijän uloskirjaus', author: 'TIKE Päivystäjä', time: '14:10', summary: 'Virtanen ulos, radiopuhelin rikki.' },
   { id: '26/FesX/1108/098', eventId: 'fesx', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Korhonen Elli', time: '13:45', summary: 'Kiinniotto portilla 2.', denied: 0, removed: 1, detained: 1, force: true, tools: true, firearm: false, firstAid: false },
   { id: '26/FesX/1108/097', eventId: 'fesx', typeId: 'firstaid', type: 'Ensiaputilanne', author: 'EA-Päivystys', time: '12:15', summary: 'Nyrjähdys, paikattu pisteellä.' },
@@ -535,7 +544,9 @@ const muotoileLaskuri = (ms: number) => {
   return paivat > 0 ? `${paivat} pv ${kello}` : kello;
 };
 
-const DashboardCard = ({ title, icon: Icon, value, subtitle, trend, trendUp }) => (
+// trend/trendUp ovat valinnaisia: yksikään nykyinen kortti ei käytä niitä, ja
+// ilman oletusarvoja TypeScript vaatisi ne jokaiselta kutsupaikalta.
+const DashboardCard = ({ title, icon: Icon, value, subtitle, trend = null, trendUp = false }) => (
   <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col justify-between">
     <div className="flex justify-between items-start mb-4">
       <div className="p-3 rounded-lg bg-slate-50 text-slate-600">
@@ -824,6 +835,49 @@ const SitemapPermissionRow = ({ node, depth, permDraft, onToggle, onCascade }) =
 // Montako hälytystä Tilannekuvan paneeliin mahtuu ennen kuin loput siirtyvät
 // "Näytä kaikki" -painikkeen taakse. Ilman rajaa paneeli kasvaisi rajatta ja
 // työntäisi muun tilannekuvan näytön alareunan alle.
+// Tehtävän kiireellisyys. Tehtävä syntyy TIKE:n avoimesta kirjauksesta, kun
+// kirjaaja rastii "Merkitse tehtäväksi" — tieto tallentuu raportin kenttiin
+// taskTitle/taskUrgency, joten erillistä kokoelmaa ei tarvita ja tehtävä säilyy
+// samassa lokissa kuin kirjaus josta se syntyi.
+// jarjestys ratkaisee Tilannekuvan Tehtävät-listan järjestyksen (pienin ensin).
+// Kauanko tehtävä on ollut auki. Muoto "HH:MM:SS" tai "2 pv HH:MM:SS" kuten
+// avausvalmiuden laskurissa. Lasketaan createdAt-kentästä, joka on tarkka
+// aikaleima (time-kenttä on vain kellonaika ilman päivää).
+const tehtavanIka = (tehtava: any, nyt: Date) => {
+  const luotu = tehtava?.createdAt ? new Date(tehtava.createdAt) : null;
+  if (!luotu || Number.isNaN(luotu.getTime())) return '—';
+  return muotoileLaskuri(nyt.getTime() - luotu.getTime());
+};
+
+const TEHTAVA_KIIREET = {
+  red: {
+    jarjestys: 0,
+    label: 'ASAP',
+    piste: 'bg-rose-500',
+    reuna: 'border-rose-200 bg-rose-50',
+    teksti: 'text-rose-700',
+  },
+  orange: {
+    jarjestys: 1,
+    label: 'Mahdollisimman pian',
+    piste: 'bg-amber-500',
+    reuna: 'border-amber-200 bg-amber-50',
+    teksti: 'text-amber-700',
+  },
+  blue: {
+    jarjestys: 2,
+    label: 'Ei määritettyä aikaa',
+    piste: 'bg-blue-500',
+    reuna: 'border-blue-200 bg-blue-50',
+    teksti: 'text-blue-700',
+  },
+};
+type TehtavaKiire = keyof typeof TEHTAVA_KIIREET;
+const TEHTAVA_KIIRE_OLETUS: TehtavaKiire = 'blue';
+// Tuntematon tai puuttuva arvo (vanha data) tulkitaan vähiten kiireelliseksi.
+const tehtavanKiire = (avain?: string) =>
+  TEHTAVA_KIIREET[avain as TehtavaKiire] || TEHTAVA_KIIREET[TEHTAVA_KIIRE_OLETUS];
+
 const HALYTYKSET_NAYTOSSA = 5;
 
 const AlertBanner = ({ alert }) => {
@@ -1100,6 +1154,10 @@ export default function App() {
 
   // Open Log Form State
   const [openKirjausDate, setOpenKirjausDate] = useState('');
+  // "Merkitse tehtäväksi": kirjaus nostetaan Tilannekuvan Tehtävät-listaan.
+  const [openKirjausTask, setOpenKirjausTask] = useState(false);
+  const [openKirjausTaskTitle, setOpenKirjausTaskTitle] = useState('');
+  const [openKirjausTaskUrgency, setOpenKirjausTaskUrgency] = useState<TehtavaKiire>(TEHTAVA_KIIRE_OLETUS);
   const [openKirjausTime, setOpenKirjausTime] = useState('');
   const [openKirjausText, setOpenKirjausText] = useState('');
   const [fileName, setFileName] = useState('');
@@ -2583,6 +2641,12 @@ export default function App() {
       alert('Odota, että liitetiedoston lähetys valmistuu.');
       return;
     }
+    // Otsikko on tehtävälistan ainoa näkyvä teksti, joten ilman sitä tehtävä olisi
+    // nimetön rivi koontinäytössä.
+    if (openKirjausTask && !openKirjausTaskTitle.trim()) {
+      alert('Anna tehtävälle otsikko, tai poista rasti kohdasta "Merkitse tehtäväksi".');
+      return;
+    }
     const now = new Date();
     const timeLabel = openKirjausTime || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
 
@@ -2596,6 +2660,11 @@ export default function App() {
       date: openKirjausDate || now.toLocaleDateString('sv-SE'),
       time: timeLabel,
       summary: openKirjausText.trim(),
+      // Tehtäväksi merkityt kirjaukset nousevat Tilannekuvan Tehtävät-listaan.
+      // Litteinä kenttinä eikä olioina, jotta taskTitle voidaan tarvittaessa
+      // lisätä server/store.js:n ENCRYPTED_FIELDS-listaan kuten muu vapaa teksti.
+      taskTitle: openKirjausTask ? openKirjausTaskTitle.trim() : '',
+      taskUrgency: openKirjausTask ? openKirjausTaskUrgency : '',
       attachment: fileUploadId ? { id: fileUploadId, name: fileName } : null
     }, ...prev]);
 
@@ -2604,6 +2673,9 @@ export default function App() {
     setOpenKirjausDate('');
     setOpenKirjausTime('');
     setOpenKirjausText('');
+    setOpenKirjausTask(false);
+    setOpenKirjausTaskTitle('');
+    setOpenKirjausTaskUrgency(TEHTAVA_KIIRE_OLETUS);
     setFileName('');
     setFileUploadId('');
   };
@@ -2792,6 +2864,18 @@ export default function App() {
       location: ra.target
     }));
 
+  // Tehtävät: avoimet kirjaukset jotka on merkitty tehtäväksi. Järjestys on
+  // kiireellisyys ensin ja saman kiireellisyyden sisällä vanhin ensin — pisimpään
+  // odottanut on se joka todennäköisimmin unohtuu.
+  const tehtavat = currentEventReports
+    .filter((r) => r.taskTitle)
+    .slice()
+    .sort((a, b) => {
+      const ero = tehtavanKiire(a.taskUrgency).jarjestys - tehtavanKiire(b.taskUrgency).jarjestys;
+      if (ero !== 0) return ero;
+      return String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+    });
+
   // TIKE-loki: kaikki tehdyt TIKE-kirjaukset paitsi työntekijän sisään-/uloskirjaukset
   // (ne täyttäisivät lokin nopeasti). currentEventReports on jo uusin ensin -järjestyksessä.
   const tikeLogReports = currentEventReports.filter(r => r.typeId !== 'in' && r.typeId !== 'out');
@@ -2889,7 +2973,7 @@ export default function App() {
             
             <div className="mt-12 text-slate-400 text-sm font-medium flex items-center gap-2">
               <Clock size={16} />
-              Kirjautumisaika: {formatTime(currentTime)}
+              Kirjautumisaika: {muotoileKirjautumisaika(session?.lastLoginAt)}
             </div>
           </div>
         );
@@ -2995,7 +3079,7 @@ export default function App() {
                       className={`flex-1 py-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors ${overviewCardTab === 'checklist' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50/30' : 'text-slate-500 hover:bg-slate-50'}`}
                     >
                       <CheckCircle size={16} />
-                      Valmiustarkastus
+                      Tehtävät
                     </button>
                     <button 
                       onClick={() => setOverviewCardTab('reports')}
@@ -3009,25 +3093,35 @@ export default function App() {
                   <div className="p-6 flex-1">
                     {overviewCardTab === 'checklist' ? (
                       <div className="space-y-3 animate-in fade-in duration-300">
-                        {mockChecklist.map(item => (
-                          <div key={item.id} className="flex items-start gap-3 p-2 rounded-lg hover:bg-slate-50">
-                            <div className="mt-0.5">
-                              {item.status === 'done' ? (
-                                <CheckCircle className="text-emerald-500" size={18} />
-                              ) : item.status === 'in-progress' ? (
-                                <Clock className="text-amber-500" size={18} />
-                              ) : (
-                                <div className="w-[18px] h-[18px] rounded-full border-2 border-slate-300"></div>
-                              )}
-                            </div>
-                            <div>
-                              <p className={`text-sm font-medium ${item.status === 'done' ? 'text-slate-500 line-through' : 'text-slate-800'}`}>
-                                {item.task}
-                              </p>
-                              <p className="text-xs text-slate-400">{item.category}</p>
-                            </div>
-                          </div>
-                        ))}
+                        {tehtavat.length === 0 ? (
+                          <p className="text-sm text-slate-500 py-4 text-center">
+                            Ei avoimia tehtäviä. Tehtävä syntyy kun TIKE:n avoimessa kirjauksessa
+                            rastitaan &quot;Merkitse tehtäväksi&quot;.
+                          </p>
+                        ) : (
+                          tehtavat.map((tehtava) => {
+                            const kiire = tehtavanKiire(tehtava.taskUrgency);
+                            const ika = tehtavanIka(tehtava, currentTime);
+                            return (
+                              <div
+                                key={tehtava.id}
+                                onClick={() => { setOpenedReport(tehtava); setOpenedReportSource('overview'); }}
+                                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors hover:brightness-[0.98] ${kiire.reuna}`}
+                              >
+                                <span className={`w-3 h-3 rounded-full shrink-0 mt-1.5 ${kiire.piste}`} title={kiire.label} />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-slate-800">{tehtava.taskTitle}</p>
+                                  <p className={`text-xs mt-0.5 ${kiire.teksti}`}>{kiire.label}</p>
+                                </div>
+                                {/* Ikä juoksee currentTimen tahdissa (päivittyy sekunnin välein),
+                                    joten tehtävän odotusaika on koko ajan näkyvissä. */}
+                                <span className="text-xs font-mono tabular-nums text-slate-500 shrink-0 pt-0.5" title="Aikaa luonnista">
+                                  {ika}
+                                </span>
+                              </div>
+                            );
+                          })
+                        )}
                       </div>
                     ) : (
                       <div className="space-y-3 animate-in fade-in duration-300">
@@ -4273,6 +4367,71 @@ export default function App() {
                   className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-indigo-500" 
                   placeholder="Kirjoita tarkka ja ytimekäs kuvaus tilanteesta ja tehdyistä toimenpiteistä..."
                 ></textarea>
+              </div>
+
+              {/* Tehtäväksi merkintä. Otsikko ja kiireellisyys näytetään vasta kun
+                  ruutu on rastittu, jottei lomake kasva turhaan tavallisessa kirjauksessa. */}
+              <div className="border border-slate-200 rounded-xl p-5 bg-slate-50/50">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={openKirjausTask}
+                    onChange={(e) => setOpenKirjausTask(e.target.checked)}
+                    className="w-5 h-5 mt-0.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0"
+                  />
+                  <span>
+                    <span className="block text-sm font-bold text-slate-800">Merkitse tehtäväksi</span>
+                    <span className="block text-xs text-slate-500 mt-0.5">
+                      Kirjaus nousee Tilannekuvan Tehtävät-listaan, jossa se pysyy näkyvissä
+                      kiireellisyysjärjestyksessä ja näyttää kuinka kauan sitten se luotiin.
+                    </span>
+                  </span>
+                </label>
+
+                {openKirjausTask && (
+                  <div className="mt-4 pt-4 border-t border-slate-200 space-y-4 animate-in fade-in slide-in-from-top-2">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-1">Tehtävän otsikko</label>
+                      <input
+                        type="text"
+                        value={openKirjausTaskTitle}
+                        onChange={(e) => setOpenKirjausTaskTitle(e.target.value)}
+                        className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                        placeholder="Lyhyt kuvaus siitä mitä pitää tehdä, esim. 'Vaihda portin 2 kortinlukija'"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">Tämä teksti näkyy Tehtävät-listassa.</p>
+                    </div>
+
+                    <div>
+                      <span className="block text-sm font-bold text-slate-700 mb-2">Kiireellisyys</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {Object.entries(TEHTAVA_KIIREET).map(([avain, kiire]) => {
+                          const valittu = openKirjausTaskUrgency === avain;
+                          return (
+                            <label
+                              key={avain}
+                              className={`flex items-center gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors ${
+                                valittu ? `${kiire.reuna} ring-2 ring-offset-1 ring-slate-300` : 'border-slate-200 bg-white hover:bg-slate-50'
+                              }`}
+                            >
+                              <input
+                                type="radio"
+                                name="tehtavan-kiireellisyys"
+                                checked={valittu}
+                                onChange={() => setOpenKirjausTaskUrgency(avain as TehtavaKiire)}
+                                className="sr-only"
+                              />
+                              <span className={`w-3.5 h-3.5 rounded-full shrink-0 ${kiire.piste}`} />
+                              <span className={`text-sm font-medium ${valittu ? kiire.teksti : 'text-slate-700'}`}>
+                                {kiire.label}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="border border-dashed border-slate-300 rounded-xl p-6 bg-slate-50/50 flex flex-col items-center justify-center gap-3">

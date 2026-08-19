@@ -8,6 +8,9 @@ export interface SessionProfile {
   nickname: string;
   role: 'admin' | 'user';
   permissions: Permissions;
+  // Tämän istunnon kirjautumishetki ISO-muodossa, tai null jos käyttäjä ei ole
+  // kirjautunut kertaakaan sen jälkeen kun palvelin alkoi tallentaa sitä.
+  lastLoginAt: string | null;
 }
 
 // Kirjautuneen käyttäjän koko profiili koko sovelluksen käyttöön: tunnus,

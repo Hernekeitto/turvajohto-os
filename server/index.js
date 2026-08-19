@@ -11,6 +11,7 @@ import {
   upsertUser,
   updateUser,
   updatePassword,
+  recordLogin,
   getTotpSecret,
   resetTotpSecret,
   setTotpRequired,
@@ -164,6 +165,7 @@ app.post('/api/login', loginLimiter, (req, res) => {
   }
 
   logAudit({ user: username, action: 'login_success', ip: req.ip });
+  recordLogin(user.username);
   setSessionCookie(res, user.username, user.role);
   res.json({ ok: true, username: user.username });
 });
@@ -192,6 +194,10 @@ app.get('/api/session', (req, res) => {
     role: user.role,
     permissions: user.permissions,
     eventAccess: user.eventAccess,
+    // Tämän istunnon kirjautumishetki. EI johdeta JWT:n iat-kentästä, koska
+    // ei-adminin istunto on liukuva: token uusitaan tässä samassa reitissä,
+    // jolloin iat siirtyisi eteenpäin eikä kertoisi enää kirjautumisajasta.
+    lastLoginAt: user.last_login_at || null,
   });
 });
 
