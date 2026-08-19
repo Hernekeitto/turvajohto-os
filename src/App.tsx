@@ -181,6 +181,115 @@ function findEventName(eventId, eventsList) {
 // Tyhjät kentät jätetään näyttämättä (ks. suodatin openedReport-modaalissa), joten
 // sama lista kattaa kaikki raporttityypit: järjestyksenvalvojan tapahtumailmoituksen
 // kohdehenkilökentät näkyvät vain niissä raporteissa joissa ne on täytetty.
+// ---------------------------------------------------------------------------
+// Raportin tulostusversio (PDF)
+//
+// PDF tuotetaan selaimen omalla tulostustoiminnolla ("Tallenna PDF-tiedostona")
+// eikä erillisellä PDF-kirjastolla. Perustelut:
+//   - ei uutta riippuvuutta (nykyinen bundle on jo ~520 kB)
+//   - ääkköset toimivat oikein ilman fontin upottamista; jsPDF vaatisi erillisen
+//     TTF-fontin ja pdf-lib rajoittuisi WinAnsi-merkistöön
+//   - sivutus, sivunumerot ja marginaalit tulevat selaimelta
+//   - sama dokumentti voidaan tulostaa myös paperille viranomaista varten
+//   - toimii suljetussa verkossa, koska mitään ei haeta ulkopuolelta
+//
+// Dokumentti kirjoitetaan omaan ikkunaansa eikä sovelluksen DOMiin, jottei
+// sovelluksen oma tyyli vuoda tulosteeseen.
+// ---------------------------------------------------------------------------
+
+// Kaikki tulosteeseen menevä teksti on käyttäjän syöttämää, joten se escapetaan.
+const htmlTeksti = (arvo: unknown) =>
+  String(arvo ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+const PDF_TYYLIT = `
+  @page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #0f172a; margin: 0; font-size: 11pt; line-height: 1.5; }
+  .tunnus { display: flex; justify-content: space-between; align-items: flex-start;
+    border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 18px; gap: 16px; }
+  .tunnus .sovellus { font-size: 9pt; letter-spacing: .08em; text-transform: uppercase; color: #475569; }
+  .tunnus h1 { font-size: 16pt; margin: 2px 0 0; }
+  .tunnus .id { font-family: ui-monospace, "Courier New", monospace; font-size: 10pt;
+    text-align: right; white-space: nowrap; }
+  .meta { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 24px; margin: 0 0 18px; }
+  .meta > div { border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
+  .meta dt { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
+  .meta dd { margin: 2px 0 0; font-weight: 600; }
+  h2 { font-size: 10pt; text-transform: uppercase; letter-spacing: .06em; color: #475569;
+    margin: 18px 0 6px; border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; }
+  .kentta { margin-bottom: 10px; page-break-inside: avoid; }
+  .kentta .otsikko { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
+  .kentta .arvo { white-space: pre-wrap; margin-top: 1px; }
+  .tyhja-rivi { border-bottom: 1px solid #94a3b8; height: 22px; margin-top: 4px; }
+  .huomio { margin-top: 22px; border-top: 1px solid #e2e8f0; padding-top: 8px;
+    font-size: 8.5pt; color: #475569; page-break-inside: avoid; }
+  .huomio strong { color: #0f172a; }
+  @media screen {
+    body { background: #f1f5f9; padding: 24px; }
+    .arkki { background: #fff; max-width: 210mm; margin: 0 auto; padding: 18mm 16mm;
+      box-shadow: 0 2px 12px rgba(15, 23, 42, .12); }
+    .ohje { max-width: 210mm; margin: 0 auto 16px; font-size: 10pt; color: #334155;
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; }
+  }
+  @media print { .ohje { display: none; } .arkki { padding: 0; box-shadow: none; } }
+`;
+
+type TulosteMeta = { otsikko: string; arvo?: string };
+// tyhja: kentästä piirretään tyhjä kirjoitusrivi arvon sijaan (tyhjät lomakepohjat).
+type TulosteKentta = { otsikko: string; arvo?: string; tyhja?: boolean };
+type TulosteOsat = {
+  otsikko: string;
+  tunniste?: string;
+  meta: TulosteMeta[];
+  kentat: TulosteKentta[];
+  huomio: string;
+};
+
+// Kokoaa valmiin, itsenäisen HTML-dokumentin.
+const tulostusDokumentti = ({ otsikko, tunniste, meta, kentat, huomio }: TulosteOsat) => `<!doctype html>
+<html lang="fi"><head><meta charset="utf-8"><title>${htmlTeksti(tunniste || otsikko)}</title>
+<style>${PDF_TYYLIT}</style></head><body>
+<div class="arkki">
+  <div class="tunnus">
+    <div><div class="sovellus">Turvajohto OS</div><h1>${htmlTeksti(otsikko)}</h1></div>
+    ${tunniste ? `<div class="id">${htmlTeksti(tunniste)}</div>` : ''}
+  </div>
+  <dl class="meta">${meta.map((m) => `<div><dt>${htmlTeksti(m.otsikko)}</dt><dd>${htmlTeksti(m.arvo || '—')}</dd></div>`).join('')}</dl>
+  ${kentat.map((k) => `<div class="kentta"><div class="otsikko">${htmlTeksti(k.otsikko)}</div>${
+    k.tyhja ? '<div class="tyhja-rivi"></div>' : `<div class="arvo">${htmlTeksti(k.arvo)}</div>`
+  }</div>`).join('')}
+  <div class="huomio">${huomio}</div>
+</div></body></html>`;
+
+// Tulostaa dokumentin näkymättömän iframen kautta. Tässä EI käytetä
+// window.openia: sovelluksen sisäinen selain ja moni työpaikkaympäristö estää
+// ponnahdusikkunat oletuksena, jolloin koko toiminto katkeaisi. Iframe toimii
+// aina, koska se on osa samaa sivua.
+const tulostaDokumentti = (html: string) => {
+  const kehys = document.createElement('iframe');
+  kehys.setAttribute('aria-hidden', 'true');
+  kehys.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+  kehys.srcdoc = html;
+  kehys.onload = () => {
+    const ikkuna = kehys.contentWindow;
+    if (!ikkuna) return;
+    // Siivotaan vasta kun tulostusdialogi on suljettu. afterprint ei laukea
+    // kaikissa selaimissa, joten varmistuksena myös ajastin.
+    let siivottu = false;
+    const siivoa = () => { if (!siivottu) { siivottu = true; kehys.remove(); } };
+    ikkuna.addEventListener('afterprint', siivoa);
+    setTimeout(siivoa, 60000);
+    ikkuna.focus();
+    ikkuna.print();
+  };
+  document.body.appendChild(kehys);
+};
+
 const REPORT_DETAIL_FIELDS = [
   { key: 'date', label: 'Päivämäärä' },
   { key: 'place', label: 'Tapahtumapaikka' },
@@ -844,6 +953,10 @@ export default function App() {
   const [riskAssessments, setRiskAssessments] = useState<any[]>([]);
   const [riskAssessmentsLoaded, setRiskAssessmentsLoaded] = useState(false);
   const [openedRiskAssessment, setOpenedRiskAssessment] = useState(null);
+  // Tulosteen esikatselu modaalissa: { otsikko, html }. Esikatselu näytetään
+  // sovelluksen sisällä eikä uudessa välilehdessä, koska ponnahdusikkunat ovat
+  // usein estettyjä (ks. tulostaDokumentti).
+  const [pdfEsikatselu, setPdfEsikatselu] = useState<{ otsikko: string; html: string } | null>(null);
 
   // Sisäänkirjatut työntekijät (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
   const [checkedInEmployees, setCheckedInEmployees] = useState(initialCheckedInEmployees);
@@ -2073,6 +2186,49 @@ export default function App() {
       ].join(rivi)
     );
   };
+  // Kokoaa raportista tulostettavan dokumentin ja avaa sen omaan ikkunaansa.
+  // tulosta=true vie suoraan selaimen tulostusikkunaan, josta PDF tallennetaan.
+  // Peitetyt kentät (henkilötunnus, osoite) tulostuvat kokonaisina: tuloste on
+  // se virallinen asiakirja joka toimitetaan viranomaiselle tai toimeksiantajalle,
+  // ja peittäminen on vain näyttötason suoja selailua varten (ks. REPORT_DETAIL_FIELDS).
+  const avaaRaporttiPdf = (report: any, tulosta: boolean) => {
+    const naytetaan = (kentta: { key: string; bool?: boolean }) => {
+      const arvo = report[kentta.key];
+      if (kentta.bool) return !!arvo;
+      return arvo !== undefined && arvo !== null && String(arvo).trim() !== '' && String(arvo) !== '0';
+    };
+
+    const kentat = [];
+    if (report.summary) kentat.push({ otsikko: 'Kuvaus', arvo: String(report.summary) });
+    for (const kentta of REPORT_DETAIL_FIELDS) {
+      // date ja time näkyvät jo yläosan metatiedoissa, ei toisteta niitä.
+      if (kentta.key === 'date' || !naytetaan(kentta)) continue;
+      kentat.push({ otsikko: kentta.label, arvo: kentta.bool ? 'Kyllä' : String(report[kentta.key]) });
+    }
+    if (report.attachment?.name) {
+      kentat.push({ otsikko: 'Liite', arvo: `${report.attachment.name} (ei sisälly tähän tulosteeseen)` });
+    }
+
+    const luotu = new Date().toLocaleString('fi-FI');
+    const html = tulostusDokumentti({
+      otsikko: report.type || 'Raportti',
+      tunniste: report.id,
+      meta: [
+        { otsikko: 'Tapahtuma', arvo: findEventName(report.eventId, events) },
+        { otsikko: 'Laatija', arvo: report.author },
+        { otsikko: 'Päivämäärä', arvo: report.date ? formatFiDate(report.date) : '' },
+        { otsikko: 'Kellonaika', arvo: report.time },
+      ],
+      kentat,
+      huomio:
+        '<strong>Sisältää henkilötietoja.</strong> Käsittele ja jaa vain toimeksiannon ' +
+        'edellyttämässä laajuudessa. Turvallisuusalan kirjauksilla on lakisääteinen ' +
+        'säilytysaika.<br>Tuloste luotu ' + htmlTeksti(luotu) + ' — ' + htmlTeksti(sessionNickname || '') + '.',
+    });
+    if (tulosta) tulostaDokumentti(html);
+    else setPdfEsikatselu({ otsikko: `${report.type || 'Raportti'} — ${report.id}`, html });
+  };
+
   const handleDeleteReport = (report) => {
     const confirmed = window.confirm(
       `Haluatko varmasti poistaa raportin "${report.type}" (${report.id})?\n\n` +
@@ -5915,17 +6071,83 @@ export default function App() {
         );
       }
       case 'documents_forms': {
+        // Kukin lomake on kytketty siihen sovelluksen lomakkeeseen jolla se
+        // täytetään (tab) ja kenttäluetteloon jonka mukaan tyhjä paperipohja
+        // tulostetaan (kentat). Neljälle listan lomakkeelle ei ole vielä omaa
+        // toteutusta — niiden painikkeet ovat pois käytöstä ja kertovat syyn,
+        // mikä on rehellisempi kuin painike joka ei tee mitään. Näistä kaksi on
+        // viranomaislomakkeita, joiden tyhjää pohjaa ei pidä keksiä itse vaan
+        // ottaa mallia virallisesta lomakkeesta.
         const fillableForms = [
-          { name: 'Tapahtumailmoitus', desc: 'JV:n tai vartijan oma ilmoitus toimenpiteestä.', tag: 'Viranomaislomake' },
+          {
+            name: 'Tapahtumailmoitus',
+            desc: 'JV:n tai vartijan oma ilmoitus toimenpiteestä.',
+            tag: 'Viranomaislomake',
+            tab: 'report_jv',
+            kentat: [
+              'Järjestyksenvalvojan nimi', 'Turvallisuusalan elinkeinoluvan haltija',
+              'Tapahtumapaikka', 'Päivämäärä', 'Kellonaika',
+              'Kohdehenkilön sukunimi', 'Kohdehenkilön etunimet', 'Kohdehenkilön henkilötunnus',
+              'Kohdehenkilön osoitetiedot', 'Tuntomerkit',
+              'Havainnot käyttäytymisestä ja tilasta',
+              'Kiinniotto tai voimakeinot (kyllä/ei)', 'Voimankäyttövälineet (kyllä/ei)',
+              'Ampuma-ase esillä tai käytetty (kyllä/ei)', 'Ensiapu tai ensihoito (kyllä/ei)',
+              'Vapaa kuvaus tapahtumasta', 'TIKE:n kommentti', 'Allekirjoitus ja nimenselvennys',
+            ],
+          },
           { name: 'Kiinniottoilmoitus', desc: 'Kiinniotetun luovutus poliisille.', tag: 'Viranomaislomake' },
           { name: 'Voimankäyttöselvitys', desc: 'Selvitys voimakeinojen ja välineiden käytöstä.', tag: 'Sisäinen' },
-          { name: 'Ensiapukaavake', desc: 'Ensiaputilanteen kirjaus ja jatkotoimet.', tag: 'Sisäinen' },
-          { name: 'Vahinkoilmoitus', desc: 'Omaisuusvaurio ja vastuukysymykset.', tag: 'Sisäinen' },
-          { name: 'Löytötavarailmoitus', desc: 'Vastaanotettu tai luovutettu löytötavara.', tag: 'Sisäinen' },
+          {
+            name: 'Ensiapukaavake',
+            desc: 'Ensiaputilanteen kirjaus ja jatkotoimet.',
+            tag: 'Sisäinen',
+            tab: 'tike_form_firstaid',
+            kentat: [
+              'Päivämäärä', 'Kellonaika', 'Tapahtuman kuvaus', 'Tehdyt toimenpiteet',
+              'Käytetyt resurssit', 'Paikalla olleet työntekijät', 'Kirjaaja',
+            ],
+          },
+          {
+            name: 'Vahinkoilmoitus',
+            desc: 'Omaisuusvaurio ja vastuukysymykset.',
+            tag: 'Sisäinen',
+            tab: 'tike_form_damage',
+            kentat: [
+              'Päivämäärä', 'Kellonaika', 'Tapahtuman kuvaus', 'Tehdyt toimenpiteet',
+              'Paikalla olleet työntekijät', 'Kirjaaja',
+            ],
+          },
+          {
+            name: 'Löytötavarailmoitus',
+            desc: 'Vastaanotettu tai luovutettu löytötavara.',
+            tag: 'Sisäinen',
+            tab: 'tike_form_lostfound',
+            kentat: [
+              'Päivämäärä', 'Kellonaika', 'Tapahtuman kuvaus', 'Tehdyt toimenpiteet',
+              'Paikalla olleet työntekijät', 'Kirjaaja',
+            ],
+          },
           { name: 'Perehdytyslomake', desc: 'Työntekijän perehdytys ja kuittaus.', tag: 'Sisäinen' },
-          { name: 'Vuoron luovutus', desc: 'Vuoronvaihdon tilannekatsaus ja avoimet asiat.', tag: 'Sisäinen' }
+          { name: 'Vuoron luovutus', desc: 'Vuoronvaihdon tilannekatsaus ja avoimet asiat.', tag: 'Sisäinen' },
         ];
 
+        const tulostaTyhjaPohja = (lomake: { name: string; desc: string; kentat?: string[] }) => {
+          setPdfEsikatselu({
+            otsikko: `${lomake.name} — tyhjä pohja`,
+            html: tulostusDokumentti({
+              otsikko: lomake.name,
+              tunniste: 'Tyhjä pohja',
+              meta: [
+                { otsikko: 'Tapahtuma', arvo: findEventName(selectedEvent, events) },
+                { otsikko: 'Lomake', arvo: lomake.desc },
+              ],
+              kentat: (lomake.kentat || []).map((otsikko: string) => ({ otsikko, tyhja: true })),
+              huomio:
+                '<strong>Tyhjä pohja käsin täytettäväksi.</strong> Kirjaa tiedot ' +
+                'ensi tilassa myös järjestelmään, jotta ne säilyvät ja näkyvät raporteissa.',
+            }),
+          });
+        };
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
             <button
@@ -5941,7 +6163,7 @@ export default function App() {
                 <Clipboard className="text-indigo-500" size={24} />
                 Täytettävät lomakkeet
               </h2>
-              <p className="text-sm text-slate-500 mt-1">Avaa lomake täytettäväksi tai tulosta tyhjä pohja.</p>
+              <p className="text-sm text-slate-500 mt-1">Avaa lomake täytettäväksi tai tulosta tyhjä pohja käsin täytettäväksi.</p>
             </div>
 
             <div className="bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-200">
@@ -5956,13 +6178,30 @@ export default function App() {
                     </div>
                     <p className="text-xs text-slate-500 mt-1">{form.desc}</p>
                   </div>
-                  <div className="flex gap-2">
-                    <button className="text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors">
-                      Täytä
-                    </button>
-                    <button className="text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-md transition-colors">
-                      Tyhjä pohja
-                    </button>
+                  <div className="flex gap-2 items-center">
+                    {form.tab ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab(form.tab)}
+                          className="text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
+                        >
+                          Täytä
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => tulostaTyhjaPohja(form)}
+                          title="Tulostaa tyhjän pohjan käsin täytettäväksi"
+                          className="text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-md transition-colors"
+                        >
+                          Tyhjä pohja
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-xs text-slate-400 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-md">
+                        Ei vielä toteutettu
+                      </span>
+                    )}
                   </div>
                 </div>
               ))}
@@ -6001,6 +6240,13 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
+                  {currentEventReports.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-sm text-slate-500">
+                        Ei vielä tallennettuja kirjauksia tälle tapahtumalle.
+                      </td>
+                    </tr>
+                  )}
                   {currentEventReports.map((report) => (
                     <tr key={report.id} className="hover:bg-white transition-colors">
                       <td className="p-4 font-mono text-xs text-slate-700">{report.id}</td>
@@ -6009,11 +6255,21 @@ export default function App() {
                       <td className="p-4 font-mono text-slate-600">{report.time}</td>
                       <td className="p-4 text-right">
                         <div className="flex justify-end gap-2">
-                          <button className="text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors">
-                            Avaa PDF
+                          <button
+                            type="button"
+                            onClick={() => avaaRaporttiPdf(report, false)}
+                            title="Avaa tulostusversio omaan välilehteen"
+                            className="text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors"
+                          >
+                            Esikatsele
                           </button>
-                          <button className="text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-md transition-colors">
-                            Lataa
+                          <button
+                            type="button"
+                            onClick={() => avaaRaporttiPdf(report, true)}
+                            title="Avaa tulostusikkunan, josta tallennetaan PDF-tiedostona"
+                            className="text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-md transition-colors"
+                          >
+                            Tallenna PDF
                           </button>
                         </div>
                       </td>
@@ -6023,9 +6279,14 @@ export default function App() {
               </table>
             </div>
 
-            <p className="text-xs text-slate-500 mt-4">
-              PDF-tiedostot sisältävät henkilötietoja. Käsittele ja jaa vain toimeksiannon edellyttämässä laajuudessa.
-            </p>
+            <div className="text-xs text-slate-500 mt-4 space-y-1">
+              <p>
+                <span className="font-medium text-slate-600">Esikatsele</span> avaa tulostusversion omaan välilehteen.{' '}
+                <span className="font-medium text-slate-600">Tallenna PDF</span> avaa selaimen tulostusikkunan, josta
+                valitaan kohteeksi &quot;Tallenna PDF-tiedostona&quot;. Sama tuloste käy myös paperitulosteeksi.
+              </p>
+              <p>PDF-tiedostot sisältävät henkilötietoja. Käsittele ja jaa vain toimeksiannon edellyttämässä laajuudessa.</p>
+            </div>
           </div>
         );
       case 'documents_trash':
@@ -9164,6 +9425,49 @@ export default function App() {
         </div>
       )}
 
+      {/* Tulosteen esikatselu. Dokumentti näytetään iframessa omine tyyleineen,
+          jottei sovelluksen tyyli vaikuta siihen miltä tuloste näyttää. */}
+      {pdfEsikatselu && (
+        <div
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[110] flex items-center justify-center p-4"
+          onClick={() => setPdfEsikatselu(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-4xl h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center p-4 border-b border-slate-100 gap-3">
+              <h2 className="font-bold text-slate-800 flex items-center gap-2 min-w-0">
+                <FileText size={18} className="text-emerald-500 shrink-0" />
+                <span className="truncate">{pdfEsikatselu.otsikko}</span>
+              </h2>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => tulostaDokumentti(pdfEsikatselu.html)}
+                  className="px-4 py-2 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <FileText size={16} />
+                  Tallenna PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPdfEsikatselu(null)}
+                  className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors"
+                  aria-label="Sulje esikatselu"
+                >
+                  <X size={22} />
+                </button>
+              </div>
+            </div>
+            <iframe
+              title="Tulosteen esikatselu"
+              srcDoc={pdfEsikatselu.html}
+              className="flex-1 w-full rounded-b-xl"
+            />
+          </div>
+        </div>
+      )}
       {openedReport && (
         <div
           className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
