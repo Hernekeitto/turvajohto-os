@@ -821,6 +821,11 @@ const SitemapPermissionRow = ({ node, depth, permDraft, onToggle, onCascade }) =
   );
 };
 
+// Montako hälytystä Tilannekuvan paneeliin mahtuu ennen kuin loput siirtyvät
+// "Näytä kaikki" -painikkeen taakse. Ilman rajaa paneeli kasvaisi rajatta ja
+// työntäisi muun tilannekuvan näytön alareunan alle.
+const HALYTYKSET_NAYTOSSA = 5;
+
 const AlertBanner = ({ alert }) => {
   const colors = {
     critical: 'bg-rose-50 border-rose-200 text-rose-800',
@@ -2775,6 +2780,10 @@ export default function App() {
   // Riskiluokan 3-5 riskiarvioinnit näytetään myös Tilannekuvan hälytyksissä
   const riskAlerts = currentEventRiskAssessments
     .filter(ra => ra.score >= 3)
+    // Vakavin ensin: Tilannekuvan paneeliin mahtuu vain osa (HALYTYKSET_NAYTOSSA),
+    // joten järjestys ratkaisee mitkä niistä käyttäjä näkee. filter palauttaa uuden
+    // taulukon, joten sort ei muuta alkuperäistä listaa.
+    .sort((a, b) => b.score - a.score)
     .map(ra => ({
       id: `risk-${ra.id}`,
       type: ra.score >= 4 ? 'critical' : 'warning',
@@ -3055,15 +3064,34 @@ export default function App() {
                   <Activity className="text-rose-500" size={20} />
                   Aktiiviset Hälytykset ja Poikkeamat
                 </h2>
-                <button className="text-sm text-indigo-600 font-medium hover:text-indigo-700">Näytä Kaikki</button>
+                {/* Hälytykset syntyvät riskiluokan 3-5 riskiarvioista, joten "kaikki"
+                    tarkoittaa tehtyjen riskiarvioiden listaa. Painike piilotetaan jos
+                    hälytyksiä ei ole tai käyttäjällä ei ole oikeutta kohdesivulle —
+                    muuten se veisi "Ei käyttöoikeutta" -sivulle. */}
+                {riskAlerts.length > 0 && (isAdminUser || canView(perms, selectedEvent, 'documents_risk_done')) && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('documents_risk_done')}
+                    className="text-sm text-indigo-600 font-medium hover:text-indigo-700"
+                  >
+                    {riskAlerts.length > HALYTYKSET_NAYTOSSA
+                      ? `Näytä kaikki (${riskAlerts.length})`
+                      : 'Näytä kaikki'}
+                  </button>
+                )}
               </div>
               <div className="space-y-1">
                 {riskAlerts.length === 0 ? (
                   <p className="text-sm text-slate-500 py-4 text-center">Ei aktiivisia hälytyksiä. Riskiluokan 3-5 riskiarviot näkyvät täällä automaattisesti.</p>
                 ) : (
-                  riskAlerts.map(alert => (
+                  riskAlerts.slice(0, HALYTYKSET_NAYTOSSA).map(alert => (
                     <AlertBanner key={alert.id} alert={alert} />
                   ))
+                )}
+                {riskAlerts.length > HALYTYKSET_NAYTOSSA && (
+                  <p className="text-xs text-slate-500 pt-2 text-center">
+                    Näytetään {HALYTYKSET_NAYTOSSA} vakavinta {riskAlerts.length} hälytyksestä.
+                  </p>
                 )}
               </div>
             </div>
