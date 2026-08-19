@@ -6559,9 +6559,56 @@ export default function App() {
   ) : null;
 
   // Kaikkiin näkymiin sisällytettävät päällekkäiselementit yhdessä paikassa.
+  // Tulosteen esikatselu: dokumentti iframessa omine tyyleineen, jottei sovelluksen
+  // tyyli vaikuta siihen milta tuloste nayttaa. Maaritelty tassa ja upotettu
+  // globalOverlaysiin, jotta esikatselu toimii myos tapahtumavalinnan
+  // "Tallennetut raportit" -listassa eika vain tapahtuman sisaisissa nakymissa.
+  const pdfEsikatseluModal = pdfEsikatselu ? (
+    <div
+      className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[110] flex items-center justify-center p-4"
+      onClick={() => setPdfEsikatselu(null)}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl w-full max-w-4xl h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-center p-4 border-b border-slate-100 gap-3">
+          <h2 className="font-bold text-slate-800 flex items-center gap-2 min-w-0">
+            <FileText size={18} className="text-emerald-500 shrink-0" />
+            <span className="truncate">{pdfEsikatselu.otsikko}</span>
+          </h2>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => tulostaDokumentti(pdfEsikatselu.html)}
+              className="px-4 py-2 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center gap-2"
+            >
+              <FileText size={16} />
+              Tallenna PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => setPdfEsikatselu(null)}
+              className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors"
+              aria-label="Sulje esikatselu"
+            >
+              <X size={22} />
+            </button>
+          </div>
+        </div>
+        <iframe
+          title="Tulosteen esikatselu"
+          srcDoc={pdfEsikatselu.html}
+          className="flex-1 w-full rounded-b-xl"
+        />
+      </div>
+    </div>
+  ) : null;
+
   const globalOverlays = (
     <>
       {changePasswordModal}
+      {pdfEsikatseluModal}
       {saveErrorBanner}
     </>
   );
@@ -8143,12 +8190,13 @@ export default function App() {
                     <th className="p-4">Tapahtuma</th>
                     <th className="p-4">Aika</th>
                     <th className="p-4">Liite</th>
+                    <th className="p-4 text-right">Toiminnot</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {sortedAllReports.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="p-8 text-center text-sm text-slate-500">
+                      <td colSpan={7} className="p-8 text-center text-sm text-slate-500">
                         Ei vielä tallennettuja raportteja.
                       </td>
                     </tr>
@@ -8173,6 +8221,26 @@ export default function App() {
                         ) : (
                           <span className="text-xs text-slate-300">—</span>
                         )}
+                      </td>
+                      <td className="p-4 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => avaaRaporttiPdf(report, false)}
+                            title="Avaa tulostusversio esikatseluun"
+                            className="text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors"
+                          >
+                            Esikatsele
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => avaaRaporttiPdf(report, true)}
+                            title="Avaa tulostusikkunan, josta tallennetaan PDF-tiedostona"
+                            className="text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-md transition-colors"
+                          >
+                            Tallenna PDF
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -9425,49 +9493,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Tulosteen esikatselu. Dokumentti näytetään iframessa omine tyyleineen,
-          jottei sovelluksen tyyli vaikuta siihen miltä tuloste näyttää. */}
-      {pdfEsikatselu && (
-        <div
-          className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[110] flex items-center justify-center p-4"
-          onClick={() => setPdfEsikatselu(null)}
-        >
-          <div
-            className="bg-white rounded-xl shadow-xl w-full max-w-4xl h-[90vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex justify-between items-center p-4 border-b border-slate-100 gap-3">
-              <h2 className="font-bold text-slate-800 flex items-center gap-2 min-w-0">
-                <FileText size={18} className="text-emerald-500 shrink-0" />
-                <span className="truncate">{pdfEsikatselu.otsikko}</span>
-              </h2>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => tulostaDokumentti(pdfEsikatselu.html)}
-                  className="px-4 py-2 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center gap-2"
-                >
-                  <FileText size={16} />
-                  Tallenna PDF
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPdfEsikatselu(null)}
-                  className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors"
-                  aria-label="Sulje esikatselu"
-                >
-                  <X size={22} />
-                </button>
-              </div>
-            </div>
-            <iframe
-              title="Tulosteen esikatselu"
-              srcDoc={pdfEsikatselu.html}
-              className="flex-1 w-full rounded-b-xl"
-            />
-          </div>
-        </div>
-      )}
       {openedReport && (
         <div
           className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
