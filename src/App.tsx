@@ -302,6 +302,11 @@ const REPORT_DETAIL_FIELDS = [
   { key: 'description', label: 'Vapaa kuvaus' },
   { key: 'tikeComment', label: 'TIKE:n kommentti' },
   { key: 'taskTitle', label: 'Tehtävän otsikko' },
+  // muotoile: kentän arvo on koneluettava (ISO-aikaleima), joten se muotoillaan
+  // vasta näytettäessä — sekä avatussa raportissa että PDF-tulosteessa.
+  { key: 'taskDoneAt', label: 'Tehtävä kuitattu tehdyksi', muotoile: (v: string) => new Date(v).toLocaleString('fi-FI') },
+  { key: 'taskDoneBy', label: 'Kuittaaja' },
+  { key: 'taskDoneComment', label: 'Kuittauksen kommentti' },
   { key: 'actions', label: 'Tehdyt toimenpiteet' },
   { key: 'resources', label: 'Käytetyt resurssit' },
   { key: 'employees', label: 'Paikalla olleet työntekijät' },
@@ -974,6 +979,8 @@ export default function App() {
   // Overview Tab State
   const [overviewCardTab, setOverviewCardTab] = useState('checklist'); // 'checklist' | 'reports'
   const [tikeLogPage, setTikeLogPage] = useState(0);
+  const [tehtavatPage, setTehtavatPage] = useState(0);
+  const [uusimmatPage, setUusimmatPage] = useState(0);
 
   // JV Form State
   // Järjestyksenvalvojan tapahtumailmoitus (report_jv). eventDate/eventTimeStr ovat
@@ -1012,6 +1019,9 @@ export default function App() {
   const [riskAssessments, setRiskAssessments] = useState<any[]>([]);
   const [riskAssessmentsLoaded, setRiskAssessmentsLoaded] = useState(false);
   const [openedRiskAssessment, setOpenedRiskAssessment] = useState(null);
+  // Kuitattavana oleva tehtävä ja sen kommenttiluonnos.
+  const [completingTask, setCompletingTask] = useState<any>(null);
+  const [completingTaskComment, setCompletingTaskComment] = useState('');
   // Tulosteen esikatselu modaalissa: { otsikko, html }. Esikatselu näytetään
   // sovelluksen sisällä eikä uudessa välilehdessä, koska ponnahdusikkunat ovat
   // usein estettyjä (ks. tulostaDokumentti).
@@ -1212,6 +1222,8 @@ export default function App() {
   // Palautetaan TIKE-lokin sivutus alkuun kun vaihdetaan tapahtumaa
   useEffect(() => {
     setTikeLogPage(0);
+    setTehtavatPage(0);
+    setUusimmatPage(0);
   }, [selectedEvent]);
 
   // Ladataan käyttäjälista aina kun "Muokkaa käyttäjiä" -listanäkymä avataan (myös
@@ -2266,7 +2278,12 @@ export default function App() {
     for (const kentta of REPORT_DETAIL_FIELDS) {
       // date ja time näkyvät jo yläosan metatiedoissa, ei toisteta niitä.
       if (kentta.key === 'date' || !naytetaan(kentta)) continue;
-      kentat.push({ otsikko: kentta.label, arvo: kentta.bool ? 'Kyllä' : String(report[kentta.key]) });
+      const arvo = kentta.bool
+        ? 'Kyllä'
+        : kentta.muotoile
+          ? kentta.muotoile(report[kentta.key])
+          : String(report[kentta.key]);
+      kentat.push({ otsikko: kentta.label, arvo });
     }
     if (report.attachment?.name) {
       kentat.push({ otsikko: 'Liite', arvo: `${report.attachment.name} (ei sisälly tähän tulosteeseen)` });
@@ -2290,6 +2307,25 @@ export default function App() {
     });
     if (tulosta) tulostaDokumentti(html);
     else setPdfEsikatselu({ otsikko: `${report.type || 'Raportti'} — ${report.id}`, html });
+  };
+
+  // Kuittaa tehtävän tehdyksi. Kirjaus itse EI katoa minnekään: se jää
+  // tallennettuihin raportteihin kuten ennenkin, ja kuittaus näkyy siellä omana
+  // kenttänään. Vain Tilannekuvan Tehtävät-lista suodattaa kuitatut pois, koska
+  // se on lista avoimista tehtävistä.
+  const handleCompleteTask = () => {
+    const report = completingTask;
+    if (!report) return;
+    const kuitattu = {
+      taskDoneAt: new Date().toISOString(),
+      taskDoneBy: sessionNickname || '',
+      taskDoneComment: completingTaskComment.trim(),
+    };
+    // Viiteyhtäläisyys (===) eikä id:n vertailu — raporttien tunnisteet eivät ole
+    // taatusti uniikkeja tapahtumien välillä (sama peruste kuin handleDeleteReportissa).
+    setReports(prev => prev.map(r => (r === report ? { ...r, ...kuitattu } : r)));
+    setCompletingTask(null);
+    setCompletingTaskComment('');
   };
 
   const handleDeleteReport = (report) => {
@@ -2868,13 +2904,33 @@ export default function App() {
   // kiireellisyys ensin ja saman kiireellisyyden sisällä vanhin ensin — pisimpään
   // odottanut on se joka todennäköisimmin unohtuu.
   const tehtavat = currentEventReports
-    .filter((r) => r.taskTitle)
+    .filter((r) => r.taskTitle && !r.taskDoneAt)
     .slice()
     .sort((a, b) => {
       const ero = tehtavanKiire(a.taskUrgency).jarjestys - tehtavanKiire(b.taskUrgency).jarjestys;
       if (ero !== 0) return ero;
       return String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
     });
+
+  const KOONTI_SIVUKOKO = 5;
+  const tehtavatPageCount = Math.max(1, Math.ceil(tehtavat.length / KOONTI_SIVUKOKO));
+  const tehtavatPageSafe = Math.min(tehtavatPage, tehtavatPageCount - 1);
+  const tehtavatSivulla = tehtavat.slice(
+    tehtavatPageSafe * KOONTI_SIVUKOKO,
+    tehtavatPageSafe * KOONTI_SIVUKOKO + KOONTI_SIVUKOKO
+  );
+
+  // "Uusimmat raportit" -koonti: avointa tehtävää ei näytetä täällä, koska se on jo
+  // saman kortin Tehtävät-välilehdellä. Kuittauksen jälkeen kirjaus ilmestyy tänne
+  // kuten mikä tahansa raportti. Rajaus koskee VAIN tätä koontia — Tallennetut
+  // raportit, PDF-lista ja TIKE-loki näyttävät kirjauksen normaalisti heti luonnista.
+  const uusimmatRaportit = currentEventReports.filter((r) => !(r.taskTitle && !r.taskDoneAt));
+  const uusimmatPageCount = Math.max(1, Math.ceil(uusimmatRaportit.length / KOONTI_SIVUKOKO));
+  const uusimmatPageSafe = Math.min(uusimmatPage, uusimmatPageCount - 1);
+  const uusimmatSivulla = uusimmatRaportit.slice(
+    uusimmatPageSafe * KOONTI_SIVUKOKO,
+    uusimmatPageSafe * KOONTI_SIVUKOKO + KOONTI_SIVUKOKO
+  );
 
   // TIKE-loki: kaikki tehdyt TIKE-kirjaukset paitsi työntekijän sisään-/uloskirjaukset
   // (ne täyttäisivät lokin nopeasti). currentEventReports on jo uusin ensin -järjestyksessä.
@@ -3099,7 +3155,7 @@ export default function App() {
                             rastitaan &quot;Merkitse tehtäväksi&quot;.
                           </p>
                         ) : (
-                          tehtavat.map((tehtava) => {
+                          tehtavatSivulla.map((tehtava) => {
                             const kiire = tehtavanKiire(tehtava.taskUrgency);
                             const ika = tehtavanIka(tehtava, currentTime);
                             return (
@@ -3115,17 +3171,60 @@ export default function App() {
                                 </div>
                                 {/* Ikä juoksee currentTimen tahdissa (päivittyy sekunnin välein),
                                     joten tehtävän odotusaika on koko ajan näkyvissä. */}
-                                <span className="text-xs font-mono tabular-nums text-slate-500 shrink-0 pt-0.5" title="Aikaa luonnista">
-                                  {ika}
-                                </span>
+                                <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                                  <span className="text-xs font-mono tabular-nums text-slate-500" title="Aikaa luonnista">
+                                    {ika}
+                                  </span>
+                                  {/* Tallennus kulkee raporttien kautta, joten kuittaus vaatii saman
+                                      muokkausoikeuden kuin avoimen kirjauksen tekeminen. Ilman
+                                      tarkistusta painike näyttäisi toimivan mutta palvelin hylkäisi sen. */}
+                                  {(isAdminUser || canEdit(perms, selectedEvent, 'tike_form_open')) && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); setCompletingTask(tehtava); setCompletingTaskComment(''); }}
+                                      title="Kuittaa tehdyksi — kirjaus säilyy tallennetuissa raporteissa"
+                                      aria-label="Kuittaa tehdyksi"
+                                      className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-white/70 transition-colors"
+                                    >
+                                      <CheckCircle size={18} />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                             );
                           })
                         )}
+                        {tehtavat.length > 0 && (
+                          <div className="flex justify-between items-center pt-3 mt-1 border-t border-slate-100">
+                            <span className="text-xs text-slate-500">{tehtavat.length} avointa tehtävää</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={tehtavatPageSafe === 0}
+                                onClick={() => setTehtavatPage(p => Math.max(0, p - 1))}
+                                className="px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Edellinen
+                              </button>
+                              <span className="text-xs text-slate-400">{tehtavatPageSafe + 1}/{tehtavatPageCount}</span>
+                              <button
+                                type="button"
+                                disabled={tehtavatPageSafe >= tehtavatPageCount - 1}
+                                onClick={() => setTehtavatPage(p => Math.min(tehtavatPageCount - 1, p + 1))}
+                                className="px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Seuraava
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="space-y-3 animate-in fade-in duration-300">
-                        {currentEventReports.slice(0, 8).map((rep, idx) => (
+                        {uusimmatRaportit.length === 0 && (
+                          <p className="text-sm text-slate-500 py-4 text-center">Ei vielä raportteja tälle tapahtumalle.</p>
+                        )}
+                        {uusimmatSivulla.map((rep, idx) => (
                           <div
                             key={idx}
                             onClick={() => { setOpenedReport(rep); setOpenedReportSource('overview'); }}
@@ -3139,7 +3238,32 @@ export default function App() {
                             <p className="text-xs text-slate-500">Kirjaaja: {rep.author} | ID: {rep.id.split('/').pop()}</p>
                           </div>
                         ))}
-                        <button 
+                        {uusimmatRaportit.length > 0 && (
+                          <div className="flex justify-between items-center pt-3 mt-1 border-t border-slate-100">
+                            <span className="text-xs text-slate-500">{uusimmatRaportit.length} raporttia</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={uusimmatPageSafe === 0}
+                                onClick={() => setUusimmatPage(p => Math.max(0, p - 1))}
+                                className="px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Edellinen
+                              </button>
+                              <span className="text-xs text-slate-400">{uusimmatPageSafe + 1}/{uusimmatPageCount}</span>
+                              <button
+                                type="button"
+                                disabled={uusimmatPageSafe >= uusimmatPageCount - 1}
+                                onClick={() => setUusimmatPage(p => Math.min(uusimmatPageCount - 1, p + 1))}
+                                className="px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Seuraava
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        <button
+                          type="button"
                           onClick={() => setActiveTab('report_list')}
                           className="w-full mt-2 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
                         >
@@ -9682,6 +9806,77 @@ export default function App() {
         </div>
       )}
 
+      {/* Tehtävän kuittaus. Oma modaali eikä yhden klikkauksen toiminto, koska
+          kuittauksen yhteydessä kysytään kommentti tehtävän aikana ilmenneistä
+          ongelmista — se on usein se tieto joka muuten jää kirjaamatta. */}
+      {completingTask && (
+        <div
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+          onClick={() => { setCompletingTask(null); setCompletingTaskComment(''); }}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-md w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-start p-5 border-b border-slate-100 gap-3">
+              <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2 min-w-0">
+                <CheckCircle size={20} className="text-emerald-500 shrink-0" />
+                <span className="truncate">Kuittaa tehdyksi</span>
+              </h2>
+              <button
+                onClick={() => { setCompletingTask(null); setCompletingTaskComment(''); }}
+                className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors shrink-0"
+                aria-label="Sulje"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-left">
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Tehtävä</p>
+                <p className="text-sm font-medium text-slate-800 mt-0.5">{completingTask.taskTitle}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Kommentti <span className="font-normal text-slate-400">(valinnainen)</span>
+                </label>
+                <textarea
+                  rows={4}
+                  value={completingTaskComment}
+                  onChange={(e) => setCompletingTaskComment(e.target.value)}
+                  className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-emerald-500"
+                  placeholder="Ilmenikö tehtävän aikana ongelmia, viivästyksiä tai jotain muuta jatkon kannalta olennaista..."
+                />
+              </div>
+
+              <p className="text-xs text-slate-500">
+                Kuittaus poistaa tehtävän Tilannekuvan Tehtävät-listalta. Kirjaus itse säilyy
+                tallennetuissa raporteissa, ja kuittaus kommentteineen näkyy siellä.
+              </p>
+            </div>
+
+            <div className="p-4 border-t border-slate-100 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setCompletingTask(null); setCompletingTaskComment(''); }}
+                className="px-5 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Peruuta
+              </button>
+              <button
+                type="button"
+                onClick={handleCompleteTask}
+                className="px-5 py-2 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors flex items-center gap-2"
+              >
+                <CheckCircle size={16} />
+                Kuittaa tehdyksi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {openedReport && (
         <div
           className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
@@ -9762,7 +9957,9 @@ export default function App() {
                         </button>
                       </div>
                     ) : (
-                      <p className="text-slate-700">{f.bool ? 'Kyllä' : openedReport[f.key]}</p>
+                      <p className="text-slate-700 whitespace-pre-wrap">
+                        {f.bool ? 'Kyllä' : f.muotoile ? f.muotoile(openedReport[f.key]) : openedReport[f.key]}
+                      </p>
                     )}
                   </div>
                 );

@@ -57,6 +57,7 @@ const ENCRYPTED_FIELDS = {
     'description',
     'tikeComment',
     'taskTitle',
+    'taskDoneComment',
     'actions',
     'resources',
     'employees',
