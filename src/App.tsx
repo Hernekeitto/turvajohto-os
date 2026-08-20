@@ -494,6 +494,10 @@ const muotoileTavut = (tavua: number) => {
 // Poikkeamiksi laskettavat kirjaustyypit
 // 'jvreport' = järjestyksenvalvojan tapahtumailmoitus (LYTP). Se on poikkeama samalla
 // perusteella kuin 'jvaction': kirjaus toimenpiteestä joka kohdistui henkilöön.
+// Sisäänkirjauksen roolit. "Ensiapu" ja "Muu" lisättiin, koska työntekijätilanteen
+// laatikoissa oli niille kovakoodatut luvut (12 ja 8) ilman mitään datalähdettä.
+const CHECKIN_ROLES = ['Järjestyksenvalvoja', 'Vartija', 'Ensiapu', 'Muu'];
+
 const DEVIATION_TYPES = ['jvaction', 'jvreport', 'firstaid', 'threat', 'fence', 'damage'];
 
 // Raportit ovat polymorfisia: 14 eri typeId:tä, joilla kullakin omat lisäkenttänsä
@@ -1598,18 +1602,43 @@ export default function App() {
   // kuukauden, mutta tapahtumakoodi on kovakoodattu "FesX" riippumatta siitä mikä
   // tapahtuma on valittuna. Raportin luontiaika luetaan createdAt-kentästä, joka
   // lisätään jokaiseen uuteen raporttiin (lakisääteisen säilytysajan laskenta).
+  // Tunnisteen tapahtumakoodi johdetaan valitun tapahtuman nimestä, ei kiinteästä
+  // "FesX"-merkkijonosta. Koodi on raportin virallinen yksilöivä tieto, joten se oli
+  // väärä heti toisesta tapahtumasta alkaen. Muoto: ensimmäiset kirjaimet ilman
+  // ääkkösiä ja välejä, esim. "FestivaaliX" -> "FesX" (sama kuin ennen FestivaaliX:lle),
+  // "Kesäjuhla Ö" -> "KesJ". Fallback estää tyhjän koodin jos nimi on pelkkiä merkkejä.
+  const getEventCode = () => {
+    // Ääkköset puretaan (Ö -> O) ja muut merkit pudotetaan, jotta koodi kelpaa
+    // tiedostonimiin ja viranomaisviitteisiin sellaisenaan.
+    const sanat = String(findEventName(selectedEvent, events))
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^A-Za-z0-9 ]/g, ' ')
+      .trim().split(/\s+/).filter(Boolean);
+    if (sanat.length === 0) return 'TAP';
+    const eka = sanat[0];
+    // Monisanainen nimi: kolme ensimmäistä kirjainta + seuraavan sanan alkukirjain
+    // ("Provinssi 2026" -> "Pro2"). Pelkät alkukirjaimet antaisivat liian lyhyen
+    // ja tunnistamattoman koodin ("P2").
+    if (sanat.length > 1) return eka.slice(0, 3) + sanat[1][0].toUpperCase();
+    // Yhden sanan nimi jonka lopussa on iso kirjain tai numero: se erottaa nimen,
+    // joten se otetaan mukaan ("FestivaaliX" -> "FesX", kuten ennenkin).
+    const viimeinen = eka.slice(-1);
+    if (eka.length > 4 && /[A-Z0-9]/.test(viimeinen)) return eka.slice(0, 3) + viimeinen;
+    return eka.slice(0, 4);
+  };
+
   const getDynamicId = () => {
     const now = new Date();
     const yy = String(now.getFullYear()).slice(-2);
     const dd = String(now.getDate()).padStart(2, '0');
     const mm = String(now.getMonth() + 1).padStart(2, '0');
-    return `${yy}/FesX/${dd}${mm}/${runningNumber}`;
+    return `${yy}/${getEventCode()}/${dd}${mm}/${runningNumber}`;
   };
 
   const getRiskId = () => {
     const now = new Date();
     const yy = String(now.getFullYear()).slice(-2);
-    return `${yy}/FesX/RA/${String(riskRunningNumber).padStart(3, '0')}`;
+    return `${yy}/${getEventCode()}/RA/${String(riskRunningNumber).padStart(3, '0')}`;
   };
 
   const handleSaveRiskAssessment = () => {
@@ -2878,6 +2907,10 @@ export default function App() {
   // vasta merkittyjä eikä jo uloskirjattuja).
   const jvCount = currentEventCheckedIn.filter(e => e.role === 'Järjestyksenvalvoja' && getEmpStatus(e) === 'checked_in').length;
   const guardCount = currentEventCheckedIn.filter(e => e.role === 'Vartija' && getEmpStatus(e) === 'checked_in').length;
+  // Ensiapu- ja muu henkilöstö: samat laskurit kuin JV/vartija, eivät kovakoodattuja
+  // lukuja kuten aiemmin. Rooli valitaan sisäänkirjauksessa (ks. CHECKIN_ROLES).
+  const firstAidStaffCount = currentEventCheckedIn.filter(e => e.role === 'Ensiapu' && getEmpStatus(e) === 'checked_in').length;
+  const otherStaffCount = currentEventCheckedIn.filter(e => e.role === 'Muu' && getEmpStatus(e) === 'checked_in').length;
   // Valitun tapahtuman perustietolomake. Määritelty tässä, koska ensimmäinen
   // käyttö on heti alla oleva JV-mitoitus — myöhemmin samaa lomaketta luetaan
   // myös avausvalmiuden laskurissa.
@@ -3899,15 +3932,15 @@ export default function App() {
                 <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">Vartijat</div>
               </div>
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center flex flex-col justify-center">
-                <div className="text-2xl font-bold text-slate-800">12</div>
+                <div className="text-2xl font-bold text-slate-800">{firstAidStaffCount}</div>
                 <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">EA henkilöt</div>
               </div>
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center flex flex-col justify-center">
-                <div className="text-2xl font-bold text-slate-800">8</div>
-                <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">Muu avoin</div>
+                <div className="text-2xl font-bold text-slate-800">{otherStaffCount}</div>
+                <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">Muu henkilöstö</div>
               </div>
               <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 text-center flex flex-col justify-center">
-                <div className="text-2xl font-bold text-amber-700">3</div>
+                <div className="text-2xl font-bold text-amber-700">{deviationCount}</div>
                 <div className="text-xs text-amber-600 font-medium uppercase tracking-wide mt-1">Poikkeamat</div>
               </div>
             </div>
@@ -4014,27 +4047,19 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-col justify-center">
                       <label className="block text-sm font-bold text-slate-700 mb-3">Työntekijän rooli</label>
-                      <div className="flex gap-6">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input 
-                            type="radio" 
-                            name="role" 
-                            className="w-4 h-4 text-emerald-600 focus:ring-emerald-500" 
-                            checked={checkInRole === 'Järjestyksenvalvoja'}
-                            onChange={() => setCheckInRole('Järjestyksenvalvoja')}
-                          />
-                          <span className="text-sm font-medium text-slate-700">Järjestyksenvalvoja</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input 
-                            type="radio" 
-                            name="role" 
-                            className="w-4 h-4 text-emerald-600 focus:ring-emerald-500" 
-                            checked={checkInRole === 'Vartija'}
-                            onChange={() => setCheckInRole('Vartija')}
-                          />
-                          <span className="text-sm font-medium text-slate-700">Vartija</span>
-                        </label>
+                      <div className="flex gap-x-6 gap-y-2 flex-wrap">
+                        {CHECKIN_ROLES.map((rooli) => (
+                          <label key={rooli} className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="role"
+                              className="w-4 h-4 text-emerald-600 focus:ring-emerald-500"
+                              checked={checkInRole === rooli}
+                              onChange={() => setCheckInRole(rooli)}
+                            />
+                            <span className="text-sm font-medium text-slate-700">{rooli}</span>
+                          </label>
+                        ))}
                       </div>
                     </div>
 
@@ -4248,15 +4273,15 @@ export default function App() {
                 <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">Vartijat</div>
               </div>
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center flex flex-col justify-center">
-                <div className="text-2xl font-bold text-slate-800">12</div>
+                <div className="text-2xl font-bold text-slate-800">{firstAidStaffCount}</div>
                 <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">EA henkilöt</div>
               </div>
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center flex flex-col justify-center">
-                <div className="text-2xl font-bold text-slate-800">8</div>
-                <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">Muu avoin</div>
+                <div className="text-2xl font-bold text-slate-800">{otherStaffCount}</div>
+                <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">Muu henkilöstö</div>
               </div>
               <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 text-center flex flex-col justify-center">
-                <div className="text-2xl font-bold text-amber-700">3</div>
+                <div className="text-2xl font-bold text-amber-700">{deviationCount}</div>
                 <div className="text-xs text-amber-600 font-medium uppercase tracking-wide mt-1">Poikkeamat</div>
               </div>
             </div>
@@ -5236,6 +5261,10 @@ export default function App() {
           </div>
         );
       }
+      case 'tike_form_fence':
+      case 'tike_form_patrol':
+      case 'tike_form_briefing':
+      case 'tike_form_management':
       case 'tike_form_threat':
       case 'tike_form_damage':
       case 'tike_form_lostfound':
@@ -5247,6 +5276,10 @@ export default function App() {
           tike_form_lostfound: { title: 'Löytötavara', icon: Package, iconColor: 'text-indigo-500', btnBg: 'bg-indigo-600 hover:bg-indigo-700', nytBg: 'bg-indigo-100 hover:bg-indigo-200 text-indigo-800', focusRing: 'focus:ring-indigo-500', desc: 'Kirjaa vastaanotetut tai toimitetut löytötavarat.' },
           tike_form_queue: { title: 'Portin jonon odotusaika', icon: Clock, iconColor: 'text-blue-500', btnBg: 'bg-blue-600 hover:bg-blue-700', nytBg: 'bg-blue-100 hover:bg-blue-200 text-blue-800', focusRing: 'focus:ring-blue-500', desc: 'Kirjaa porttien jonotilanne ja odotusajat.' },
           tike_form_weather: { title: 'Sääraportti', icon: Cloud, iconColor: 'text-sky-500', btnBg: 'bg-sky-600 hover:bg-sky-700', nytBg: 'bg-sky-100 hover:bg-sky-200 text-sky-800', focusRing: 'focus:ring-sky-500', desc: 'Kirjaa sääolosuhteiden muutokset ja varautumistoimenpiteet.' },
+          tike_form_fence: { title: 'Aitojen ylitys / luvaton sisäänpääsy', icon: ShieldAlert, iconColor: 'text-orange-500', btnBg: 'bg-orange-600 hover:bg-orange-700', nytBg: 'bg-orange-100 hover:bg-orange-200 text-orange-800', focusRing: 'focus:ring-orange-500', desc: 'Kirjaa aidan ylitykset ja muu luvaton sisäänpääsy alueelle.' },
+          tike_form_patrol: { title: 'Kierrosraportti', icon: Clipboard, iconColor: 'text-blue-500', btnBg: 'bg-blue-600 hover:bg-blue-700', nytBg: 'bg-blue-100 hover:bg-blue-200 text-blue-800', focusRing: 'focus:ring-blue-500', desc: 'Kirjaa kierroksella tehdyt havainnot ja toimenpiteet.' },
+          tike_form_briefing: { title: 'Briefing', icon: Users, iconColor: 'text-indigo-500', btnBg: 'bg-indigo-600 hover:bg-indigo-700', nytBg: 'bg-indigo-100 hover:bg-indigo-200 text-indigo-800', focusRing: 'focus:ring-indigo-500', desc: 'Kirjaa vuoron briefingin sisältö ja läsnäolijat.' },
+          tike_form_management: { title: 'Johdon tilannekatsaus', icon: BarChart2, iconColor: 'text-purple-500', btnBg: 'bg-purple-600 hover:bg-purple-700', nytBg: 'bg-purple-100 hover:bg-purple-200 text-purple-800', focusRing: 'focus:ring-purple-500', desc: 'Kirjaa johdolle annettu tilannekatsaus ja siinä tehdyt linjaukset.' },
         };
         
         const config = genericForms[activeTab];
