@@ -1025,7 +1025,9 @@ export default function App() {
   // Riskiarvioinnit (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
   const [riskAssessments, setRiskAssessments] = useState<any[]>([]);
   const [riskAssessmentsLoaded, setRiskAssessmentsLoaded] = useState(false);
-  const [openedRiskAssessment, setOpenedRiskAssessment] = useState(null);
+  // any: riskiarvio on vapaamuotoinen tietue kuten raportitkin, eikä useState(null)
+  // -päättely (never) salli sen kenttien lukemista.
+  const [openedRiskAssessment, setOpenedRiskAssessment] = useState<any>(null);
   // Kuitattavana oleva tehtävä ja sen kommenttiluonnos.
   const [completingTask, setCompletingTask] = useState<any>(null);
   const [completingTaskComment, setCompletingTaskComment] = useState('');
@@ -1544,8 +1546,14 @@ export default function App() {
   const currentEventCheckedIn = checkedInEmployees.filter(
     (e) => (e.eventId || 'fesx') === selectedEvent
   );
+  // Roskakoriin siirretyt kirjaukset (deletedAt) jätetään kaikkien näkymien ja
+  // laskureiden ulkopuolelle — ne näkyvät vain Roskakori-sivulla, josta ne voi
+  // palauttaa tai hävittää pysyvästi.
   const currentEventReports = reports.filter(
-    (r) => (r.eventId || 'fesx') === selectedEvent
+    (r) => (r.eventId || 'fesx') === selectedEvent && !r.deletedAt
+  );
+  const currentEventDeletedReports = reports.filter(
+    (r) => (r.eventId || 'fesx') === selectedEvent && r.deletedAt
   );
   const currentEventRiskAssessments = riskAssessments.filter(
     (r) => (r.eventId || 'fesx') === selectedEvent
@@ -1677,6 +1685,24 @@ export default function App() {
     setRiskRunningNumber(prev => prev + 1);
     resetRiskForm();
     setActiveTab('documents_risk_done');
+  };
+
+  // Riskiarvion hyväksyntä. Tila kirjoitettiin aiemmin kiinteästi arvoon
+  // "Toimenpiteet kesken" eikä mikään asettanut arvoa "Hyväksytty", joten
+  // listanäkymän vihreä tila oli saavuttamaton. Hyväksyntä kirjaa myös kuka
+  // hyväksyi ja milloin, koska se on riskiarviossa nimenomaan päätös.
+  const handleApproveRiskAssessment = (ra) => {
+    setRiskAssessments(prev => prev.map(r => (r === ra
+      ? { ...r, status: 'Hyväksytty', approvedBy: sessionNickname || '', approvedAt: new Date().toISOString() }
+      : r)));
+    setOpenedRiskAssessment(null);
+  };
+
+  const handleReopenRiskAssessment = (ra) => {
+    setRiskAssessments(prev => prev.map(r => (r === ra
+      ? { ...r, status: 'Toimenpiteet kesken', approvedBy: '', approvedAt: '' }
+      : r)));
+    setOpenedRiskAssessment(null);
   };
 
   const handleDeleteRiskAssessment = (ra) => {
@@ -2388,16 +2414,61 @@ export default function App() {
     setCompletingTaskComment('');
   };
 
+  // Poisto siirtää kirjauksen roskakoriin eikä hävitä sitä. Näkymä lupasi tämän jo
+  // ennestään ("Kirjauksia ei poisteta lopullisesti ennen säilytysajan päättymistä"),
+  // mutta toteutus poisti tietueen heti — lupaus oli siis paikkansapitämätön.
   const handleDeleteReport = (report) => {
     const confirmed = window.confirm(
-      `Haluatko varmasti poistaa raportin "${report.type}" (${report.id})?\n\n` +
-      'Poistoa ei voi perua.'
+      `Siirretäänkö raportti "${report.type}" (${report.id}) roskakoriin?\n\n` +
+      'Kirjaus säilyy roskakorissa, josta sen voi palauttaa tai hävittää pysyvästi.'
     );
     if (!confirmed) return;
     // Viiteyhtäläisyys (=== ) on turvallisempi kuin id:n vertailu, koska raporttien
     // tunnisteet eivät ole taatusti uniikkeja tapahtumien välillä.
-    setReports(prev => prev.filter(r => r !== report));
+    setReports(prev => prev.map(r => (r === report
+      ? { ...r, deletedAt: new Date().toISOString(), deletedBy: sessionNickname || '' }
+      : r)));
     setOpenedReport(null);
+  };
+
+  const handleRestoreReport = (report) => {
+    setReports(prev => prev.map(r => {
+      if (r !== report) return r;
+      // Kentät irrotetaan pois tietueesta; alaviiva kertoo ettei arvoja käytetä.
+      const { deletedAt: _deletedAt, deletedBy: _deletedBy, ...palautettu } = r;
+      return palautettu;
+    }));
+  };
+
+  // Pysyvä hävitys roskakorista. Vain adminille, kuten muutkin peruuttamattomat
+  // poistot (vrt. handlePermanentDeleteEvent ja vanhentuneiden ilmoitusten hävitys).
+  // Tallennus tehdään nimenomaisella kutsulla, jotta epäonnistuminen näkyy: pelkkä
+  // automaattitallennus on "fire and forget" eikä kertoisi lakisääteisen hävittämisen
+  // epäonnistuneen.
+  const handlePurgeReports = async (poistettavat: any[]) => {
+    if (poistettavat.length === 0) return;
+    const rivi = String.fromCharCode(10);
+    const vahvistus = window.prompt(
+      [
+        `HÄVITETÄÄN ${poistettavat.length} kirjausta pysyvästi.`,
+        '',
+        'Poistoa ei voi perua, ja myös liitetiedostot poistetaan.',
+        'Huomioi että tapahtumailmoituksilla on lakisääteinen säilytysaika.',
+        '',
+        'Vahvista kirjoittamalla: HÄVITÄ',
+      ].join(rivi)
+    );
+    if (vahvistus === null) return;
+    if (vahvistus.trim().toUpperCase() !== 'HÄVITÄ') {
+      alert('Vahvistus ei täsmää — mitään ei poistettu.');
+      return;
+    }
+    const poistettavatJoukko = new Set(poistettavat);
+    const jaljelle = reports.filter(r => !poistettavatJoukko.has(r));
+    const ok = await tallennaKokoelma('reports', jaljelle, { allowEmpty: true });
+    if (!ok) return; // virhe näkyy bannerissa; tilaa ei muuteta
+    setReports(jaljelle);
+    alert(`${poistettavat.length} kirjausta hävitettiin pysyvästi.`);
   };
 
   const handleSaveCheckIn = () => {
@@ -6741,26 +6812,90 @@ export default function App() {
                   <Archive className="text-slate-500" size={24} />
                   Roskakori
                 </h2>
-                <p className="text-sm text-slate-500 mt-1">Poistetut kirjaukset ja asiakirjat.</p>
+                <p className="text-sm text-slate-500 mt-1">
+                  Roskakoriin siirretyt kirjaukset. Ne eivät näy raporttilistauksissa eivätkä
+                  tilannekuvan laskureissa, mutta säilyvät kunnes ne hävitetään pysyvästi.
+                </p>
               </div>
-              <button className="px-4 py-2 text-sm font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors">
-                Tyhjennä roskakori
-              </button>
+              {/* Pysyvä hävitys on peruuttamaton, joten se on vain pääkäyttäjälle —
+                  sama linja kuin tapahtuman pysyvässä poistossa ja säilytysaikojen
+                  hävityksessä. */}
+              {isAdminUser && currentEventDeletedReports.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handlePurgeReports(currentEventDeletedReports)}
+                  className="px-4 py-2 text-sm font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <Trash2 size={16} />
+                  Tyhjennä roskakori ({currentEventDeletedReports.length})
+                </button>
+              )}
             </div>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-12 text-center">
-              <Archive className="text-slate-300 mx-auto mb-3" size={40} />
-              <p className="text-sm font-medium text-slate-600">Roskakori on tyhjä.</p>
-              <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                Poistetut asiakirjat näkyvät täällä. Kirjauksia ei poisteta lopullisesti ennen säilytysajan päättymistä.
-              </p>
-            </div>
+            {currentEventDeletedReports.length === 0 ? (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-12 text-center">
+                <Archive className="text-slate-300 mx-auto mb-3" size={40} />
+                <p className="text-sm font-medium text-slate-600">Roskakori on tyhjä.</p>
+                <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                  Kun kirjaus poistetaan avatun raportin roskakorikuvakkeesta, se siirtyy tänne.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                    <tr>
+                      <th className="p-4">Tunniste</th>
+                      <th className="p-4">Tyyppi</th>
+                      <th className="p-4">Laatija</th>
+                      <th className="p-4">Poistettu</th>
+                      <th className="p-4 text-right">Toiminnot</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {currentEventDeletedReports.map((report) => (
+                      <tr key={report.id} className="hover:bg-white transition-colors">
+                        <td className="p-4 font-mono text-xs text-slate-700">{report.id}</td>
+                        <td className="p-4 font-medium text-slate-800">{report.type}</td>
+                        <td className="p-4 text-slate-600">{report.author}</td>
+                        <td className="p-4 text-slate-600 text-xs">
+                          {new Date(report.deletedAt).toLocaleString('fi-FI')}
+                          {report.deletedBy ? ` — ${report.deletedBy}` : ''}
+                        </td>
+                        <td className="p-4 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => { setOpenedReport(report); setOpenedReportSource('report_list'); }}
+                              className="text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-md transition-colors"
+                            >
+                              Avaa
+                            </button>
+                            {(isAdminUser || canEdit(perms, selectedEvent, 'documents_trash')) && (
+                              <button
+                                type="button"
+                                onClick={() => handleRestoreReport(report)}
+                                className="text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors"
+                              >
+                                Palauta
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
               <Info className="text-amber-600 shrink-0 mt-0.5" size={18} />
               <div className="text-sm text-amber-900">
-                Turvallisuusalan kirjauksilla on lakisääteinen säilytysaika. Tarkista säilytys- ja poistokäytännöt
-                toimeksiantajan tietosuojaselosteesta ennen roskakorin tyhjentämistä.
+                Turvallisuusalan kirjauksilla on lakisääteinen säilytysaika. Roskakoriin
+                siirtäminen ei ole hävittämistä — kirjaus on yhä tallessa. Tarkista
+                säilytys- ja poistokäytännöt toimeksiantajan tietosuojaselosteesta ennen
+                pysyvää hävittämistä. Säilytysaikojen tilanne näkyy Asetukset-näkymässä.
               </div>
             </div>
           </div>
@@ -8540,7 +8675,8 @@ export default function App() {
 
   // ====================== TALLENNETUT RAPORTIT (kaikki tapahtumat) ======================
   if (viewingAllReports) {
-    const sortedAllReports = [...reports].sort((a, b) => {
+    // Roskakoriin siirretyt eivät kuulu raporttilistaukseen (ks. handleDeleteReport).
+    const sortedAllReports = reports.filter((r) => !r.deletedAt).sort((a, b) => {
       if (allReportsSortBy === 'id') return String(a.id).localeCompare(String(b.id));
       if (allReportsSortBy === 'author') return String(a.author || '').localeCompare(String(b.author || ''));
       if (allReportsSortBy === 'event') return findEventName(a.eventId, events).localeCompare(findEventName(b.eventId, events));
@@ -8697,7 +8833,7 @@ export default function App() {
     const detailEvent = archivedEventDetailId ? archivedEvents.find(e => e.id === archivedEventDetailId) : null;
 
     if (detailEvent) {
-      const eventReports = reports.filter(r => (r.eventId || 'fesx') === detailEvent.id);
+      const eventReports = reports.filter(r => (r.eventId || 'fesx') === detailEvent.id && !r.deletedAt);
       const eventCheckins = checkedInEmployees.filter(e => (e.eventId || 'fesx') === detailEvent.id);
       const eventRisks = riskAssessments.filter(r => (r.eventId || 'fesx') === detailEvent.id);
 
@@ -10186,6 +10322,16 @@ export default function App() {
                     <dd className="text-slate-800 font-medium">{ra.date || '—'}</dd>
                   </div>
                   <div className="col-span-2">
+                    <dt className="text-xs text-slate-400 uppercase tracking-wide">Tila</dt>
+                    <dd className={`font-medium ${ra.status === 'Hyväksytty' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                      {ra.status}
+                      {ra.status === 'Hyväksytty' && ra.approvedBy ? ` — ${ra.approvedBy}` : ''}
+                      {ra.status === 'Hyväksytty' && ra.approvedAt
+                        ? ` (${new Date(ra.approvedAt).toLocaleDateString('fi-FI')})`
+                        : ''}
+                    </dd>
+                  </div>
+                  <div className="col-span-2">
                     <dt className="text-xs text-slate-400 uppercase tracking-wide">Tapahtuma</dt>
                     <dd className="text-slate-800 font-medium">{findEventName(ra.eventId, events)}</dd>
                   </div>
@@ -10256,7 +10402,27 @@ export default function App() {
                 )}
               </div>
 
-              <div className="p-4 border-t border-slate-100 flex justify-end">
+              <div className="p-4 border-t border-slate-100 flex justify-end gap-2 flex-wrap">
+                {/* Hyväksyntä on riskiarvion päätös, joten se vaatii saman
+                    muokkausoikeuden kuin tehtyjen riskiarvioiden hallinta. */}
+                {(isAdminUser || canEdit(perms, selectedEvent, 'documents_risk_done')) && (
+                  ra.status === 'Hyväksytty' ? (
+                    <button
+                      onClick={() => handleReopenRiskAssessment(ra)}
+                      className="px-5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 text-sm font-medium rounded-lg transition-colors"
+                    >
+                      Palauta kesken-tilaan
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleApproveRiskAssessment(ra)}
+                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg transition-colors flex items-center gap-2"
+                    >
+                      <CheckCircle size={16} />
+                      Hyväksy riskiarvio
+                    </button>
+                  )
+                )}
                 <button
                   onClick={() => setOpenedRiskAssessment(null)}
                   className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-lg transition-colors"
