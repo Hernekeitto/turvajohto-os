@@ -293,13 +293,24 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   // pysyvästi vaikka itse raportti oli poistettu. Tämän pyynnön irrottamat liitteet
   // poistetaan heti (ne ovat varmasti orpoja), ja sen lisäksi siivotaan aiemmin
   // orvoiksi jääneet tiedostot armonajan jälkeen (ks. uploads.js: collectGarbage).
-  if (name === 'reports') {
+  // Liitteitä viittaa kaksi kokoelmaa: raporttien liitteet ja tapahtumien
+  // pohjakartat. Roskienkeruulle on annettava MOLEMPIEN viitteet, muuten toisen
+  // kokoelman tallennus poistaisi toisen tiedostot armonajan jälkeen.
+  if (name === 'reports' || name === 'events') {
     try {
-      const liiteIds = (arr) => (Array.isArray(arr) ? arr : []).map((r) => r?.attachment?.id).filter(Boolean);
-      const viitatutNyt = liiteIds(verdict.data);
-      const irrotetut = liiteIds(current).filter((id) => !viitatutNyt.includes(id));
+      const raporttiIdt = (arr) => (Array.isArray(arr) ? arr : []).map((r) => r?.attachment?.id).filter(Boolean);
+      const karttaIdt = (arr) => (Array.isArray(arr) ? arr : []).map((e) => e?.formData?.mapUploadId).filter(Boolean);
+      const idt = name === 'reports' ? raporttiIdt : karttaIdt;
+
+      // Tässä pyynnössä irronneet liitteet poistetaan heti — ne ovat varmasti orpoja.
+      const viitatutNyt = idt(verdict.data);
+      const irrotetut = idt(current).filter((id) => !viitatutNyt.includes(id));
       for (const id of irrotetut) deleteUpload(id);
-      collectGarbage(viitatutNyt);
+
+      const toinen = name === 'reports'
+        ? karttaIdt(readCollection('events'))
+        : raporttiIdt(readCollection('reports'));
+      collectGarbage([...viitatutNyt, ...toinen]);
     } catch (err) {
       // Liitteiden siivous ei saa kaataa itse tallennusta joka jo onnistui.
       console.error('Liitetiedostojen siivous epäonnistui:', err.message);
@@ -526,7 +537,8 @@ app.get('/api/uploads/:id', requireAuth, (req, res) => {
   // Liite itsessään ei tiedä oikeuksia — omistava raportti (ja sen typeId) etsitään
   // reports-kokoelmasta ja tarkistetaan sen lukuoikeus, ks. permissions.js.
   const reportsArr = readCollection('reports') || [];
-  if (!canReadAttachment(req.role, req.permissions, req.eventAccess, req.params.id, reportsArr)) {
+  const eventsArr = readCollection('events') || [];
+  if (!canReadAttachment(req.role, req.permissions, req.eventAccess, req.params.id, reportsArr, eventsArr)) {
     return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän liitteen lataamiseen.' });
   }
   res.sendFile(filePath);

@@ -960,7 +960,9 @@ export default function App() {
     performers: '', reactionRisk: false, vipGuests: false, vipNotes: '',
     existingCctv: '', cctvNotes: '', lighting: '', exitRoutes: '',
     policeNotification: '', rescuePlan: '', authorityResponsible: '',
-    otherOperators: '', buildPhaseResponsible: ''
+    otherOperators: '', buildPhaseResponsible: '',
+    // Pohjakartan liitetunniste ja alkuperäinen tiedostonimi (ks. tallennaPohjakartta).
+    mapUploadId: '', mapUploadName: ''
   };
   const [newEvent, setNewEvent] = useState(emptyNewEvent);
   const updNewEvent = (key, value) => setNewEvent(prev => ({ ...prev, [key]: value }));
@@ -1197,6 +1199,8 @@ export default function App() {
   const [genRepFile, setGenRepFile] = useState('');
   const [genRepFileUploadId, setGenRepFileUploadId] = useState('');
   const [genRepFileUploading, setGenRepFileUploading] = useState(false);
+  // Tapahtuman pohjakartan lähetys (Tapahtuman yleiskatsaus -sivu).
+  const [karttaUploading, setKarttaUploading] = useState(false);
 
   // Edit Employee Form State
   const [editingEmp, setEditingEmp] = useState(null);
@@ -2314,6 +2318,32 @@ export default function App() {
   // tallennettuihin raportteihin kuten ennenkin, ja kuittaus näkyy siellä omana
   // kenttänään. Vain Tilannekuvan Tehtävät-lista suodattaa kuitatut pois, koska
   // se on lista avoimista tehtävistä.
+  // Lähettää pohjakartan ja tallentaa sen viitteen tapahtuman tietoihin. Kartta on
+  // ainoa liite jolla ei ole omistavaa raporttia, joten palvelin tunnistaa sen
+  // erikseen sekä lukuoikeudessa että roskienkeruussa (ks. server/permissions.js
+  // canReadAttachment ja server/index.js liitesiivous).
+  const tallennaPohjakartta = async (tiedosto?: File) => {
+    if (!tiedosto) return;
+    setKarttaUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', tiedosto);
+      const res = await fetch('/api/uploads', { method: 'POST', credentials: 'include', body: formData });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        alert(data.error || 'Kartan lähetys epäonnistui.');
+        return;
+      }
+      setEvents(prev => prev.map(e => (e.id === selectedEvent
+        ? { ...e, formData: { ...((e as any).formData || {}), mapUploadId: data.id, mapUploadName: tiedosto.name } }
+        : e)));
+    } catch {
+      alert('Kartan lähetys epäonnistui (yhteysvirhe).');
+    } finally {
+      setKarttaUploading(false);
+    }
+  };
+
   const handleCompleteTask = () => {
     const report = completingTask;
     if (!report) return;
@@ -5595,7 +5625,7 @@ export default function App() {
             </form>
           </div>
         );
-      case 'postevent':
+      case 'postevent': {
         const radioChannels = [
           "JV:t Tapahtuma",
           "JV:t Välitönläheisyys",
@@ -5607,41 +5637,74 @@ export default function App() {
           "Turvallisuusjohto ja tike (tarvittaessa viranomaiset)"
         ];
 
-        const supervisors = [
-          { role: "Turva 1", name: "Ismo Näkki" },
-          { role: "Turva 2", name: "Liisa Ollila" },
-          { role: "Pääportti 10", name: "Jaakko Mäki" },
-          { role: "Lava 1 10", name: "Markus Joki" },
-          { role: "Lava 2 10", name: "Maria Lohi" },
-          { role: "VIP 10", name: "Sulo Oja" },
-          { role: "Toimintaryhmä 10", name: "Kalevi Mauno" },
-          { role: "Kenttä 10", name: "Jouko Neno" },
-          { role: "Ulko 10", name: "Anna Lahti" }
-        ];
+        // Vastuuhenkilöt luetaan tapahtuman omista perustiedoista. Aiemmin tässä oli
+        // yhdeksän kovakoodattua nimeä ("Turva 1 — Ismo Näkki" jne.), jotka näkyivät
+        // samanlaisina joka tapahtumassa ja näyttivät elävältä organisaatiotiedolta.
+        // Nämä ovat ne vastuuhenkilöt jotka lomake oikeasti kerää; sisäinen
+        // kutsutunnusketju (Turva 1/2, porttien ja lavojen vastaavat) ei ole vielä
+        // missään tallessa, joten sitä ei voi tähän myöskään keksiä.
+        const vastuuhenkilot = [
+          { rooli: 'Tilaaja', nimi: valittuTapahtumaLomake.ordererName, puhelin: valittuTapahtumaLomake.ordererPhone, email: valittuTapahtumaLomake.ordererEmail },
+          { rooli: 'Päättävä vastuuhenkilö hätätilanteessa', nimi: valittuTapahtumaLomake.deciderName, puhelin: valittuTapahtumaLomake.deciderPhone, email: valittuTapahtumaLomake.deciderEmail },
+          { rooli: 'Viranomaisyhteyshenkilö', nimi: valittuTapahtumaLomake.authorityResponsible },
+          { rooli: 'Anniskelusta vastaa', nimi: valittuTapahtumaLomake.barResponsible },
+          { rooli: 'Rakennusvaiheen vastaava', nimi: valittuTapahtumaLomake.buildPhaseResponsible },
+        ].filter((v) => String(v.nimi || '').trim());
+
+        const karttaId = valittuTapahtumaLomake.mapUploadId;
+        const saaMuokataTapahtumaa = isAdminUser || canEdit(perms, selectedEvent, 'landing');
 
         return (
           <div className="space-y-6 max-w-5xl">
             <div className="mb-6 pb-4 border-b border-slate-200">
               <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
                 <Layers className="text-indigo-500" size={28} />
-                FestivaaliX
+                {findEventName(selectedEvent, events)}
               </h2>
               <p className="text-sm text-slate-500 mt-1">Tapahtuman operatiivinen kartta, viestintäkanavat ja johto.</p>
             </div>
 
             {/* Kartta */}
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-              <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <Map className="text-indigo-500" size={20} />
-                Tapahtuman pohjakartta
-              </h3>
+              <div className="flex justify-between items-center mb-4 gap-4 flex-wrap">
+                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                  <Map className="text-indigo-500" size={20} />
+                  Tapahtuman pohjakartta
+                </h3>
+                {/* Kartta talletetaan tapahtuman tietoihin, joten sen vaihtaminen
+                    vaatii saman oikeuden kuin tapahtuman muokkaaminen. */}
+                {saaMuokataTapahtumaa && (
+                  <label className="cursor-pointer flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 shadow-sm hover:bg-slate-50 rounded-lg transition-all text-sm font-medium text-slate-700">
+                    <Paperclip size={16} className="text-indigo-500" />
+                    {karttaUploading ? 'Lähetetään…' : karttaId ? 'Vaihda kartta' : 'Lataa kartta'}
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      className="hidden"
+                      onChange={(e) => tallennaPohjakartta(e.target.files[0])}
+                    />
+                  </label>
+                )}
+              </div>
+
               <div className="w-full bg-slate-50 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center min-h-[300px] md:min-h-[500px]">
-                <img 
-                  src="image_aa9244.png" 
-                  alt="Tapahtuman pohjakartta" 
-                  className="max-w-full h-auto object-contain" 
-                  onError={(e) => { e.target.onerror = null; e.target.src = 'https://placehold.co/800x400/e2e8f0/64748b?text=Kuva+ei+latautunut' }} 
-                />
+                {karttaId ? (
+                  <img
+                    src={`/api/uploads/${karttaId}`}
+                    alt="Tapahtuman pohjakartta"
+                    className="max-w-full h-auto object-contain"
+                  />
+                ) : (
+                  <div className="text-center p-8">
+                    <Map className="text-slate-300 mx-auto mb-3" size={40} />
+                    <p className="text-sm font-medium text-slate-600">Pohjakarttaa ei ole ladattu.</p>
+                    <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                      {saaMuokataTapahtumaa
+                        ? 'Lataa alueen pohjakartta yllä olevalla painikkeella. Kartta tallentuu tähän tapahtumaan.'
+                        : 'Pyydä pääkäyttäjää lataamaan alueen pohjakartta tähän tapahtumaan.'}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -5658,31 +5721,49 @@ export default function App() {
                     <li key={idx} className="flex gap-3 items-center p-2 hover:bg-slate-50 rounded-lg border border-transparent hover:border-slate-100 transition-colors">
                       <span className="w-7 h-7 rounded-md bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm shrink-0">
                         {idx + 1}
-                      </span> 
+                      </span>
                       <span className="text-sm font-medium text-slate-700">{channel}</span>
                     </li>
                   ))}
                 </ul>
               </div>
 
-              {/* Esimiehet */}
+              {/* Vastuuhenkilöt */}
               <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm h-full">
                 <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                   <Users className="text-blue-500" size={20} />
-                  Esimiehet ja vastuuhenkilöt
+                  Vastuuhenkilöt
                 </h3>
-                <ul className="space-y-2">
-                  {supervisors.map((sup, idx) => (
-                    <li key={idx} className="flex justify-between items-center p-3 hover:bg-slate-50 rounded-lg border border-slate-100 transition-colors">
-                      <span className="text-sm font-bold text-slate-700">{sup.role}</span>
-                      <span className="text-sm font-medium text-slate-500 bg-white px-2 py-1 rounded shadow-sm border border-slate-200">{sup.name}</span>
-                    </li>
-                  ))}
-                </ul>
+                {vastuuhenkilot.length === 0 ? (
+                  <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                    Vastuuhenkilöitä ei ole kirjattu. Ne täytetään tapahtuman perustiedoissa
+                    (yhteyshenkilöt, viranomaisyhteistyö, anniskelu ja rakennusvaihe).
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {vastuuhenkilot.map((v, idx) => (
+                      <li key={idx} className="p-3 rounded-lg border border-slate-100 hover:bg-slate-50 transition-colors">
+                        <div className="text-xs font-medium text-slate-500 uppercase tracking-wide">{v.rooli}</div>
+                        <div className="text-sm font-bold text-slate-800 mt-0.5">{v.nimi}</div>
+                        {(v.puhelin || v.email) && (
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+                            {v.puhelin && (
+                              <a href={`tel:${v.puhelin}`} className="text-xs font-medium text-indigo-600 hover:text-indigo-800">
+                                {v.puhelin}
+                              </a>
+                            )}
+                            {v.email && <span className="text-xs text-slate-500">{v.email}</span>}
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
           </div>
         );
+      }
       case 'planning_employees':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
@@ -9744,7 +9825,7 @@ export default function App() {
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'postevent' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
                 >
                   <Layers size={18} />
-                  FestivaaliX
+                  {findEventName(selectedEvent, events)}
                 </button>
               )}
               {(isAdminUser || canView(perms, selectedEvent, 'documents')) && (

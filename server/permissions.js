@@ -324,8 +324,19 @@ export function authorizeWrite(role, permissions, eventAccess, name, oldArr, new
 // sekä sama tapahtumarajaus että sama sen tapahtuman Sivukartta-oikeus kuin sen raportin
 // (typeId:n) lukeminen vaatisi. Jos mikään raportti ei viittaa liitteeseen, se evätään
 // aina (ei tunnettua omistajaa jonka oikeuksia vasten tarkistaa).
-export function canReadAttachment(role, permissions, eventAccess, attachmentId, reportsArr) {
+export function canReadAttachment(role, permissions, eventAccess, attachmentId, reportsArr, eventsArr) {
   if (role === 'admin') return true;
+  // Tapahtuman pohjakartta on ainoa liite jolla ei ole omistavaa raporttia: se
+  // talletetaan tapahtuman omiin tietoihin (formData.mapUploadId) ja näytetään
+  // "Tapahtuman yleiskatsaus" -sivulla, joten lukuoikeus tulee postevent-solmusta.
+  const kartanTapahtuma = (Array.isArray(eventsArr) ? eventsArr : []).find(
+    (e) => e?.formData?.mapUploadId === attachmentId
+  );
+  if (kartanTapahtuma) {
+    const kartanEventId = kartanTapahtuma.id;
+    if (!eventAllowed(eventAccess, kartanEventId)) return false;
+    return hasAnyView(permissions, kartanEventId, ['postevent']);
+  }
   const owner = (Array.isArray(reportsArr) ? reportsArr : []).find((r) => r?.attachment?.id === attachmentId);
   if (!owner) return false;
   const eventId = legacyEventId(owner);
