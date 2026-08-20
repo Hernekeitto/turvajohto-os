@@ -51,7 +51,9 @@ const COLLECTIONS = {
 // Selväkielisiksi jäävät place, licenseHolder, date ja time (eivät henkilötietoa) sekä
 // author, typeId ja eventId (suodatus ja oikeustarkistukset).
 const ENCRYPTED_FIELDS = {
-  employees: ['personalId'],
+  // personalId ja taxNumber ovat molemmat henkilön yksilöiviä viranomaistunnisteita,
+  // joten kumpikaan ei saa olla levyllä selväkielisenä.
+  employees: ['personalId', 'taxNumber'],
   reports: [
     'summary',
     'description',

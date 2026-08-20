@@ -79,7 +79,36 @@ const emptyEmpForm = {
   address: '', postalCode: '', postalCity: '', email: '', phone: '',
   // 3. Pankkitiedot
   iban: '', bic: '', bankName: '',
-  // 4. Ajokortti ja yleiset luvat
+  // Veronumero on rakennusalan veronumerorekisterin 12-numeroinen tunniste. Salataan
+  // levylle henkilötunnuksen tapaan (ks. server/store.js ENCRYPTED_FIELDS).
+  taxNumber: '',
+  // 4. Työsuhdetiedot. Työsopimuksen ehdot kerätään samaan lomakkeeseen, koska
+  // työntekijäpankki on ainoa paikka jossa työntekijän tiedot ovat kokonaisuutena.
+  employmentStart: '',
+  // 'permanent' = toistaiseksi voimassa oleva, 'fixed' = määräaikainen (jolloin
+  // employmentFixedFrom/To kertovat jakson).
+  employmentType: '',
+  employmentFixedFrom: '', employmentFixedTo: '',
+  workLocation: '',
+  // 'monthly' = kuukausipalkka 120 h / 3 vk, 'parttime' = osa-aikainen tuntipalkka
+  // (alle 112 h 30 min / 3 vk), 'oncall' = erikseen työhön kutsuttava (työvoimareservi).
+  workTimeType: '',
+  minHoursPer3Weeks: '',
+  // Palkkaus. Tasopalkan euromäärä syötetään käsin: TES:n palkkataulukko muuttuu
+  // sopimuskausittain eikä sitä ole sovelluksessa, joten taso ja paikkakuntaluokka
+  // kirjataan dokumentoinniksi ja euromäärä sen viereen.
+  payLevel: '', municipalityClass: '', basePay: '',
+  personalPayPart: '', personalPayBasis: '',
+  personalPay: '',
+  otherPay: '', otherPayBasis: '',
+  // Kuukausipalkan jakaja tuntipalkaksi. Oletus 173.33 = 120 h / 3 vk eli 40 h/vk
+  // kuukausikeskiarvona — muutettavissa, koska oikea jakaja riippuu sopimuksesta.
+  hourDivisor: '173.33',
+  otherTerms: '',
+  // Vartijan peruskurssin sitoutumisehto (ks. Koulutus-tekstiruutu lomakkeessa).
+  trainingCommitmentMonths: '', trainingCourseCost: '',
+  // 5. Ajokortti ja yleiset luvat
+  hasDrivingLicense: false,
   drivingLicense: '',
   adrPermit: false, alcoholPass: false, hygienePass: false,
   craneCard: false, craneCardUntil: '',
@@ -87,19 +116,21 @@ const emptyEmpForm = {
   firstAidEA1: false, firstAidEA1Until: '',
   firstAidEA2: false, firstAidEA2Until: '',
   firstAidEA3: false, firstAidEA3Until: '',
-  // 5. Turvallisuusalan kortit (numero + voimassa kuukausi/vuosi)
-  jvCard: '', jvCardValidUntil: '',
-  guardCard: '', guardCardValidUntil: '',
-  gasPermit: '', gasPermitValidUntil: '',
-  // 6. Työturvallisuuskortit (kyllä/ei + voimassa pvm)
+  // 6. Turvallisuusalan kortit (kyllä/ei + numero + voimassa kuukausi/vuosi)
+  hasJvCard: false, jvCard: '', jvCardValidUntil: '',
+  hasGuardCard: false, guardCard: '', guardCardValidUntil: '',
+  hasGasPermit: false, gasPermit: '', gasPermitValidUntil: '',
+  // Voimankäyttövälineiden kertauskoulutus kuuluu turvallisuusalan pätevyyksiin, ei
+  // yleisiin työturvallisuuskortteihin — siirretty tänne osiosta 7.
+  trainingRefresher: false, trainingRefresherUntil: '',
+  // 7. Työturvallisuuskortit (kyllä/ei + voimassa pvm)
   roadSafetyCard: false, roadSafetyCardUntil: '',
   forkliftCard: false, forkliftCardUntil: '',
   hotWorkCard: false, hotWorkCardUntil: '',
   safetyCard: false, safetyCardUntil: '',
-  trainingRefresher: false, trainingRefresherUntil: '',
-  // 7. Erityiskoulutukset (kyllä/ei)
+  // 8. Erityiskoulutukset (kyllä/ei)
   trainingForce: false, trainingGas: false, trainingBaton: false, firearmTraining: false,
-  // 8. Kielitaito ({ language, level } -lista, level 1-5)
+  // 9. Kielitaito ({ language, level } -lista, level 1-5)
   languages: [],
 };
 
@@ -107,6 +138,44 @@ const emptyEmpForm = {
 // (`name`). Uusi lomake kerää etu- ja sukunimen erikseen, mutta koko sovellus (haut,
 // sisäänkirjaukset, näytöt) tunnistaa työntekijän edelleen tällä samalla yhdistetyllä
 // nimellä, joten se lasketaan aina tallennettaessa eikä sitä koskaan muokata suoraan.
+// Tämän päivän päivämäärä <input type="date">-kenttään sopivassa muodossa (YYYY-MM-DD).
+// toISOString() yksin antaisi UTC-päivän, joka on Suomen aikaa illalla jo eri vuorokausi.
+const paikallinenPaiva = (d = new Date()) =>
+  new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+
+// Työsopimuksen palkkarivien summaus. Pilkku hyväksytään desimaalierottimena, koska
+// suomalainen näppäilee palkan muodossa "12,45".
+const euroLuku = (arvo: unknown) => {
+  const n = parseFloat(String(arvo ?? '').replace(',', '.').replace(/\s/g, ''));
+  return Number.isFinite(n) ? n : 0;
+};
+
+// Kokonaispalkka työsopimuslomakkeelle.
+//
+// HUOM tulkinta: "Henkilökohtainen palkka (jos sovittu)" KORVAA tasopalkan ja
+// henkilökohtaisen palkanosan summan silloin kun se on täytetty — TES:n tasopalkka on
+// vähimmäispalkka, ja erikseen sovittu henkilökohtainen palkka sovitaan sen tilalle
+// eikä sen päälle. "Muu palkka" lisätään aina päälle. Laskenta näytetään lomakkeella
+// auki (ks. Palkkaus-lohko), jotta virheellinen tulkinta huomataan heti.
+const laskeKokonaispalkka = (form: any) => {
+  const tasopalkka = euroLuku(form?.basePay);
+  const hlokohtainenOsa = euroLuku(form?.personalPayPart);
+  const hlokohtainenPalkka = euroLuku(form?.personalPay);
+  const muuPalkka = euroLuku(form?.otherPay);
+  const pohja = hlokohtainenPalkka > 0 ? hlokohtainenPalkka : tasopalkka + hlokohtainenOsa;
+  const kuukaudessa = pohja + muuPalkka;
+  const jakaja = euroLuku(form?.hourDivisor);
+  return {
+    kuukaudessa,
+    tunnissa: jakaja > 0 ? kuukaudessa / jakaja : 0,
+    // Kertoo kumpi laskutapa oli käytössä, jotta lomake voi selittää sen käyttäjälle.
+    korvaava: hlokohtainenPalkka > 0,
+  };
+};
+
+const muotoileEuro = (arvo: number, desimaalit = 2) =>
+  arvo.toLocaleString('fi-FI', { minimumFractionDigits: desimaalit, maximumFractionDigits: desimaalit });
+
 const splitFullName = (name) => {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
   return { lastName: parts[0] || '', firstName: parts.slice(1).join(' ') };
@@ -118,8 +187,23 @@ const buildFullName = (form) => `${(form.lastName || '').trim()} ${(form.firstNa
 const employeeToFormState = (emp) => {
   if (!emp) return emptyEmpForm;
   const needsSplit = emp.firstName === undefined && emp.name;
-  return { ...emptyEmpForm, ...emp, ...(needsSplit ? splitFullName(emp.name) : {}) };
+  const pohja = { ...emptyEmpForm, ...emp, ...(needsSplit ? splitFullName(emp.name) : {}) };
+  // Kyllä-valinnat (hasJvCard, hasDrivingLicense, ...) lisättiin vasta jälkikäteen: ennen
+  // niitä tallennetuilla työntekijöillä on pelkkä kortin numero tai ajo-oikeuden laatu.
+  // Ilman tätä johtamista vanhan työntekijän kortti näyttäisi lomakkeella rastittamattomalta
+  // ja sen kentät olisivat lukittuina — eli tiedot katoaisivat näkyvistä.
+  return {
+    ...pohja,
+    hasDrivingLicense: !!(emp.hasDrivingLicense || emp.drivingLicense),
+    hasJvCard: !!(emp.hasJvCard || emp.jvCard),
+    hasGuardCard: !!(emp.hasGuardCard || emp.guardCard),
+    hasGasPermit: !!(emp.hasGasPermit || emp.gasPermit),
+  };
 };
+
+// Onko työntekijällä kyseinen turvallisuusalan kortti? Kyllä-valinta riittää, mutta
+// pelkkä kortin numero kelpaa myös (ks. employeeToFormState: vanha data).
+const onKortti = (emp: any, boolKey: string, numKey: string) => !!(emp?.[boolKey] || emp?.[numKey]);
 
 // Sama sääntö kuin palvelimella (server/index.js) — tämä on vain välitöntä
 // käyttäjäpalautetta varten, palvelin on todellinen portti.
@@ -1427,6 +1511,14 @@ export default function App() {
   // muutoksen tallentuneelta. Se on erityisen paha poistoissa — lakisääteisesti
   // hävitettävä raportti olisi voinut jäädä levylle ilman että kukaan huomaa.
   // Nyt virhe nostetaan näkyviin (ks. saveErrorBanner) eikä sitä niellä.
+  // Kokoelmat joiden SEURAAVA automaattitallennus ohitetaan, koska tallennus on jo tehty
+  // eksplisiittisesti allowEmpty-lipulla (viimeisen tietueen poisto). Ilman tätä
+  // automaattitallennus lähettäisi saman tyhjän taulukon heti perään ilman lippua, jolloin
+  // palvelimen romahdussuoja hylkäisi sen 409:llä ja käyttäjä näkisi turhan virhebannerin
+  // vaikka poisto onnistui. Set.delete palauttaa true jos lippu oli asetettu — eli sama
+  // kutsu sekä lukee että kuluttaa lipun.
+  const ohitaSeuraavaTallennus = useRef<Set<string>>(new Set());
+
   const tallennaKokoelma = async (kokoelma: string, data: any, { allowEmpty = false } = {}) => {
     try {
       const r = await fetch(`/api/data/${kokoelma}${allowEmpty ? '?allowEmpty=1' : ''}`, {
@@ -1518,6 +1610,7 @@ export default function App() {
 
   useEffect(() => {
     if (!employeesLoaded) return;
+    if (ohitaSeuraavaTallennus.current.delete('employees')) return;
     tallennaKokoelma('employees', employees);
   }, [employees, employeesLoaded]);
 
@@ -1540,6 +1633,7 @@ export default function App() {
 
   useEffect(() => {
     if (!reportsLoaded) return;
+    if (ohitaSeuraavaTallennus.current.delete('reports')) return;
     tallennaKokoelma('reports', reports);
   }, [reports, reportsLoaded]);
 
@@ -1790,14 +1884,24 @@ export default function App() {
     setViewingEmployeeBank('list');
   };
 
-  const handleDeleteEmployee = (emp) => {
+  const handleDeleteEmployee = async (emp) => {
     const confirmed = window.confirm(
       `Haluatko varmasti poistaa työntekijän "${emp.name}" työntekijäpankista?\n\n` +
       'Poistoa ei voi perua. Jo tehdyt sisäänkirjaukset tapahtumiin säilyvät ennallaan.'
     );
     if (!confirmed) return;
     // Viiteyhtäläisyys (=== ) on turvallisempi kuin id:n vertailu.
-    setEmployees(prev => prev.filter(e => e !== emp));
+    const jaljelle = employees.filter(e => e !== emp);
+    // VIIMEISEN työntekijän poisto tyhjentää kokoelman, jonka palvelimen romahdussuoja
+    // hylkää ilman allowEmpty-lippua (409). Ilman tätä työntekijä katosi näkymästä mutta
+    // palasi sivun päivityksellä, koska tallennus ei mennyt koskaan läpi — juuri tämä
+    // teki "viimeistä työntekijää ei voi poistaa" -oireen.
+    if (jaljelle.length === 0) {
+      const ok = await tallennaKokoelma('employees', jaljelle, { allowEmpty: true });
+      if (!ok) return; // virhe näkyy bannerissa; tilaa ei muuteta
+      ohitaSeuraavaTallennus.current.add('employees');
+    }
+    setEmployees(jaljelle);
     setEditingEmp(null);
     setEmpForm(emptyEmpForm);
     setViewingEmployeeBank('list');
@@ -2512,6 +2616,7 @@ export default function App() {
     const jaljelle = reports.filter(r => !poistettavatJoukko.has(r));
     const ok = await tallennaKokoelma('reports', jaljelle, { allowEmpty: true });
     if (!ok) return; // virhe näkyy bannerissa; tilaa ei muuteta
+    if (jaljelle.length === 0) ohitaSeuraavaTallennus.current.add('reports');
     setReports(jaljelle);
     alert(`${poistettavat.length} kirjausta hävitettiin pysyvästi.`);
   };
@@ -7343,7 +7448,7 @@ export default function App() {
                       <Landmark size={18} className="text-slate-400"/>
                       3. Pankkitiedot
                     </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">Tilinumero (IBAN)</label>
                         <input type="text" value={empForm.iban} onChange={(e) => updEmpForm('iban', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="FI00 0000 0000 0000 00" />
@@ -7356,18 +7461,291 @@ export default function App() {
                         <label className="block text-sm font-medium text-slate-700 mb-1">Pankki</label>
                         <input type="text" value={empForm.bankName} onChange={(e) => updEmpForm('bankName', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. Nordea" />
                       </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Veronumero</label>
+                        <input type="text" inputMode="numeric" value={empForm.taxNumber} onChange={(e) => updEmpForm('taxNumber', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="12 numeroa" />
+                      </div>
                     </div>
                   </div>
 
-                  {/* Osa 4: Ajokortti ja yleiset luvat */}
+                  {/* Osa 4: Työsuhdetiedot */}
+                  <div className="space-y-4">
+                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
+                      <Briefcase size={18} className="text-slate-400"/>
+                      4. Työsuhdetiedot
+                    </h3>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Työsuhteen alkamispäivä</label>
+                        <div className="flex gap-2">
+                          <input type="date" value={empForm.employmentStart} onChange={(e) => updEmpForm('employmentStart', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" />
+                          <button
+                            type="button"
+                            onClick={() => updEmpForm('employmentStart', paikallinenPaiva())}
+                            title="Aseta tämä päivä"
+                            className="shrink-0 px-3 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg transition-colors"
+                          >
+                            Tänään
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Työn suorittamispaikka</label>
+                        <input type="text" value={empForm.workLocation} onChange={(e) => updEmpForm('workLocation', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. Tampere ja lähikunnat" />
+                      </div>
+                    </div>
+
+                    {/* Työsuhteen voimassaolo */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                      <p className="text-sm font-bold text-slate-800">Työsuhde voimassa</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {[
+                          ['permanent', 'Toistaiseksi'],
+                          ['fixed', 'Määräajan'],
+                        ].map(([arvo, label]) => (
+                          <label key={arvo} className="flex items-center gap-2.5 p-3 bg-white rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={empForm.employmentType === arvo}
+                              onChange={(e) => updEmpForm('employmentType', e.target.checked ? arvo : '')}
+                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0"
+                            />
+                            <span className="text-sm font-medium text-slate-700">{label}</span>
+                          </label>
+                        ))}
+                      </div>
+                      {empForm.employmentType === 'fixed' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs text-slate-500 mb-1">Määräaika alkaa</label>
+                            <input type="date" value={empForm.employmentFixedFrom} onChange={(e) => updEmpForm('employmentFixedFrom', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-slate-500 mb-1">Määräaika päättyy</label>
+                            <input type="date" value={empForm.employmentFixedTo} onChange={(e) => updEmpForm('employmentFixedTo', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Työaika ja palkkausmuoto */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                      <p className="text-sm font-bold text-slate-800">Työaika ja palkkausmuoto</p>
+                      <div className="space-y-2">
+                        {[
+                          ['monthly', 'Kuukausipalkka', '120 h / 3 viikkoa'],
+                          ['parttime', 'Tuntipalkka (osa-aikainen)', 'alle 112 h 30 min / 3 viikkoa'],
+                          ['oncall', 'Erikseen työhön kutsuttava tuntipalkkainen', 'työvoimareservi'],
+                        ].map(([arvo, label, tarkenne]) => (
+                          <label key={arvo} className="flex items-start gap-2.5 p-3 bg-white rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={empForm.workTimeType === arvo}
+                              onChange={(e) => updEmpForm('workTimeType', e.target.checked ? arvo : '')}
+                              className="w-4 h-4 mt-0.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0"
+                            />
+                            <span className="text-sm text-slate-700">
+                              <span className="font-medium">{label}</span>
+                              <span className="text-slate-500"> — {tarkenne}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      {(empForm.workTimeType === 'parttime' || empForm.workTimeType === 'oncall') && (
+                        <div className="sm:w-72">
+                          <label className="block text-xs text-slate-500 mb-1">Vähimmäistyöaika (tuntia / 3 viikkoa)</label>
+                          <input type="number" min="0" step="0.5" value={empForm.minHoursPer3Weeks} onChange={(e) => updEmpForm('minHoursPer3Weeks', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. 60" />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
+                      <Info size={18} className="text-amber-500 shrink-0 mt-0.5" />
+                      <p className="text-sm text-amber-900 leading-relaxed">
+                        Työtehtävissä noudatetaan voimassa olevia lakeja sekä työehtosopimusta.
+                      </p>
+                    </div>
+
+                    {/* Palkkaus */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
+                      <p className="text-sm font-bold text-slate-800">Palkkaus</p>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-xs text-slate-500 mb-1">Tasopalkka</label>
+                          <select value={empForm.payLevel} onChange={(e) => updEmpForm('payLevel', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500">
+                            <option value="">Ei valittu</option>
+                            {['I', 'II', 'III', 'IIIA', 'IV', 'IVA', 'V'].map((taso) => (
+                              <option key={taso} value={taso}>{taso}-taso</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-500 mb-1">Paikkakuntaluokka</label>
+                          <select value={empForm.municipalityClass} onChange={(e) => updEmpForm('municipalityClass', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500">
+                            <option value="">Ei valittu</option>
+                            <option value="A">A = pääkaupunkiseutu</option>
+                            <option value="B">B = muu Suomi</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-500 mb-1">Tasopalkka (€/kk)</label>
+                          <input type="text" inputMode="decimal" value={empForm.basePay} onChange={(e) => updEmpForm('basePay', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="TES-taulukon mukaan" />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs text-slate-500 mb-1">Henkilökohtainen palkan osa (€/kk)</label>
+                          <input type="text" inputMode="decimal" value={empForm.personalPayPart} onChange={(e) => updEmpForm('personalPayPart', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="0,00" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-500 mb-1">Perusteet</label>
+                          <input type="text" value={empForm.personalPayBasis} onChange={(e) => updEmpForm('personalPayBasis', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Millä perusteella osa on sovittu" />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-xs text-slate-500 mb-1">Henkilökohtainen palkka, jos sovittu (€/kk)</label>
+                          <input type="text" inputMode="decimal" value={empForm.personalPay} onChange={(e) => updEmpForm('personalPay', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Korvaa tasopalkan" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-500 mb-1">Muu palkka (€/kk)</label>
+                          <input type="text" inputMode="decimal" value={empForm.otherPay} onChange={(e) => updEmpForm('otherPay', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="0,00" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-slate-500 mb-1">Muun palkan perusteet</label>
+                          <input type="text" value={empForm.otherPayBasis} onChange={(e) => updEmpForm('otherPayBasis', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. olosuhdelisä" />
+                        </div>
+                      </div>
+
+                      {/* Kokonaispalkka lasketaan yllä olevista riveistä */}
+                      {(() => {
+                        const summa = laskeKokonaispalkka(empForm);
+                        return (
+                          <div className="bg-white border-2 border-indigo-200 rounded-xl p-4">
+                            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Kokonaispalkka</p>
+                                <p className="text-2xl font-bold text-indigo-700 mt-1">
+                                  {muotoileEuro(summa.kuukaudessa)} €/kk
+                                </p>
+                                <p className="text-sm font-semibold text-slate-600">
+                                  {muotoileEuro(summa.tunnissa)} €/tunti
+                                </p>
+                              </div>
+                              <div className="sm:w-44">
+                                <label className="block text-xs text-slate-500 mb-1">Tuntijakaja (h/kk)</label>
+                                <input type="text" inputMode="decimal" value={empForm.hourDivisor} onChange={(e) => updEmpForm('hourDivisor', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" />
+                              </div>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-3 leading-relaxed">
+                              {summa.korvaava
+                                ? 'Laskettu: henkilökohtainen palkka + muu palkka. Erikseen sovittu henkilökohtainen palkka korvaa tasopalkan ja henkilökohtaisen palkan osan.'
+                                : 'Laskettu: tasopalkka + henkilökohtainen palkan osa + muu palkka.'}
+                              {' '}Tuntipalkka = kuukausipalkka / tuntijakaja. Oletusjakaja 173,33 vastaa 120 h / 3 viikkoa; tarkista se sopimuksesta.
+                            </p>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Muut sopimuksen ehdot */}
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Muut sopimuksen ehdot</label>
+                      <textarea rows={3} value={empForm.otherTerms} onChange={(e) => updEmpForm('otherTerms', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. koeaika, työvälineet, muut erikseen sovitut ehdot" />
+                    </div>
+
+                    {/* Kiinteät sopimusehdot */}
+                    <div className="bg-white border border-slate-200 rounded-xl p-4">
+                      <h4 className="text-sm font-bold text-slate-800 mb-2">Salassapitovelvollisuus</h4>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Työntekijä sitoutuu olemaan ilmaisematta tietoja vartiointikohteen turvallisuusjärjestelyistä,
+                        vartiointitoimeksiannon osapuolten liike- tai ammattisalaisuutta taikka yksityisen henkilön
+                        henkilökohtaisista asioista. Salassapitovelvollisuus ei koske tietojen antamista
+                        valvontaviranomaiselle, syyttäjä- tai poliisiviranomaiselle rikoksen selvittämistä varten eikä
+                        viranomaiselle, jolla erikoissäännöksen nojalla on oikeus saada näitä tietoja.
+                      </p>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+                      <h4 className="text-sm font-bold text-slate-800">Koulutus</h4>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Työntekijä sitoutuu osallistumaan kaikkeen työnantajan osoittamaan ammatilliseen koulutukseen.
+                        Perusteeton koulutuksesta kieltäytyminen katsotaan työstä kieltäytymiseksi.
+                      </p>
+
+                      <h4 className="text-sm font-bold text-slate-800 pt-1">
+                        Vartijan peruskurssin vaikutus työsuhteeseen, työsuhteen purku, lopputilin saamisen edellytykset
+                      </h4>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Työntekijän osallistuessa yksityisistä turvallisuuspalveluista annetun lain edellyttämälle
+                        vartijan peruskurssille (60 tunnin osio), hän sitoutuu kurssin hyväksytysti suoritettuaan
+                        olemaan työnantajan palveluksessa vähintään{' '}
+                        <input
+                          type="number"
+                          min="0"
+                          max="4"
+                          value={empForm.trainingCommitmentMonths}
+                          onChange={(e) => updEmpForm('trainingCommitmentMonths', e.target.value)}
+                          className="inline-block w-16 rounded border-slate-300 border px-2 py-0.5 text-sm focus:ring-2 focus:ring-indigo-500 align-baseline"
+                          placeholder="0"
+                        />{' '}
+                        kuukautta (enintään 4 kuukautta) kurssin suorittamisesta lukien. Mikäli työsuhde päättyy
+                        työntekijästä johtuvasta syystä ennen mainittua aikaa, työnantaja voi periä työntekijältä
+                        työnantajalle kurssista aiheutuneet kustannukset samassa suhteessa kuin neljän kuukauden
+                        ajasta on kulumatta. Työnantajan suorittamat kustannukset ovat{' '}
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={empForm.trainingCourseCost}
+                          onChange={(e) => updEmpForm('trainingCourseCost', e.target.value)}
+                          className="inline-block w-24 rounded border-slate-300 border px-2 py-0.5 text-sm focus:ring-2 focus:ring-indigo-500 align-baseline"
+                          placeholder="0,00"
+                        />{' '}
+                        euroa.
+                      </p>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Mikäli viranomainen peruuttaa työntekijän vartijaksi hyväksymisen, voi se olla peruste
+                        työsopimuksen päättämiselle.
+                      </p>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Työsuhteen päättyessä on aina lopputilin maksamisen edellytyksenä, että työntekijä palauttaa
+                        työnantajan hänelle luovuttamat puvun, varusteet, laitteet ja toimikortin (TES 36 §).
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Osa 5: Ajokortti ja yleiset luvat.
+                      Tiivistetty: kortit ovat kahdessa sarakkeessa yhden sijaan, jolloin
+                      koko osio mahtuu näytölle ilman vieritystä. */}
                   <div className="space-y-4">
                     <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
                       <BadgeCheck size={18} className="text-slate-400"/>
-                      4. Ajokortti ja yleiset luvat
+                      5. Ajokortti ja yleiset luvat
                     </h3>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Ajokortti</label>
-                      <input type="text" value={empForm.drivingLicense} onChange={(e) => updEmpForm('drivingLicense', e.target.value)} className="w-full md:w-1/3 rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. B" />
+
+                    {/* Ajokortti: kyllä-valinta + ajo-oikeuden laatu vasta jos rastittu */}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                      <label className="flex items-center gap-2.5 cursor-pointer sm:w-48 shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={empForm.hasDrivingLicense}
+                          onChange={(e) => updEmpForm('hasDrivingLicense', e.target.checked)}
+                          className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0"
+                        />
+                        <span className="text-sm font-medium text-slate-700">Ajokortti</span>
+                      </label>
+                      <input
+                        type="text"
+                        disabled={!empForm.hasDrivingLicense}
+                        value={empForm.drivingLicense}
+                        onChange={(e) => updEmpForm('drivingLicense', e.target.value)}
+                        className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
+                        placeholder="Ajo-oikeuden laatu, esim. B, BE, C"
+                      />
                     </div>
 
                     {/* Pelkkä kyllä/ei, ei voimassaoloa */}
@@ -7384,11 +7762,8 @@ export default function App() {
                       ))}
                     </div>
 
-                    {/* Kyllä/ei + voimassa kuukausi/vuosi jos kyllä */}
-                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
-                      <div className="hidden sm:flex items-center justify-end px-4 pt-2">
-                        <span className="text-xs font-medium text-slate-400 uppercase tracking-wide sm:w-40">Voimassa</span>
-                      </div>
+                    {/* Kyllä/ei + voimassa kuukausi/vuosi jos kyllä — kaksi per rivi */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {[
                         ['craneCard', 'craneCardUntil', 'Nosturikortti'],
                         ['electricalWorkCard', 'electricalWorkCardUntil', 'Sähkötyökortti'],
@@ -7396,12 +7771,56 @@ export default function App() {
                         ['firstAidEA2', 'firstAidEA2Until', 'Ensiapukortti (EA2)'],
                         ['firstAidEA3', 'firstAidEA3Until', 'Ensiapukortti (EA3)'],
                       ].map(([boolKey, untilKey, label]) => (
-                        <div key={boolKey} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 hover:bg-slate-50 transition-colors">
-                          <label className="flex items-center gap-3 flex-1 cursor-pointer">
-                            <input type="checkbox" checked={empForm[boolKey]} onChange={(e) => updEmpForm(boolKey, e.target.checked)} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
+                        <div key={boolKey} className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+                          <label className="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer">
+                            <input type="checkbox" checked={empForm[boolKey]} onChange={(e) => updEmpForm(boolKey, e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0" />
+                            <span className="text-sm font-medium text-slate-700 truncate">{label}</span>
+                          </label>
+                          <input
+                            type="month"
+                            disabled={!empForm[boolKey]}
+                            value={empForm[untilKey]}
+                            onChange={(e) => updEmpForm(untilKey, e.target.value)}
+                            title="Voimassa asti"
+                            className="w-36 shrink-0 rounded-lg border-slate-300 border p-1.5 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Osa 6: Turvallisuusalan kortit */}
+                  <div className="space-y-4">
+                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
+                      <IdCard size={18} className="text-slate-400"/>
+                      6. Turvallisuusalan kortit
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {[
+                        ['hasJvCard', 'jvCard', 'jvCardValidUntil', 'Järjestyksenvalvojakortti'],
+                        ['hasGuardCard', 'guardCard', 'guardCardValidUntil', 'Vartijakortti'],
+                        ['hasGasPermit', 'gasPermit', 'gasPermitValidUntil', 'Kaasusumuttimen hallussapito'],
+                      ].map(([boolKey, numKey, untilKey, label]) => (
+                        <div key={numKey} className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+                          <label className="flex items-center gap-2.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={empForm[boolKey]}
+                              onChange={(e) => updEmpForm(boolKey, e.target.checked)}
+                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0"
+                            />
                             <span className="text-sm font-bold text-slate-800">{label}</span>
                           </label>
-                          <div className="sm:w-40">
+                          <input
+                            type="text"
+                            disabled={!empForm[boolKey]}
+                            value={empForm[numKey]}
+                            onChange={(e) => updEmpForm(numKey, e.target.value)}
+                            className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
+                            placeholder="Kortin numero"
+                          />
+                          <div>
+                            <label className="block text-xs text-slate-500 mb-1">Voimassa asti (kk/vuosi)</label>
                             <input
                               type="month"
                               disabled={!empForm[boolKey]}
@@ -7413,63 +7832,53 @@ export default function App() {
                         </div>
                       ))}
                     </div>
-                  </div>
 
-                  {/* Osa 5: Turvallisuusalan kortit */}
-                  <div className="space-y-4">
-                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <IdCard size={18} className="text-slate-400"/>
-                      5. Turvallisuusalan kortit
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {[
-                        ['jvCard', 'jvCardValidUntil', 'Järjestyksenvalvojakortti'],
-                        ['guardCard', 'guardCardValidUntil', 'Vartijakortti'],
-                        ['gasPermit', 'gasPermitValidUntil', 'Kaasusumuttimen hallussapito'],
-                      ].map(([numKey, untilKey, label]) => (
-                        <div key={numKey} className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                          <label className="block text-sm font-bold text-slate-800">{label}</label>
-                          <input type="text" value={empForm[numKey]} onChange={(e) => updEmpForm(numKey, e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Kortin numero" />
-                          <div>
-                            <label className="block text-xs text-slate-500 mb-1">Voimassa asti (kk/vuosi)</label>
-                            <input type="month" value={empForm[untilKey]} onChange={(e) => updEmpForm(untilKey, e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" />
-                          </div>
-                        </div>
-                      ))}
+                    {/* Voimankäyttövälineiden kertauskoulutus: turvallisuusalan pätevyys,
+                        ei yleinen työturvallisuuskortti — siirretty tänne osiosta 7. */}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg">
+                      <label className="flex items-center gap-2.5 flex-1 cursor-pointer">
+                        <input type="checkbox" checked={empForm.trainingRefresher} onChange={(e) => updEmpForm('trainingRefresher', e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0" />
+                        <span className="text-sm font-medium text-slate-700">Voimankäyttövälineiden kertauskoulutus</span>
+                      </label>
+                      <div className="sm:w-48">
+                        <input
+                          type="date"
+                          disabled={!empForm.trainingRefresher}
+                          value={empForm.trainingRefresherUntil}
+                          onChange={(e) => updEmpForm('trainingRefresherUntil', e.target.value)}
+                          title="Voimassa asti"
+                          className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
+                        />
+                      </div>
                     </div>
                   </div>
 
-                  {/* Osa 6: Työturvallisuuskortit */}
+                  {/* Osa 7: Työturvallisuuskortit. Tiivistetty samalla tavalla kuin osio 5. */}
                   <div className="space-y-4">
                     <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
                       <HardHat size={18} className="text-slate-400"/>
-                      6. Työturvallisuuskortit
+                      7. Työturvallisuuskortit
                     </h3>
-                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
-                      <div className="hidden sm:flex items-center justify-end px-4 pt-2">
-                        <span className="text-xs font-medium text-slate-400 uppercase tracking-wide sm:w-48">Voimassa</span>
-                      </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {[
                         ['roadSafetyCard', 'roadSafetyCardUntil', 'Tieturvakortti'],
                         ['forkliftCard', 'forkliftCardUntil', 'Trukkikortti'],
                         ['hotWorkCard', 'hotWorkCardUntil', 'Tulityökortti'],
                         ['safetyCard', 'safetyCardUntil', 'Työturvallisuuskortti'],
-                        ['trainingRefresher', 'trainingRefresherUntil', 'Voimankäyttövälineiden kertauskoulutus'],
                       ].map(([boolKey, dateKey, label]) => (
-                        <div key={boolKey} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 hover:bg-slate-50 transition-colors">
-                          <label className="flex items-center gap-3 flex-1 cursor-pointer">
-                            <input type="checkbox" checked={empForm[boolKey]} onChange={(e) => updEmpForm(boolKey, e.target.checked)} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
-                            <span className="text-sm font-bold text-slate-800">{label}</span>
+                        <div key={boolKey} className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+                          <label className="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer">
+                            <input type="checkbox" checked={empForm[boolKey]} onChange={(e) => updEmpForm(boolKey, e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0" />
+                            <span className="text-sm font-medium text-slate-700 truncate">{label}</span>
                           </label>
-                          <div className="sm:w-48">
-                            <input
-                              type="date"
-                              disabled={!empForm[boolKey]}
-                              value={empForm[dateKey]}
-                              onChange={(e) => updEmpForm(dateKey, e.target.value)}
-                              className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
-                            />
-                          </div>
+                          <input
+                            type="date"
+                            disabled={!empForm[boolKey]}
+                            value={empForm[dateKey]}
+                            onChange={(e) => updEmpForm(dateKey, e.target.value)}
+                            title="Voimassa asti"
+                            className="w-40 shrink-0 rounded-lg border-slate-300 border p-1.5 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
+                          />
                         </div>
                       ))}
                     </div>
@@ -7480,7 +7889,7 @@ export default function App() {
                     <div className="flex justify-between items-end border-b pb-2">
                       <h3 className="text-md font-semibold text-slate-700 flex items-center gap-2">
                         <UserCheck size={18} className="text-slate-400"/>
-                        7. Erityiskoulutukset
+                        8. Erityiskoulutukset
                       </h3>
                       <span className="text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded">Ruksaa vain jos suoritettu ja todistus mukana</span>
                     </div>
@@ -7512,7 +7921,7 @@ export default function App() {
                   <div className="space-y-4">
                     <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
                       <Languages size={18} className="text-slate-400"/>
-                      8. Kielitaito
+                      9. Kielitaito
                     </h3>
                     <div className="space-y-3">
                       {empForm.languages.length === 0 && (
@@ -7635,10 +8044,10 @@ export default function App() {
                           <td className="p-4 font-mono text-xs text-slate-600">{emp.personalId || '—'}</td>
                           <td className="p-4">
                             <div className="flex flex-wrap gap-1">
-                              {emp.jvCard && <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">JV</span>}
-                              {emp.guardCard && <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded">Vartija</span>}
-                              {emp.gasPermit && <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded">Kaasu</span>}
-                              {!emp.jvCard && !emp.guardCard && !emp.gasPermit && <span className="text-xs text-slate-400">-</span>}
+                              {onKortti(emp, 'hasJvCard', 'jvCard') && <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">JV</span>}
+                              {onKortti(emp, 'hasGuardCard', 'guardCard') && <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded">Vartija</span>}
+                              {onKortti(emp, 'hasGasPermit', 'gasPermit') && <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded">Kaasu</span>}
+                              {!onKortti(emp, 'hasJvCard', 'jvCard') && !onKortti(emp, 'hasGuardCard', 'guardCard') && !onKortti(emp, 'hasGasPermit', 'gasPermit') && <span className="text-xs text-slate-400">-</span>}
                             </div>
                           </td>
                           <td className="p-4 text-slate-500 text-xs">{[emp.email, emp.phone].filter(Boolean).join(' · ') || '—'}</td>
@@ -8167,7 +8576,8 @@ export default function App() {
     const poistettavat = new Set(vanhentuneet);
     const jaljelle = reports.filter((r) => !poistettavat.has(r));
     const ok = await tallennaKokoelma('reports', jaljelle, { allowEmpty: true });
-    if (!ok) return; // virhe näkyy bannerissa; tilaa ei muuteta jotta näkymä pysyy totuudenmukaisena
+    if (!ok) return;
+    if (jaljelle.length === 0) ohitaSeuraavaTallennus.current.add('reports'); // virhe näkyy bannerissa; tilaa ei muuteta jotta näkymä pysyy totuudenmukaisena
     setReports(jaljelle);
     alert(
       [
