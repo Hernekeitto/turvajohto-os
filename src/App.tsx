@@ -394,6 +394,12 @@ const FORM_FIELD_GROUPS = [
     { key: 'rescuePlan', label: 'Pelastussuunnitelma pelastuslaitokselle' },
     { key: 'authorityResponsible', label: 'Kenen vastuulla asiakirjojen laatiminen on' },
   ]},
+  { title: '14. Viestintä ja hätänumerot', fields: [
+    { key: 'phoneTurva1', label: 'Turva 1 (turvallisuuspäällikkö)' },
+    { key: 'phoneTurva2', label: 'Turva 2' },
+    { key: 'phoneTike', label: 'TIKE (tilannekeskus)' },
+    { key: 'phoneFirstAid', label: 'EA-päivystys' },
+  ]},
   { title: '13. Muiden toimijoiden läsnäolo', fields: [
     { key: 'otherOperators', label: 'Alueella toimivat muut osapuolet' },
     { key: 'buildPhaseResponsible', label: 'Päävastuu alueen kokonaisturvallisuudesta rakennusvaiheessa' },
@@ -496,6 +502,21 @@ const muotoileTavut = (tavua: number) => {
 // perusteella kuin 'jvaction': kirjaus toimenpiteestä joka kohdistui henkilöön.
 // Sisäänkirjauksen roolit. "Ensiapu" ja "Muu" lisättiin, koska työntekijätilanteen
 // laatikoissa oli niille kovakoodatut luvut (12 ja 8) ilman mitään datalähdettä.
+// Radiokanavien oletusjako. Tämä on uuden tapahtuman ESITÄYTTÖ, ei kiinteä lista:
+// kanavat tallentuvat tapahtuman omiin tietoihin ja jokainen tapahtuma voi muuttaa
+// niitä. Aiemmin lista oli kovakoodattu suoraan näkymään, jolloin se näytti samalta
+// joka tapahtumassa eikä sitä voinut korjata mistään.
+const OLETUS_RADIOKANAVAT = [
+  'JV:t Tapahtuma',
+  'JV:t Välitönläheisyys',
+  'Toimintaryhmät',
+  'Toimintaryhmät (vara)',
+  'Backstage',
+  'Raportointi',
+  'Liikenne',
+  'Turvallisuusjohto ja tike (tarvittaessa viranomaiset)',
+];
+
 const CHECKIN_ROLES = ['Järjestyksenvalvoja', 'Vartija', 'Ensiapu', 'Muu'];
 
 const DEVIATION_TYPES = ['jvaction', 'jvreport', 'firstaid', 'threat', 'fence', 'damage'];
@@ -934,7 +955,9 @@ export default function App() {
   const [openedReportSource, setOpenedReportSource] = useState(null); // 'overview' | 'report_list' — mistä avoin raportti-modaali avattiin, muokkausoikeuden tarkistusta varten
 
   // Tapahtumavalinta: null = valintasivu, 'fesx' = tuotantotapahtuma,
-  // 'feso' = mallitapahtuma, 'new' = uuden tapahtuman lomake
+  // 'new' = uuden tapahtuman lomake. Muut arvot ovat tavallisia tapahtuma-id:itä;
+  // erillistä 'feso'-mallinäkymää ei enää ole, koska tyhjät tiedot käsitellään nyt
+  // kaikkialla kunnollisilla tyhjillä tiloilla.
   const [selectedEvent, setSelectedEvent] = useState(null);
 
   // Tapahtumariippumaton "Tallennetut raportit" -näkymä (kaikki tapahtumat samassa listassa)
@@ -965,11 +988,30 @@ export default function App() {
     existingCctv: '', cctvNotes: '', lighting: '', exitRoutes: '',
     policeNotification: '', rescuePlan: '', authorityResponsible: '',
     otherOperators: '', buildPhaseResponsible: '',
+    // 14. Viestintä ja hätänumerot. radioChannels on merkkijonolista; hätänumerot
+    // näkyvät Hätätilanneohjeet-sivulla, jossa niiden kohdalla oli aiemmin pelkkä
+    // rooli ilman numeroa.
+    radioChannels: OLETUS_RADIOKANAVAT,
+    phoneTurva1: '', phoneTurva2: '', phoneTike: '', phoneFirstAid: '',
     // Pohjakartan liitetunniste ja alkuperäinen tiedostonimi (ks. tallennaPohjakartta).
     mapUploadId: '', mapUploadName: ''
   };
   const [newEvent, setNewEvent] = useState(emptyNewEvent);
   const updNewEvent = (key, value) => setNewEvent(prev => ({ ...prev, [key]: value }));
+
+  // Radiokanavat ovat tapahtuman oma lista, joten niitä muokataan rivi kerrallaan.
+  const paivitaRadiokanava = (idx: number, arvo: string) => setNewEvent(prev => ({
+    ...prev,
+    radioChannels: (prev.radioChannels || []).map((k, i) => (i === idx ? arvo : k)),
+  }));
+  const lisaaRadiokanava = () => setNewEvent(prev => ({
+    ...prev,
+    radioChannels: [...(prev.radioChannels || []), ''],
+  }));
+  const poistaRadiokanava = (idx: number) => setNewEvent(prev => ({
+    ...prev,
+    radioChannels: (prev.radioChannels || []).filter((_, i) => i !== idx),
+  }));
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [openedReport, setOpenedReport] = useState(null);
@@ -5730,16 +5772,9 @@ export default function App() {
           </div>
         );
       case 'postevent': {
-        const radioChannels = [
-          "JV:t Tapahtuma",
-          "JV:t Välitönläheisyys",
-          "Toimintaryhmät",
-          "Toimintaryhmät (vara)",
-          "Backstage",
-          "Raportointi",
-          "Liikenne",
-          "Turvallisuusjohto ja tike (tarvittaessa viranomaiset)"
-        ];
+        // Kanavajako tulee tapahtuman omista tiedoista (osio 14). Uusi tapahtuma saa
+        // oletusjaon esitäyttönä, mutta jokainen tapahtuma voi muuttaa sitä.
+        const radioChannels = (valittuTapahtumaLomake.radioChannels || []).filter((k: string) => String(k || '').trim());
 
         // Vastuuhenkilöt luetaan tapahtuman omista perustiedoista. Aiemmin tässä oli
         // yhdeksän kovakoodattua nimeä ("Turva 1 — Ismo Näkki" jne.), jotka näkyivät
@@ -5820,16 +5855,23 @@ export default function App() {
                   <PhoneCall className="text-emerald-500" size={20} />
                   Radiopuhelinten kanavalista
                 </h3>
-                <ul className="space-y-2">
-                  {radioChannels.map((channel, idx) => (
-                    <li key={idx} className="flex gap-3 items-center p-2 hover:bg-slate-50 rounded-lg border border-transparent hover:border-slate-100 transition-colors">
-                      <span className="w-7 h-7 rounded-md bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm shrink-0">
-                        {idx + 1}
-                      </span>
-                      <span className="text-sm font-medium text-slate-700">{channel}</span>
-                    </li>
-                  ))}
-                </ul>
+                {radioChannels.length === 0 ? (
+                  <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                    Kanavajakoa ei ole kirjattu. Se täytetään tapahtuman perustiedoissa
+                    (osio 14, Viestintä ja hätänumerot).
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {radioChannels.map((channel: string, idx: number) => (
+                      <li key={idx} className="flex gap-3 items-center p-2 hover:bg-slate-50 rounded-lg border border-transparent hover:border-slate-100 transition-colors">
+                        <span className="w-7 h-7 rounded-md bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm shrink-0">
+                          {idx + 1}
+                        </span>
+                        <span className="text-sm font-medium text-slate-700">{channel}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
 
               {/* Vastuuhenkilöt */}
@@ -6964,24 +7006,41 @@ export default function App() {
                 <PhoneCall size={18} className="text-rose-400" />
                 Hätänumerot
               </h3>
+              {/* Numerot tulevat tapahtuman perustiedoista (osio 14). Aiemmin korteissa
+                  luki pelkkä rooli ilman numeroa, eli hätänumerokortti ilman numeroa.
+                  112 on kiinteä, koska se on sama kaikkialla. */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                <div className="bg-slate-700 rounded-lg p-3">
+                <a href="tel:112" className="bg-slate-700 hover:bg-slate-600 rounded-lg p-3 transition-colors block">
                   <div className="text-2xl font-bold">112</div>
                   <div className="text-xs text-slate-300 mt-0.5">Hätäkeskus</div>
-                </div>
-                <div className="bg-slate-700 rounded-lg p-3">
-                  <div className="font-bold">Turva 1</div>
-                  <div className="text-xs text-slate-300 mt-0.5">Turvallisuuspäällikkö</div>
-                </div>
-                <div className="bg-slate-700 rounded-lg p-3">
-                  <div className="font-bold">TIKE</div>
-                  <div className="text-xs text-slate-300 mt-0.5">Tilannekeskus</div>
-                </div>
-                <div className="bg-slate-700 rounded-lg p-3">
-                  <div className="font-bold">EA-päivystys</div>
-                  <div className="text-xs text-slate-300 mt-0.5">Ensiapupiste 1</div>
-                </div>
+                </a>
+                {[
+                  { numero: valittuTapahtumaLomake.phoneTurva1, otsikko: 'Turva 1', selite: 'Turvallisuuspäällikkö' },
+                  { numero: valittuTapahtumaLomake.phoneTurva2, otsikko: 'Turva 2', selite: 'Turvajohto' },
+                  { numero: valittuTapahtumaLomake.phoneTike, otsikko: 'TIKE', selite: 'Tilannekeskus' },
+                  { numero: valittuTapahtumaLomake.phoneFirstAid, otsikko: 'EA-päivystys', selite: 'Ensiapu' },
+                ].map((kortti) => {
+                  const numero = String(kortti.numero || '').trim();
+                  return numero ? (
+                    <a
+                      key={kortti.otsikko}
+                      href={`tel:${numero}`}
+                      className="bg-slate-700 hover:bg-slate-600 rounded-lg p-3 transition-colors block"
+                    >
+                      <div className="font-bold">{numero}</div>
+                      <div className="text-xs text-slate-300 mt-0.5">{kortti.otsikko} — {kortti.selite}</div>
+                    </a>
+                  ) : (
+                    <div key={kortti.otsikko} className="bg-slate-700/50 rounded-lg p-3">
+                      <div className="font-bold text-slate-400">Ei numeroa</div>
+                      <div className="text-xs text-slate-400 mt-0.5">{kortti.otsikko} — {kortti.selite}</div>
+                    </div>
+                  );
+                })}
               </div>
+              <p className="text-xs text-slate-400 mt-3">
+                Numerot täytetään tapahtuman perustiedoissa (osio 14, Viestintä ja hätänumerot).
+              </p>
             </div>
           </div>
         );
@@ -9690,6 +9749,71 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Osio 14 */}
+              <div className={sectionCls}>
+                <h3 className={headCls}><PhoneCall size={18} className="text-indigo-500" />14. Viestintä ja hätänumerot</h3>
+
+                <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Radiopuhelinten kanavajako</div>
+                <div className="space-y-2 mb-5">
+                  {(newEvent.radioChannels || []).map((kanava, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <span className="w-7 h-7 rounded-md bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm shrink-0">
+                        {idx + 1}
+                      </span>
+                      <input
+                        type="text"
+                        className={inputCls}
+                        value={kanava}
+                        onChange={(e) => paivitaRadiokanava(idx, e.target.value)}
+                        placeholder="Kanavan käyttötarkoitus"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => poistaRadiokanava(idx)}
+                        title="Poista kanava"
+                        className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-lg transition-colors shrink-0"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={lisaaRadiokanava}
+                    className="text-sm font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1.5"
+                  >
+                    <Plus size={16} />
+                    Lisää kanava
+                  </button>
+                  <p className="text-xs text-slate-500">
+                    Kanavat näkyvät tapahtuman yleiskatsauksessa siinä järjestyksessä kuin ne ovat tässä.
+                  </p>
+                </div>
+
+                <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Hätänumerot</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className={labelCls}>Turva 1 (turvallisuuspäällikkö)</label>
+                    <input type="tel" className={inputCls} value={newEvent.phoneTurva1} onChange={(e) => updNewEvent('phoneTurva1', e.target.value)} placeholder="Puhelinnumero" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Turva 2</label>
+                    <input type="tel" className={inputCls} value={newEvent.phoneTurva2} onChange={(e) => updNewEvent('phoneTurva2', e.target.value)} placeholder="Puhelinnumero" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>TIKE (tilannekeskus)</label>
+                    <input type="tel" className={inputCls} value={newEvent.phoneTike} onChange={(e) => updNewEvent('phoneTike', e.target.value)} placeholder="Puhelinnumero" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>EA-päivystys</label>
+                    <input type="tel" className={inputCls} value={newEvent.phoneFirstAid} onChange={(e) => updNewEvent('phoneFirstAid', e.target.value)} placeholder="Puhelinnumero" />
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 mt-3">
+                  Numerot näkyvät Hätätilanneohjeet-sivulla yleisen hätänumeron 112 rinnalla.
+                </p>
+              </div>
+
               {/* Toiminnot */}
               <div className="flex justify-end gap-3 pb-6">
                 <button
@@ -9717,134 +9841,6 @@ export default function App() {
   }
 
   // ====================== MALLITAPAHTUMA FESTIVAALIÖ ======================
-  if (selectedEvent === 'feso') {
-    const demoNav = [
-      { label: 'Tilannekuva', icon: Activity },
-      { label: 'Raportointi ja lomakkeet', icon: PenTool },
-      { label: 'Ennen Tapahtumaa', icon: Calendar },
-      { label: 'FestivaaliÖ', icon: Layers },
-      { label: 'Lomakekartoitus', icon: FileText },
-      { label: 'Asetukset', icon: Settings }
-    ];
-
-    return (
-      <div className="min-h-screen bg-slate-50 font-sans">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center sticky top-0 z-50 shadow-md">
-          <div className="flex items-center gap-4">
-            <div className="p-1.5 text-slate-500">
-              <Menu size={24} />
-            </div>
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="text-indigo-400" size={28} />
-              <div>
-                <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
-                <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-4 sm:gap-6">
-            <div className="flex items-center gap-2 bg-rose-600/50 text-white/70 px-4 py-2 rounded-lg font-bold text-sm cursor-not-allowed">
-              <AlertTriangle size={16} />
-              <span className="hidden sm:inline">Pikatoiminnot</span>
-            </div>
-            <button
-              onClick={() => setSelectedEvent(null)}
-              className="hidden sm:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white transition-colors"
-            >
-              <ArrowLeft size={16} />
-              Vaihda tapahtuma
-            </button>
-            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
-              <Clock size={16} className="text-indigo-400" />
-              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
-            </div>
-            <div className="flex items-center gap-3 border-l border-slate-700 pl-4 sm:pl-6">
-              <ProfileMenu
-                nickname={sessionNickname}
-                isAdmin={session?.role === 'admin'}
-                onChangePassword={() => setShowChangePassword(true)}
-                onManageUsers={() => setViewingUserAdmin('list')}
-              onViewAuditLog={() => setViewingAuditLog(true)}
-              onOpenSettings={() => setViewingSettings(true)}
-                onLogout={handleLogout}
-              />
-            </div>
-          </div>
-        </nav>
-
-        <div className="flex">
-          <aside className="w-64 bg-white border-r border-slate-200 min-h-[calc(100vh-72px)] p-4 hidden md:block">
-            <nav className="space-y-1">
-              {demoNav.map((item, idx) => {
-                const Icon = item.icon;
-                return (
-                  <div
-                    key={idx}
-                    className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-slate-400 cursor-not-allowed select-none"
-                  >
-                    <Icon size={18} />
-                    {item.label}
-                  </div>
-                );
-              })}
-            </nav>
-          </aside>
-
-          <main className="flex-1 p-6 md:p-8">
-            <div className="max-w-4xl">
-              <div className="mb-6 pb-4 border-b border-slate-200">
-                <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                  <Layers className="text-indigo-500" size={28} />
-                  FestivaaliÖ
-                </h2>
-                <p className="text-sm text-slate-500 mt-1">Mallitapahtuma. Suunnitteluvaihe, tietoja ei ole vielä täydennetty.</p>
-              </div>
-
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3 mb-6">
-                <Info className="text-amber-600 shrink-0 mt-0.5" size={18} />
-                <div className="text-sm text-amber-900">
-                  <span className="font-bold">Tyhjä pohja.</span> Tämä tapahtuma käyttää samaa Turvajohto OS -runkoa,
-                  mutta toiminnot eivät ole käytössä. Valikot ja pikatoiminnot on poistettu käytöstä, koska tapahtuman
-                  perustiedot puuttuvat.
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
-                {['Aktiiviset järjestyksenvalvojat', 'Avoimet tehtävät', 'Kirjaukset tänään', 'Yleisöarvio'].map((title, idx) => (
-                  <div key={idx} className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
-                    <div className="flex justify-between items-start mb-3">
-                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{title}</span>
-                      <div className="p-2 rounded-lg bg-slate-50 text-slate-300">
-                        <Activity size={18} />
-                      </div>
-                    </div>
-                    <div className="text-3xl font-bold text-slate-300">-</div>
-                    <div className="text-xs text-slate-400 mt-1">Ei tietoja</div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
-                <Layers className="text-slate-300 mx-auto mb-4" size={48} />
-                <h3 className="text-lg font-bold text-slate-700 mb-1">Tapahtuman tiedot puuttuvat</h3>
-                <p className="text-sm text-slate-500 max-w-md mx-auto">
-                  Täytä toimeksiannon perustiedot, jotta tilannekuva, resurssimitoitus ja raportointi saadaan käyttöön.
-                </p>
-                <button
-                  onClick={() => setSelectedEvent('new')}
-                  className="mt-5 px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors inline-flex items-center gap-2"
-                >
-                  <Plus size={18} />
-                  Täytä tapahtuman tiedot
-                </button>
-              </div>
-            </div>
-          </main>
-        </div>
-        {globalOverlays}
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans">
