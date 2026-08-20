@@ -127,10 +127,12 @@ const COLLECTIONS = {
     eventScoped: false,
   },
   events: {
-    // Tapahtumien luonti/muokkaus/poisto tehdään kaikki "Aloitussivulta" (landing), eikä
-    // frontissa ole tälle erillistä muokkausoikeus-solmua — sama peilataan tässä. 'landing'
-    // on globaali solmu, joten tämä ei tosiasiassa vaihtele tapahtumittain (tarkoituksella
-    // — "kuka näkee tapahtumavalitsimen" ei ole järkevää asettaa per tapahtuma).
+    // Tapahtumien luonti/muokkaus/poisto tehdään kaikki etusivun "Valitse tapahtuma"
+    // -näkymästä (sivukartan solmu 'landing' — nimi on peruja ajalta jolloin se oli
+    // tapahtuman sisäinen Aloitussivu-välilehti), eikä frontissa ole tälle erillistä
+    // muokkausoikeus-solmua — sama peilataan tässä. 'landing' on globaali solmu, joten
+    // tämä ei tosiasiassa vaihtele tapahtumittain (tarkoituksella — "kuka näkee
+    // tapahtumavalitsimen" ei ole järkevää asettaa per tapahtuma).
     view: ['landing'],
     touch: () => ['landing'],
     eventScoped: true,

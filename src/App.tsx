@@ -642,7 +642,9 @@ const getInitials = (name) => {
 
 // Yläpalkin profiilipainike + pudotusvalikko. Korvaa aiemman kovakoodatun "TJ"-badgen
 // kaikissa nav-palkeissa (ks. käyttöpaikat renderöinnin puolella).
-const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onManageUsers, onViewAuditLog, onOpenSettings, onLogout }) => {
+// HUOM: "Muokkaa käyttäjiä" ja "Sovellusasetukset" eivät ole enää täällä vaan etusivun
+// painikkeina — valikkoon jäävät vain omaan tunnukseen liittyvät toiminnot.
+const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onViewAuditLog, onLogout }) => {
   const [open, setOpen] = useState(false);
   return (
     <div className="relative">
@@ -670,29 +672,11 @@ const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onManageUsers, onVie
             </button>
             {isAdmin && (
               <button
-                onClick={() => { setOpen(false); onManageUsers(); }}
-                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
-              >
-                <Users size={16} className="text-slate-400" />
-                Muokkaa käyttäjiä
-              </button>
-            )}
-            {isAdmin && (
-              <button
                 onClick={() => { setOpen(false); onViewAuditLog(); }}
                 className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
               >
                 <History size={16} className="text-slate-400" />
                 Audit-loki
-              </button>
-            )}
-            {isAdmin && (
-              <button
-                onClick={() => { setOpen(false); onOpenSettings(); }}
-                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
-              >
-                <Settings size={16} className="text-slate-400" />
-                Asetukset
               </button>
             )}
             <div className="border-t border-slate-100 my-1" />
@@ -714,7 +698,10 @@ const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onManageUsers, onVie
 // olevia activeTab-arvoja (uudelleenkäyttö) — backend ei tunne tätä puuta, se
 // tallentaa vain geneerisen { [id]: { view, edit } } -olion.
 const SITEMAP = [
-  { id: 'landing', label: 'Aloitussivu' },
+  // 'landing' oli aiemmin tapahtuman sisäinen Aloitussivu-välilehti. Välilehteä ei enää
+  // ole: solmu ratkaisee nyt sen, kuka näkee etusivun "Valitse tapahtuma" -näkymän (ja
+  // tapahtumien luonnin/muokkauksen, ks. server/permissions.js COLLECTIONS.events).
+  { id: 'landing', label: 'Tapahtumavalinta' },
   { id: 'overview', label: 'Tilannekuva' },
   { id: 'reporting', label: 'Raportointi', children: [
     { id: 'report_jv', label: 'Järjestyksenvalvojan tapahtumailmoitus' },
@@ -751,7 +738,7 @@ const SITEMAP = [
       { id: 'documents_risk_new', label: 'Riskin arviointi' },
     ] },
   ] },
-  { id: 'settings', label: 'Asetukset' },
+  { id: 'settings', label: 'Sovellusasetukset' },
   { id: 'global_reports', label: 'Tallennetut raportit (kaikki tapahtumat)' },
   { id: 'global_archived_events', label: 'Tallennetut tapahtumat' },
   { id: 'global_employee_bank', label: 'Työntekijäpankki' },
@@ -790,6 +777,7 @@ const DEFAULT_BUCKET = '__default__';
 // Nämä solmut EIVÄT ole sidottu yhteen tapahtumaan — haetaan aina __default__-asetuksesta
 // riippumatta mille tapahtumalle tarkistus muuten tehtäisiin (sama lista kuin
 // server/permissions.js:n GLOBAL_NODES, ks. sen kommentti täydestä perustelusta).
+// Nämä solmut ratkaisevat myös sen, mitkä painikkeet etusivulla näkyvät.
 const GLOBAL_NODES = new Set([
   'landing',
   'settings',
@@ -951,14 +939,29 @@ export default function App() {
   // "Muokkaa käyttäjiä" -näkymässä.
   const isAdminUser = session?.role === 'admin';
   const perms = session?.permissions;
-  const [activeTab, setActiveTab] = useState('landing');
-  const [openedReportSource, setOpenedReportSource] = useState(null); // 'overview' | 'report_list' — mistä avoin raportti-modaali avattiin, muokkausoikeuden tarkistusta varten
+  const [activeTab, setActiveTab] = useState('overview');
+  // 'overview' | 'report_list' — mistä avoin raportti-modaali avattiin, muokkausoikeuden tarkistusta varten
+  const [openedReportSource, setOpenedReportSource] = useState(null);
 
   // Tapahtumavalinta: null = valintasivu, 'fesx' = tuotantotapahtuma,
   // 'new' = uuden tapahtuman lomake. Muut arvot ovat tavallisia tapahtuma-id:itä;
   // erillistä 'feso'-mallinäkymää ei enää ole, koska tyhjät tiedot käsitellään nyt
   // kaikkialla kunnollisilla tyhjillä tiloilla.
   const [selectedEvent, setSelectedEvent] = useState(null);
+
+  // Etusivu on kirjautumisen jälkeen ensimmäinen näkymä (selectedEvent === null JA
+  // showEventPicker === false). Sieltä "Valitse tapahtuma" avaa tapahtumalistan.
+  const [showEventPicker, setShowEventPicker] = useState(false);
+
+  // Tapahtuman sivuvalikon välilehdet siinä järjestyksessä kuin ne näkyvät valikossa.
+  // Aloitussivu-välilehteä ei enää ole, joten tapahtuma avataan ensimmäiselle sivulle
+  // johon käyttäjällä on lukuoikeus — muuten rajatuilla oikeuksilla varustettu käyttäjä
+  // laskeutuisi aina renderContentin "Ei käyttöoikeutta" -sivulle.
+  const oletusValilehti = (eventId: string | null) => {
+    if (isAdminUser) return 'overview';
+    const valilehdet = ['overview', 'reporting', 'planning', 'postevent', 'documents'];
+    return valilehdet.find((id) => canView(perms, eventId, id)) || 'overview';
+  };
 
   // Tapahtumariippumaton "Tallennetut raportit" -näkymä (kaikki tapahtumat samassa listassa)
   const [viewingAllReports, setViewingAllReports] = useState(false);
@@ -2214,7 +2217,7 @@ export default function App() {
       const targetId = editingEventId;
       setEditingEventId(null);
       setSelectedEvent(targetId);
-      setActiveTab('landing');
+      setActiveTab(oletusValilehti(targetId));
       return;
     }
 
@@ -2238,7 +2241,7 @@ export default function App() {
     setEvents(prev => [...prev, newEventCard]);
     setNewEvent(emptyNewEvent);
     setSelectedEvent(id);
-    setActiveTab('landing');
+    setActiveTab(oletusValilehti(id));
   };
 
   const handleStartEditEvent = (id) => {
@@ -3177,46 +3180,8 @@ export default function App() {
       );
     }
     switch (activeTab) {
-      case 'landing':
-        return (
-          <div className="flex flex-col items-center justify-center min-h-[calc(100vh-120px)] animate-in fade-in zoom-in-95 duration-500">
-            <div className="bg-white p-10 md:p-14 rounded-3xl shadow-xl border border-slate-100 text-center max-w-2xl w-full">
-              <div className="w-24 h-24 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner ring-8 ring-indigo-50/50">
-                <ShieldCheck size={48} />
-              </div>
-              <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-3 tracking-tight">Turvajohto OS</h1>
-              
-              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 mt-6 mb-10">
-                <h2 className="text-xl md:text-2xl font-semibold text-slate-700">
-                  {getGreeting(currentTime)}, <span className="text-indigo-600">Turva 1</span>
-                </h2>
-                <p className="text-slate-500 font-medium mt-1">Turvajohto</p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <button 
-                  onClick={() => setActiveTab('overview')}
-                  className="flex items-center justify-center gap-3 p-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all shadow-sm hover:shadow group"
-                >
-                  <Activity size={20} className="group-hover:scale-110 transition-transform" />
-                  Tilannekuva
-                </button>
-                <button 
-                  onClick={() => setActiveTab('reporting')}
-                  className="flex items-center justify-center gap-3 p-4 bg-white border-2 border-slate-200 hover:border-indigo-300 hover:bg-slate-50 text-slate-700 rounded-xl font-bold transition-all"
-                >
-                  <FileText size={20} className="text-indigo-500" />
-                  Avaa raportointi
-                </button>
-              </div>
-            </div>
-            
-            <div className="mt-12 text-slate-400 text-sm font-medium flex items-center gap-2">
-              <Clock size={16} />
-              Kirjautumisaika: {muotoileKirjautumisaika(session?.lastLoginAt)}
-            </div>
-          </div>
-        );
+      // 'landing' (Aloitussivu) ei ole enää tapahtuman välilehti — sen sisältö on nyt
+      // koko sovelluksen etusivu, joka aukeaa heti kirjautumisen jälkeen.
       case 'overview':
         return (
           <div className="space-y-6">
@@ -7262,9 +7227,7 @@ export default function App() {
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}
               onChangePassword={() => setShowChangePassword(true)}
-              onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
-              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -7739,9 +7702,7 @@ export default function App() {
               nickname={sessionNickname}
               isAdmin={isAdmin}
               onChangePassword={() => setShowChangePassword(true)}
-              onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
-              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -8241,16 +8202,14 @@ export default function App() {
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Asetukset</p>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Sovellusasetukset</p>
             </div>
           </div>
           <ProfileMenu
             nickname={sessionNickname}
             isAdmin={session?.role === 'admin'}
             onChangePassword={() => setShowChangePassword(true)}
-            onManageUsers={() => setViewingUserAdmin('list')}
             onViewAuditLog={() => setViewingAuditLog(true)}
-            onOpenSettings={() => setViewingSettings(true)}
             onLogout={handleLogout}
           />
         </nav>
@@ -8265,7 +8224,7 @@ export default function App() {
               Takaisin
             </button>
 
-            <h2 className="text-2xl font-bold text-slate-800 mb-1">Asetukset</h2>
+            <h2 className="text-2xl font-bold text-slate-800 mb-1">Sovellusasetukset</h2>
             <p className="text-sm text-slate-500 mb-8">Palvelimen tallennustila ja lakisääteiset säilytysajat.</p>
 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
@@ -8599,9 +8558,7 @@ export default function App() {
               nickname={sessionNickname}
               isAdmin={isAdmin}
               onChangePassword={() => setShowChangePassword(true)}
-              onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
-              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -8768,9 +8725,7 @@ export default function App() {
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}
               onChangePassword={() => setShowChangePassword(true)}
-              onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
-              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -8783,7 +8738,7 @@ export default function App() {
               className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
             >
               <ArrowLeft size={16} />
-              Takaisin tapahtumavalintaan
+              Takaisin etusivulle
             </button>
 
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
@@ -8910,9 +8865,7 @@ export default function App() {
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}
               onChangePassword={() => setShowChangePassword(true)}
-              onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
-              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </nav>
@@ -9084,9 +9037,7 @@ export default function App() {
             nickname={sessionNickname}
             isAdmin={session?.role === 'admin'}
             onChangePassword={() => setShowChangePassword(true)}
-            onManageUsers={() => setViewingUserAdmin('list')}
             onViewAuditLog={() => setViewingAuditLog(true)}
-            onOpenSettings={() => setViewingSettings(true)}
             onLogout={handleLogout}
           />
         </nav>
@@ -9098,7 +9049,7 @@ export default function App() {
               className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
             >
               <ArrowLeft size={16} />
-              Takaisin tapahtumavalintaan
+              Takaisin etusivulle
             </button>
 
             <div className="mb-8">
@@ -9148,6 +9099,123 @@ export default function App() {
     );
   }
 
+  // ====================== ETUSIVU ======================
+  // Ensimmäinen näkymä kirjautumisen jälkeen. Sisältö on entinen tapahtuman sisäinen
+  // "Aloitussivu"-välilehti, joka on nyt nostettu koko sovelluksen tasolle: tapahtumasta
+  // riippumattomat toiminnot (työntekijäpankki, arkistot, käyttäjät, asetukset) löytyvät
+  // täältä yhdestä paikasta sen sijaan että ne olisivat hajallaan yläpalkissa ja
+  // profiilivalikossa. Tapahtumalista aukeaa "Valitse tapahtuma" -painikkeesta.
+  if (selectedEvent === null && !showEventPicker) {
+    const etusivunPainikkeet = [
+      {
+        nakyy: isAdminUser || canView(perms, null, 'global_employee_bank'),
+        label: 'Työntekijäpankki',
+        icon: IdCard,
+        onClick: () => setViewingEmployeeBank('list'),
+      },
+      {
+        nakyy: isAdminUser || canView(perms, null, 'global_archived_events'),
+        label: 'Tallennetut tapahtumat',
+        icon: Archive,
+        onClick: () => setViewingArchivedEvents(true),
+      },
+      {
+        nakyy: isAdminUser || canView(perms, null, 'global_reports'),
+        label: 'Tallennetut raportit',
+        icon: FileText,
+        onClick: () => setViewingAllReports(true),
+      },
+      {
+        nakyy: isAdminUser,
+        label: 'Muokkaa käyttäjiä',
+        icon: Users,
+        onClick: () => setViewingUserAdmin('list'),
+      },
+      {
+        nakyy: isAdminUser || canView(perms, null, 'settings'),
+        label: 'Sovellusasetukset',
+        icon: Settings,
+        onClick: () => setViewingSettings(true),
+      },
+    ].filter((painike) => painike.nakyy);
+
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
+        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="text-indigo-400" size={28} />
+            <div>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
+              <Clock size={16} className="text-indigo-400" />
+              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
+            </div>
+            <ProfileMenu
+              nickname={sessionNickname}
+              isAdmin={session?.role === 'admin'}
+              onChangePassword={() => setShowChangePassword(true)}
+              onViewAuditLog={() => setViewingAuditLog(true)}
+              onLogout={handleLogout}
+            />
+          </div>
+        </nav>
+
+        <main className="flex-1 p-6 md:p-10 flex flex-col items-center justify-center">
+          <div className="bg-white p-8 md:p-12 rounded-3xl shadow-xl border border-slate-100 text-center max-w-2xl w-full animate-in fade-in zoom-in-95 duration-500">
+            <div className="w-24 h-24 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner ring-8 ring-indigo-50/50">
+              <ShieldCheck size={48} />
+            </div>
+            <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-3 tracking-tight">Turvajohto OS</h1>
+
+            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 mt-6 mb-10">
+              <h2 className="text-xl md:text-2xl font-semibold text-slate-700">
+                {getGreeting(currentTime)}, <span className="text-indigo-600">{sessionNickname || 'Turva 1'}</span>
+              </h2>
+              <p className="text-slate-500 font-medium mt-1">Turvajohto</p>
+            </div>
+
+            <div className="space-y-4">
+              {(isAdminUser || canView(perms, null, 'landing')) && (
+                <button
+                  onClick={() => setShowEventPicker(true)}
+                  className="w-full flex items-center justify-center gap-3 p-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all shadow-sm hover:shadow group"
+                >
+                  <Layers size={20} className="group-hover:scale-110 transition-transform" />
+                  Valitse tapahtuma
+                </button>
+              )}
+
+              {etusivunPainikkeet.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {etusivunPainikkeet.map(({ label, icon: Icon, onClick }) => (
+                    <button
+                      key={label}
+                      onClick={onClick}
+                      className="flex items-center justify-center gap-3 p-4 bg-white border-2 border-slate-200 hover:border-indigo-300 hover:bg-slate-50 text-slate-700 rounded-xl font-bold transition-all text-center leading-tight"
+                    >
+                      <Icon size={20} className="text-indigo-500 shrink-0" />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-12 text-slate-400 text-sm font-medium flex items-center gap-2">
+            <Clock size={16} />
+            Kirjautumisaika: {muotoileKirjautumisaika(session?.lastLoginAt)}
+          </div>
+        </main>
+        {globalOverlays}
+      </div>
+    );
+  }
+
   // ====================== TAPAHTUMAN VALINTA ======================
   if (selectedEvent === null) {
     return (
@@ -9161,33 +9229,8 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {(isAdminUser || canView(perms, selectedEvent, 'global_reports')) && (
-              <button
-                onClick={() => setViewingAllReports(true)}
-                className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-              >
-                <FileText size={16} className="text-indigo-400" />
-                Tallennetut raportit
-              </button>
-            )}
-            {(isAdminUser || canView(perms, selectedEvent, 'global_archived_events')) && (
-              <button
-                onClick={() => setViewingArchivedEvents(true)}
-                className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-              >
-                <Archive size={16} className="text-indigo-400" />
-                Tallennetut tapahtumat
-              </button>
-            )}
-            {(isAdminUser || canView(perms, selectedEvent, 'global_employee_bank')) && (
-              <button
-                onClick={() => setViewingEmployeeBank('list')}
-                className="hidden md:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-              >
-                <IdCard size={16} className="text-indigo-400" />
-                Työntekijäpankki
-              </button>
-            )}
+            {/* Tallennetut raportit / Tallennetut tapahtumat / Työntekijäpankki löytyvät
+                nyt etusivulta, eivät enää tämän näkymän yläpalkista. */}
             <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
@@ -9196,9 +9239,7 @@ export default function App() {
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}
               onChangePassword={() => setShowChangePassword(true)}
-              onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
-              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -9206,40 +9247,19 @@ export default function App() {
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-5xl mx-auto">
-            <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div>
-                <h2 className="text-2xl font-bold text-slate-800">Valitse tapahtuma</h2>
-                <p className="text-sm text-slate-500 mt-1">
-                  Avaa olemassa oleva tapahtuma tai luo uusi toimeksianto. Kaikki kirjaukset kohdistuvat valittuun tapahtumaan.
-                </p>
-              </div>
-              {(isAdminUser || canView(perms, selectedEvent, 'global_reports')) && (
-                <button
-                  onClick={() => setViewingAllReports(true)}
-                  className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
-                >
-                  <FileText size={16} />
-                  Tallennetut raportit
-                </button>
-              )}
-              {(isAdminUser || canView(perms, selectedEvent, 'global_archived_events')) && (
-                <button
-                  onClick={() => setViewingArchivedEvents(true)}
-                  className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
-                >
-                  <Archive size={16} />
-                  Tallennetut tapahtumat
-                </button>
-              )}
-              {(isAdminUser || canView(perms, selectedEvent, 'global_employee_bank')) && (
-                <button
-                  onClick={() => setViewingEmployeeBank('list')}
-                  className="md:hidden flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
-                >
-                  <IdCard size={16} />
-                  Työntekijäpankki
-                </button>
-              )}
+            <button
+              onClick={() => setShowEventPicker(false)}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin etusivulle
+            </button>
+
+            <div className="mb-8">
+              <h2 className="text-2xl font-bold text-slate-800">Valitse tapahtuma</h2>
+              <p className="text-sm text-slate-500 mt-1">
+                Avaa olemassa oleva tapahtuma tai luo uusi toimeksianto. Kaikki kirjaukset kohdistuvat valittuun tapahtumaan.
+              </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -9248,8 +9268,8 @@ export default function App() {
                   key={ev.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() => { setSelectedEvent(ev.id); setActiveTab('landing'); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { setSelectedEvent(ev.id); setActiveTab('landing'); } }}
+                  onClick={() => { setSelectedEvent(ev.id); setActiveTab(oletusValilehti(ev.id)); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { setSelectedEvent(ev.id); setActiveTab(oletusValilehti(ev.id)); } }}
                   className={`bg-white rounded-xl border-2 ${ev.accent} shadow-sm hover:shadow-md transition-all p-6 text-left group cursor-pointer relative`}
                 >
                   <div className="absolute top-4 right-4 flex items-center gap-1">
@@ -9342,9 +9362,7 @@ export default function App() {
             nickname={sessionNickname}
             isAdmin={session?.role === 'admin'}
             onChangePassword={() => setShowChangePassword(true)}
-            onManageUsers={() => setViewingUserAdmin('list')}
             onViewAuditLog={() => setViewingAuditLog(true)}
-            onOpenSettings={() => setViewingSettings(true)}
             onLogout={handleLogout}
           />
         </nav>
@@ -9352,7 +9370,7 @@ export default function App() {
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-4xl mx-auto">
             <button
-              onClick={() => { setSelectedEvent(null); setNewEvent(emptyNewEvent); setEditingEventId(null); }}
+              onClick={() => { setSelectedEvent(null); setShowEventPicker(true); setNewEvent(emptyNewEvent); setEditingEventId(null); }}
               className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
             >
               <ArrowLeft size={16} />
@@ -9818,7 +9836,7 @@ export default function App() {
               <div className="flex justify-end gap-3 pb-6">
                 <button
                   type="button"
-                  onClick={() => { setNewEvent(emptyNewEvent); setSelectedEvent(null); setEditingEventId(null); }}
+                  onClick={() => { setNewEvent(emptyNewEvent); setSelectedEvent(null); setShowEventPicker(true); setEditingEventId(null); }}
                   className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg transition-colors"
                 >
                   Peruuta
@@ -9856,7 +9874,7 @@ export default function App() {
           </button>
           <div 
             className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
-            onClick={() => setActiveTab('landing')}
+            onClick={() => setActiveTab('overview')}
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
@@ -9918,7 +9936,7 @@ export default function App() {
           </div>
 
           <button
-            onClick={() => { setSelectedEvent(null); setActiveTab('landing'); setShowQuickActions(false); }}
+            onClick={() => { setSelectedEvent(null); setShowEventPicker(true); setShowQuickActions(false); }}
             className="hidden sm:flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white transition-colors"
           >
             <ArrowLeft size={16} />
@@ -9934,9 +9952,7 @@ export default function App() {
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}
               onChangePassword={() => setShowChangePassword(true)}
-              onManageUsers={() => setViewingUserAdmin('list')}
               onViewAuditLog={() => setViewingAuditLog(true)}
-              onOpenSettings={() => setViewingSettings(true)}
               onLogout={handleLogout}
             />
           </div>
@@ -9948,15 +9964,6 @@ export default function App() {
         {isSidebarOpen && (
           <aside className="w-full md:w-64 bg-white border-r border-slate-200 flex-shrink-0 flex flex-col">
             <div className="p-4 space-y-1">
-              {(isAdminUser || canView(perms, selectedEvent, 'landing')) && (
-                <button
-                  onClick={() => setActiveTab('landing')}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'landing' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
-                >
-                  <Home size={18} />
-                  Aloitussivu
-                </button>
-              )}
               {(isAdminUser || canView(perms, selectedEvent, 'overview')) && (
                 <button
                   onClick={() => setActiveTab('overview')}
@@ -10008,7 +10015,7 @@ export default function App() {
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors text-slate-600 hover:bg-slate-50"
                 >
                   <Settings size={18} />
-                  Asetukset
+                  Sovellusasetukset
                 </button>
               )}
             </div>
