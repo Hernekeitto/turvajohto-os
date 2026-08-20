@@ -364,6 +364,7 @@ const FORM_FIELD_GROUPS = [
   ]},
   { title: '7. Arvioitu yleisömäärä ja kohderyhmä', fields: [
     { key: 'audienceCount', label: 'Arvioitu yleisömäärä (hlö)' },
+    { key: 'requiredJvCount', label: 'Vahvistettu JV-mitoitus (hlö)' },
     { key: 'ageProfile', label: 'Ikärakenne' },
     { key: 'audienceNotes', label: 'Kohderyhmän kuvaus' },
   ]},
@@ -953,7 +954,7 @@ export default function App() {
     publicStartDate: '', publicStartTime: '', publicEndDate: '', publicEndTime: '',
     buildStart: '', buildEnd: '', teardownStart: '', teardownEnd: '',
     address: '', areaType: '', fenced: '', areaNotes: '',
-    audienceCount: '', ageProfile: '', audienceNotes: '',
+    audienceCount: '', ageProfile: '', audienceNotes: '', requiredJvCount: '',
     heldBefore: '', previousIncidents: '',
     hasBar: false, barResponsible: '', barOperator: '',
     performers: '', reactionRisk: false, vipGuests: false, vipNotes: '',
@@ -2847,7 +2848,15 @@ export default function App() {
   // vasta merkittyjä eikä jo uloskirjattuja).
   const jvCount = currentEventCheckedIn.filter(e => e.role === 'Järjestyksenvalvoja' && getEmpStatus(e) === 'checked_in').length;
   const guardCount = currentEventCheckedIn.filter(e => e.role === 'Vartija' && getEmpStatus(e) === 'checked_in').length;
-  const requiredJv = 142;
+  // Valitun tapahtuman perustietolomake. Määritelty tässä, koska ensimmäinen
+  // käyttö on heti alla oleva JV-mitoitus — myöhemmin samaa lomaketta luetaan
+  // myös avausvalmiuden laskurissa.
+  const valittuTapahtumaLomake = (events.find((e) => e.id === selectedEvent) as any)?.formData || {};
+
+  // JV-mitoitus tulee tapahtuman perustiedoista (osio 7), ei kovakoodattuna.
+  // 0 = mitoitusta ei ole vahvistettu, jolloin vertailulukua ei näytetä lainkaan
+  // — aiemmin tässä oli kiinteä 142, joka oli väärä heti toisesta tapahtumasta.
+  const requiredJv = Math.max(0, Number(valittuTapahtumaLomake.requiredJvCount) || 0);
   const jvMissing = Math.max(0, requiredJv - jvCount);
 
   // ---- Tilannekuvan laskurit raportoiduista kirjauksista ----
@@ -2953,7 +2962,6 @@ export default function App() {
   const isReadyForOpening = missingChecksCount === 0;
 
   // Tapahtuman perustiedoista: milloin portit on suunniteltu avattavaksi yleisölle.
-  const valittuTapahtumaLomake = (events.find((e) => e.id === selectedEvent) as any)?.formData || {};
   const suunniteltuAvausPvm = valittuTapahtumaLomake.publicStartDate || '';
   const suunniteltuAvausKlo = valittuTapahtumaLomake.publicStartTime || '';
 
@@ -3042,9 +3050,11 @@ export default function App() {
                 title="Aktiiviset Järjestyksenvalvojat" 
                 icon={ShieldCheck} 
                 value={jvCount} 
-                subtitle={jvMissing === 0
-                  ? `Sisäänkirjattu ${jvCount}/${requiredJv} — mitoitus täyttyy`
-                  : `Sisäänkirjattu ${jvCount}/${requiredJv} — puuttuu ${jvMissing}`}
+                subtitle={requiredJv === 0
+                  ? 'Mitoitusta ei ole vahvistettu — aseta se tapahtuman perustiedoissa (osio 7)'
+                  : jvMissing === 0
+                    ? `Sisäänkirjattu ${jvCount}/${requiredJv} — mitoitus täyttyy`
+                    : `Sisäänkirjattu ${jvCount}/${requiredJv} — puuttuu ${jvMissing}`}
               />
               <DashboardCard 
                 title="Ensiaputapaukset" 
@@ -9247,6 +9257,25 @@ export default function App() {
                         Lopullisen määrän vahvistaa poliisi.
                       </p>
                     )}
+                  </div>
+                  <div>
+                    <label className={labelCls}>Vahvistettu JV-mitoitus (hlö)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      className={inputCls}
+                      value={newEvent.requiredJvCount}
+                      onChange={(e) => updNewEvent('requiredJvCount', e.target.value)}
+                      placeholder={
+                        newEvent.audienceCount && Number(newEvent.audienceCount) > 0
+                          ? `Esim. ${Math.ceil(Number(newEvent.audienceCount) / 100)}`
+                          : 'Esim. 142'
+                      }
+                    />
+                    <p className="text-xs text-slate-500 mt-1.5">
+                      Poliisin vahvistama järjestyksenvalvojien määrä. Tilannekuva vertaa
+                      sisäänkirjattujen määrää tähän lukuun.
+                    </p>
                   </div>
                   <div>
                     <label className={labelCls}>Ikärakenne</label>
