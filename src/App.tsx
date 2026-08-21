@@ -1253,18 +1253,26 @@ export default function App() {
   const [auditFilters, setAuditFilters] = useState({ user: '', action: '', collection: '' });
   const [newUserUsername, setNewUserUsername] = useState('');
   const [newUserNickname, setNewUserNickname] = useState('');
-  const [newUserPassword, setNewUserPassword] = useState('');
+
   const [newUserError, setNewUserError] = useState('');
   const [newUserSubmitting, setNewUserSubmitting] = useState(false);
   const [editingPermUser, setEditingPermUser] = useState(null);
-  // permDraft on nyt kaksitasoinen: { __default__: {node:{view,edit}}, [eventId]:
-  // {node:{view,edit}} } — ks. DEFAULT_BUCKET-kommentti. permEditingBucket kertoo kumpaa
-  // niistä Sivukartta-taulukko juuri nyt näyttää/muokkaa (oletuksena __default__ eli
-  // "Yleiset").
-  const [permDraft, setPermDraft] = useState({ [DEFAULT_BUCKET]: {} });
-  const [permEditingBucket, setPermEditingBucket] = useState(DEFAULT_BUCKET);
-  // "Kopioi oikeudet myös näihin tapahtumiin" -valinta (ks. handleCopyPermsToEvents).
-  const [permCopyTargets, setPermCopyTargets] = useState([]);
+  // Käyttäjätasot (server/roles.js). Taso määrää sivukartta-oikeudet — käyttäjäkohtaista
+  // sivukarttaa ei enää muokata, joten "Muokkaa oikeuksia" -näkymässä valitaan vain taso.
+  const [roles, setRoles] = useState([]);
+  const [rolesLoading, setRolesLoading] = useState(false);
+  const [permRoleId, setPermRoleId] = useState('');
+  // Palvelimen arvoma salasana näytetään kertaalleen luonnin/nollauksen jälkeen.
+  const [uusiSalasanaNaytto, setUusiSalasanaNaytto] = useState(null); // { username, password }
+  // Sovellusasetusten tasoeditori: valittu taso ja sen muokattavat oikeudet.
+  const [editingRoleId, setEditingRoleId] = useState(null);
+  const [roleDraft, setRoleDraft] = useState({});      // { [nodeId]: { view, edit } }
+  const [roleDraftName, setRoleDraftName] = useState('');
+  const [roleDraftDesc, setRoleDraftDesc] = useState('');
+  const [roleSaving, setRoleSaving] = useState(false);
+  const [roleError, setRoleError] = useState('');
+  const [roleNotice, setRoleNotice] = useState('');
+  const [newRoleName, setNewRoleName] = useState('');
   // Tapahtumarajaus: tyhjä = ei rajoitusta (näkee kaikki tapahtumat), muuten lista
   // tapahtuma-id:itä joihin käyttäjä on rajattu (ks. server/permissions.js: eventAccess).
   const [permEventAccess, setPermEventAccess] = useState([]);
@@ -1441,7 +1449,11 @@ export default function App() {
   // Ladataan käyttäjälista aina kun "Muokkaa käyttäjiä" -listanäkymä avataan (myös
   // paluu luonti-/oikeuslomakkeelta), jotta lista pysyy tuoreena.
   useEffect(() => {
-    if (viewingUserAdmin === 'list') fetchUserAdminList();
+    if (viewingUserAdmin === 'list') {
+      fetchUserAdminList();
+      // Tasojen nimet näkyvät listan "Käyttäjätaso"-sarakkeessa.
+      fetchRoles();
+    }
   }, [viewingUserAdmin]);
 
   // before annettuna haetaan "lisää" edellisen sivun jatkoksi (append), muuten
@@ -1476,6 +1488,8 @@ export default function App() {
   // Tallennustilan tilanne haetaan vasta kun Asetukset avataan (vain admin näkee sen).
   useEffect(() => {
     if (!viewingSettings) return;
+    // Käyttäjätasot näkyvät Sovellusasetusten omassa osiossaan.
+    fetchRoles();
     setStorageError(null);
     fetch('/api/storage', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
@@ -2232,10 +2246,6 @@ export default function App() {
       setNewUserError('Käyttäjätunnus vaaditaan.');
       return;
     }
-    if (!isValidPasswordClient(newUserPassword)) {
-      setNewUserError('Salasanan tulee olla vähintään 10 merkkiä ja sisältää iso kirjain, pieni kirjain ja numero.');
-      return;
-    }
     setNewUserSubmitting(true);
     try {
       const res = await fetch('/api/users', {
@@ -2248,13 +2258,16 @@ export default function App() {
           // enää kysytä, joten se johdetaan tunnuksesta — varsinainen näyttönimi on
           // tapahtumakohtainen nimimerkki (ks. kirjaajanTunniste).
           nickname: newUserNickname.trim() || newUserUsername.trim(),
-          password: newUserPassword,
         }),
       });
       const data = await res.json();
       if (res.ok && data.ok) {
-        resetNewUserForm();
-        setViewingUserAdmin('list');
+        // Jäädään lomakkeelle näyttämään arvottu salasana: se on ainoa kerta kun sen
+        // näkee. Lista aukeaa vasta kun pääkäyttäjä sulkee näkymän itse.
+        setUusiSalasanaNaytto({ username: newUserUsername.trim(), password: data.password });
+        setNewUserUsername('');
+        setNewUserNickname('');
+        setNewUserPassword('');
       } else {
         setNewUserError(data.error || 'Käyttäjän luonti epäonnistui.');
       }
@@ -2278,17 +2291,22 @@ export default function App() {
       .finally(() => setPermTotpLoading(false));
   };
 
+  const fetchRoles = () => {
+    setRolesLoading(true);
+    fetch('/api/roles', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((data) => { if (data.ok) setRoles(data.roles || []); })
+      .catch(() => { /* virhe näkyy tyhjänä listana */ })
+      .finally(() => setRolesLoading(false));
+  };
+
   const handleOpenPermissions = (user) => {
     setEditingPermUser(user);
-    // Varmistetaan että __default__ on aina läsnä vaikka käyttäjän tallennettu data olisi
-    // jostain syystä vanhaa/puutteellista muotoa — palvelin migroi tämän aina, mutta
-    // frontin ei kannata kaatua siihen jos jokin poikkeustapaus livahtaisi läpi.
-    const savedPerms = user.permissions || {};
-    setPermDraft({ ...savedPerms, [DEFAULT_BUCKET]: savedPerms[DEFAULT_BUCKET] || {} });
-    setPermEditingBucket(DEFAULT_BUCKET);
-    setPermCopyTargets([]);
     setPermEventAccess(user.eventAccess || []);
     setPermNickname(user.nickname || '');
+    setPermRoleId(user.roleId || '');
+    setUusiSalasanaNaytto(null);
+    fetchRoles();
     setPermSaveError('');
     setPermTotpInfo(null);
     setPermTotpError('');
@@ -2366,66 +2384,10 @@ export default function App() {
       .finally(() => setPermForceLogoutSubmitting(false));
   };
 
-  // Molemmat muokkaavat AINA vain sitä bucketia joka on juuri nyt valittuna
-  // (permEditingBucket — "Yleiset" eli __default__, tai jokin tietty tapahtuma). Jos
-  // valitulla tapahtumalla ei vielä ole omaa erillistä asetusta, se "materialisoituu"
-  // tässä ensimmäisen muokkauksen yhteydessä kopiona nykyisestä __default__-arvosta —
-  // muut bucketit (__default__ mukaan lukien) eivät koskaan muutu tästä.
-  const handleTogglePerm = (nodeId, field, value) => {
-    setPermDraft((prev) => {
-      const bucket = { ...(prev[permEditingBucket] || prev[DEFAULT_BUCKET] || {}) };
-      const next = { ...bucket, [nodeId]: { ...bucket[nodeId], [field]: value } };
-      // Näkyvyyden myöntäminen alasivulle myöntää sen automaattisesti myös kaikille
-      // yläsivuille — muuten myönnetty oikeus ei koskaan näy valikossa, koska
-      // yläsivun kortti/valikko olisi itse piilossa. Ei koske muokkausoikeutta eikä
-      // oikeuden poistamista (se voi jättää muille alasivuille tarpeellisen yläsivun rauhaan).
-      if (field === 'view' && value) {
-        const ancestorIds = findAncestorIds(nodeId) || [];
-        for (const id of ancestorIds) next[id] = { ...next[id], view: true };
-      }
-      return { ...prev, [permEditingBucket]: next };
-    });
-  };
-
-  const handleCascadePerm = (node, field, value) => {
-    const ids = collectDescendantIds(node);
-    setPermDraft((prev) => {
-      const bucket = { ...(prev[permEditingBucket] || prev[DEFAULT_BUCKET] || {}) };
-      const next = { ...bucket };
-      for (const id of ids) next[id] = { ...next[id], [field]: value };
-      return { ...prev, [permEditingBucket]: next };
-    });
-  };
-
-  // "Kopioi oikeudet myös näihin tapahtumiin" -painike: ottaa juuri muokatun bucketin
-  // (permEditingBucket) NYKYISEN vaikuttavan arvon (oma asetus jos on, muuten __default__)
-  // ja kirjoittaa sen sellaisenaan jokaiselle permCopyTargets-listan tapahtumalle. Vain
-  // luonnostilassa (permDraft) — ei tallennu levylle ennen "Tallenna oikeudet" -painiketta,
-  // kuten mikään muukaan tällä lomakkeella.
-  const handleCopyPermsToEvents = () => {
-    if (permCopyTargets.length === 0) return;
-    setPermDraft((prev) => {
-      const effective = prev[permEditingBucket] || prev[DEFAULT_BUCKET] || {};
-      const next = { ...prev };
-      for (const eventId of permCopyTargets) {
-        next[eventId] = JSON.parse(JSON.stringify(effective));
-      }
-      return next;
-    });
-    setPermCopyTargets([]);
-  };
-
   // Tapahtumarajauksen valintaruudun kytkin — sama "lista mukana / pois" -periaate kuin
   // muuallakin sovelluksessa (ks. esim. toggleAddEmpSelected).
   const handleToggleEventAccess = (eventId) => {
     setPermEventAccess((prev) => (
-      prev.includes(eventId) ? prev.filter((id) => id !== eventId) : [...prev, eventId]
-    ));
-  };
-
-  // "Kopioi oikeudet myös näihin tapahtumiin" -kohdevalinnan kytkin.
-  const handleTogglePermCopyTarget = (eventId) => {
-    setPermCopyTargets((prev) => (
       prev.includes(eventId) ? prev.filter((id) => id !== eventId) : [...prev, eventId]
     ));
   };
@@ -2443,7 +2405,13 @@ export default function App() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ nickname: permNickname.trim(), permissions: permDraft, eventAccess: permEventAccess }),
+        // permissions-kenttää EI enää lähetetä: sivukartta-oikeudet tulevat tasolta
+        // (roleId), ei käyttäjätietueesta. Tapahtumarajaus pysyy käyttäjäkohtaisena.
+        body: JSON.stringify({
+          nickname: permNickname.trim(),
+          eventAccess: permEventAccess,
+          ...(permRoleId ? { roleId: permRoleId } : {}),
+        }),
       });
       const data = await res.json();
       if (res.ok && data.ok) {
@@ -2456,6 +2424,178 @@ export default function App() {
       setPermSaveError('Yhteysvirhe. Yritä uudelleen.');
     } finally {
       setPermSaving(false);
+    }
+  };
+
+  // Pääkäyttäjä nollaa salasanan kun käyttäjä ei muista omaansa. Palvelin arpoo uuden
+  // ja pakottaa käyttäjän vaihtamaan sen omakseen heti seuraavalla kirjautumisella.
+  const handleResetUserPassword = async () => {
+    if (!editingPermUser) return;
+    const vahvistus = window.confirm(
+      `Nollataanko "${editingPermUser.nickname}" (${editingPermUser.username}) salasana?\n\n` +
+      'Palvelin arpoo uuden väliaikaisen salasanan, joka näytetään sinulle kerran. ' +
+      'Käyttäjä kirjautuu sillä ja joutuu heti vaihtamaan sen omakseen. ' +
+      'Mahdolliset avoimet istunnot katkaistaan.'
+    );
+    if (!vahvistus) return;
+    setPermSaveError('');
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(editingPermUser.username)}/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setUusiSalasanaNaytto({ username: editingPermUser.username, password: data.password });
+      } else {
+        setPermSaveError(data.error || 'Salasanan nollaus epäonnistui.');
+      }
+    } catch {
+      setPermSaveError('Yhteysvirhe. Yritä uudelleen.');
+    }
+  };
+
+  // ---- Käyttäjätasojen muokkaus (Sovellusasetukset) ----
+  // Tason oikeudet ovat samaa muotoa kuin käyttäjän vanhat sivukartta-oikeudet, joten
+  // SitemapPermissionRow-komponentti kelpaa sellaisenaan. Muokataan vain __default__-
+  // bucketia: tapahtumakohtainen hienosäätö kuuluu käyttäjälle (eventAccess), ei tasolle.
+  const avaaTasoMuokkaukseen = (role) => {
+    setEditingRoleId(role.id);
+    setRoleDraft({ ...(role.permissions?.[DEFAULT_BUCKET] || {}) });
+    setRoleDraftName(role.name || '');
+    setRoleDraftDesc(role.description || '');
+    setRoleError('');
+    setRoleNotice('');
+  };
+
+  const vaihdaTasoOikeus = (nodeId, kentta) => {
+    setRoleDraft((prev) => {
+      const nykyinen = prev[nodeId] || {};
+      const seuraava = { ...nykyinen, [kentta]: !nykyinen[kentta] };
+      // Muokkausoikeus ilman näkyvyyttä ei tarkoita mitään: sivu ei näy valikossa,
+      // joten sinne ei pääse muokkaamaan. Näkyvyyden poisto vie siis myös muokkauksen.
+      if (kentta === 'view' && !seuraava.view) seuraava.edit = false;
+      if (kentta === 'edit' && seuraava.edit) seuraava.view = true;
+      const uusi = { ...prev, [nodeId]: seuraava };
+      // Alasivun näkyvyys ei auta jos yläsivu on piilotettu — myönnetään esi-isät
+      // automaattisesti, sama sääntö kuin käyttäjäkohtaisissa oikeuksissa aiemmin.
+      if (seuraava.view) {
+        for (const esiisa of findAncestorIds(nodeId) || []) {
+          uusi[esiisa] = { ...(uusi[esiisa] || {}), view: true };
+        }
+      }
+      return uusi;
+    });
+  };
+
+  const vaihdaTasoOikeusRekursiivisesti = (node, kentta) => {
+    const idt = [node.id, ...collectDescendantIds(node)];
+    setRoleDraft((prev) => {
+      // Jos yksikin puuttuu, myönnetään kaikille; muuten poistetaan kaikilta.
+      const kaikillaOn = idt.every((id) => prev[id]?.[kentta]);
+      const uusi = { ...prev };
+      for (const id of idt) {
+        const nykyinen = uusi[id] || {};
+        const arvo = !kaikillaOn;
+        const seuraava = { ...nykyinen, [kentta]: arvo };
+        if (kentta === 'view' && !arvo) seuraava.edit = false;
+        if (kentta === 'edit' && arvo) seuraava.view = true;
+        uusi[id] = seuraava;
+      }
+      if (!kaikillaOn) {
+        for (const esiisa of findAncestorIds(node.id) || []) {
+          uusi[esiisa] = { ...(uusi[esiisa] || {}), view: true };
+        }
+      }
+      return uusi;
+    });
+  };
+
+  const tallennaTaso = async () => {
+    if (!editingRoleId) return;
+    setRoleError('');
+    setRoleNotice('');
+    if (!roleDraftName.trim()) {
+      setRoleError('Käyttäjätason nimi ei voi olla tyhjä.');
+      return;
+    }
+    setRoleSaving(true);
+    try {
+      const res = await fetch(`/api/roles/${encodeURIComponent(editingRoleId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: roleDraftName.trim(),
+          description: roleDraftDesc.trim(),
+          permissions: { [DEFAULT_BUCKET]: roleDraft },
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setRoleNotice('Käyttäjätaso tallennettu. Muutos koskee heti kaikkia tason käyttäjiä.');
+        fetchRoles();
+      } else {
+        setRoleError(data.error || 'Tallennus epäonnistui.');
+      }
+    } catch {
+      setRoleError('Yhteysvirhe. Yritä uudelleen.');
+    } finally {
+      setRoleSaving(false);
+    }
+  };
+
+  const luoTaso = async () => {
+    setRoleError('');
+    setRoleNotice('');
+    if (!newRoleName.trim()) {
+      setRoleError('Anna uudelle käyttäjätasolle nimi.');
+      return;
+    }
+    try {
+      const res = await fetch('/api/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        // Uusi taso aloittaa ilman oikeuksia: turvallisempi lähtökohta kuin kopioida
+        // jotain olemassa olevaa, koska oikeudet on joka tapauksessa käytävä läpi.
+        body: JSON.stringify({ name: newRoleName.trim(), description: '', permissions: { [DEFAULT_BUCKET]: {} } }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setNewRoleName('');
+        fetchRoles();
+        avaaTasoMuokkaukseen(data.role);
+        setRoleNotice(`Taso "${data.role.name}" luotu. Valitse sille oikeudet alta.`);
+      } else {
+        setRoleError(data.error || 'Tason luonti epäonnistui.');
+      }
+    } catch {
+      setRoleError('Yhteysvirhe. Yritä uudelleen.');
+    }
+  };
+
+  const poistaTaso = async (role) => {
+    if (!window.confirm(`Poistetaanko käyttäjätaso "${role.name}"? Tätä ei voi perua.`)) return;
+    setRoleError('');
+    setRoleNotice('');
+    try {
+      const res = await fetch(`/api/roles/${encodeURIComponent(role.id)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        if (editingRoleId === role.id) setEditingRoleId(null);
+        fetchRoles();
+        setRoleNotice('Käyttäjätaso poistettu.');
+      } else {
+        setRoleError(data.error || 'Poisto epäonnistui.');
+      }
+    } catch {
+      setRoleError('Yhteysvirhe. Yritä uudelleen.');
     }
   };
 
@@ -8613,17 +8753,28 @@ export default function App() {
                       tunnistenumero täyttyvät automaattisesti.
                     </p>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Salasana</label>
-                    <input
-                      type="password"
-                      autoComplete="new-password"
-                      value={newUserPassword}
-                      onChange={(e) => setNewUserPassword(e.target.value)}
-                      className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <p className="text-xs text-slate-400 mt-1">Vähintään 10 merkkiä, iso ja pieni kirjain sekä numero.</p>
+                  {/* Salasanaa ei syötetä: palvelin arpoo sen ja näyttää kerran alla. */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex gap-2.5">
+                    <KeyRound size={16} className="text-slate-400 shrink-0 mt-0.5" />
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Salasanaa ei aseteta käsin. Palvelin arpoo väliaikaisen salasanan, joka
+                      näytetään sinulle kerran luonnin jälkeen. Käyttäjä kirjautuu sillä ja joutuu
+                      heti vaihtamaan sen omakseen.
+                    </p>
                   </div>
+                  {uusiSalasanaNaytto && (
+                    <div className="bg-emerald-50 border-2 border-emerald-300 rounded-lg p-4">
+                      <p className="text-xs font-bold text-emerald-900 uppercase tracking-wide mb-1">
+                        Tunnus {uusiSalasanaNaytto.username} luotu — väliaikainen salasana
+                      </p>
+                      <code className="block bg-white border border-emerald-200 rounded-lg px-3 py-2.5 text-base font-mono font-bold tracking-wider break-all text-slate-900">
+                        {uusiSalasanaNaytto.password}
+                      </code>
+                      <p className="text-xs text-emerald-800 mt-2">
+                        Välitä tämä käyttäjälle. Salasanaa ei voi hakea myöhemmin uudelleen.
+                      </p>
+                    </div>
+                  )}
                   {newUserError && <p className="text-sm text-rose-600">{newUserError}</p>}
                   <div className="pt-2 flex justify-end gap-3">
                     <button
@@ -8749,119 +8900,99 @@ export default function App() {
                   </div>
                 )}
 
-                {editingPermUser.role === 'admin' ? (
-                  <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
-                    Pääkäyttäjällä on aina täydet oikeudet kaikkeen — sivukarttaa ei tarvitse (eikä voi) rajata.
+                {/* Sivukartta-oikeudet tulevat KÄYTTÄJÄTASOLTA (server/roles.js), ei enää
+                    käyttäjäkohtaisesti. Täällä valitaan vain taso; itse tason sivuoikeuksia
+                    muokataan Sovellusasetuksissa. Näin yhdestä paikasta näkee kenellä on
+                    mitkä oikeudet, eikä efektiivisiä oikeuksia tarvitse laskea kahdesta
+                    lähteestä. */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
+                  <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
+                    <ShieldCheck className="text-indigo-500" size={16} />
+                    Käyttäjätaso
+                  </h3>
+                  <p className="text-xs text-slate-500 mb-4">
+                    Taso määrää mitä sivuja käyttäjä näkee ja voi muokata. Tasojen sisältöä
+                    muokataan Sovellusasetuksista — muutos vaikuttaa kaikkiin tason käyttäjiin heti.
                   </p>
-                ) : (
-                  <>
-                    <div className="mb-4">
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Muokattava tapahtuma</label>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setPermEditingBucket(DEFAULT_BUCKET)}
-                          className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                            permEditingBucket === DEFAULT_BUCKET
-                              ? 'bg-indigo-600 border-indigo-600 text-white'
-                              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+
+                  {rolesLoading ? (
+                    <p className="text-sm text-slate-500">Ladataan tasoja…</p>
+                  ) : roles.length === 0 ? (
+                    <p className="text-sm text-rose-600">Käyttäjätasoja ei saatu ladattua.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {roles.map((role) => (
+                        <label
+                          key={role.id}
+                          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                            permRoleId === role.id
+                              ? 'bg-indigo-50 border-indigo-300'
+                              : 'bg-white border-slate-200 hover:bg-slate-50'
                           }`}
                         >
-                          Yleiset (oletus)
-                        </button>
-                        {events.map((ev) => (
-                          <button
-                            key={ev.id}
-                            type="button"
-                            onClick={() => setPermEditingBucket(ev.id)}
-                            className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                              permEditingBucket === ev.id
-                                ? 'bg-indigo-600 border-indigo-600 text-white'
-                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                            }`}
-                          >
-                            {ev.name}
-                            {ev.archived && <span className="text-xs opacity-70">(arkistoitu)</span>}
-                            {permDraft[ev.id] && (
-                              <span
-                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${permEditingBucket === ev.id ? 'bg-white' : 'bg-indigo-500'}`}
-                                title="Tällä tapahtumalla on oma erillinen oikeusasetus"
-                              />
+                          <input
+                            type="radio"
+                            name="permRole"
+                            checked={permRoleId === role.id}
+                            onChange={() => setPermRoleId(role.id)}
+                            className="w-4 h-4 mt-0.5 text-indigo-600 focus:ring-indigo-500 shrink-0"
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-bold text-slate-800">
+                              {role.name}
+                              {role.builtin && <span className="ml-2 text-xs font-medium text-slate-400">vakio</span>}
+                            </span>
+                            {role.description && (
+                              <span className="block text-xs text-slate-500 mt-0.5">{role.description}</span>
                             )}
-                          </button>
-                        ))}
-                      </div>
-                      <p className="text-xs text-slate-500 mt-2">
-                        {permEditingBucket === DEFAULT_BUCKET
-                          ? 'Yleiset oikeudet koskevat jokaista tapahtumaa jolle ei ole asetettu omaa erillistä oikeutta.'
-                          : permDraft[permEditingBucket]
-                            ? 'Tällä tapahtumalla on oma erillinen oikeusasetus — poikkeaa Yleisistä.'
-                            : 'Ei vielä omaa asetusta — näyttää Yleiset-oikeudet kunnes jotain muutetaan alla.'}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+
+                  {permRoleId === 'admin' && (
+                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-3">
+                      Pääkäyttäjällä on täydet oikeudet kaikkeen, mukaan lukien käyttäjien ja
+                      tasojen hallinta. Anna tämä taso vain harkiten.
+                    </p>
+                  )}
+                </div>
+
+                {/* Salasanan nollaus: käyttäjä ei muista omaansa */}
+                <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5">
+                  <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
+                    <KeyRound className="text-indigo-500" size={16} />
+                    Salasana
+                  </h3>
+                  <p className="text-xs text-slate-500 mb-4">
+                    Nollaus arpoo uuden väliaikaisen salasanan, joka näytetään sinulle kerran.
+                    Käyttäjä kirjautuu sillä ja joutuu heti vaihtamaan sen omakseen.
+                  </p>
+                  {uusiSalasanaNaytto && uusiSalasanaNaytto.username === editingPermUser.username ? (
+                    <div className="bg-emerald-50 border-2 border-emerald-300 rounded-lg p-4">
+                      <p className="text-xs font-bold text-emerald-900 uppercase tracking-wide mb-2">
+                        Väliaikainen salasana — näytetään vain nyt
+                      </p>
+                      <code className="block bg-white border border-emerald-200 rounded-lg px-3 py-2.5 text-base font-mono font-bold tracking-wider break-all text-slate-900">
+                        {uusiSalasanaNaytto.password}
+                      </code>
+                      <p className="text-xs text-emerald-800 mt-2">
+                        Välitä tämä käyttäjälle. Salasanaa ei voi hakea myöhemmin uudelleen —
+                        jos se katoaa, nollaa uudestaan.
                       </p>
                     </div>
-
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
-                      <div className="flex items-center gap-3 py-2 pr-2 bg-slate-100 border-b border-slate-200">
-                        <span className="flex-1 text-xs font-bold text-slate-500 uppercase tracking-wide pl-2">Sivu</span>
-                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-28">Näkyy</span>
-                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-32">Muokattavissa</span>
-                      </div>
-                      <div className="bg-white divide-y divide-slate-50 max-h-[28rem] overflow-y-auto">
-                        {SITEMAP.map((node) => (
-                          <SitemapPermissionRow
-                            key={node.id}
-                            node={node}
-                            depth={0}
-                            permDraft={permDraft[permEditingBucket] || permDraft[DEFAULT_BUCKET] || {}}
-                            onToggle={handleTogglePerm}
-                            onCascade={handleCascadePerm}
-                          />
-                        ))}
-                      </div>
-                    </div>
-
-                    {events.length > 0 && (
-                      <div className="mt-4 bg-indigo-50/60 border border-indigo-100 rounded-xl p-5">
-                        <h3 className="text-sm font-bold text-slate-800 mb-1">Kopioi nämä oikeudet myös muihin tapahtumiin</h3>
-                        <p className="text-xs text-slate-500 mb-3">
-                          Ottaa {permEditingBucket === DEFAULT_BUCKET ? '"Yleiset"' : `"${findEventName(permEditingBucket, events)}"`}-välilehden
-                          nykyiset oikeudet ja asettaa ne sellaisenaan valituille kohteille alla. Ei vaikuta mihinkään ennen
-                          "Tallenna oikeudet" -painiketta.
-                        </p>
-                        <div className="flex flex-wrap gap-2 mb-3">
-                          {[{ id: DEFAULT_BUCKET, name: 'Yleiset (oletus)' }, ...events]
-                            .filter((ev) => ev.id !== permEditingBucket)
-                            .map((ev) => (
-                              <label
-                                key={ev.id}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm cursor-pointer transition-colors ${
-                                  permCopyTargets.includes(ev.id)
-                                    ? 'bg-indigo-100 border-indigo-300 text-indigo-800'
-                                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={permCopyTargets.includes(ev.id)}
-                                  onChange={() => handleTogglePermCopyTarget(ev.id)}
-                                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-                                />
-                                {ev.name}
-                              </label>
-                            ))}
-                        </div>
-                        <button
-                          type="button"
-                          disabled={permCopyTargets.length === 0}
-                          onClick={handleCopyPermsToEvents}
-                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
-                        >
-                          Kopioi valittuihin{permCopyTargets.length > 0 ? ` (${permCopyTargets.length})` : ''}
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleResetUserPassword}
+                      className="flex items-center gap-2 text-xs font-bold text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-lg transition-colors"
+                    >
+                      <RefreshCw size={14} />
+                      Nollaa salasana
+                    </button>
+                  )}
+                </div>
 
                 {editingPermUser.role !== 'admin' && (
                   <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5">
@@ -8948,8 +9079,9 @@ export default function App() {
                     <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="p-4">Nimimerkki</th>
+                        <th className="p-4 w-24">Tunniste</th>
+                        <th className="p-4">Käyttäjätaso</th>
                         <th className="p-4">Käyttäjätunnus</th>
-                        <th className="p-4">Rooli</th>
                         <th className="p-4">Luotu</th>
                         <th className="p-4 text-right">Toiminnot</th>
                       </tr>
@@ -8962,8 +9094,15 @@ export default function App() {
                       ) : userAdminList.map((u) => (
                         <tr key={u.username} className="hover:bg-slate-50 transition-colors">
                           <td className="p-4 font-medium text-slate-800">{u.nickname}</td>
+                          <td className="p-4">
+                            {u.displayId
+                              ? <span className="font-mono text-xs font-bold text-indigo-700">{muotoileTunniste(u.displayId)}</span>
+                              : <span className="text-xs text-slate-400">—</span>}
+                          </td>
+                          <td className="p-4 text-slate-600 text-xs">
+                            {roles.find((r) => r.id === u.roleId)?.name || u.roleId || '—'}
+                          </td>
                           <td className="p-4 font-mono text-xs text-slate-600">{u.username}</td>
-                          <td className="p-4">{roleBadge(u.role)}</td>
                           <td className="p-4 text-slate-500 text-xs">{u.created_at ? new Date(u.created_at).toLocaleDateString('fi-FI') : '—'}</td>
                           <td className="p-4 text-right">
                             <button
@@ -9073,7 +9212,157 @@ export default function App() {
             </button>
 
             <h2 className="text-2xl font-bold text-slate-800 mb-1">Sovellusasetukset</h2>
-            <p className="text-sm text-slate-500 mb-8">Palvelimen tallennustila ja lakisääteiset säilytysajat.</p>
+            <p className="text-sm text-slate-500 mb-8">Käyttäjätasot, palvelimen tallennustila ja lakisääteiset säilytysajat.</p>
+
+            {/* ==================== KÄYTTÄJÄTASOT ==================== */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <ShieldCheck size={18} className="text-indigo-500" />
+                Käyttäjätasot
+              </h3>
+              <p className="text-sm text-slate-500 mt-1 mb-5">
+                Taso määrää mitä sivuja sen käyttäjät näkevät ja voivat muokata. Muutos vaikuttaa
+                heti kaikkiin tason käyttäjiin. Käyttäjän tason valitset "Muokkaa käyttäjiä"
+                -näkymästä.
+              </p>
+
+              {rolesLoading && roles.length === 0 ? (
+                <p className="text-sm text-slate-500">Ladataan käyttäjätasoja…</p>
+              ) : (
+                <>
+                  {/* Tasojen lista */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
+                    {roles.map((role) => (
+                      <div
+                        key={role.id}
+                        className={`rounded-xl border p-4 transition-colors ${
+                          editingRoleId === role.id ? 'bg-indigo-50 border-indigo-300' : 'bg-slate-50 border-slate-200'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start gap-2 mb-1">
+                          <p className="text-sm font-bold text-slate-800 min-w-0 truncate">{role.name}</p>
+                          {role.builtin && (
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide shrink-0">vakio</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500 min-h-[2rem]">{role.description || '—'}</p>
+                        <div className="flex gap-2 mt-3">
+                          {role.id === 'admin' ? (
+                            <span className="text-xs text-slate-400 italic py-1.5">Aina täydet oikeudet</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => avaaTasoMuokkaukseen(role)}
+                              className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
+                            >
+                              Muokkaa oikeuksia
+                            </button>
+                          )}
+                          {!role.builtin && (
+                            <button
+                              type="button"
+                              onClick={() => poistaTaso(role)}
+                              title="Poista käyttäjätaso"
+                              className="text-xs font-medium text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
+                            >
+                              Poista
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Uuden tason luonti */}
+                  <div className="flex flex-col sm:flex-row gap-2 mb-5 pb-5 border-b border-slate-100">
+                    <input
+                      type="text"
+                      value={newRoleName}
+                      onChange={(e) => setNewRoleName(e.target.value)}
+                      placeholder="Uuden käyttäjätason nimi, esim. Ensiapuvastaava"
+                      className="flex-1 rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={luoTaso}
+                      className="shrink-0 px-4 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-sm"
+                    >
+                      <Plus size={16} />
+                      Luo käyttäjätaso
+                    </button>
+                  </div>
+
+                  {roleError && <p className="text-sm text-rose-600 mb-3">{roleError}</p>}
+                  {roleNotice && <p className="text-sm text-emerald-700 font-medium mb-3">{roleNotice}</p>}
+
+                  {/* Valitun tason oikeudet sivu kerrallaan */}
+                  {editingRoleId && (
+                    <div className="border-t border-slate-100 pt-5">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1">Tason nimi</label>
+                          <input
+                            type="text"
+                            value={roleDraftName}
+                            onChange={(e) => setRoleDraftName(e.target.value)}
+                            className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1">Kuvaus</label>
+                          <input
+                            type="text"
+                            value={roleDraftDesc}
+                            onChange={(e) => setRoleDraftDesc(e.target.value)}
+                            placeholder="Mihin tasoa käytetään"
+                            className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+                        <div className="flex items-center gap-3 py-2 pr-2 bg-slate-100 border-b border-slate-200">
+                          <span className="flex-1 text-xs font-bold text-slate-500 uppercase tracking-wide pl-2">Sivu</span>
+                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-28">Näkyy</span>
+                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-32">Muokattavissa</span>
+                        </div>
+                        <div className="bg-white divide-y divide-slate-50 max-h-[28rem] overflow-y-auto">
+                          {SITEMAP.map((node) => (
+                            <SitemapPermissionRow
+                              key={node.id}
+                              node={node}
+                              depth={0}
+                              permDraft={roleDraft}
+                              onToggle={vaihdaTasoOikeus}
+                              onCascade={vaihdaTasoOikeusRekursiivisesti}
+                            />
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end gap-3 mt-4">
+                        <button
+                          type="button"
+                          onClick={() => setEditingRoleId(null)}
+                          className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                        >
+                          Sulje
+                        </button>
+                        <button
+                          type="button"
+                          disabled={roleSaving}
+                          onClick={tallennaTaso}
+                          className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                        >
+                          <CheckCircle size={18} />
+                          {roleSaving ? 'Tallennetaan…' : 'Tallenna käyttäjätaso'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
               <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">

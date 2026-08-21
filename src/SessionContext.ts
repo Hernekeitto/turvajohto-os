@@ -12,6 +12,12 @@ export interface SessionProfile {
   displayId: number | null;
   // Mihin työntekijäpankin tietueeseen tunnus liittyy.
   employeeId: string | null;
+  // Käyttäjätaso, joka määrää sivukartta-oikeudet (ks. server/roles.js).
+  roleId: string | null;
+  roleName: string | null;
+  // true = pääkäyttäjä on asettanut väliaikaisen salasanan, joka on vaihdettava
+  // ennen kuin sovellusta voi käyttää. Palvelin estää kaiken muun (server/index.js).
+  mustChangePassword: boolean;
   permissions: Permissions;
   // Tämän istunnon kirjautumishetki ISO-muodossa, tai null jos käyttäjä ei ole
   // kirjautunut kertaakaan sen jälkeen kun palvelin alkoi tallentaa sitä.

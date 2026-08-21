@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateBase32Secret, encryptSecret, decryptSecret, isEncryptedSecret } from './totp.js';
 import { DEFAULT_BUCKET } from './permissions.js';
+import { listRoles, createRole, ROLE_ADMIN, ROLE_BASIC } from './roles.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -54,6 +55,73 @@ function withDefaults(user) {
   return withRole;
 }
 
+// Sijoittaa jokaisen käyttäjän käyttäjätasoon (roleId), jos sitä ei vielä ole.
+//
+// Siirtymäsääntö on valittu niin ETTEI KENENKÄÄN PÄÄSY MUUTU käyttöönotossa:
+//   - admin-roolin käyttäjä -> sisäänrakennettu Pääkäyttäjä-taso
+//   - muut -> heille luodaan OMA taso, joka kopioi heidän siihenastiset
+//     käyttäjäkohtaiset sivukartta-oikeutensa sellaisenaan
+// Jos ei-adminit olisi sijoitettu suoraan Peruskäyttäjä-tasoon, heidän oikeutensa
+// olisivat hypänneet siihen mitä sille tasolle sattuu olemaan asetettu — joko liikaa
+// tai liian vähän. Omat tasot voi yhdistellä jälkikäteen käsin.
+//
+// Käyttäjäkohtainen permissions-kenttä jätetään tietueeseen koskematta: se ei enää
+// vaikuta mihinkään (oikeudet luetaan tasolta), mutta se on siirtymän tarkistusjälki
+// eikä sen poistamisesta olisi hyötyä.
+function migrateRoles(users) {
+  if (users.every((u) => u.roleId)) return users;
+  const tasot = listRoles();
+  const nimetKaytossa = new Set(tasot.map((r) => r.name));
+  return users.map((user) => {
+    if (user.roleId) return user;
+    if (user.role === 'admin') return { ...user, roleId: ROLE_ADMIN };
+    const omat = user.permissions || {};
+    // Tyhjillä oikeuksilla ei ole mitään säilytettävää — Peruskäyttäjä on parempi
+    // lähtökohta kuin tyhjä oma taso, jota kukaan ei muistaisi säätää.
+    const onOikeuksia = Object.values(omat).some(
+      (bucket) => bucket && Object.keys(bucket).length > 0
+    );
+    if (!onOikeuksia) return { ...user, roleId: ROLE_BASIC };
+    let nimi = `${user.nickname || user.username} (siirretty)`;
+    let n = 2;
+    while (nimetKaytossa.has(nimi)) {
+      nimi = `${user.nickname || user.username} (siirretty ${n})`;
+      n += 1;
+    }
+    nimetKaytossa.add(nimi);
+    const luotu = createRole({
+      name: nimi,
+      description: 'Luotu automaattisesti käyttäjätasojen käyttöönotossa aiemmista käyttäjäkohtaisista oikeuksista.',
+      permissions: omat,
+    });
+    return { ...user, roleId: luotu.id };
+  });
+}
+
+// Tunnistenumerot alkavat #1000:sta — sama alkukohta kuin frontin työntekijäpankissa
+// (src/App.tsx: TUNNISTE_ALKU). Numeroavaruus on JAETTU työntekijöiden kanssa, joten
+// seuraava vapaa lasketaan aina molemmista.
+const TUNNISTE_ALKU = 1000;
+
+// Täydentää puuttuvat tunnistenumerot olemassa oleville tunnuksille. Ennen tätä
+// ominaisuutta luoduilla tileillä ei ole numeroa lainkaan, eikä raporttien kirjaajatietoa
+// voi muodostaa ilman sitä. Numerot jaetaan users.json:in järjestyksessä, joten
+// ensimmäinen tili (Johto1) saa #1000. Jo annettuun numeroon ei kosketa koskaan:
+// tallennetut raportit viittaavat siihen.
+function migrateDisplayIds(users) {
+  const varatut = new Set(
+    users.map((u) => parseInt(String(u?.displayId ?? ''), 10)).filter((n) => Number.isFinite(n))
+  );
+  let seuraava = TUNNISTE_ALKU;
+  return users.map((user) => {
+    const nykyinen = parseInt(String(user?.displayId ?? ''), 10);
+    if (Number.isFinite(nykyinen)) return user;
+    while (varatut.has(seuraava)) seuraava += 1;
+    varatut.add(seuraava);
+    return { ...user, displayId: seuraava };
+  });
+}
+
 // Jos yksikään käyttäjä ei ole admin (esim. ensimmäinen käynnistys tämän
 // ominaisuuden käyttöönoton jälkeen), ylennetään taulukon ensimmäinen käyttäjä
 // adminiksi ja täydelliset oikeudet ('*'). Tämä tekee migraation itsestään
@@ -61,17 +129,21 @@ function withDefaults(user) {
 // ainoa tili ennen tätä ominaisuutta saa adminoikeudet automaattisesti
 // seuraavalla palvelimen käynnistyksellä.
 function migrateUsers(rawUsers) {
-  const users = rawUsers.map(withDefaults);
+  const users = migrateDisplayIds(rawUsers.map(withDefaults));
+  // Admin-bootstrap on ajettava ENNEN roolimigraatiota: muuten ensimmäinen käyttäjä
+  // ylennettäisiin adminiksi vasta sen jälkeen kun migrateRoles on jo sijoittanut hänet
+  // Peruskäyttäjä-tasolle, ja hän jäisi ilman hallintaoikeuksia.
   if (users.length > 0 && !users.some((u) => u.role === 'admin')) {
     users[0] = {
       ...users[0],
       role: 'admin',
+      roleId: ROLE_ADMIN,
       permissions: { [DEFAULT_BUCKET]: { '*': { view: true, edit: true } } },
       totp_secret: undefined,
       totp_required: undefined,
     };
   }
-  return users;
+  return migrateRoles(users);
 }
 
 function readRawUsers() {
@@ -180,13 +252,14 @@ export function forceLogout(username) {
 // muuteta jälkikäteen: raporttien kirjaajamerkintä ("Ensiapu 1 #1028") viittaa siihen,
 // joten numeron vaihtuminen katkaisisi jo tallennettujen raporttien jäljitettävyyden.
 // employeeId kertoo mihin työntekijäpankin tietueeseen tunnus liittyy.
-export function upsertUser(username, passwordHash, { nickname, role, displayId, employeeId } = {}) {
+export function upsertUser(username, passwordHash, { nickname, role, displayId, employeeId, roleId } = {}) {
   const users = readUsers();
   const existing = users.find((u) => u.username === username);
   if (existing) {
     existing.password_hash = passwordHash;
     if (nickname) existing.nickname = nickname;
     if (role) existing.role = role;
+    if (roleId) existing.roleId = roleId;
     // Olemassa olevalle tunnukselle numero asetetaan vain jos se puuttuu kokonaan.
     if (displayId && !existing.displayId) existing.displayId = displayId;
     if (employeeId && !existing.employeeId) existing.employeeId = employeeId;
@@ -196,6 +269,9 @@ export function upsertUser(username, passwordHash, { nickname, role, displayId, 
       password_hash: passwordHash,
       nickname: nickname || username,
       role: role || 'user',
+      // Uusi tili menee oletuksena Peruskäyttäjä-tasolle. Ensimmäisen tilin kohdalla
+      // migrateUsers-bootstrap ylentää sen adminiksi seuraavassa luvussa.
+      roleId: roleId || (role === 'admin' ? ROLE_ADMIN : ROLE_BASIC),
       permissions: { [DEFAULT_BUCKET]: {} },
       eventAccess: [],
       ...(displayId ? { displayId } : {}),
@@ -208,13 +284,31 @@ export function upsertUser(username, passwordHash, { nickname, role, displayId, 
 
 // Osittainen päivitys nimimerkille ja/tai sivukartta-oikeuksille ja/tai tapahtumarajaukselle
 // (admin muokkaa muita käyttäjiä).
-export function updateUser(username, { nickname, permissions, eventAccess } = {}) {
+// Pakottaa (tai poistaa) salasanan vaihtopakon. Lippu asetetaan aina kun pääkäyttäjä
+// asettaa käyttäjälle salasanan: väliaikainen salasana on kulkenut pääkäyttäjän kautta,
+// joten se ei saa jäädä käyttöön. Käyttäjän oma vaihto (updatePassword) nollaa lipun.
+export function setMustChangePassword(username, required) {
+  const users = readUsers();
+  const existing = users.find((u) => u.username === username);
+  if (!existing) return null;
+  existing.must_change_password = !!required;
+  writeUsers(users);
+  return existing;
+}
+
+export function updateUser(username, { nickname, permissions, eventAccess, roleId } = {}) {
   const users = readUsers();
   const existing = users.find((u) => u.username === username);
   if (!existing) return null;
   if (nickname !== undefined) existing.nickname = nickname;
   if (permissions !== undefined) existing.permissions = permissions;
   if (eventAccess !== undefined) existing.eventAccess = eventAccess;
+  if (roleId !== undefined) {
+    existing.roleId = roleId;
+    // role-kenttä ('admin' | 'user') ohjaa yhä TOTP-pakkoa, istunnon kestoa ja
+    // requireAdmin-portteja, joten se pidetään synkassa tason kanssa.
+    existing.role = roleId === ROLE_ADMIN ? 'admin' : 'user';
+  }
   writeUsers(users);
   return existing;
 }
@@ -236,6 +330,9 @@ export function updatePassword(username, passwordHash) {
   const existing = users.find((u) => u.username === username);
   if (!existing) return false;
   existing.password_hash = passwordHash;
+  // Oma vaihto poistaa pakon: väliaikainen salasana ei ole enää käytössä.
+  // Pääkäyttäjän asettama salasana palauttaa pakon (ks. index.js: users/:username/password).
+  existing.must_change_password = false;
   writeUsers(users);
   return true;
 }

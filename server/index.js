@@ -5,12 +5,14 @@ import cookie from 'cookie';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import QRCode from 'qrcode';
+import crypto from 'node:crypto';
 import {
   findUser,
   listUsers,
   upsertUser,
   updateUser,
   updatePassword,
+  setMustChangePassword,
   recordLogin,
   getTotpSecret,
   resetTotpSecret,
@@ -20,6 +22,7 @@ import {
 import { readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage } from './store.js';
 import { isAllowedFile, saveUpload, getUploadPath, deleteUpload, collectGarbage } from './uploads.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
+import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
 import {
   COLLECTION_NAMES,
   readableData,
@@ -83,6 +86,35 @@ const loginLimiter = rateLimit({
 
 // Sama sääntö kuin frontin salasanavalidoinnissa (App.tsx) — backend on todellinen portti,
 // frontin tarkistus on vain välitöntä käyttäjäpalautetta varten.
+// Pääkäyttäjän luoma salasana arvotaan palvelimella eikä sitä koskaan kirjoiteta
+// selaimessa: se annetaan käyttäjälle kertaalleen ja vaihdetaan heti ensimmäisellä
+// kirjautumisella (must_change_password). Merkistöstä on jätetty pois helposti
+// sekoittuvat 0/O ja 1/l/I, koska salasana luetaan usein ruudulta paperille.
+const SALASANA_ISOT = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+const SALASANA_PIENET = 'abcdefghijkmnopqrstuvwxyz';
+const SALASANA_NUMEROT = '23456789';
+
+function arvoSalasana(pituus = 14) {
+  const kaikki = SALASANA_ISOT + SALASANA_PIENET + SALASANA_NUMEROT;
+  // Vähintään yksi kustakin ryhmästä, jotta arvottu salasana läpäisee aina
+  // isValidPassword-tarkistuksen — muuten luonti voisi satunnaisesti epäonnistua.
+  const pakolliset = [
+    SALASANA_ISOT[crypto.randomInt(SALASANA_ISOT.length)],
+    SALASANA_PIENET[crypto.randomInt(SALASANA_PIENET.length)],
+    SALASANA_NUMEROT[crypto.randomInt(SALASANA_NUMEROT.length)],
+  ];
+  const loput = Array.from({ length: Math.max(0, pituus - pakolliset.length) },
+    () => kaikki[crypto.randomInt(kaikki.length)]);
+  const merkit = [...pakolliset, ...loput];
+  // Fisher-Yates satunnaisella indeksillä: ilman sekoitusta pakolliset merkit
+  // olisivat aina kolmessa ensimmäisessä paikassa.
+  for (let i = merkit.length - 1; i > 0; i -= 1) {
+    const j = crypto.randomInt(i + 1);
+    [merkit[i], merkit[j]] = [merkit[j], merkit[i]];
+  }
+  return merkit.join('');
+}
+
 function isValidPassword(pw) {
   return typeof pw === 'string' && pw.length >= 10 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /[0-9]/.test(pw);
 }
@@ -167,7 +199,9 @@ app.post('/api/login', loginLimiter, (req, res) => {
   logAudit({ user: username, action: 'login_success', ip: req.ip });
   recordLogin(user.username);
   setSessionCookie(res, user.username, user.role);
-  res.json({ ok: true, username: user.username });
+  // mustChangePassword kertoo frontille että istunto on käytettävissä vasta kun
+  // käyttäjä on vaihtanut pääkäyttäjän asettaman väliaikaisen salasanan omakseen.
+  res.json({ ok: true, username: user.username, mustChangePassword: !!user.must_change_password });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -195,8 +229,11 @@ app.get('/api/session', (req, res) => {
     // tapahtumakohtaisen nimimerkin perään, esim. "Ensiapu 1 #1028".
     displayId: user.displayId || null,
     employeeId: user.employeeId || null,
+    mustChangePassword: !!user.must_change_password,
     role: user.role,
-    permissions: user.permissions,
+    permissions: rolePermissions(user.roleId),
+    roleId: user.roleId || null,
+    roleName: findRole(user.roleId)?.name || null,
     eventAccess: user.eventAccess,
     // Tämän istunnon kirjautumishetki. EI johdeta JWT:n iat-kentästä, koska
     // ei-adminin istunto on liukuva: token uusitaan tässä samassa reitissä,
@@ -210,11 +247,28 @@ function requireAuth(req, res, next) {
   if (!username) return res.status(401).json({ ok: false, error: 'Kirjaudu sisään.' });
   const user = findUser(username);
   if (!user) return res.status(401).json({ ok: false, error: 'Kirjaudu sisään.' });
+  // Pakkovaihto: kunnes käyttäjä on vaihtanut pääkäyttäjän asettaman väliaikaisen
+  // salasanan omakseen, istunnolla ei saa tehdä mitään muuta. Tämä on TÄRKEÄ olla
+  // palvelimella eikä vain käyttöliittymässä — pelkkä frontin modaali olisi ohitettavissa
+  // devtoolsilla tai curlilla. Sallittuja ovat vain oma salasananvaihto, istunnon luku
+  // ja uloskirjautuminen.
+  const sallittuVaihdonAikana =
+    req.path === '/api/change-password' || req.path === '/api/session' || req.path === '/api/logout';
+  if (user.must_change_password && !sallittuVaihdonAikana) {
+    return res.status(403).json({
+      ok: false,
+      mustChangePassword: true,
+      error: 'Vaihda salasana ennen kuin jatkat.',
+    });
+  }
   req.username = username;
   req.role = user.role;
-  // Sivukartta-oikeudet ja tapahtumarajaus tuoreena samasta luvusta — käytetään /api/data
-  // ja /api/uploads -reittien palvelinpuolen oikeustarkistuksissa (ks. permissions.js).
-  req.permissions = user.permissions;
+  // Sivukartta-oikeudet tulevat KÄYTTÄJÄTASOLTA, eivät enää käyttäjätietueesta: taso
+  // määrää kaiken (ks. roles.js). Tapahtumarajaus (eventAccess) pysyy käyttäjäkohtaisena,
+  // koska se vaihtelee henkilöittäin saman tason sisällä.
+  // Luetaan tuoreena joka pyynnöllä, jotta tason muokkaus vaikuttaa heti ilman
+  // uudelleenkirjautumista — sama periaate kuin aiemmin käyttäjän omilla oikeuksilla.
+  req.permissions = rolePermissions(user.roleId);
   req.eventAccess = user.eventAccess;
   // Liukuva istunto: jokainen onnistunut kirjautunut pyyntö ei-adminilta pidentää
   // evästeen voimassaoloa uudelleen USER_SESSION_MINUTES eteenpäin. Admin pysyy
@@ -342,7 +396,8 @@ app.get('/api/users', requireAuth, requireAdmin, (req, res) => {
 });
 
 app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
-  const { username, nickname, password, displayId, employeeId } = req.body || {};
+  // password ei tule enää pyynnöstä: palvelin arpoo sen (ks. arvoSalasana).
+  const { username, nickname, displayId, employeeId } = req.body || {};
   if (typeof username !== 'string' || !username.trim()) {
     return res.status(400).json({ ok: false, error: 'Käyttäjätunnus vaaditaan.' });
   }
@@ -360,32 +415,45 @@ app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
       return res.status(409).json({ ok: false, error: `Tunnistenumero #${displayId} on jo tunnuksella ${varattu.username}.` });
     }
   }
-  if (!isValidPassword(password)) {
-    return res.status(400).json({
-      ok: false,
-      error: 'Salasanan tulee olla vähintään 10 merkkiä ja sisältää iso kirjain, pieni kirjain ja numero.',
-    });
-  }
+  // Salasanaa EI oteta enää pyynnöstä: se arvotaan palvelimella ja palautetaan
+  // pääkäyttäjälle kertaalleen. Näin uutta salasanaa ei keksitä käsin eikä se kulje
+  // selaimesta palvelimelle. Käyttäjä vaihtaa sen heti ensimmäisellä kirjautumisella.
   const trimmedUsername = username.trim();
   if (findUser(trimmedUsername)) {
     return res.status(409).json({ ok: false, error: 'Käyttäjätunnus on jo käytössä.' });
   }
-  const hash = bcrypt.hashSync(password, 12);
-  upsertUser(trimmedUsername, hash, {
+  const arvottu = arvoSalasana();
+  upsertUser(trimmedUsername, bcrypt.hashSync(arvottu, 12), {
     nickname: nickname.trim(),
     role: 'user',
     displayId: displayId ?? undefined,
     employeeId: typeof employeeId === 'string' ? employeeId : undefined,
   });
+  setMustChangePassword(trimmedUsername, true);
   logAudit({ user: req.username, action: 'user_create', targetUser: trimmedUsername });
-  res.json({ ok: true });
+  // Salasana palautetaan VAIN tässä vastauksessa — sitä ei tallenneta selväkielisenä
+  // eikä sitä voi hakea myöhemmin uudelleen.
+  res.json({ ok: true, password: arvottu, mustChangePassword: true });
 });
 
 app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
   const { username } = req.params;
-  const { nickname, permissions, eventAccess } = req.body || {};
-  if (!findUser(username)) {
+  const { nickname, permissions, eventAccess, roleId } = req.body || {};
+  const kohde = findUser(username);
+  if (!kohde) {
     return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
+  }
+  if (roleId !== undefined) {
+    if (!findRole(roleId)) {
+      return res.status(400).json({ ok: false, error: 'Tuntematon käyttäjätaso.' });
+    }
+    // Viimeistä pääkäyttäjää ei saa alentaa: muuten hallintaan ei pääse enää kukaan.
+    if (kohde.roleId === ROLE_ADMIN && roleId !== ROLE_ADMIN) {
+      const adminejaMuita = listUsers().filter((u) => u.roleId === ROLE_ADMIN && u.username !== username).length;
+      if (adminejaMuita === 0) {
+        return res.status(400).json({ ok: false, error: 'Viimeisen pääkäyttäjän tasoa ei voi vaihtaa.' });
+      }
+    }
   }
   if (nickname !== undefined && (typeof nickname !== 'string' || !nickname.trim())) {
     return res.status(400).json({ ok: false, error: 'Nimimerkki ei voi olla tyhjä.' });
@@ -400,6 +468,7 @@ app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
     nickname: nickname !== undefined ? nickname.trim() : undefined,
     permissions,
     eventAccess,
+    roleId,
   });
   // Ei tallenneta permissions/eventAccess-sisältöä itseään lokiin (iso, nested rakenne,
   // ei kovin luettava sellaisenaan) — vain mitkä kentät koskivat, samaan tapaan kuin
@@ -477,26 +546,24 @@ app.post('/api/users/:username/logout', requireAuth, requireAdmin, (req, res) =>
   res.json({ ok: true });
 });
 
-// Pääkäyttäjä asettaa toisen käyttäjän salasanan (unohtunut salasana, uusi työntekijä).
+// Pääkäyttäjä nollaa salasanan, kun käyttäjä ei muista omaansa. Uusi salasana arvotaan
+// palvelimella ja palautetaan kertaalleen; käyttäjä kirjautuu sillä ja joutuu heti
+// vaihtamaan sen omakseen (must_change_password). Väliaikainen salasana on kulkenut
+// pääkäyttäjän kautta, joten se ei saa jäädä pysyväksi.
+//
 // Erillinen /api/change-password-reitistä, joka on käyttäjän oma itsepalvelu ja vaatii
 // nykyisen salasanan. Tähän ei tarvita vanhaa salasanaa — pääsy on jo rajattu adminiin.
-// Salasanan vaihto kirjaa käyttäjän ulos: vanhat istunnot eivät saa jäädä voimaan, jos
-// syy vaihtoon on että salasana on paljastunut.
 app.post('/api/users/:username/password', requireAuth, requireAdmin, (req, res) => {
   const { username } = req.params;
-  const { password } = req.body || {};
   const user = findUser(username);
   if (!user) return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
-  if (!isValidPassword(password)) {
-    return res.status(400).json({
-      ok: false,
-      error: 'Salasanan tulee olla vähintään 10 merkkiä ja sisältää iso kirjain, pieni kirjain ja numero.',
-    });
-  }
-  updatePassword(username, bcrypt.hashSync(password, 12));
+  const arvottu = arvoSalasana();
+  updatePassword(username, bcrypt.hashSync(arvottu, 12));
+  setMustChangePassword(username, true);
+  // Vanhat istunnot katkaistaan: syy nollaukseen voi olla vuotanut salasana.
   if (user.role !== 'admin') forceLogout(username);
   logAudit({ user: req.username, action: 'user_password_set', targetUser: username });
-  res.json({ ok: true });
+  res.json({ ok: true, password: arvottu, mustChangePassword: true });
 });
 
 app.post('/api/change-password', requireAuth, loginLimiter, (req, res) => {
@@ -528,6 +595,56 @@ app.post('/api/change-password', requireAuth, loginLimiter, (req, res) => {
 // käytössä — datahakemiston tiedostojärjestelmä on sama levy jolla koko palvelin on.
 // Käytetään fs.statfsSync:iä eikä ulkoista komentoa (df), jotta reitti ei riipu
 // shellistä eikä sen tulosteen muodosta.
+// ====================== KÄYTTÄJÄTASOT ======================
+// Tasot määräävät sivukartta-oikeudet (ks. roles.js). Vain pääkäyttäjä hallinnoi niitä.
+app.get('/api/roles', requireAuth, requireAdmin, (req, res) => {
+  res.json({ ok: true, roles: listRoles() });
+});
+
+app.post('/api/roles', requireAuth, requireAdmin, (req, res) => {
+  const { name, description, permissions } = req.body || {};
+  if (typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ ok: false, error: 'Käyttäjätason nimi vaaditaan.' });
+  }
+  if (permissions !== undefined && (typeof permissions !== 'object' || permissions === null || Array.isArray(permissions))) {
+    return res.status(400).json({ ok: false, error: 'Virheellinen oikeusmuoto.' });
+  }
+  const luotu = createRole({ name, description, permissions });
+  logAudit({ user: req.username, action: 'role_create', targetRole: luotu.id });
+  res.json({ ok: true, role: luotu });
+});
+
+app.put('/api/roles/:id', requireAuth, requireAdmin, (req, res) => {
+  const { id } = req.params;
+  const { name, description, permissions } = req.body || {};
+  if (!findRole(id)) {
+    return res.status(404).json({ ok: false, error: 'Käyttäjätasoa ei löytynyt.' });
+  }
+  if (permissions !== undefined && (typeof permissions !== 'object' || permissions === null || Array.isArray(permissions))) {
+    return res.status(400).json({ ok: false, error: 'Virheellinen oikeusmuoto.' });
+  }
+  const paivitetty = updateRole(id, { name, description, permissions });
+  logAudit({ user: req.username, action: 'role_update', targetRole: id });
+  res.json({ ok: true, role: paivitetty });
+});
+
+app.delete('/api/roles/:id', requireAuth, requireAdmin, (req, res) => {
+  const { id } = req.params;
+  // Käytössä olevaa tasoa ei voi poistaa: käyttäjät jäisivät osoittamaan olemattomaan
+  // tasoon, jolloin he menettäisivät kaikki oikeutensa selittämättä miksi.
+  const kaytossa = listUsers().filter((u) => u.roleId === id);
+  if (kaytossa.length > 0) {
+    return res.status(409).json({
+      ok: false,
+      error: `Tasoa ei voi poistaa: se on käytössä ${kaytossa.length} käyttäjällä (${kaytossa.map((u) => u.username).join(', ')}).`,
+    });
+  }
+  const tulos = deleteRole(id);
+  if (!tulos.ok) return res.status(400).json(tulos);
+  logAudit({ user: req.username, action: 'role_delete', targetRole: id });
+  res.json({ ok: true });
+});
+
 app.get('/api/storage', requireAuth, requireAdmin, (req, res) => {
   try {
     res.json({ ok: true, ...getStorageUsage() });
