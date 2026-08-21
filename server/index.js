@@ -191,6 +191,10 @@ app.get('/api/session', (req, res) => {
     authenticated: true,
     username: user.username,
     nickname: user.nickname,
+    // Pysyvä tunnistenumero (#1000 ->). Frontti liittää sen raporttien kirjaajatietoon
+    // tapahtumakohtaisen nimimerkin perään, esim. "Ensiapu 1 #1028".
+    displayId: user.displayId || null,
+    employeeId: user.employeeId || null,
     role: user.role,
     permissions: user.permissions,
     eventAccess: user.eventAccess,
@@ -338,12 +342,23 @@ app.get('/api/users', requireAuth, requireAdmin, (req, res) => {
 });
 
 app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
-  const { username, nickname, password } = req.body || {};
+  const { username, nickname, password, displayId, employeeId } = req.body || {};
   if (typeof username !== 'string' || !username.trim()) {
     return res.status(400).json({ ok: false, error: 'Käyttäjätunnus vaaditaan.' });
   }
   if (typeof nickname !== 'string' || !nickname.trim()) {
     return res.status(400).json({ ok: false, error: 'Nimimerkki vaaditaan.' });
+  }
+  // Tunnistenumero on valinnainen (vanha "Luo käyttäjä" -polku ei anna sitä), mutta jos
+  // se annetaan, sen on oltava kelvollinen ja vapaa: numero yksilöi henkilön raporteissa.
+  if (displayId !== undefined && displayId !== null) {
+    if (!Number.isInteger(displayId) || displayId < 1000) {
+      return res.status(400).json({ ok: false, error: 'Virheellinen tunnistenumero.' });
+    }
+    const varattu = listUsers().find((u) => u.displayId === displayId);
+    if (varattu) {
+      return res.status(409).json({ ok: false, error: `Tunnistenumero #${displayId} on jo tunnuksella ${varattu.username}.` });
+    }
   }
   if (!isValidPassword(password)) {
     return res.status(400).json({
@@ -356,7 +371,12 @@ app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
     return res.status(409).json({ ok: false, error: 'Käyttäjätunnus on jo käytössä.' });
   }
   const hash = bcrypt.hashSync(password, 12);
-  upsertUser(trimmedUsername, hash, { nickname: nickname.trim(), role: 'user' });
+  upsertUser(trimmedUsername, hash, {
+    nickname: nickname.trim(),
+    role: 'user',
+    displayId: displayId ?? undefined,
+    employeeId: typeof employeeId === 'string' ? employeeId : undefined,
+  });
   logAudit({ user: req.username, action: 'user_create', targetUser: trimmedUsername });
   res.json({ ok: true });
 });
@@ -454,6 +474,28 @@ app.post('/api/users/:username/logout', requireAuth, requireAdmin, (req, res) =>
   }
   forceLogout(username);
   logAudit({ user: req.username, action: 'force_logout', targetUser: username });
+  res.json({ ok: true });
+});
+
+// Pääkäyttäjä asettaa toisen käyttäjän salasanan (unohtunut salasana, uusi työntekijä).
+// Erillinen /api/change-password-reitistä, joka on käyttäjän oma itsepalvelu ja vaatii
+// nykyisen salasanan. Tähän ei tarvita vanhaa salasanaa — pääsy on jo rajattu adminiin.
+// Salasanan vaihto kirjaa käyttäjän ulos: vanhat istunnot eivät saa jäädä voimaan, jos
+// syy vaihtoon on että salasana on paljastunut.
+app.post('/api/users/:username/password', requireAuth, requireAdmin, (req, res) => {
+  const { username } = req.params;
+  const { password } = req.body || {};
+  const user = findUser(username);
+  if (!user) return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
+  if (!isValidPassword(password)) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Salasanan tulee olla vähintään 10 merkkiä ja sisältää iso kirjain, pieni kirjain ja numero.',
+    });
+  }
+  updatePassword(username, bcrypt.hashSync(password, 12));
+  if (user.role !== 'admin') forceLogout(username);
+  logAudit({ user: req.username, action: 'user_password_set', targetUser: username });
   res.json({ ok: true });
 });
 

@@ -73,6 +73,9 @@ const mockEmployees = [
 // Työntekijäpankin alkuarvo ensimmäistä latausta varten — todellinen rekisteri
 // tulee palvelimelta (ks. `employees`-tila) samaan tapaan kuin tapahtumat/raportit.
 const emptyEmpForm = {
+  // Pysyvä tunnistenumero (#1000 →). Annetaan automaattisesti tallennettaessa eikä sitä
+  // muuteta jälkikäteen — ks. seuraavaTunnisteNumero.
+  displayId: null,
   // 1. Henkilötiedot
   firstName: '', lastName: '', personalId: '', birthDate: '', nationality: '',
   // 2. Yhteystiedot
@@ -138,6 +141,58 @@ const emptyEmpForm = {
 // (`name`). Uusi lomake kerää etu- ja sukunimen erikseen, mutta koko sovellus (haut,
 // sisäänkirjaukset, näytöt) tunnistaa työntekijän edelleen tällä samalla yhdistetyllä
 // nimellä, joten se lasketaan aina tallennettaessa eikä sitä koskaan muokata suoraan.
+// Tunnistenumerot alkavat #1000:sta. Numero on henkilön PYSYVÄ tunniste: se annetaan
+// työntekijäpankissa kerran eikä sitä muuteta, koska tallennetut raportit viittaavat
+// siihen kirjaajatiedossaan ("Ensiapu 1 #1028").
+const TUNNISTE_ALKU = 1000;
+
+// Seuraava vapaa tunnistenumero. Otetaan suurin käytössä oleva + 1 sekä työntekijöistä
+// ETTÄ käyttäjätunnuksista: pelkkä työntekijälista ei riitä, koska työntekijän poisto
+// vapauttaisi hänen numeronsa uudelleenkäyttöön ja kaksi eri henkilöä päätyisi samaan
+// numeroon jo tallennetuissa raporteissa.
+const seuraavaTunnisteNumero = (tyontekijat = [], kayttajat = []) => {
+  const numerot = [
+    ...tyontekijat.map((e) => e?.displayId),
+    ...kayttajat.map((u) => u?.displayId),
+  ]
+    .map((n) => parseInt(String(n ?? ''), 10))
+    .filter((n) => Number.isFinite(n));
+  return (numerot.length ? Math.max(...numerot) : TUNNISTE_ALKU - 1) + 1;
+};
+
+const muotoileTunniste = (numero) => (numero ? `#${numero}` : '');
+
+// Täydentää puuttuvat tunnistenumerot juoksevasti. Ennen tätä ominaisuutta tallennetuilla
+// työntekijöillä ei ole numeroa lainkaan, ja numero on pakollinen jotta kirjaaja voidaan
+// yksilöidä raporteissa. Jo annettuun numeroon ei kosketa koskaan.
+const taydennaTunnisteet = (tyontekijat) => {
+  if (!Array.isArray(tyontekijat)) return tyontekijat;
+  let seuraava = seuraavaTunnisteNumero(tyontekijat);
+  return tyontekijat.map((e) => {
+    const nykyinen = parseInt(String(e?.displayId ?? ''), 10);
+    if (Number.isFinite(nykyinen)) return e;
+    return { ...e, displayId: seuraava++ };
+  });
+};
+
+// Käyttäjätunnus johdetaan aina nimestä muodossa sukunimi_etunimi. Ääkköset korvataan,
+// koska tunnusta käytetään myös URL-poluissa (/api/users/:username).
+const kayttajatunnusNimesta = (form) => {
+  const siisti = (osa) =>
+    String(osa || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[äå]/g, 'a')
+      .replace(/ö/g, 'o')
+      .replace(/[^a-z0-9]+/g, '')
+      .trim();
+  // Vain ensimmäinen etunimi: "Elli Marja Orvokki" -> "elli".
+  const etunimi = siisti(String(form?.firstName || '').trim().split(/\s+/)[0]);
+  const sukunimi = siisti(form?.lastName);
+  if (!etunimi || !sukunimi) return '';
+  return `${sukunimi}_${etunimi}`;
+};
+
 // Tämän päivän päivämäärä <input type="date">-kenttään sopivassa muodossa (YYYY-MM-DD).
 // toISOString() yksin antaisi UTC-päivän, joka on Suomen aikaa illalla jo eri vuorokausi.
 const paikallinenPaiva = (d = new Date()) =>
@@ -215,6 +270,9 @@ const initialEmployees = mockEmployees.map((name, idx) => ({
   ...splitFullName(name),
   id: `emp-seed-${idx}`,
   name,
+  // Tämän on oltava emptyEmpFormin JÄLKEEN: siinä displayId on null, joka muuten
+  // ylikirjoittaisi tässä annetun numeron.
+  displayId: TUNNISTE_ALKU + idx,
 }));
 
 // Tapahtumat — jaettu perustieto, käytetään sekä tapahtumavalinnassa että
@@ -1231,6 +1289,17 @@ export default function App() {
   // "Lisää tapahtumaan työntekijä" -näkymän tila (per-tapahtuma monivalinta rekisteristä)
   const [addEmpSearch, setAddEmpSearch] = useState('');
   const [addEmpSelectedIds, setAddEmpSelectedIds] = useState([]);
+  // Tapahtumakohtaiset nimimerkit "Lisää tapahtumaan" -listassa: { [työntekijän id]: 'Ensiapu 1' }
+  const [addEmpNicknames, setAddEmpNicknames] = useState({});
+
+  // Työntekijälomakkeen tunnusmodaali. Avataan osiosta 10; ei navigoi pois lomakkeelta,
+  // jottei keskeneräinen työntekijän muokkaus katoa.
+  const [empUserModalOpen, setEmpUserModalOpen] = useState(false);
+  const [empUserPassword, setEmpUserPassword] = useState('');
+  const [empUserPassword2, setEmpUserPassword2] = useState('');
+  const [empUserError, setEmpUserError] = useState('');
+  const [empUserNotice, setEmpUserNotice] = useState('');
+  const [empUserSubmitting, setEmpUserSubmitting] = useState(false);
   const [addEmpRole, setAddEmpRole] = useState('Järjestyksenvalvoja');
 
   // Kirjaukset ja raportit (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
@@ -1249,6 +1318,9 @@ export default function App() {
   const [checkInDate, setCheckInDate] = useState('');
   const [checkInTime, setCheckInTime] = useState('');
   const [checkInRole, setCheckInRole] = useState('Järjestyksenvalvoja');
+  // Tapahtumakohtainen nimimerkki ("Ensiapu 1"). Annetaan kun henkilö lisätään
+  // tapahtumaan, ja on muokattavissa täällä jälkikäteen ilman että rivi pitää poistaa.
+  const [checkInNickname, setCheckInNickname] = useState('');
   const [checkInVest, setCheckInVest] = useState(false);
   const [checkInBadge, setCheckInBadge] = useState('');
   const [checkInHeadset, setCheckInHeadset] = useState(false);
@@ -1599,7 +1671,9 @@ export default function App() {
         // loaded asetetaan true:ksi VAIN onnistuneella vastauksella — ks. events-lohkon
         // kommentti yllä samasta syystä.
         if (res && res.ok === true) {
-          if (Array.isArray(res.data)) setEmployees(res.data);
+          // Puuttuvat tunnistenumerot täydennetään heti latauksessa; muutos tallentuu
+          // takaisin palvelimelle automaattitallennuksen kautta.
+          if (Array.isArray(res.data)) setEmployees(taydennaTunnisteet(res.data));
           setEmployeesLoaded(true);
         }
       })
@@ -1685,6 +1759,34 @@ export default function App() {
   const currentEventCheckedIn = checkedInEmployees.filter(
     (e) => (e.eventId || 'fesx') === selectedEvent
   );
+  // Kirjautuneen käyttäjän oma rivi tämän tapahtuman työntekijälistassa. Sieltä tulee
+  // tapahtumakohtainen nimimerkki ("Ensiapu 1"): sama henkilö voi olla eri tapahtumassa
+  // eri roolissa, joten nimimerkki ei voi olla käyttäjätunnuksen ominaisuus.
+  // Kirjautunutta käyttäjää vastaava työntekijäpankin tietue. Tarvitaan nimipohjaiseen
+  // varalinkitykseen alla.
+  const omaTyontekija = employees.find((e) =>
+    (session?.employeeId && e.id === session.employeeId) ||
+    (session?.displayId && e.displayId === session.displayId)
+  );
+
+  const omaRosteriRivi = currentEventCheckedIn.find((e) =>
+    (session?.employeeId && e.employeeId === session.employeeId) ||
+    (session?.displayId && e.displayId === session.displayId) ||
+    // Ennen tätä ominaisuutta lisätyillä rosteririveillä ei ole employeeId- eikä
+    // displayId-kenttää, joten ne sovitetaan nimen kautta. Ilman tätä nimimerkki jäisi
+    // käyttämättä kaikilla jo tapahtumaan lisätyillä työntekijöillä.
+    (omaTyontekija?.name && e.name === omaTyontekija.name)
+  );
+
+  // Raporttien "Laatija"-kenttä. Muoto: "<tapahtuman nimimerkki> #<tunnistenumero>",
+  // esim. "Ensiapu 1 #1028". Jos käyttäjää ei ole lisätty tämän tapahtuman listaan,
+  // käytetään tunnuksen omaa nimimerkkiä — kirjaus ei saa jäädä nimettömäksi.
+  const kirjaajanTunniste = (oletus = 'TIKE Päivystäjä') => {
+    const nimimerkki = omaRosteriRivi?.nickname?.trim() || sessionNickname || oletus;
+    const numero = session?.displayId ?? omaRosteriRivi?.displayId ?? null;
+    return numero ? `${nimimerkki} ${muotoileTunniste(numero)}` : nimimerkki;
+  };
+
   // Roskakoriin siirretyt kirjaukset (deletedAt) jätetään kaikkien näkymien ja
   // laskureiden ulkopuolelle — ne näkyvät vain Roskakori-sivulla, josta ne voi
   // palauttaa tai hävittää pysyvästi.
@@ -1816,7 +1918,7 @@ export default function App() {
       resProb: raResProb,
       resSev: raResSev,
       resScore,
-      author: sessionNickname || 'TIKE Päivystäjä',
+      author: kirjaajanTunniste(),
       date: new Date().toLocaleDateString('fi-FI'),
       status: 'Toimenpiteet kesken'
     }, ...prev]);
@@ -1877,11 +1979,117 @@ export default function App() {
         ? { ...empForm, id: editingEmp.id, name }
         : e)));
     } else {
-      setEmployees(prev => [...prev, { ...empForm, id: getEmployeeId(), name }]);
+      // Tunnistenumero annetaan kerran luontihetkellä eikä sitä enää muuteta.
+      setEmployees(prev => [
+        ...prev,
+        { ...empForm, id: getEmployeeId(), name, displayId: seuraavaTunnisteNumero(prev, userAdminList) },
+      ]);
     }
     setEditingEmp(null);
     setEmpForm(emptyEmpForm);
     setViewingEmployeeBank('list');
+  };
+
+  // ---- Työntekijän käyttäjätunnus ----
+  // Tunnus on aina sukunimi_etunimi (ks. kayttajatunnusNimesta) ja tunnistenumero on
+  // työntekijän oma pysyvä numero, joten mitään ei kysytä käyttäjältä salasanan lisäksi.
+  const empFormUsername = kayttajatunnusNimesta(empForm);
+  const empFormExistingUser = userAdminList.find((u) => u.username === empFormUsername) || null;
+
+  const avaaTunnusModaali = () => {
+    setEmpUserPassword('');
+    setEmpUserPassword2('');
+    setEmpUserError('');
+    setEmpUserNotice('');
+    // Lista haetaan aina tuoreena: se kertoo onko tunnus jo olemassa ja mitkä
+    // tunnistenumerot ovat varattuja.
+    fetchUserAdminList();
+    setEmpUserModalOpen(true);
+  };
+
+  const handleCreateEmployeeUser = async () => {
+    setEmpUserError('');
+    setEmpUserNotice('');
+    if (!empFormUsername) {
+      setEmpUserError('Täytä ensin etunimi ja sukunimi — käyttäjätunnus muodostetaan niistä.');
+      return;
+    }
+    if (empUserPassword !== empUserPassword2) {
+      setEmpUserError('Salasanat eivät täsmää.');
+      return;
+    }
+    if (!isValidPasswordClient(empUserPassword)) {
+      setEmpUserError('Salasanan tulee olla vähintään 10 merkkiä ja sisältää iso kirjain, pieni kirjain ja numero.');
+      return;
+    }
+    // Numero on työntekijällä jo (annettu tallennushetkellä tai migraatiossa); jos
+    // työntekijää ei ole vielä tallennettu, varataan seuraava vapaa.
+    const numero = parseInt(String(empForm.displayId ?? ''), 10) || seuraavaTunnisteNumero(employees, userAdminList);
+    setEmpUserSubmitting(true);
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          username: empFormUsername,
+          // Tunnuksen nimimerkki on henkilön koko nimi. Raporteissa näkyvä nimi on eri
+          // asia: se on tapahtumakohtainen nimimerkki + tunnistenumero.
+          nickname: buildFullName(empForm) || empFormUsername,
+          password: empUserPassword,
+          displayId: numero,
+          employeeId: editingEmp?.id || null,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setEmpUserPassword('');
+        setEmpUserPassword2('');
+        setEmpUserNotice(`Tunnus ${empFormUsername} luotu (${muotoileTunniste(numero)}).`);
+        if (!empForm.displayId) updEmpForm('displayId', numero);
+        fetchUserAdminList();
+      } else {
+        setEmpUserError(data.error || 'Tunnuksen luonti epäonnistui.');
+      }
+    } catch {
+      setEmpUserError('Yhteysvirhe. Yritä uudelleen.');
+    } finally {
+      setEmpUserSubmitting(false);
+    }
+  };
+
+  const handleSetEmployeeUserPassword = async () => {
+    setEmpUserError('');
+    setEmpUserNotice('');
+    if (empUserPassword !== empUserPassword2) {
+      setEmpUserError('Salasanat eivät täsmää.');
+      return;
+    }
+    if (!isValidPasswordClient(empUserPassword)) {
+      setEmpUserError('Salasanan tulee olla vähintään 10 merkkiä ja sisältää iso kirjain, pieni kirjain ja numero.');
+      return;
+    }
+    setEmpUserSubmitting(true);
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(empFormUsername)}/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ password: empUserPassword }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setEmpUserPassword('');
+        setEmpUserPassword2('');
+        setEmpUserNotice('Salasana vaihdettu. Käyttäjä on kirjattu ulos ja kirjautuu uudella salasanalla.');
+      } else {
+        setEmpUserError(data.error || 'Salasanan vaihto epäonnistui.');
+      }
+    } catch {
+      setEmpUserError('Yhteysvirhe. Yritä uudelleen.');
+    } finally {
+      setEmpUserSubmitting(false);
+    }
   };
 
   const handleDeleteEmployee = async (emp) => {
@@ -1922,6 +2130,13 @@ export default function App() {
         id: Date.now() + idx,
         eventId: selectedEvent,
         name: e.name,
+        // employeeId ja displayId sitovat rosterirvin työntekijäpankin tietueeseen, jotta
+        // kirjautuneen käyttäjän oma nimimerkki löytyy tästä tapahtumasta (kirjaajanTunniste).
+        employeeId: e.id,
+        displayId: e.displayId ?? null,
+        // Tapahtumakohtainen nimimerkki, esim. "Ensiapu 1". Sama henkilö voi olla eri
+        // tapahtumassa eri roolissa, joten tätä ei voi sitoa käyttäjätunnukseen.
+        nickname: (addEmpNicknames[e.id] || '').trim(),
         role: addEmpRole,
         vest: false,
         badge: '',
@@ -1937,6 +2152,7 @@ export default function App() {
     ]);
     setAddEmpSearch('');
     setAddEmpSelectedIds([]);
+    setAddEmpNicknames({});
     setActiveTab('planning_employees');
   };
 
@@ -2012,8 +2228,8 @@ export default function App() {
 
   const handleCreateUser = async () => {
     setNewUserError('');
-    if (!newUserUsername.trim() || !newUserNickname.trim()) {
-      setNewUserError('Käyttäjätunnus ja nimimerkki vaaditaan.');
+    if (!newUserUsername.trim()) {
+      setNewUserError('Käyttäjätunnus vaaditaan.');
       return;
     }
     if (!isValidPasswordClient(newUserPassword)) {
@@ -2028,7 +2244,10 @@ export default function App() {
         credentials: 'include',
         body: JSON.stringify({
           username: newUserUsername.trim(),
-          nickname: newUserNickname.trim(),
+          // Palvelin vaatii nimimerkin. Tätä kautta luodulle tunnukselle sellaista ei
+          // enää kysytä, joten se johdetaan tunnuksesta — varsinainen näyttönimi on
+          // tapahtumakohtainen nimimerkki (ks. kirjaajanTunniste).
+          nickname: newUserNickname.trim() || newUserUsername.trim(),
           password: newUserPassword,
         }),
       });
@@ -2271,6 +2490,7 @@ export default function App() {
     setCheckInDate('');
     setCheckInTime('');
     setCheckInRole('Järjestyksenvalvoja');
+    setCheckInNickname('');
     setCheckInVest(false);
     setCheckInBadge('');
     setCheckInHeadset(false);
@@ -2636,6 +2856,7 @@ export default function App() {
     const checkInTimeVal = checkInTime || localNow.toISOString().slice(11, 16);
     const updated = {
       role: checkInRole,
+      nickname: checkInNickname.trim(),
       vest: checkInVest,
       badge: checkInBadge,
       headset: checkInHeadset,
@@ -2680,7 +2901,7 @@ export default function App() {
     const newComment = {
       id: `c-${Date.now()}`,
       text,
-      author: sessionNickname || 'TIKE Päivystäjä',
+      author: kirjaajanTunniste(),
       date: localNow.toISOString().split('T')[0],
       time: localNow.toISOString().slice(11, 16),
     };
@@ -2720,7 +2941,7 @@ export default function App() {
       eventId: selectedEvent,
       typeId: 'open',
       type: 'Avoin kirjaus',
-      author: sessionNickname || 'TIKE Päivystäjä',
+      author: kirjaajanTunniste(),
       date: checkInDate || now.toLocaleDateString('sv-SE'),
       time: timeLabel,
       summary: `${selectedEmp}: ${text}`,
@@ -2973,7 +3194,7 @@ export default function App() {
       eventId: selectedEvent,
       typeId: 'open',
       type: 'Avoin kirjaus',
-      author: sessionNickname || 'TIKE Päivystäjä',
+      author: kirjaajanTunniste(),
       date: openKirjausDate || now.toLocaleDateString('sv-SE'),
       time: timeLabel,
       summary: openKirjausText.trim(),
@@ -3015,7 +3236,7 @@ export default function App() {
       eventId: selectedEvent,
       typeId: 'firstaid',
       type: 'Ensiaputilanne',
-      author: sessionNickname || 'EA-Päivystys',
+      author: kirjaajanTunniste('EA-Päivystys'),
       date: faDate || now.toLocaleDateString('sv-SE'),
       time: timeLabel,
       summary: faDesc.trim(),
@@ -3050,7 +3271,7 @@ export default function App() {
       eventId: selectedEvent,
       typeId,
       type: title,
-      author: sessionNickname || 'TIKE Päivystäjä',
+      author: kirjaajanTunniste(),
       date: genRepDate || now.toLocaleDateString('sv-SE'),
       time: timeLabel,
       summary: genRepDesc.trim(),
@@ -4246,7 +4467,20 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Nimimerkki tässä tapahtumassa</label>
+                        <input
+                          type="text"
+                          value={checkInNickname}
+                          onChange={(e) => setCheckInNickname(e.target.value)}
+                          placeholder="esim. Ensiapu 1"
+                          className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-emerald-500"
+                        />
+                        <p className="text-xs text-slate-400 mt-1">
+                          Näkyy raporttien kirjaajana yhdessä tunnistenumeron kanssa.
+                        </p>
+                      </div>
                       <label className="block text-sm font-medium text-slate-700 mb-1">Sisäänkirjausaika</label>
                       <div className="flex gap-2">
                         <input 
@@ -6067,6 +6301,7 @@ export default function App() {
                                 setSelectedEmp(emp.name);
                                 setEmpSearch(emp.name);
                                 setCheckInRole(emp.role || 'Järjestyksenvalvoja');
+                                setCheckInNickname(emp.nickname || '');
                                 setCheckInVest(!!emp.vest);
                                 setCheckInBadge(emp.badge || '');
                                 setCheckInHeadset(!!emp.headset);
@@ -6110,7 +6345,7 @@ export default function App() {
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
             <button
-              onClick={() => { setAddEmpSearch(''); setAddEmpSelectedIds([]); setActiveTab('planning_employees'); }}
+              onClick={() => { setAddEmpSearch(''); setAddEmpSelectedIds([]); setAddEmpNicknames({}); setActiveTab('planning_employees'); }}
               className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
             >
               <ArrowLeft size={16} />
@@ -6182,13 +6417,14 @@ export default function App() {
                           />
                         </th>
                         <th className="p-3">Nimi</th>
+                        <th className="p-3 w-56">Nimimerkki tässä tapahtumassa</th>
                         <th className="p-3">Yhteystiedot</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 bg-white">
                       {visibleAddEmployees.length === 0 ? (
                         <tr>
-                          <td colSpan={3} className="p-8 text-center text-sm text-slate-500">
+                          <td colSpan={4} className="p-8 text-center text-sm text-slate-500">
                             {addEmpSearch.trim() ? 'Ei hakua vastaavia työntekijöitä.' : 'Kaikki rekisterin työntekijät on jo kirjattu sisään tähän tapahtumaan.'}
                           </td>
                         </tr>
@@ -6206,7 +6442,19 @@ export default function App() {
                               className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
                             />
                           </td>
-                          <td className="p-3 font-medium text-slate-800">{emp.name}</td>
+                          <td className="p-3 font-medium text-slate-800">
+                            {emp.name}
+                            {emp.displayId && <span className="ml-2 text-xs font-mono text-slate-400">{muotoileTunniste(emp.displayId)}</span>}
+                          </td>
+                          <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="text"
+                              value={addEmpNicknames[emp.id] || ''}
+                              onChange={(e) => setAddEmpNicknames(prev => ({ ...prev, [emp.id]: e.target.value }))}
+                              placeholder="esim. Ensiapu 1"
+                              className="w-full rounded-lg border-slate-300 border p-1.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                            />
+                          </td>
                           <td className="p-3 text-slate-500 text-xs">{[emp.email, emp.phone].filter(Boolean).join(' · ') || '—'}</td>
                         </tr>
                       ))}
@@ -7299,10 +7547,153 @@ export default function App() {
     </div>
   ) : null;
 
+  // Työntekijän käyttäjätunnusmodaali (työntekijälomakkeen osio 10). Oma modaalinsa eikä
+  // navigointi käyttäjähallintaan, jottei keskeneräinen työntekijän muokkaus katoa.
+  const empUserModal = empUserModalOpen ? (
+    <div
+      className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+      onClick={() => setEmpUserModalOpen(false)}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-start p-5 border-b border-slate-100 gap-3">
+          <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2 min-w-0">
+            <KeyRound size={20} className="text-indigo-500 shrink-0" />
+            <span className="truncate">{empFormExistingUser ? 'Muokkaa käyttäjätunnusta' : 'Luo käyttäjätunnukset'}</span>
+          </h2>
+          <button
+            onClick={() => setEmpUserModalOpen(false)}
+            className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors shrink-0"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4 text-left">
+          {/* Tunnus ja numero muodostuvat automaattisesti — ei syötettäviä kenttiä */}
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2">
+            <div className="flex justify-between items-baseline gap-3">
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Nimi</span>
+              <span className="text-sm font-medium text-slate-800 text-right">{buildFullName(empForm) || '—'}</span>
+            </div>
+            <div className="flex justify-between items-baseline gap-3">
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Käyttäjätunnus</span>
+              <span className="text-sm font-mono font-bold text-slate-900 text-right">{empFormUsername || '—'}</span>
+            </div>
+            <div className="flex justify-between items-baseline gap-3">
+              <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Tunnistenumero</span>
+              <span className="text-sm font-mono font-bold text-indigo-700 text-right">
+                {empForm.displayId
+                  ? muotoileTunniste(empForm.displayId)
+                  : muotoileTunniste(seuraavaTunnisteNumero(employees, userAdminList))}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 pt-1 leading-relaxed">
+              Molemmat muodostuvat automaattisesti eikä niitä voi muuttaa jälkikäteen:
+              tallennetut raportit viittaavat tunnistenumeroon.
+            </p>
+          </div>
+
+          {empFormExistingUser ? (
+            <>
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex gap-2.5">
+                <CheckCircle size={16} className="text-emerald-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-emerald-900 leading-relaxed">
+                  Tunnus on olemassa. Oikeudet ja Authenticator-asetukset hoidetaan
+                  etusivun "Muokkaa käyttäjiä" -näkymästä.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Aseta uusi salasana</label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={empUserPassword}
+                  onChange={(e) => setEmpUserPassword(e.target.value)}
+                  className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Vahvista salasana</label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={empUserPassword2}
+                  onChange={(e) => setEmpUserPassword2(e.target.value)}
+                  className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                />
+                <p className="text-xs text-slate-400 mt-1">
+                  Vähintään 10 merkkiä, iso ja pieni kirjain sekä numero. Vaihto kirjaa käyttäjän ulos.
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Salasana</label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={empUserPassword}
+                  onChange={(e) => setEmpUserPassword(e.target.value)}
+                  className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Vahvista salasana</label>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={empUserPassword2}
+                  onChange={(e) => setEmpUserPassword2(e.target.value)}
+                  className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                />
+                <p className="text-xs text-slate-400 mt-1">Vähintään 10 merkkiä, iso ja pieni kirjain sekä numero.</p>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-2.5">
+                <Info size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-900 leading-relaxed">
+                  Uudella tunnuksella ei ole oletuksena mitään sivukartta-oikeuksia, ja se vaatii
+                  Authenticator-sovelluksen. Hoida molemmat luonnin jälkeen etusivun
+                  "Muokkaa käyttäjiä" -näkymästä.
+                </p>
+              </div>
+            </>
+          )}
+
+          {empUserError && <p className="text-sm text-rose-600">{empUserError}</p>}
+          {empUserNotice && <p className="text-sm text-emerald-700 font-medium">{empUserNotice}</p>}
+        </div>
+
+        <div className="p-4 border-t border-slate-100 flex justify-end gap-3">
+          <button
+            onClick={() => setEmpUserModalOpen(false)}
+            className="px-5 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+          >
+            Sulje
+          </button>
+          <button
+            onClick={empFormExistingUser ? handleSetEmployeeUserPassword : handleCreateEmployeeUser}
+            disabled={empUserSubmitting}
+            className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm font-bold rounded-lg transition-colors flex items-center gap-2"
+          >
+            <CheckCircle size={16} />
+            {empUserSubmitting
+              ? 'Tallennetaan…'
+              : empFormExistingUser ? 'Vaihda salasana' : 'Luo tunnus'}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   const globalOverlays = (
     <>
       {changePasswordModal}
       {pdfEsikatseluModal}
+      {empUserModal}
       {saveErrorBanner}
     </>
   );
@@ -7968,6 +8359,48 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Osa 10: Käyttäjätunnukset. Avaa modaalin eikä vie käyttäjähallintaan,
+                      jottei keskeneräinen työntekijän muokkaus katoa navigoinnin mukana. */}
+                  <div className="space-y-4">
+                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
+                      <KeyRound size={18} className="text-slate-400"/>
+                      10. Käyttäjätunnukset
+                    </h3>
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <p className="text-sm text-slate-700">
+                          <span className="font-medium">Käyttäjätunnus:</span>{' '}
+                          {empFormUsername
+                            ? <span className="font-mono text-slate-900">{empFormUsername}</span>
+                            : <span className="text-slate-400">muodostuu etu- ja sukunimestä</span>}
+                        </p>
+                        <p className="text-sm text-slate-700">
+                          <span className="font-medium">Tunnistenumero:</span>{' '}
+                          {empForm.displayId
+                            ? <span className="font-mono text-slate-900">{muotoileTunniste(empForm.displayId)}</span>
+                            : <span className="text-slate-400">annetaan kun työntekijä tallennetaan</span>}
+                        </p>
+                        <p className="text-xs text-slate-500 pt-1 leading-relaxed">
+                          Raporteissa kirjaajana näkyy tapahtumakohtainen nimimerkki ja tämä numero,
+                          esim. "Ensiapu 1 {muotoileTunniste(empForm.displayId || 1028)}". Nimimerkki annetaan
+                          kun henkilö lisätään tapahtumaan.
+                        </p>
+                      </div>
+                      {(isAdminUser || canEdit(perms, selectedEvent, 'global_employee_bank')) && (
+                        <button
+                          type="button"
+                          onClick={avaaTunnusModaali}
+                          disabled={!empFormUsername}
+                          title={empFormUsername ? undefined : 'Täytä ensin etunimi ja sukunimi'}
+                          className="shrink-0 px-4 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                        >
+                          <KeyRound size={16} />
+                          {empFormExistingUser ? 'Muokkaa käyttäjätunnusta' : 'Luo käyttäjätunnukset'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="pt-6 flex justify-end gap-3 border-t border-slate-100">
                     <button
                       type="button"
@@ -8025,6 +8458,7 @@ export default function App() {
                     <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="p-4">Nimi</th>
+                        <th className="p-4 w-24">Tunniste</th>
                         <th className="p-4">Henkilötunnus</th>
                         <th className="p-4">Kortit</th>
                         <th className="p-4">Yhteystiedot</th>
@@ -8034,13 +8468,18 @@ export default function App() {
                     <tbody className="divide-y divide-slate-200">
                       {filteredBankEmployees.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="p-8 text-center text-sm text-slate-500">
+                          <td colSpan={6} className="p-8 text-center text-sm text-slate-500">
                             {employeeBankSearch.trim() ? 'Ei hakua vastaavia työntekijöitä.' : 'Ei vielä työntekijöitä rekisterissä.'}
                           </td>
                         </tr>
                       ) : filteredBankEmployees.map((emp) => (
                         <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
                           <td className="p-4 font-medium text-slate-800">{emp.name}</td>
+                          <td className="p-4">
+                            {emp.displayId
+                              ? <span className="font-mono text-xs font-bold text-indigo-700">{muotoileTunniste(emp.displayId)}</span>
+                              : <span className="text-xs text-slate-400">—</span>}
+                          </td>
                           <td className="p-4 font-mono text-xs text-slate-600">{emp.personalId || '—'}</td>
                           <td className="p-4">
                             <div className="flex flex-wrap gap-1">
@@ -8164,16 +8603,15 @@ export default function App() {
                       placeholder="esim. tikepvst"
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Nimimerkki</label>
-                    <input
-                      type="text"
-                      value={newUserNickname}
-                      onChange={(e) => setNewUserNickname(e.target.value)}
-                      className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-                      placeholder="esim. TIKE Päivystäjä"
-                    />
-                    <p className="text-xs text-slate-400 mt-1">Näkyy mm. raporttien "Laatija"-kenttänä.</p>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex gap-2.5">
+                    <Info size={16} className="text-slate-400 shrink-0 mt-0.5" />
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Nimimerkkiä ei enää aseteta tässä. Raporttien "Laatija"-kenttä muodostuu
+                      tapahtumakohtaisesta nimimerkistä ja henkilön tunnistenumerosta (esim.
+                      "Ensiapu 1 #1028") — nimimerkki annetaan kun henkilö lisätään tapahtumaan.
+                      Tunnukset kannattaa luoda työntekijäpankista, jolloin nimi, tunnus ja
+                      tunnistenumero täyttyvät automaattisesti.
+                    </p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Salasana</label>
@@ -8931,6 +9369,7 @@ export default function App() {
       totp_required_change: 'Muutti Authenticator-vaatimusta',
       force_logout: 'Pakotti uloskirjautumaan',
       password_change: 'Vaihtoi salasanan',
+      user_password_set: 'Asetti käyttäjän salasanan',
     };
     const collectionLabels = {
       checkins: 'Sisäänkirjaukset',

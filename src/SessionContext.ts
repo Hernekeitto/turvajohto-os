@@ -7,6 +7,11 @@ export interface SessionProfile {
   username: string;
   nickname: string;
   role: 'admin' | 'user';
+  // Pysyvä tunnistenumero (#1000 →), jolla henkilö yksilöidään raporteissa
+  // tapahtumakohtaisen nimimerkin lisäksi. null jos tunnukselle ei ole annettu numeroa.
+  displayId: number | null;
+  // Mihin työntekijäpankin tietueeseen tunnus liittyy.
+  employeeId: string | null;
   permissions: Permissions;
   // Tämän istunnon kirjautumishetki ISO-muodossa, tai null jos käyttäjä ei ole
   // kirjautunut kertaakaan sen jälkeen kun palvelin alkoi tallentaa sitä.

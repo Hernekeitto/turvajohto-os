@@ -175,13 +175,21 @@ export function forceLogout(username) {
   return true;
 }
 
-export function upsertUser(username, passwordHash, { nickname, role } = {}) {
+// displayId on työntekijän pysyvä tunnistenumero (#1000 ->), joka annetaan
+// työntekijäpankissa ja kopioidaan tunnukselle sen luonnin yhteydessä. Sitä EI koskaan
+// muuteta jälkikäteen: raporttien kirjaajamerkintä ("Ensiapu 1 #1028") viittaa siihen,
+// joten numeron vaihtuminen katkaisisi jo tallennettujen raporttien jäljitettävyyden.
+// employeeId kertoo mihin työntekijäpankin tietueeseen tunnus liittyy.
+export function upsertUser(username, passwordHash, { nickname, role, displayId, employeeId } = {}) {
   const users = readUsers();
   const existing = users.find((u) => u.username === username);
   if (existing) {
     existing.password_hash = passwordHash;
     if (nickname) existing.nickname = nickname;
     if (role) existing.role = role;
+    // Olemassa olevalle tunnukselle numero asetetaan vain jos se puuttuu kokonaan.
+    if (displayId && !existing.displayId) existing.displayId = displayId;
+    if (employeeId && !existing.employeeId) existing.employeeId = employeeId;
   } else {
     users.push({
       username,
@@ -190,6 +198,8 @@ export function upsertUser(username, passwordHash, { nickname, role } = {}) {
       role: role || 'user',
       permissions: { [DEFAULT_BUCKET]: {} },
       eventAccess: [],
+      ...(displayId ? { displayId } : {}),
+      ...(employeeId ? { employeeId } : {}),
       created_at: new Date().toISOString(),
     });
   }

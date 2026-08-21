@@ -11,6 +11,8 @@ async function loadSessionProfile(): Promise<SessionProfile | null> {
     username: data.username,
     nickname: data.nickname || data.username,
     role: data.role || 'user',
+    displayId: typeof data.displayId === 'number' ? data.displayId : null,
+    employeeId: data.employeeId || null,
     permissions: data.permissions || {},
     lastLoginAt: data.lastLoginAt || null,
   };
