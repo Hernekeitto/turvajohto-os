@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="fi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Jaettu tiedosto – Turvajohto OS</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+        background: #f8fafc; padding: 1rem;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        color: #1e293b;
+      }
+      .kortti {
+        width: 100%; max-width: 30rem; background: #fff; border: 1px solid #e2e8f0;
+        border-radius: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 1.5rem;
+      }
+      h1 { font-size: 1.125rem; margin: 0 0 .25rem; }
+      .vaimea { color: #64748b; font-size: .875rem; margin: 0 0 1rem; }
+      .rivi {
+        display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+        padding: .625rem .75rem; border: 1px solid #e2e8f0; border-radius: .5rem; margin-bottom: .5rem;
+      }
+      .nimi { font-size: .875rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      button, input {
+        font: inherit; border-radius: .5rem; border: 1px solid #cbd5e1; padding: .5rem .75rem;
+      }
+      button {
+        background: #4f46e5; color: #fff; border-color: #4f46e5; font-weight: 700; cursor: pointer;
+      }
+      button:hover { background: #4338ca; }
+      button:disabled { opacity: .6; cursor: default; }
+      button.toissijainen { background: #f1f5f9; color: #334155; border-color: #e2e8f0; font-weight: 500; }
+      input { width: 100%; margin-bottom: .5rem; }
+      .virhe { color: #e11d48; font-size: .875rem; }
+      .info { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: .5rem; padding: .75rem; font-size: .8125rem; }
+    </style>
+  </head>
+  <body>
+    <div class="kortti" id="kortti">
+      <p class="vaimea">Ladataan…</p>
+    </div>
+
+    <script>
+      // Token luetaan osoitteen hash-osasta (#token) EIKÄ polusta tai kyselyparametrista.
+      // Hash ei koskaan lähde palvelimelle, joten token ei päädy nginxin access.logiin
+      // eikä välityspalvelimien lokeihin. Se on merkittävä ero: URL-polku kirjautuu
+      // jokaisesta pyynnöstä, hash ei kirjaudu mihinkään palvelimen päässä.
+      const token = location.hash.slice(1);
+      const kortti = document.getElementById('kortti');
+
+      const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ));
+
+      function virhe(viesti) {
+        kortti.innerHTML = '<h1>Linkki ei ole käytettävissä</h1><p class="vaimea">' + esc(viesti) + '</p>';
+      }
+
+      async function lataa(fileId, nimi) {
+        const salasanaKentta = document.getElementById('salasana');
+        // Edellinen virhe pois heti: muuten onnistunut lataus jättäisi ruudulle
+        // vanhan "Väärä salasana." -tekstin ja näyttäisi epäonnistuneen.
+        const virheP = document.getElementById('virhe');
+        if (virheP) virheP.textContent = '';
+        const res = await fetch('/api/share/' + encodeURIComponent(token) + '/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileId, password: salasanaKentta ? salasanaKentta.value : undefined }),
+        });
+        if (!res.ok) {
+          let viesti = 'Lataus epäonnistui.';
+          try { viesti = (await res.json()).error || viesti; } catch {}
+          const p = document.getElementById('virhe');
+          if (p) p.textContent = viesti;
+          return;
+        }
+        // Ladataan blobina, jotta salasana voidaan lähettää rungossa eikä URL:ssa.
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = nimi;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      async function alusta() {
+        if (!token) return virhe('Linkistä puuttuu tunniste.');
+        let tiedot;
+        try {
+          const res = await fetch('/api/share/' + encodeURIComponent(token));
+          tiedot = await res.json();
+          if (!res.ok || !tiedot.ok) return virhe(tiedot.error || 'Linkkiä ei löytynyt.');
+        } catch {
+          return virhe('Yhteysvirhe. Yritä myöhemmin uudelleen.');
+        }
+
+        const tiedostot = tiedot.type === 'folder'
+          ? (tiedot.contents || []).filter((f) => f.type === 'file')
+          : [{ id: null, name: tiedot.name }];
+
+        const vanhenee = tiedot.expiresAt
+          ? '<p class="vaimea">Linkki on voimassa ' + esc(new Date(tiedot.expiresAt).toLocaleString('fi-FI')) + ' asti.</p>'
+          : '';
+
+        kortti.innerHTML =
+          '<h1>' + esc(tiedot.name) + '</h1>' +
+          '<p class="vaimea">' + (tiedot.type === 'folder' ? 'Jaettu kansio' : 'Jaettu tiedosto') + '</p>' +
+          (tiedot.requiresPassword
+            ? '<input id="salasana" type="password" placeholder="Salasana" autocomplete="off" />'
+            : '') +
+          '<div id="lista"></div>' +
+          '<p id="virhe" class="virhe"></p>' +
+          vanhenee;
+
+        const lista = document.getElementById('lista');
+        if (tiedostot.length === 0) {
+          lista.innerHTML = '<p class="info">Kansiossa ei ole ladattavia tiedostoja.</p>';
+          return;
+        }
+        tiedostot.forEach((f) => {
+          const rivi = document.createElement('div');
+          rivi.className = 'rivi';
+          const nimi = document.createElement('span');
+          nimi.className = 'nimi';
+          nimi.textContent = f.name;
+          const nappi = document.createElement('button');
+          nappi.textContent = 'Lataa';
+          nappi.addEventListener('click', () => lataa(f.id, f.name));
+          rivi.append(nimi, nappi);
+          lista.append(rivi);
+        });
+      }
+
+      alusta();
+    </script>
+  </body>
+</html>

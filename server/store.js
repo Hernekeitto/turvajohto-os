@@ -14,6 +14,14 @@ const COLLECTIONS = {
   riskAssessments: 'riskAssessments.json',
   employees: 'employees.json',
   readiness: 'readiness.json',
+  // Tapahtumakohtaiset lisätyt lomakkeet ("Täytettävät lomakkeet" -sivun oma lista;
+  // sisäänrakennetut lomakkeet ovat edelleen koodissa, koska niissä on toiminnallisuus).
+  eventForms: 'eventForms.json',
+  // Tapahtuman tiedostot: kansiot ja tiedostot samassa kokoelmassa (type-kenttä erottaa,
+  // parentId tekee sisäkkäisyyden).
+  eventFiles: 'eventFiles.json',
+  // Tiedostojen ja kansioiden jakolinkit.
+  fileShares: 'fileShares.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
@@ -51,6 +59,9 @@ const COLLECTIONS = {
 // Selväkielisiksi jäävät place, licenseHolder, date ja time (eivät henkilötietoa) sekä
 // author, typeId ja eventId (suodatus ja oikeustarkistukset).
 const ENCRYPTED_FIELDS = {
+  // Jakolinkin token antaa pääsyn tiedostoon ilman kirjautumista, joten se on
+  // salasanaan rinnastuva salaisuus eikä saa olla levyllä selväkielisenä.
+  fileShares: ['token'],
   // personalId ja taxNumber ovat molemmat henkilön yksilöiviä viranomaistunnisteita,
   // joten kumpikaan ei saa olla levyllä selväkielisenä.
   employees: ['personalId', 'taxNumber'],

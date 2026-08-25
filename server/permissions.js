@@ -121,6 +121,28 @@ const legacyEventId = (item) => item?.eventId || 'fesx';
 // tapahtumarajauksella varustettu käyttäjä voisi siis hiljaa hukata muiden käyttäjien/
 // tapahtumien dataa pelkällä sivun avaamisella.
 const COLLECTIONS = {
+  // Tapahtumakohtaiset lisätyt lomakkeet kuuluvat "Täytettävät lomakkeet" -sivulle,
+  // joten ne käyttävät saman sivun oikeutta.
+  eventForms: {
+    view: ['documents_forms'],
+    touch: () => ['documents_forms'],
+    eventScoped: true,
+    eventIdOf: legacyEventId,
+  },
+  // Tapahtuman tiedostot (kansiot + tiedostot) ja niiden jakolinkit ovat saman sivun
+  // takana: jakaminen on osa tiedostonhallintaa, ei erillinen oikeus.
+  eventFiles: {
+    view: ['eventfiles'],
+    touch: () => ['eventfiles'],
+    eventScoped: true,
+    eventIdOf: legacyEventId,
+  },
+  fileShares: {
+    view: ['eventfiles'],
+    touch: () => ['eventfiles'],
+    eventScoped: true,
+    eventIdOf: legacyEventId,
+  },
   employees: {
     view: ['global_employee_bank'],
     touch: () => ['global_employee_bank'],

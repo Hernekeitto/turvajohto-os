@@ -24,11 +24,23 @@ import { isAllowedFile, saveUpload, getUploadPath, deleteUpload, collectGarbage 
 import { verifyTotp, buildOtpauthUri } from './totp.js';
 import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
 import {
+  luoToken,
+  tokenTasmaa,
+  ratkaiseVoimassaolo,
+  jaonTila,
+  TILAN_SELITE,
+  hashaaSalasana,
+  salasanaTasmaa,
+  kuuluuJakoon,
+  julkinenJako,
+} from './shares.js';
+import {
   COLLECTION_NAMES,
   readableData,
   authorizeWrite,
   canReadAttachment,
   canUploadAttachment,
+  canEdit,
 } from './permissions.js';
 import { logAudit, readAuditLog } from './audit.js';
 import { validateRecords, wouldWipeNonEmptyCollection } from './validation.js';
@@ -297,6 +309,17 @@ function requireAdmin(req, res, next) {
 // tapahtumasidotun kokoelman tietue kerrallaan (eventAccess JA kyseisen tietueen oman
 // tapahtuman Sivukartta-oikeus yhdessä), ja PUT tarkistetaan samoin tietue kerrallaan sen
 // mukaan mitä oikeasti muuttuu.
+// Kokoelmat jotka viittaavat ladattuihin tiedostoihin, ja miten viite kustakin luetaan.
+//
+// TÄRKEÄ: uusi liitteitä viittaava kokoelma ON LISÄTTÄVÄ TÄHÄN. Roskienkeruu poistaa
+// tiedostot joihin mikään kokoelma ei viittaa (armonajan jälkeen), joten puuttuva rivi
+// tarkoittaa että kyseisen kokoelman tiedostot katoavat levyltä vuorokaudessa.
+const UPLOAD_VIITTAAJAT = {
+  reports: (arr) => (Array.isArray(arr) ? arr : []).map((r) => r?.attachment?.id).filter(Boolean),
+  events: (arr) => (Array.isArray(arr) ? arr : []).map((e) => e?.formData?.mapUploadId).filter(Boolean),
+  eventFiles: (arr) => (Array.isArray(arr) ? arr : []).map((f) => f?.uploadId).filter(Boolean),
+};
+
 app.get('/api/data/:name', requireAuth, (req, res) => {
   const { name } = req.params;
   if (!KNOWN_COLLECTIONS.includes(name)) {
@@ -306,7 +329,12 @@ app.get('/api/data/:name', requireAuth, (req, res) => {
   if (!result.ok) {
     return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän tiedon lukemiseen.' });
   }
-  res.json({ ok: true, data: result.data });
+  // Jakolinkin token on salasanaan rinnastuva salaisuus: se antaa pääsyn tiedostoon
+  // ilman kirjautumista. Sitä ei anneta listahaussa vaikka kutsujalla on lukuoikeus —
+  // token haetaan erikseen /api/shares/:id/token -reitiltä vasta kun käyttäjä pyytää
+  // linkin nähtäväkseen. Sama koskee salasanatiivistettä.
+  const data = name === 'fileShares' ? (result.data || []).map(julkinenJako) : result.data;
+  res.json({ ok: true, data });
 });
 
 app.put('/api/data/:name', requireAuth, (req, res) => {
@@ -321,6 +349,16 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   const recordCheck = validateRecords(req.body);
   if (!recordCheck.ok) {
     return res.status(400).json(recordCheck);
+  }
+  // Jakolinkkejä ei kirjoiteta tämän geneerisen reitin kautta: token ja salasanatiiviste
+  // syntyvät palvelimella (/api/shares), eikä frontilla ole niitä hallussaan. Jos tämä
+  // sallittaisiin, frontin tallennus ylikirjoittaisi tokenit tyhjiksi ja katkaisisi
+  // kaikki voimassa olevat jakolinkit kerralla.
+  if (name === 'fileShares') {
+    return res.status(403).json({
+      ok: false,
+      error: 'Jakolinkkejä hallitaan vain omien reittiensä kautta (/api/shares).',
+    });
   }
   const current = readCollection(name) || [];
   const verdict = authorizeWrite(req.role, req.permissions, req.eventAccess, name, current, req.body);
@@ -351,24 +389,26 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   // pysyvästi vaikka itse raportti oli poistettu. Tämän pyynnön irrottamat liitteet
   // poistetaan heti (ne ovat varmasti orpoja), ja sen lisäksi siivotaan aiemmin
   // orvoiksi jääneet tiedostot armonajan jälkeen (ks. uploads.js: collectGarbage).
-  // Liitteitä viittaa kaksi kokoelmaa: raporttien liitteet ja tapahtumien
-  // pohjakartat. Roskienkeruulle on annettava MOLEMPIEN viitteet, muuten toisen
-  // kokoelman tallennus poistaisi toisen tiedostot armonajan jälkeen.
-  if (name === 'reports' || name === 'events') {
+  //
+  // Roskienkeruulle on annettava KAIKKIEN liitteitä viittaavien kokoelmien viitteet,
+  // muuten yhden kokoelman tallennus poistaisi toisen tiedostot armonajan jälkeen.
+  // Siksi viittaajat ovat rekisterissä (UPLOAD_VIITTAAJAT) eivätkä if-ehdossa: uusi
+  // liitteitä viittaava kokoelma lisätään yhteen paikkaan, eikä sen tiedostojen
+  // katoaminen jää kiinni siitä että joku muisti päivittää tämän ehdon.
+  if (UPLOAD_VIITTAAJAT[name]) {
     try {
-      const raporttiIdt = (arr) => (Array.isArray(arr) ? arr : []).map((r) => r?.attachment?.id).filter(Boolean);
-      const karttaIdt = (arr) => (Array.isArray(arr) ? arr : []).map((e) => e?.formData?.mapUploadId).filter(Boolean);
-      const idt = name === 'reports' ? raporttiIdt : karttaIdt;
+      const idt = UPLOAD_VIITTAAJAT[name];
 
       // Tässä pyynnössä irronneet liitteet poistetaan heti — ne ovat varmasti orpoja.
       const viitatutNyt = idt(verdict.data);
       const irrotetut = idt(current).filter((id) => !viitatutNyt.includes(id));
       for (const id of irrotetut) deleteUpload(id);
 
-      const toinen = name === 'reports'
-        ? karttaIdt(readCollection('events'))
-        : raporttiIdt(readCollection('reports'));
-      collectGarbage([...viitatutNyt, ...toinen]);
+      // Muiden kokoelmien viitteet luetaan levyltä, jotta ne eivät joudu roskiksi.
+      const muut = Object.entries(UPLOAD_VIITTAAJAT)
+        .filter(([kokoelma]) => kokoelma !== name)
+        .flatMap(([kokoelma, poimi]) => poimi(readCollection(kokoelma)));
+      collectGarbage([...viitatutNyt, ...muut]);
     } catch (err) {
       // Liitteiden siivous ei saa kaataa itse tallennusta joka jo onnistui.
       console.error('Liitetiedostojen siivous epäonnistui:', err.message);
@@ -642,6 +682,227 @@ app.delete('/api/roles/:id', requireAuth, requireAdmin, (req, res) => {
   const tulos = deleteRole(id);
   if (!tulos.ok) return res.status(400).json(tulos);
   logAudit({ user: req.username, action: 'role_delete', targetRole: id });
+  res.json({ ok: true });
+});
+
+// ====================== JAKOLINKIT ======================
+// Julkinen latausreitti. EI requireAuthia — se on koko pointti: ulkopuolinen saa
+// tiedoston pelkällä linkillä. Suojana ovat token, mahdollinen salasana, vanhentuminen
+// ja latausraja (ks. shares.js), sekä oma rate limit alla.
+//
+// Kaikki estot vastaavat 404:llä, mutta virheviesti erottelee syyn (vanhentunut,
+// peruutettu, latausraja). Se paljastaa arvaajalle että token oli oikea — tietoinen
+// kompromissi: tokenin arvaaminen ei ole realistinen uhka (256 bittiä), ja
+// vastaanottajalle "linkki on vanhentunut" on olennaisesti hyödyllisempi kuin
+// "ei löytynyt" silloin kun linkki oikeasti vanheni.
+const shareLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Liikaa yrityksiä. Odota hetki ja yritä uudelleen.' },
+});
+
+// Etsii jakolinkin tokenilla. Vakioaikainen vertailu jokaista vastaan, jottei
+// vastausaika kerro kuinka moni merkki osui.
+function etsiJako(token) {
+  const shares = readCollection('fileShares') || [];
+  return shares.find((sh) => tokenTasmaa(token, sh.token)) || null;
+}
+
+// Jaon tiedot ilman tiedostoa: käyttöliittymä kysyy tällä tarvitaanko salasana ja
+// mitä ollaan lataamassa, ennen kuin näyttää lomakkeen.
+app.get('/api/share/:token', shareLimiter, (req, res) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  const share = etsiJako(req.params.token);
+  const tila = jaonTila(share);
+  if (!tila.ok) {
+    // Kaikki estot palautetaan 404:llä: 403 kertoisi että token on olemassa.
+    return res.status(404).json({ ok: false, error: TILAN_SELITE[tila.syy] || TILAN_SELITE.not_found });
+  }
+  const tiedostot = readCollection('eventFiles') || [];
+  const kohde = tiedostot.find((f) => f.id === share.targetId);
+  if (!kohde) return res.status(404).json({ ok: false, error: TILAN_SELITE.not_found });
+
+  // Kansiojaossa listataan sisältö, jotta vastaanottaja näkee mitä on tarjolla.
+  const sisalto = kohde.type === 'folder'
+    ? tiedostot
+        .filter((f) => kuuluuJakoon(share.targetId, f.id, tiedostot) && f.id !== kohde.id)
+        .map((f) => ({ id: f.id, name: f.name, type: f.type, parentId: f.parentId, size: f.size }))
+    : [];
+
+  res.json({
+    ok: true,
+    name: kohde.name,
+    type: kohde.type,
+    requiresPassword: !!share.passwordHash,
+    expiresAt: share.expiresAt,
+    contents: sisalto,
+  });
+});
+
+// Varsinainen lataus. Salasana tulee POST-rungossa eikä URL:ssa: kyselyparametrit
+// päätyvät palvelinlokeihin ja selainhistoriaan.
+app.post('/api/share/:token/download', shareLimiter, (req, res) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  const { password, fileId } = req.body || {};
+  const share = etsiJako(req.params.token);
+  const tila = jaonTila(share);
+  if (!tila.ok) {
+    return res.status(404).json({ ok: false, error: TILAN_SELITE[tila.syy] || TILAN_SELITE.not_found });
+  }
+  if (!salasanaTasmaa(password, share.passwordHash)) {
+    logAudit({ user: 'share:' + share.id, action: 'share_bad_password', ip: req.ip });
+    return res.status(401).json({ ok: false, error: 'Väärä salasana.' });
+  }
+
+  const tiedostot = readCollection('eventFiles') || [];
+  // Kansiojaossa kutsuja kertoo minkä tiedoston haluaa; se on tarkistettava kuuluvaksi
+  // jaettuun alipuuhun JOKA latauksella — kansion sisältö muuttuu jaon luonnin jälkeen.
+  const haettuId = fileId || share.targetId;
+  const kohde = tiedostot.find((f) => f.id === haettuId);
+  if (!kohde || kohde.type !== 'file' || !kuuluuJakoon(share.targetId, haettuId, tiedostot)) {
+    return res.status(404).json({ ok: false, error: TILAN_SELITE.not_found });
+  }
+  const polku = getUploadPath(kohde.uploadId);
+  if (!polku) return res.status(404).json({ ok: false, error: TILAN_SELITE.not_found });
+
+  // Latausloki: ilman tätä linkin vuotamista ei havaitse mitenkään.
+  try {
+    const shares = readCollection('fileShares') || [];
+    writeCollection('fileShares', shares.map((sh) => (sh.id === share.id
+      ? {
+          ...sh,
+          downloadCount: (sh.downloadCount || 0) + 1,
+          lastDownloadAt: new Date().toISOString(),
+          lastDownloadIp: req.ip,
+        }
+      : sh)));
+  } catch (err) {
+    // Laskurin päivitys ei saa estää itse latausta.
+    console.error('Jakolinkin latauslaskurin päivitys epäonnistui:', err.message);
+  }
+  logAudit({ user: 'share:' + share.id, action: 'share_download', recordId: kohde.id, ip: req.ip });
+  res.download(polku, kohde.name);
+});
+
+// Pääkäyttäjän hyväksyntä pysyvälle linkille.
+app.post('/api/shares/:id/approval', requireAuth, requireAdmin, (req, res) => {
+  const { approve } = req.body || {};
+  const shares = readCollection('fileShares') || [];
+  const share = shares.find((sh) => sh.id === req.params.id);
+  if (!share) return res.status(404).json({ ok: false, error: 'Jakolinkkiä ei löytynyt.' });
+  if (share.approvalStatus !== 'pending') {
+    return res.status(400).json({ ok: false, error: 'Tämä jakolinkki ei odota hyväksyntää.' });
+  }
+  const paivitetty = approve
+    // Hyväksyntä poistaa määräajan: linkistä tulee pysyvä kuten pyydettiin.
+    ? { ...share, approvalStatus: 'approved', expiresAt: null, approvedBy: req.username, approvedAt: new Date().toISOString() }
+    // Hylkäys ei poista linkkiä vaan jättää sen alkuperäiseen määräaikaansa.
+    : { ...share, approvalStatus: 'rejected', approvedBy: req.username, approvedAt: new Date().toISOString() };
+  writeCollection('fileShares', shares.map((sh) => (sh.id === share.id ? paivitetty : sh)));
+  logAudit({ user: req.username, action: approve ? 'share_approved' : 'share_rejected', recordId: share.id });
+  res.json({ ok: true, share: julkinenJako(paivitetty) });
+});
+
+// Jakolinkin luonti. Oma reittinsä eikä /api/data/fileShares, koska token on luotava
+// ja salasana hashattava palvelimella — kumpaakaan ei voi tehdä selaimessa.
+app.post('/api/shares', requireAuth, (req, res) => {
+  const { targetId, mode, password, expiresAt, ikuinen, maxDownloads, allowedUsernames } = req.body || {};
+  const tiedostot = readCollection('eventFiles') || [];
+  const kohde = tiedostot.find((f) => f.id === targetId);
+  if (!kohde) return res.status(404).json({ ok: false, error: 'Jaettavaa kohdetta ei löytynyt.' });
+
+  // Jakaminen vaatii muokkausoikeuden tiedostosivulle SIINÄ tapahtumassa johon kohde
+  // kuuluu — lukuoikeus ei riitä, koska jakaminen laajentaa pääsyn sovelluksen ulkopuolelle.
+  if (req.role !== 'admin' && !canEdit(req.permissions, kohde.eventId, 'eventfiles')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta jakaa tämän tapahtuman tiedostoja.' });
+  }
+  if (!['link', 'password', 'users'].includes(mode)) {
+    return res.status(400).json({ ok: false, error: 'Tuntematon jakotapa.' });
+  }
+
+  // Henkilötietolippu peritään myös yläkansioilta: alikansioon laitettu tiedosto ei saa
+  // kiertää rajoitusta sillä että lippu on vain juurikansiossa.
+  const henkilotietoa = !!kohde.containsPersonalData
+    || tiedostot.some((f) => f.containsPersonalData && kuuluuJakoon(f.id, kohde.id, tiedostot) && f.id !== kohde.id);
+
+  if (mode === 'link' && henkilotietoa) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Henkilötietoa sisältävää kohdetta ei voi jakaa pelkällä linkillä. Valitse salasanasuojaus tai jakaminen nimetyille käyttäjille.',
+    });
+  }
+  if (mode === 'password' && (typeof password !== 'string' || password.length < 8)) {
+    return res.status(400).json({ ok: false, error: 'Salasanan tulee olla vähintään 8 merkkiä.' });
+  }
+  if (mode === 'users' && (!Array.isArray(allowedUsernames) || allowedUsernames.length === 0)) {
+    return res.status(400).json({ ok: false, error: 'Valitse vähintään yksi käyttäjä.' });
+  }
+
+  // Nimetyille käyttäjille jaettu ei kulje tokenilla lainkaan: he kirjautuvat normaalisti,
+  // joten linkkiä ei tarvita eikä sen vanhentumista ratkaista.
+  const onTokenJako = mode !== 'users';
+  let voimassaolo = { expiresAt: null, approvalStatus: 'none' };
+  if (onTokenJako) {
+    voimassaolo = ratkaiseVoimassaolo(
+      { expiresAt, ikuinen, henkilotietoa, onAdmin: req.role === 'admin' },
+      new Date()
+    );
+    if (voimassaolo.error) return res.status(400).json({ ok: false, error: voimassaolo.error });
+  }
+
+  const share = {
+    id: crypto.randomUUID(),
+    eventId: kohde.eventId,
+    targetId,
+    mode,
+    token: onTokenJako ? luoToken() : null,
+    passwordHash: mode === 'password' ? hashaaSalasana(password) : null,
+    allowedUsernames: mode === 'users' ? allowedUsernames.filter((u) => typeof u === 'string') : [],
+    expiresAt: voimassaolo.expiresAt,
+    approvalStatus: voimassaolo.approvalStatus,
+    maxDownloads: Number.isFinite(maxDownloads) && maxDownloads > 0 ? maxDownloads : null,
+    downloadCount: 0,
+    lastDownloadAt: null,
+    lastDownloadIp: null,
+    createdBy: req.username,
+    createdAt: new Date().toISOString(),
+    revokedAt: null,
+  };
+  const shares = readCollection('fileShares') || [];
+  writeCollection('fileShares', [...shares, share]);
+  logAudit({ user: req.username, action: 'share_create', recordId: share.id, eventId: kohde.eventId });
+
+  // Token palautetaan tässä, jotta käyttöliittymä voi näyttää linkin heti.
+  res.json({ ok: true, share: julkinenJako(share), token: share.token });
+});
+
+// Tokenin näyttäminen uudelleen. Erillinen reitti, jotta token ei kulje jokaisessa
+// listahaussa mukana — sitä tarvitaan vain kun käyttäjä pyytää linkin nähtäväkseen.
+app.get('/api/shares/:id/token', requireAuth, (req, res) => {
+  const shares = readCollection('fileShares') || [];
+  const share = shares.find((sh) => sh.id === req.params.id);
+  if (!share) return res.status(404).json({ ok: false, error: 'Jakolinkkiä ei löytynyt.' });
+  if (req.role !== 'admin' && !canEdit(req.permissions, share.eventId, 'eventfiles')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta tähän jakolinkkiin.' });
+  }
+  res.json({ ok: true, token: share.token });
+});
+
+// Peruutus. Ei poista tietuetta vaan merkitsee sen peruutetuksi: latausloki ja tieto
+// siitä kuka linkin loi ovat jälkikäteen tärkeämpiä kuin siisti tietokanta.
+app.delete('/api/shares/:id', requireAuth, (req, res) => {
+  const shares = readCollection('fileShares') || [];
+  const share = shares.find((sh) => sh.id === req.params.id);
+  if (!share) return res.status(404).json({ ok: false, error: 'Jakolinkkiä ei löytynyt.' });
+  if (req.role !== 'admin' && !canEdit(req.permissions, share.eventId, 'eventfiles')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta peruuttaa tätä jakolinkkiä.' });
+  }
+  writeCollection('fileShares', shares.map((sh) => (sh.id === share.id
+    ? { ...sh, revokedAt: new Date().toISOString(), revokedBy: req.username }
+    : sh)));
+  logAudit({ user: req.username, action: 'share_revoke', recordId: share.id, eventId: share.eventId });
   res.json({ ok: true });
 });
 

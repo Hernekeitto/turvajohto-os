@@ -880,6 +880,10 @@ const SITEMAP = [
       { id: 'documents_risk_new', label: 'Riskin arviointi' },
     ] },
   ] },
+  // Tapahtuman tiedostot: omat kansiot ja tiedostot, joita voi jakaa myös ulkopuolisille
+  // (ks. server/shares.js). Sijaitsee sivuvalikossa Lomakekartoituksen ja
+  // Sovellusasetusten välissä.
+  { id: 'eventfiles', label: 'Tapahtuman tiedostot' },
   { id: 'settings', label: 'Sovellusasetukset' },
   { id: 'global_reports', label: 'Tallennetut raportit (kaikki tapahtumat)' },
   { id: 'global_archived_events', label: 'Tallennetut tapahtumat' },
@@ -1275,6 +1279,42 @@ export default function App() {
   const [newRoleName, setNewRoleName] = useState('');
   // Minkä käyttäjätason käyttäjälista on auki Sovellusasetuksissa (tason id tai null).
   const [roleUsersOpen, setRoleUsersOpen] = useState(null);
+
+  // Tapahtumakohtaiset lisätyt lomakkeet ("Täytettävät lomakkeet"). Sisäänrakennetut
+  // lomakkeet ovat edelleen koodissa, koska niihin liittyy toiminnallisuutta (tab,
+  // tulostettava kenttäluettelo) — tänne tulevat vain käyttäjän itse lisäämät.
+  const [eventForms, setEventForms] = useState([]);
+  const [eventFormsLoaded, setEventFormsLoaded] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newFormName, setNewFormName] = useState('');
+  const [newFormDesc, setNewFormDesc] = useState('');
+  const [newFormTag, setNewFormTag] = useState('Sisäinen');
+  const [newFormTagOther, setNewFormTagOther] = useState('');
+
+  // ---- Tapahtuman tiedostot ----
+  // Kansiot ja tiedostot ovat samassa kokoelmassa: type erottaa ne ja parentId tekee
+  // sisäkkäisyyden. Navigointi tapahtuu "ollaan kansiossa" -mallilla murupolun kanssa,
+  // mikä on yksinkertaisempi kuin aina auki oleva puu ja toimii mielivaltaisen syvänä.
+  const [eventFiles, setEventFiles] = useState([]);
+  const [eventFilesLoaded, setEventFilesLoaded] = useState(false);
+  const [fileShares, setFileShares] = useState([]);
+  const [currentFolderId, setCurrentFolderId] = useState(null);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [tiedostoUploading, setTiedostoUploading] = useState(false);
+  const tiedostoInputRef = useRef<HTMLInputElement>(null);
+
+  // Jakodialogi: mitä jaetaan ja millä ehdoilla.
+  const [shareTarget, setShareTarget] = useState(null);   // eventFiles-tietue
+  const [shareMode, setShareMode] = useState('link');     // 'link' | 'password' | 'users'
+  const [sharePassword, setSharePassword] = useState('');
+  const [shareUsers, setShareUsers] = useState([]);
+  const [shareVoimassa, setShareVoimassa] = useState('7');  // vrk tai 'oma' | 'ikuinen'
+  const [shareOmaPvm, setShareOmaPvm] = useState('');
+  const [shareOmaKlo, setShareOmaKlo] = useState('12:00');
+  const [shareMaxDownloads, setShareMaxDownloads] = useState('');
+  const [shareError, setShareError] = useState('');
+  const [shareSubmitting, setShareSubmitting] = useState(false);
+  const [luotuLinkki, setLuotuLinkki] = useState(null);   // { url, approvalStatus }
   // Tapahtumarajaus: tyhjä = ei rajoitusta (näkee kaikki tapahtumat), muuten lista
   // tapahtuma-id:itä joihin käyttäjä on rajattu (ks. server/permissions.js: eventAccess).
   const [permEventAccess, setPermEventAccess] = useState([]);
@@ -1705,6 +1745,61 @@ export default function App() {
     if (ohitaSeuraavaTallennus.current.delete('employees')) return;
     tallennaKokoelma('employees', employees);
   }, [employees, employeesLoaded]);
+
+  // Tapahtumakohtaiset lomakkeet palvelimelta
+  useEffect(() => {
+    fetch('/api/data/eventForms', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && res.ok === true) {
+          if (Array.isArray(res.data)) setEventForms(res.data);
+          setEventFormsLoaded(true);
+        }
+      })
+      .catch(() => { /* loaded ei asetu -> tallennus ei laukea tyhjällä */ });
+  }, []);
+
+  useEffect(() => {
+    if (!eventFormsLoaded) return;
+    if (ohitaSeuraavaTallennus.current.delete('eventForms')) return;
+    tallennaKokoelma('eventForms', eventForms);
+  }, [eventForms, eventFormsLoaded]);
+
+  // Tapahtuman tiedostot ja jakolinkit
+  useEffect(() => {
+    fetch('/api/data/eventFiles', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && res.ok === true) {
+          if (Array.isArray(res.data)) setEventFiles(res.data);
+          setEventFilesLoaded(true);
+        }
+      })
+      .catch(() => { /* loaded ei asetu -> tallennus ei laukea tyhjällä */ });
+
+    fetch('/api/data/fileShares', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && res.ok === true && Array.isArray(res.data)) setFileShares(res.data);
+      })
+      .catch(() => { /* jakolinkit eivät ole kriittisiä sivun toiminnalle */ });
+  }, []);
+
+  useEffect(() => {
+    if (!eventFilesLoaded) return;
+    if (ohitaSeuraavaTallennus.current.delete('eventFiles')) return;
+    tallennaKokoelma('eventFiles', eventFiles);
+  }, [eventFiles, eventFilesLoaded]);
+
+  // Jakolinkkejä EI tallenneta automaattisesti: ne luodaan ja peruutetaan omilla
+  // reiteillään (/api/shares), koska token ja salasanatiiviste syntyvät palvelimella.
+  // Tämä tila on vain palvelimelta luettu näkymä.
+  const paivitaJaot = () => {
+    fetch('/api/data/fileShares', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => { if (res && res.ok === true && Array.isArray(res.data)) setFileShares(res.data); })
+      .catch(() => { /* virhe näkyy tyhjänä listana */ });
+  };
 
   // Ladataan kirjaukset/raportit palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
   useEffect(() => {
@@ -2625,6 +2720,313 @@ export default function App() {
       }
     } catch {
       setRoleError('Yhteysvirhe. Yritä uudelleen.');
+    }
+  };
+
+  // ---- Täytettävien lomakkeiden lisäys ja poisto ----
+  const LOMAKE_TUNNISTEET = ['Sisäinen', 'Ulkoinen', 'Viranomaislomake', 'Muu'];
+
+  const nollaaLomakeLisays = () => {
+    setNewFormName('');
+    setNewFormDesc('');
+    setNewFormTag('Sisäinen');
+    setNewFormTagOther('');
+    setShowAddForm(false);
+  };
+
+  const lisaaLomake = () => {
+    if (!newFormName.trim()) {
+      alert('Anna lomakkeelle nimi.');
+      return;
+    }
+    if (newFormTag === 'Muu' && !newFormTagOther.trim()) {
+      alert('Kerro mikä tunniste on kyseessä.');
+      return;
+    }
+    setEventForms((prev) => [
+      ...prev,
+      {
+        id: `form-${Date.now()}`,
+        eventId: selectedEvent,
+        name: newFormName.trim(),
+        desc: newFormDesc.trim(),
+        tag: newFormTag,
+        tagOther: newFormTag === 'Muu' ? newFormTagOther.trim() : '',
+        createdBy: sessionNickname || sessionUsername || '',
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+    nollaaLomakeLisays();
+  };
+
+  const poistaLomake = async (lomake) => {
+    if (!window.confirm(`Poistetaanko lomake "${lomake.name}"? Tätä ei voi perua.`)) return;
+    const jaljelle = eventForms.filter((f) => f.id !== lomake.id);
+    // Viimeisen poisto tyhjentää kokoelman, jonka palvelimen romahdussuoja hylkää
+    // ilman allowEmpty-lippua — sama kaava kuin työntekijäpankissa.
+    if (jaljelle.length === 0) {
+      const ok = await tallennaKokoelma('eventForms', jaljelle, { allowEmpty: true });
+      if (!ok) return;
+      ohitaSeuraavaTallennus.current.add('eventForms');
+    }
+    setEventForms(jaljelle);
+  };
+
+  // ---- Tapahtuman tiedostot: kansiot, lataus ja poisto ----
+  const tapahtumanTiedostot = eventFiles.filter((f) => (f.eventId || 'fesx') === selectedEvent);
+
+  // Murupolku nykyiseen kansioon. Rakennetaan parentId-ketjua ylöspäin ja käännetään.
+  const murupolku = (() => {
+    const polku = [];
+    // HUOM: ei new Map() — lucide-reactista importoitu Map-ikoni varjostaa globaalin
+    // Map-konstruktorin tässä tiedostossa. Tavallinen objekti ajaa saman asian.
+    const byId = Object.fromEntries(tapahtumanTiedostot.map((f) => [f.id, f]));
+    let solmu = currentFolderId ? byId[currentFolderId] : null;
+    const nahdyt = new Set();
+    while (solmu && !nahdyt.has(solmu.id)) {
+      nahdyt.add(solmu.id);
+      polku.unshift(solmu);
+      solmu = solmu.parentId ? byId[solmu.parentId] : null;
+    }
+    return polku;
+  })();
+
+  // Periytyvä henkilötietolippu: alikansiossa oleva tiedosto on henkilötietoa myös
+  // silloin kun lippu on asetettu vain yläkansioon. Sama sääntö kuin palvelimella.
+  const onHenkilotietoa = (kohde) => {
+    if (!kohde) return false;
+    if (kohde.containsPersonalData) return true;
+    const byId = Object.fromEntries(tapahtumanTiedostot.map((f) => [f.id, f]));
+    let solmu = kohde.parentId ? byId[kohde.parentId] : null;
+    const nahdyt = new Set();
+    while (solmu && !nahdyt.has(solmu.id)) {
+      nahdyt.add(solmu.id);
+      if (solmu.containsPersonalData) return true;
+      solmu = solmu.parentId ? byId[solmu.parentId] : null;
+    }
+    return false;
+  };
+
+  const luoKansio = () => {
+    if (!newFolderName.trim()) return;
+    setEventFiles((prev) => [
+      ...prev,
+      {
+        id: `kansio-${Date.now()}`,
+        eventId: selectedEvent,
+        type: 'folder',
+        name: newFolderName.trim(),
+        parentId: currentFolderId,
+        containsPersonalData: false,
+        createdBy: sessionNickname || sessionUsername || '',
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+    setNewFolderName('');
+  };
+
+  const lataaTiedosto = async (tiedosto) => {
+    if (!tiedosto) return;
+    setTiedostoUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', tiedosto);
+      const res = await fetch('/api/uploads', { method: 'POST', credentials: 'include', body: formData });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        alert(data.error || 'Tiedoston lähetys epäonnistui.');
+        return;
+      }
+      setEventFiles((prev) => [
+        ...prev,
+        {
+          id: `tiedosto-${Date.now()}`,
+          eventId: selectedEvent,
+          type: 'file',
+          name: tiedosto.name,
+          parentId: currentFolderId,
+          uploadId: data.id,
+          size: tiedosto.size,
+          containsPersonalData: false,
+          createdBy: sessionNickname || sessionUsername || '',
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+    } catch {
+      alert('Tiedoston lähetys epäonnistui (yhteysvirhe).');
+    } finally {
+      setTiedostoUploading(false);
+      if (tiedostoInputRef.current) tiedostoInputRef.current.value = '';
+    }
+  };
+
+  // Kansion poisto vie mukanaan koko alipuun — muuten sen sisältö jäisi orvoiksi
+  // tietueiksi joihin ei pääse käsiksi mistään.
+  const poistaTiedostoTaiKansio = async (kohde) => {
+    const alipuu = [kohde.id];
+    if (kohde.type === 'folder') {
+      let muuttui = true;
+      while (muuttui) {
+        muuttui = false;
+        for (const f of tapahtumanTiedostot) {
+          if (!alipuu.includes(f.id) && alipuu.includes(f.parentId)) {
+            alipuu.push(f.id);
+            muuttui = true;
+          }
+        }
+      }
+    }
+    const tiedostoja = alipuu.length - (kohde.type === 'folder' ? 1 : 0);
+    const varoitus = kohde.type === 'folder' && tiedostoja > 0
+      ? `\n\nKansio sisältää ${tiedostoja} kohdetta, jotka poistetaan samalla.`
+      : '';
+    const jaotKohteille = fileShares.filter((sh) => alipuu.includes(sh.targetId) && !sh.revokedAt);
+    const jakoVaroitus = jaotKohteille.length > 0
+      ? `\n\nHUOM: kohteella on ${jaotKohteille.length} voimassa olevaa jakolinkkiä, jotka lakkaavat toimimasta.`
+      : '';
+    if (!window.confirm(`Poistetaanko "${kohde.name}"? Tätä ei voi perua.${varoitus}${jakoVaroitus}`)) return;
+
+    const jaljelle = eventFiles.filter((f) => !alipuu.includes(f.id));
+    if (jaljelle.length === 0) {
+      const ok = await tallennaKokoelma('eventFiles', jaljelle, { allowEmpty: true });
+      if (!ok) return;
+      ohitaSeuraavaTallennus.current.add('eventFiles');
+    }
+    setEventFiles(jaljelle);
+  };
+
+  const vaihdaHenkilotietoLippu = (kohde) => {
+    setEventFiles((prev) => prev.map((f) => (f.id === kohde.id
+      ? { ...f, containsPersonalData: !f.containsPersonalData }
+      : f)));
+  };
+
+  // ---- Jakaminen ----
+  const VOIMASSA_VAIHTOEHDOT = [
+    { arvo: '0.5', label: '12 h', tunnit: 12 },
+    { arvo: '2', label: '48 h', tunnit: 48 },
+    { arvo: '7', label: '7 vrk', tunnit: 24 * 7 },
+    { arvo: '30', label: '30 vrk', tunnit: 24 * 30 },
+    { arvo: '65', label: '65 vrk', tunnit: 24 * 65 },
+  ];
+
+  const avaaJakoDialogi = (kohde) => {
+    setShareTarget(kohde);
+    // Henkilötietoa sisältävää ei voi jakaa pelkällä linkillä, joten oletus on salasana.
+    setShareMode(onHenkilotietoa(kohde) ? 'password' : 'link');
+    setSharePassword('');
+    setShareUsers([]);
+    setShareVoimassa('7');
+    setShareOmaPvm('');
+    setShareOmaKlo('12:00');
+    setShareMaxDownloads('');
+    setShareError('');
+    setLuotuLinkki(null);
+    if (userAdminList.length === 0) fetchUserAdminList();
+  };
+
+  const luoJako = async () => {
+    if (!shareTarget) return;
+    setShareError('');
+    let expiresAt = null;
+    let ikuinen = false;
+    if (shareMode !== 'users') {
+      if (shareVoimassa === 'ikuinen') {
+        ikuinen = true;
+      } else if (shareVoimassa === 'oma') {
+        if (!shareOmaPvm) {
+          setShareError('Valitse päivämäärä.');
+          return;
+        }
+        expiresAt = new Date(`${shareOmaPvm}T${shareOmaKlo || '12:00'}`).toISOString();
+      } else {
+        const valinta = VOIMASSA_VAIHTOEHDOT.find((v) => v.arvo === shareVoimassa);
+        expiresAt = new Date(Date.now() + (valinta?.tunnit || 168) * 3600 * 1000).toISOString();
+      }
+    }
+    setShareSubmitting(true);
+    try {
+      const res = await fetch('/api/shares', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          targetId: shareTarget.id,
+          mode: shareMode,
+          password: shareMode === 'password' ? sharePassword : undefined,
+          allowedUsernames: shareMode === 'users' ? shareUsers : undefined,
+          expiresAt,
+          ikuinen,
+          maxDownloads: shareMaxDownloads ? Number(shareMaxDownloads) : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        paivitaJaot();
+        if (data.token) {
+          setLuotuLinkki({
+            url: `${window.location.origin}${import.meta.env.BASE_URL}jako.html#${data.token}`,
+            approvalStatus: data.share.approvalStatus,
+          });
+        } else {
+          setLuotuLinkki({ url: null, approvalStatus: 'none' });
+        }
+      } else {
+        setShareError(data.error || 'Jakolinkin luonti epäonnistui.');
+      }
+    } catch {
+      setShareError('Yhteysvirhe. Yritä uudelleen.');
+    } finally {
+      setShareSubmitting(false);
+    }
+  };
+
+  const peruutaJako = async (share) => {
+    if (!window.confirm('Peruutetaanko jakolinkki? Se lakkaa toimimasta heti.')) return;
+    try {
+      const res = await fetch(`/api/shares/${encodeURIComponent(share.id)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) paivitaJaot();
+      else alert(data.error || 'Peruutus epäonnistui.');
+    } catch {
+      alert('Peruutus epäonnistui (yhteysvirhe).');
+    }
+  };
+
+  const hyvaksyJako = async (share, hyvaksy) => {
+    try {
+      const res = await fetch(`/api/shares/${encodeURIComponent(share.id)}/approval`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ approve: hyvaksy }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) paivitaJaot();
+      else alert(data.error || 'Toiminto epäonnistui.');
+    } catch {
+      alert('Toiminto epäonnistui (yhteysvirhe).');
+    }
+  };
+
+  const naytaJakoLinkki = async (share) => {
+    try {
+      const res = await fetch(`/api/shares/${encodeURIComponent(share.id)}/token`, { credentials: 'include' });
+      const data = await res.json();
+      if (res.ok && data.ok && data.token) {
+        setLuotuLinkki({
+          url: `${window.location.origin}${import.meta.env.BASE_URL}jako.html#${data.token}`,
+          approvalStatus: share.approvalStatus,
+        });
+        setShareTarget(tapahtumanTiedostot.find((f) => f.id === share.targetId) || null);
+      } else {
+        alert(data.error || 'Linkin haku epäonnistui.');
+      }
+    } catch {
+      alert('Linkin haku epäonnistui (yhteysvirhe).');
     }
   };
 
@@ -3677,6 +4079,284 @@ export default function App() {
     switch (activeTab) {
       // 'landing' (Aloitussivu) ei ole enää tapahtuman välilehti — sen sisältö on nyt
       // koko sovelluksen etusivu, joka aukeaa heti kirjautumisen jälkeen.
+      case 'eventfiles': {
+        const saaMuokata = isAdminUser || canEdit(perms, selectedEvent, 'eventfiles');
+        const nykyisenSisalto = tapahtumanTiedostot
+          .filter((f) => (f.parentId || null) === currentFolderId)
+          .sort((a, b) => {
+            // Kansiot ensin, sitten nimen mukaan.
+            if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+            return String(a.name).localeCompare(String(b.name), 'fi');
+          });
+        const kohteenJaot = (id) => fileShares.filter((sh) => sh.targetId === id && !sh.revokedAt);
+        const odottavat = fileShares.filter((sh) => sh.approvalStatus === 'pending' && !sh.revokedAt);
+
+        return (
+          <div className="space-y-6 max-w-5xl">
+            <div className="mb-2 pb-4 border-b border-slate-200">
+              <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                <Package className="text-indigo-500" size={28} />
+                Tapahtuman tiedostot
+              </h2>
+              <p className="text-sm text-slate-500 mt-1">
+                Tapahtuman omat kansiot ja tiedostot. Yksittäisen tiedoston tai kokonaisen
+                kansion voi jakaa myös sovelluksen ulkopuolelle.
+              </p>
+            </div>
+
+            {/* Pääkäyttäjän hyväksyntää odottavat pysyvät linkit */}
+            {isAdminUser && odottavat.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+                <h3 className="text-sm font-bold text-amber-900 flex items-center gap-2 mb-1">
+                  <AlertTriangle size={16} className="text-amber-500" />
+                  Pysyviä jakolinkkejä odottaa hyväksyntää ({odottavat.length})
+                </h3>
+                <p className="text-xs text-amber-800 mb-4">
+                  Linkki toimii määräaikaisena kunnes hyväksyt sen. Hyväksyntä poistaa
+                  vanhentumisen kokonaan — hylkäys jättää linkin alkuperäiseen määräaikaansa.
+                </p>
+                <div className="space-y-2">
+                  {odottavat.map((sh) => {
+                    const kohde = tapahtumanTiedostot.find((f) => f.id === sh.targetId);
+                    return (
+                      <div key={sh.id} className="bg-white border border-amber-200 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-800 truncate">{kohde?.name || 'Poistettu kohde'}</p>
+                          <p className="text-xs text-slate-500">
+                            Pyytäjä: {sh.createdBy} · Voimassa väliaikaisesti {sh.expiresAt ? new Date(sh.expiresAt).toLocaleDateString('fi-FI') : '—'} asti
+                          </p>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => hyvaksyJako(sh, true)}
+                            className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors"
+                          >
+                            Hyväksy pysyväksi
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => hyvaksyJako(sh, false)}
+                            className="text-xs font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
+                          >
+                            Hylkää
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Murupolku */}
+            <div className="flex items-center gap-1.5 flex-wrap text-sm">
+              <button
+                type="button"
+                onClick={() => setCurrentFolderId(null)}
+                className={`px-2 py-1 rounded-md transition-colors ${currentFolderId === null ? 'font-bold text-slate-800' : 'text-indigo-600 hover:bg-indigo-50'}`}
+              >
+                Tapahtuman tiedostot
+              </button>
+              {murupolku.map((kansio, idx) => (
+                <span key={kansio.id} className="flex items-center gap-1.5">
+                  <ChevronRight size={14} className="text-slate-300" />
+                  <button
+                    type="button"
+                    onClick={() => setCurrentFolderId(kansio.id)}
+                    className={`px-2 py-1 rounded-md transition-colors ${idx === murupolku.length - 1 ? 'font-bold text-slate-800' : 'text-indigo-600 hover:bg-indigo-50'}`}
+                  >
+                    {kansio.name}
+                  </button>
+                </span>
+              ))}
+            </div>
+
+            {/* Uusi kansio ja tiedoston lataus */}
+            {saaMuokata && (
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className="flex-1 flex gap-2">
+                  <input
+                    type="text"
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') luoKansio(); }}
+                    placeholder="Uuden kansion nimi"
+                    className="flex-1 rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={luoKansio}
+                    disabled={!newFolderName.trim()}
+                    className="shrink-0 px-4 py-2.5 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <Plus size={16} />
+                    Luo kansio
+                  </button>
+                </div>
+                <input
+                  ref={tiedostoInputRef}
+                  type="file"
+                  onChange={(e) => lataaTiedosto(e.target.files?.[0])}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  disabled={tiedostoUploading}
+                  onClick={() => tiedostoInputRef.current?.click()}
+                  className="shrink-0 px-4 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <Paperclip size={16} />
+                  {tiedostoUploading ? 'Lähetetään…' : 'Lisää tiedosto'}
+                </button>
+              </div>
+            )}
+
+            {/* Sisältö */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              {nykyisenSisalto.length === 0 ? (
+                <p className="p-8 text-center text-sm text-slate-500">
+                  {currentFolderId ? 'Kansio on tyhjä.' : 'Ei vielä tiedostoja. Luo kansio tai lisää tiedosto yltä.'}
+                </p>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {nykyisenSisalto.map((kohde) => {
+                    const jaot = kohteenJaot(kohde.id);
+                    const henkilotietoa = onHenkilotietoa(kohde);
+                    return (
+                      <div key={kohde.id} className="p-4 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          {kohde.type === 'folder' ? (
+                            <button
+                              type="button"
+                              onClick={() => setCurrentFolderId(kohde.id)}
+                              className="flex items-center gap-3 min-w-0 text-left"
+                            >
+                              <Layers size={18} className="text-indigo-500 shrink-0" />
+                              <span className="text-sm font-medium text-slate-800 truncate hover:text-indigo-700">{kohde.name}</span>
+                            </button>
+                          ) : (
+                            <a
+                              href={`/api/uploads/${kohde.uploadId}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex items-center gap-3 min-w-0"
+                            >
+                              <FileText size={18} className="text-slate-400 shrink-0" />
+                              <span className="text-sm font-medium text-slate-800 truncate hover:text-indigo-700">{kohde.name}</span>
+                            </a>
+                          )}
+                          {henkilotietoa && (
+                            <span className="shrink-0 text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded uppercase tracking-wide">
+                              Henkilötietoa
+                            </span>
+                          )}
+                          {jaot.length > 0 && (
+                            <span className="shrink-0 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded uppercase tracking-wide">
+                              Jaettu ({jaot.length})
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex gap-2 items-center shrink-0">
+                          {saaMuokata && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => vaihdaHenkilotietoLippu(kohde)}
+                                title="Merkitse sisältääkö kohde henkilötietoa. Vaikuttaa siihen miten sen voi jakaa."
+                                className={`text-xs font-medium px-3 py-1.5 rounded-md transition-colors ${
+                                  kohde.containsPersonalData
+                                    ? 'text-rose-700 bg-rose-50 hover:bg-rose-100'
+                                    : 'text-slate-500 bg-slate-100 hover:bg-slate-200'
+                                }`}
+                              >
+                                {kohde.containsPersonalData ? 'Henkilötietoa' : 'Ei henkilötietoa'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => avaaJakoDialogi(kohde)}
+                                className="text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
+                              >
+                                Jaa
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => poistaTiedostoTaiKansio(kohde)}
+                                title="Poista"
+                                className="text-xs font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
+                              >
+                                Poista
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Voimassa olevat jakolinkit */}
+            {(() => {
+              const omatJaot = fileShares.filter(
+                (sh) => tapahtumanTiedostot.some((f) => f.id === sh.targetId) && !sh.revokedAt
+              );
+              if (omatJaot.length === 0) return null;
+              return (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
+                  <h3 className="text-sm font-bold text-slate-800 mb-3">Voimassa olevat jaot</h3>
+                  <div className="space-y-2">
+                    {omatJaot.map((sh) => {
+                      const kohde = tapahtumanTiedostot.find((f) => f.id === sh.targetId);
+                      const tapa = sh.mode === 'link' ? 'Linkki'
+                        : sh.mode === 'password' ? 'Linkki + salasana'
+                        : `Käyttäjät (${(sh.allowedUsernames || []).length})`;
+                      return (
+                        <div key={sh.id} className="bg-white border border-slate-200 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-slate-800 truncate">{kohde?.name}</p>
+                            <p className="text-xs text-slate-500">
+                              {tapa}
+                              {' · '}
+                              {sh.expiresAt
+                                ? `voimassa ${new Date(sh.expiresAt).toLocaleString('fi-FI')} asti`
+                                : sh.approvalStatus === 'approved' ? 'pysyvä' : 'odottaa hyväksyntää'}
+                              {' · '}
+                              ladattu {sh.downloadCount || 0} kertaa
+                              {sh.maxDownloads ? ` / ${sh.maxDownloads}` : ''}
+                            </p>
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            {sh.mode !== 'users' && (
+                              <button
+                                type="button"
+                                onClick={() => naytaJakoLinkki(sh)}
+                                className="text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
+                              >
+                                Näytä linkki
+                              </button>
+                            )}
+                            {saaMuokata && (
+                              <button
+                                type="button"
+                                onClick={() => peruutaJako(sh)}
+                                className="text-xs font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
+                              >
+                                Peruuta
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        );
+      }
       case 'overview':
         return (
           <div className="space-y-6">
@@ -7113,6 +7793,7 @@ export default function App() {
         // mikä on rehellisempi kuin painike joka ei tee mitään. Näistä kaksi on
         // viranomaislomakkeita, joiden tyhjää pohjaa ei pidä keksiä itse vaan
         // ottaa mallia virallisesta lomakkeesta.
+        const saaMuokataLomakkeita = isAdminUser || canEdit(perms, selectedEvent, 'documents_forms');
         const fillableForms = [
           {
             name: 'Tapahtumailmoitus',
@@ -7166,6 +7847,16 @@ export default function App() {
           { name: 'Vuoron luovutus', desc: 'Vuoronvaihdon tilannekatsaus ja avoimet asiat.', tag: 'Sisäinen' },
         ];
 
+        // Sisäänrakennetut ja käyttäjän lisäämät samassa listassa. lisatty-lippu
+        // erottaa ne: vain lisätyt voi poistaa, ja vain sisäänrakennetuilla on
+        // täyttölomake tai tulostettava pohja.
+        const kaikkiLomakkeet = [
+          ...fillableForms,
+          ...eventForms
+            .filter((f) => (f.eventId || 'fesx') === selectedEvent)
+            .map((f) => ({ ...f, lisatty: true })),
+        ];
+
         const tulostaTyhjaPohja = (lomake: { name: string; desc: string; kentat?: string[] }) => {
           setPdfEsikatselu({
             otsikko: `${lomake.name} — tyhjä pohja`,
@@ -7193,27 +7884,130 @@ export default function App() {
               Takaisin asiakirjavalikkoon
             </button>
 
-            <div className="mb-6 border-b border-slate-100 pb-4">
-              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                <Clipboard className="text-indigo-500" size={24} />
-                Täytettävät lomakkeet
-              </h2>
-              <p className="text-sm text-slate-500 mt-1">Avaa lomake täytettäväksi tai tulosta tyhjä pohja käsin täytettäväksi.</p>
+            <div className="mb-6 border-b border-slate-100 pb-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <Clipboard className="text-indigo-500" size={24} />
+                  Täytettävät lomakkeet
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">Avaa lomake täytettäväksi tai tulosta tyhjä pohja käsin täytettäväksi.</p>
+              </div>
+              {saaMuokataLomakkeita && (
+                <button
+                  type="button"
+                  onClick={() => setShowAddForm((o) => !o)}
+                  className="shrink-0 flex items-center gap-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors shadow-sm"
+                >
+                  <Plus size={16} />
+                  Lisää lomake
+                </button>
+              )}
             </div>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-200">
-              {fillableForms.map((form, idx) => (
-                <div key={idx} className="p-4 flex justify-between items-center gap-4 flex-wrap hover:bg-white transition-colors">
+            {/* Uuden lomakkeen lisäys */}
+            {showAddForm && saaMuokataLomakkeita && (
+              <div className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-5 mb-6 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <div className="flex items-center gap-2">
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Lomakkeen nimi</label>
+                    <input
+                      type="text"
+                      value={newFormName}
+                      onChange={(e) => setNewFormName(e.target.value)}
+                      placeholder="Esim. Perehdytyslomake"
+                      className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Kuvaus</label>
+                    <input
+                      type="text"
+                      value={newFormDesc}
+                      onChange={(e) => setNewFormDesc(e.target.value)}
+                      placeholder="Mihin lomaketta käytetään"
+                      className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Tunniste</label>
+                  <div className="flex flex-wrap gap-2">
+                    {LOMAKE_TUNNISTEET.map((tunniste) => (
+                      <label
+                        key={tunniste}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer transition-colors ${
+                          newFormTag === tunniste
+                            ? 'bg-indigo-100 border-indigo-300 text-indigo-800'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="newFormTag"
+                          checked={newFormTag === tunniste}
+                          onChange={() => setNewFormTag(tunniste)}
+                          className="w-4 h-4 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        {tunniste === 'Muu' ? 'Muu, mikä?' : tunniste}
+                      </label>
+                    ))}
+                  </div>
+                  {newFormTag === 'Muu' && (
+                    <input
+                      type="text"
+                      value={newFormTagOther}
+                      onChange={(e) => setNewFormTagOther(e.target.value)}
+                      placeholder="Kerro mikä tunniste"
+                      className="mt-2 w-full md:w-1/2 rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                    />
+                  )}
+                </div>
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={nollaaLomakeLisays}
+                    className="px-5 py-2 text-sm font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors"
+                  >
+                    Peruuta
+                  </button>
+                  <button
+                    type="button"
+                    onClick={lisaaLomake}
+                    className="px-5 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <CheckCircle size={16} />
+                    Lisää lomake
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-200">
+              {kaikkiLomakkeet.map((form, idx) => (
+                <div key={form.id || idx} className="p-4 flex justify-between items-center gap-4 flex-wrap hover:bg-white transition-colors">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-slate-800 text-sm">{form.name}</span>
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${form.tag === 'Viranomaislomake' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
-                        {form.tag}
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${form.tag === 'Viranomaislomake' ? 'bg-amber-50 text-amber-700' : form.tag === 'Ulkoinen' ? 'bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-600'}`}>
+                        {form.tag === 'Muu' ? (form.tagOther || 'Muu') : form.tag}
                       </span>
+                      {form.lisatty && (
+                        <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">lisätty</span>
+                      )}
                     </div>
                     <p className="text-xs text-slate-500 mt-1">{form.desc}</p>
                   </div>
                   <div className="flex gap-2 items-center">
+                    {form.lisatty && saaMuokataLomakkeita && (
+                      <button
+                        type="button"
+                        onClick={() => poistaLomake(form)}
+                        title="Poista lomake"
+                        className="text-xs font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
+                      >
+                        Poista
+                      </button>
+                    )}
                     {form.tab ? (
                       <>
                         <button
@@ -7234,7 +8028,7 @@ export default function App() {
                       </>
                     ) : (
                       <span className="text-xs text-slate-400 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-md">
-                        Ei vielä toteutettu
+                        {form.lisatty ? 'Ei täyttölomaketta' : 'Ei vielä toteutettu'}
                       </span>
                     )}
                   </div>
@@ -7858,11 +8652,305 @@ export default function App() {
     </div>
   ) : null;
 
+  // Jakodialogi. Osa globalOverlaysia, jotta se toimii myös silloin kun näkymä vaihtuu.
+  const jakoModal = shareTarget ? (
+    <div
+      className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+      onClick={() => { setShareTarget(null); setLuotuLinkki(null); }}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-start p-5 border-b border-slate-100 gap-3">
+          <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2 min-w-0">
+            <Paperclip size={20} className="text-indigo-500 shrink-0" />
+            <span className="truncate">Jaa: {shareTarget.name}</span>
+          </h2>
+          <button
+            onClick={() => { setShareTarget(null); setLuotuLinkki(null); }}
+            className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors shrink-0"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {luotuLinkki ? (
+          <div className="p-5 space-y-4">
+            {luotuLinkki.url ? (
+              <>
+                <div className="bg-emerald-50 border-2 border-emerald-300 rounded-lg p-4">
+                  <p className="text-xs font-bold text-emerald-900 uppercase tracking-wide mb-2">Jakolinkki</p>
+                  <code className="block bg-white border border-emerald-200 rounded-lg px-3 py-2.5 text-xs font-mono break-all text-slate-900">
+                    {luotuLinkki.url}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(luotuLinkki.url)}
+                    className="mt-3 text-xs font-bold text-emerald-800 bg-white border border-emerald-200 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors"
+                  >
+                    Kopioi leikepöydälle
+                  </button>
+                </div>
+                {shareMode === 'password' && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-2.5">
+                    <Info size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-900 leading-relaxed">
+                      Lähetä salasana <strong>eri kanavaa</strong> kuin linkki. Samassa viestissä
+                      salasana ei suojaa miltään.
+                    </p>
+                  </div>
+                )}
+                {luotuLinkki.approvalStatus === 'pending' && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex gap-2.5">
+                    <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                    <p className="text-xs text-slate-700 leading-relaxed">
+                      Pyysit pysyvää linkkiä. Se odottaa pääkäyttäjän hyväksyntää ja toimii
+                      siihen asti 7 vuorokautta. Jos hyväksyntää ei tule, linkki vanhenee itsestään.
+                    </p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                <p className="text-sm text-emerald-900">
+                  Jaettu valituille käyttäjille. He näkevät kohteen kirjautuessaan sovellukseen —
+                  linkkiä ei tarvita.
+                </p>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => { setShareTarget(null); setLuotuLinkki(null); }}
+                className="px-5 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Sulje
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="p-5 space-y-5 text-left">
+              {onHenkilotietoa(shareTarget) && (
+                <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 flex gap-2.5">
+                  <ShieldAlert size={16} className="text-rose-500 shrink-0 mt-0.5" />
+                  <p className="text-xs text-rose-900 leading-relaxed">
+                    Kohde on merkitty sisältämään henkilötietoa. Pelkkä linkki ei ole
+                    käytettävissä, ja voimassaolo on enintään 7 vuorokautta.
+                  </p>
+                </div>
+              )}
+
+              {/* Jakotapa */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Jakotapa</label>
+                <div className="space-y-2">
+                  {[
+                    ['link', 'Pelkkä linkki', 'Kuka tahansa jolla on linkki pääsee tiedostoon.'],
+                    ['password', 'Linkki ja salasana', 'Linkin lisäksi vaaditaan salasana.'],
+                    ['users', 'Vain valitut käyttäjät', 'Näkyy sovelluksessa kirjautuneille. Ei linkkiä.'],
+                  ].map(([arvo, otsikko, selite]) => {
+                    const estetty = arvo === 'link' && onHenkilotietoa(shareTarget);
+                    return (
+                      <label
+                        key={arvo}
+                        className={`flex items-start gap-2.5 p-3 rounded-lg border transition-colors ${
+                          estetty
+                            ? 'bg-slate-50 border-slate-200 opacity-50 cursor-not-allowed'
+                            : shareMode === arvo
+                              ? 'bg-indigo-50 border-indigo-300 cursor-pointer'
+                              : 'bg-white border-slate-200 hover:bg-slate-50 cursor-pointer'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="shareMode"
+                          disabled={estetty}
+                          checked={shareMode === arvo}
+                          onChange={() => setShareMode(arvo)}
+                          className="w-4 h-4 mt-0.5 text-indigo-600 focus:ring-indigo-500 shrink-0"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium text-slate-800">{otsikko}</span>
+                          <span className="block text-xs text-slate-500">{selite}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {shareMode === 'password' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Salasana</label>
+                  <input
+                    type="text"
+                    value={sharePassword}
+                    onChange={(e) => setSharePassword(e.target.value)}
+                    placeholder="Vähintään 8 merkkiä"
+                    className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <p className="text-xs text-slate-400 mt-1">
+                    Näkyy tässä selväkielisenä, jotta voit välittää sen. Palvelimelle se
+                    tallennetaan vain tiivisteenä.
+                  </p>
+                </div>
+              )}
+
+              {shareMode === 'users' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Kenelle jaetaan</label>
+                  {userAdminList.length === 0 ? (
+                    <p className="text-sm text-slate-500">Ladataan käyttäjiä…</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto border border-slate-200 rounded-lg p-2">
+                      {userAdminList.map((u) => (
+                        <label key={u.username} className="flex items-center gap-2.5 p-2 rounded-md hover:bg-slate-50 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={shareUsers.includes(u.username)}
+                            onChange={() => setShareUsers((prev) => (
+                              prev.includes(u.username)
+                                ? prev.filter((x) => x !== u.username)
+                                : [...prev, u.username]
+                            ))}
+                            className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                          />
+                          <span className="text-sm text-slate-700">{u.nickname}</span>
+                          <span className="text-xs font-mono text-slate-400 ml-auto">
+                            {u.displayId ? muotoileTunniste(u.displayId) : u.username}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Voimassaolo — vain linkkijaoille */}
+              {shareMode !== 'users' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Voimassa</label>
+                  <div className="flex flex-wrap gap-2">
+                    {VOIMASSA_VAIHTOEHDOT.map((v) => (
+                      <button
+                        key={v.arvo}
+                        type="button"
+                        onClick={() => setShareVoimassa(v.arvo)}
+                        className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                          shareVoimassa === v.arvo
+                            ? 'bg-indigo-600 border-indigo-600 text-white'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {v.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setShareVoimassa('oma')}
+                      className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                        shareVoimassa === 'oma'
+                          ? 'bg-indigo-600 border-indigo-600 text-white'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      Valitse itse
+                    </button>
+                    {!onHenkilotietoa(shareTarget) && (
+                      <button
+                        type="button"
+                        onClick={() => setShareVoimassa('ikuinen')}
+                        className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                          shareVoimassa === 'ikuinen'
+                            ? 'bg-amber-500 border-amber-500 text-white'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        Ei vanhene
+                      </button>
+                    )}
+                  </div>
+
+                  {shareVoimassa === 'oma' && (
+                    <div className="flex gap-2 mt-3">
+                      <input
+                        type="date"
+                        value={shareOmaPvm}
+                        max={new Date(Date.now() + 65 * 864e5).toISOString().split('T')[0]}
+                        onChange={(e) => setShareOmaPvm(e.target.value)}
+                        className="flex-1 rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <input
+                        type="time"
+                        value={shareOmaKlo}
+                        onChange={(e) => setShareOmaKlo(e.target.value)}
+                        className="w-32 rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  )}
+
+                  {shareVoimassa === 'ikuinen' && !isAdminUser && (
+                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-3">
+                      Pysyvä linkki vaatii pääkäyttäjän hyväksynnän. Linkki toimii 7 vuorokautta
+                      sillä välin, ja vanhenee itsestään jos hyväksyntää ei tule.
+                    </p>
+                  )}
+                  <p className="text-xs text-slate-400 mt-2">
+                    Enimmäisaika on 65 vuorokautta. Vanhentuminen on tärkein suoja: linkki voi
+                    vuotaa lokeihin, selainhistoriaan ja viestisovellusten esikatseluun.
+                  </p>
+                </div>
+              )}
+
+              {shareMode !== 'users' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Latausraja (valinnainen)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={shareMaxDownloads}
+                    onChange={(e) => setShareMaxDownloads(e.target.value)}
+                    placeholder="Ei rajaa"
+                    className="w-full sm:w-48 rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              )}
+
+              {shareError && <p className="text-sm text-rose-600">{shareError}</p>}
+            </div>
+
+            <div className="p-4 border-t border-slate-100 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShareTarget(null)}
+                className="px-5 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Peruuta
+              </button>
+              <button
+                type="button"
+                disabled={shareSubmitting}
+                onClick={luoJako}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm font-bold rounded-lg transition-colors flex items-center gap-2"
+              >
+                <CheckCircle size={16} />
+                {shareSubmitting ? 'Luodaan…' : 'Luo jako'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  ) : null;
+
   const globalOverlays = (
     <>
       {changePasswordModal}
       {pdfEsikatseluModal}
       {empUserModal}
+      {jakoModal}
       {saveErrorBanner}
     </>
   );
@@ -11264,6 +12352,15 @@ export default function App() {
                 >
                   <FileText size={18} />
                   Lomakekartoitus
+                </button>
+              )}
+              {(isAdminUser || canView(perms, selectedEvent, 'eventfiles')) && (
+                <button
+                  onClick={() => setActiveTab('eventfiles')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'eventfiles' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <Package size={18} />
+                  Tapahtuman tiedostot
                 </button>
               )}
               {(isAdminUser || canView(perms, selectedEvent, 'settings')) && (
