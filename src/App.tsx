@@ -58,7 +58,8 @@ import {
   History,
   Eye,
   EyeOff,
-  HardDrive
+  HardDrive,
+  Bell
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -782,6 +783,62 @@ const getInitials = (name) => {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 };
 
+// Yläpalkin ilmoituskello. Rakenne on tarkoituksella yleinen (tyyppi/otsikko/kuvaus/aika),
+// jotta muut ilmoituslajit voi lisätä palvelimen /api/notifications-reittiin ilman että
+// tätä komponenttia tarvitsee muuttaa. Toistaiseksi ainoa laji on pääkäyttäjälle tuleva
+// jakolinkin hyväksymispyyntö.
+const NotificationBell = ({ notifications, onOpen }) => {
+  const [open, setOpen] = useState(false);
+  const maara = notifications.length;
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title={maara === 0 ? 'Ei uusia ilmoituksia' : `${maara} ilmoitusta`}
+        className="relative w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 hover:text-white transition-colors"
+      >
+        <Bell size={16} />
+        {maara > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[1.05rem] h-[1.05rem] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+            {maara > 9 ? '9+' : maara}
+          </span>
+        )}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50 text-left">
+            <div className="px-4 py-2 border-b border-slate-100">
+              <p className="text-sm font-bold text-slate-800">Ilmoitukset</p>
+            </div>
+            {maara === 0 ? (
+              <p className="px-4 py-6 text-sm text-slate-500 text-center">Ei uusia ilmoituksia.</p>
+            ) : (
+              <div className="max-h-80 overflow-y-auto divide-y divide-slate-50">
+                {notifications.map((ilm) => (
+                  <button
+                    key={ilm.id}
+                    onClick={() => { setOpen(false); onOpen(ilm); }}
+                    className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors"
+                  >
+                    <p className="text-sm font-medium text-slate-800">{ilm.otsikko}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{ilm.kuvaus}</p>
+                    {ilm.aika && (
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        {new Date(ilm.aika).toLocaleString('fi-FI')}
+                      </p>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 // Yläpalkin profiilipainike + pudotusvalikko. Korvaa aiemman kovakoodatun "TJ"-badgen
 // kaikissa nav-palkeissa (ks. käyttöpaikat renderöinnin puolella).
 // HUOM: "Muokkaa käyttäjiä" ja "Sovellusasetukset" eivät ole enää täällä vaan etusivun
@@ -1279,6 +1336,14 @@ export default function App() {
   const [newRoleName, setNewRoleName] = useState('');
   // Minkä käyttäjätason käyttäjälista on auki Sovellusasetuksissa (tason id tai null).
   const [roleUsersOpen, setRoleUsersOpen] = useState(null);
+
+  // Ilmoituskello. Palvelin koostaa listan (/api/notifications), joten uusia
+  // ilmoituslajeja voi lisätä ilman frontin muutoksia.
+  const [notifications, setNotifications] = useState([]);
+  // "Minulle jaetut" -näkymä: käyttäjälle erikseen jaetut tiedostot ja kansiot.
+  const [viewingSharedWithMe, setViewingSharedWithMe] = useState(false);
+  const [sharedWithMe, setSharedWithMe] = useState([]);
+  const [sharedWithMeLoading, setSharedWithMeLoading] = useState(false);
 
   // Tapahtumakohtaiset lisätyt lomakkeet ("Täytettävät lomakkeet"). Sisäänrakennetut
   // lomakkeet ovat edelleen koodissa, koska niihin liittyy toiminnallisuutta (tab,
@@ -1799,6 +1864,8 @@ export default function App() {
       .then((r) => (r.ok ? r.json() : null))
       .then((res) => { if (res && res.ok === true && Array.isArray(res.data)) setFileShares(res.data); })
       .catch(() => { /* virhe näkyy tyhjänä listana */ });
+    // Hyväksymispyynnöt näkyvät ilmoituskellossa, joten kello päivittyy samalla.
+    fetchNotifications();
   };
 
   // Ladataan kirjaukset/raportit palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
@@ -2405,12 +2472,51 @@ export default function App() {
     setEditingPermUser(null);
     setViewingAuditLog(false);
     setViewingSettings(false);
+    setViewingSharedWithMe(false);
     setShowQuickActions(false);
     // Kesken jäänyt tapahtumalomake nollataan samaan tapaan kuin "Takaisin
     // tapahtumavalintaan" -painikkeessa: muuten editingEventId jäisi voimaan ja
     // seuraava "Luo uusi tapahtuma" päivittäisikin vanhaa tapahtumaa.
     setEditingEventId(null);
     setNewEvent(emptyNewEvent);
+  };
+
+  const fetchNotifications = () => {
+    fetch('/api/notifications', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (data && data.ok) setNotifications(data.notifications || []); })
+      .catch(() => { /* ilmoitukset eivät ole kriittisiä */ });
+  };
+
+  const fetchSharedWithMe = () => {
+    setSharedWithMeLoading(true);
+    fetch('/api/shares/for-me', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (data && data.ok) setSharedWithMe(data.shares || []); })
+      .catch(() => { /* virhe näkyy tyhjänä listana */ })
+      .finally(() => setSharedWithMeLoading(false));
+  };
+
+  // Ilmoitukset haetaan kerran sivun avautuessa. Ne päivittyvät myös aina kun
+  // jakolinkkejä muutetaan (ks. paivitaJaot).
+  useEffect(() => {
+    fetchNotifications();
+  }, []);
+
+  // Ilmoituksen avaus vie sinne missä asia hoidetaan. Toistaiseksi kaikki ilmoitukset
+  // ovat jakolinkkien hyväksymispyyntöjä, jotka käsitellään tapahtuman tiedostosivulla.
+  const avaaIlmoitus = (ilm) => {
+    if (ilm.tyyppi === 'share_approval') {
+      setViewingSettings(false);
+      setViewingUserAdmin(null);
+      setViewingEmployeeBank(null);
+      setViewingAllReports(false);
+      setViewingArchivedEvents(false);
+      setViewingSharedWithMe(false);
+      setShowEventPicker(false);
+      if (ilm.eventId) setSelectedEvent(ilm.eventId);
+      setActiveTab('eventfiles');
+    }
   };
 
   const fetchRoles = () => {
@@ -4319,9 +4425,13 @@ export default function App() {
                             <p className="text-xs text-slate-500">
                               {tapa}
                               {' · '}
-                              {sh.expiresAt
-                                ? `voimassa ${new Date(sh.expiresAt).toLocaleString('fi-FI')} asti`
-                                : sh.approvalStatus === 'approved' ? 'pysyvä' : 'odottaa hyväksyntää'}
+                              {/* Käyttäjäjaossa ei ole vanhentumista eikä hyväksyntää:
+                                  se on voimassa kunnes se peruutetaan. */}
+                              {sh.mode === 'users'
+                                ? 'voimassa toistaiseksi'
+                                : sh.expiresAt
+                                  ? `voimassa ${new Date(sh.expiresAt).toLocaleString('fi-FI')} asti`
+                                  : sh.approvalStatus === 'approved' ? 'pysyvä' : 'odottaa hyväksyntää'}
                               {' · '}
                               ladattu {sh.downloadCount || 0} kertaa
                               {sh.maxDownloads ? ` / ${sh.maxDownloads}` : ''}
@@ -8981,6 +9091,7 @@ export default function App() {
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
             </div>
+            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
             <ProfileMenu
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}
@@ -9813,6 +9924,7 @@ export default function App() {
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
             </div>
+            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
             <ProfileMenu
               nickname={sessionNickname}
               isAdmin={isAdmin}
@@ -10324,6 +10436,7 @@ export default function App() {
               <p className="hidden md:block text-xs text-slate-400 font-medium">Sovellusasetukset</p>
             </div>
           </button>
+          <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
           <ProfileMenu
             nickname={sessionNickname}
             isAdmin={session?.role === 'admin'}
@@ -10867,6 +10980,7 @@ export default function App() {
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
             </div>
+            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
             <ProfileMenu
               nickname={sessionNickname}
               isAdmin={isAdmin}
@@ -11039,6 +11153,7 @@ export default function App() {
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
             </div>
+            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
             <ProfileMenu
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}
@@ -11184,6 +11299,7 @@ export default function App() {
                 <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
               </div>
             </button>
+            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
             <ProfileMenu
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}
@@ -11361,6 +11477,7 @@ export default function App() {
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
             </div>
           </button>
+          <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
           <ProfileMenu
             nickname={sessionNickname}
             isAdmin={session?.role === 'admin'}
@@ -11427,6 +11544,123 @@ export default function App() {
     );
   }
 
+  // ====================== MINULLE JAETUT ======================
+  // Käyttäjälle erikseen jaetut tiedostot ja kansiot. Erillinen näkymä eikä osa
+  // tapahtuman tiedostosivua, koska jako voi tulla tapahtumasta johon vastaanottajalla
+  // ei ole pääsyä lainkaan — silloin sitä ei näkisi missään tapahtuman sisällä.
+  if (viewingSharedWithMe) {
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
+        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
+          <button
+            type="button"
+            onClick={palaaEtusivulle}
+            title="Etusivulle"
+            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+          >
+            <ShieldCheck className="text-indigo-400" size={28} />
+            <div>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <p className="hidden md:block text-xs text-slate-400 font-medium">Minulle jaetut</p>
+            </div>
+          </button>
+          <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
+              <Clock size={16} className="text-indigo-400" />
+              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
+            </div>
+            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
+            <ProfileMenu
+              nickname={sessionNickname}
+              isAdmin={session?.role === 'admin'}
+              onChangePassword={() => setShowChangePassword(true)}
+              onViewAuditLog={() => setViewingAuditLog(true)}
+              onLogout={handleLogout}
+            />
+          </div>
+        </nav>
+
+        <main className="flex-1 p-6 md:p-10">
+          <div className="max-w-4xl mx-auto">
+            <button
+              onClick={() => setViewingSharedWithMe(false)}
+              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
+            >
+              <ArrowLeft size={16} />
+              Takaisin etusivulle
+            </button>
+
+            <div className="mb-8">
+              <h2 className="text-2xl font-bold text-slate-800">Minulle jaetut</h2>
+              <p className="text-sm text-slate-500 mt-1">
+                Tiedostot ja kansiot jotka on jaettu sinulle nimellä. Näet ne täältä vaikka
+                sinulla ei olisi muuten pääsyä kyseiseen tapahtumaan.
+              </p>
+            </div>
+
+            {sharedWithMeLoading ? (
+              <p className="text-sm text-slate-500">Ladataan…</p>
+            ) : sharedWithMe.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
+                <Paperclip className="text-slate-300 mx-auto mb-3" size={36} />
+                <p className="text-sm text-slate-500">Sinulle ei ole jaettu tiedostoja.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {sharedWithMe.map((jako) => (
+                  <div key={jako.shareId} className="bg-white border border-slate-200 rounded-xl p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          {jako.type === 'folder'
+                            ? <Layers size={18} className="text-indigo-500 shrink-0" />
+                            : <FileText size={18} className="text-slate-400 shrink-0" />}
+                          <h3 className="text-sm font-bold text-slate-800 truncate">{jako.name}</h3>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Jakanut {jako.sharedBy}
+                          {jako.sharedAt && ` · ${new Date(jako.sharedAt).toLocaleDateString('fi-FI')}`}
+                          {' · '}
+                          {findEventName(jako.eventId, events)}
+                        </p>
+                      </div>
+                      {jako.expiresAt && (
+                        <span className="shrink-0 text-xs text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
+                          Voimassa {new Date(jako.expiresAt).toLocaleDateString('fi-FI')} asti
+                        </span>
+                      )}
+                    </div>
+
+                    {jako.files.length === 0 ? (
+                      <p className="text-sm text-slate-500">Ei ladattavia tiedostoja.</p>
+                    ) : (
+                      <div className="border border-slate-100 rounded-lg divide-y divide-slate-100">
+                        {jako.files.map((f) => (
+                          <div key={f.id} className="p-3 flex items-center justify-between gap-3">
+                            <span className="text-sm text-slate-700 truncate">{f.name}</span>
+                            <a
+                              href={`/api/uploads/${f.uploadId}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="shrink-0 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
+                            >
+                              Lataa
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </main>
+        {globalOverlays}
+      </div>
+    );
+  }
+
   // ====================== ETUSIVU ======================
   // Ensimmäinen näkymä kirjautumisen jälkeen. Sisältö on entinen tapahtuman sisäinen
   // "Aloitussivu"-välilehti, joka on nyt nostettu koko sovelluksen tasolle: tapahtumasta
@@ -11435,6 +11669,14 @@ export default function App() {
   // profiilivalikossa. Tapahtumalista aukeaa "Valitse tapahtuma" -painikkeesta.
   if (selectedEvent === null && !showEventPicker) {
     const etusivunPainikkeet = [
+      {
+        // Näkyy kaikille: jaon vastaanottajalla ei tarvitse olla mitään erillistä
+        // oikeutta, koska jakaminen itsessään antaa pääsyn kohteeseen.
+        nakyy: true,
+        label: 'Minulle jaetut',
+        icon: Paperclip,
+        onClick: () => { setViewingSharedWithMe(true); fetchSharedWithMe(); },
+      },
       {
         nakyy: isAdminUser || canView(perms, null, 'global_employee_bank'),
         label: 'Työntekijäpankki',
@@ -11487,6 +11729,7 @@ export default function App() {
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
             </div>
+            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
             <ProfileMenu
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}
@@ -11573,6 +11816,7 @@ export default function App() {
               <Clock size={16} className="text-indigo-400" />
               <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
             </div>
+            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
             <ProfileMenu
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}
@@ -11701,6 +11945,7 @@ export default function App() {
             <ShieldCheck className="text-indigo-400" size={28} />
             <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
           </button>
+          <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
           <ProfileMenu
             nickname={sessionNickname}
             isAdmin={session?.role === 'admin'}
@@ -12293,6 +12538,7 @@ export default function App() {
             <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
           </div>
           <div className="flex items-center gap-3 border-l border-slate-700 pl-4 sm:pl-6">
+            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
             <ProfileMenu
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}

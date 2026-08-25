@@ -906,6 +906,77 @@ app.delete('/api/shares/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Käyttäjälle erikseen jaetut tiedostot ja kansiot ("Minulle jaetut").
+//
+// Oma reittinsä eikä /api/data/fileShares, koska vastaanottajalla EI välttämättä ole
+// oikeutta kyseisen tapahtuman tiedostosivulle eikä pääsyä tapahtumaan lainkaan —
+// jakaminen on juuri se mekanismi joka antaa pääsyn tähän yhteen kohteeseen.
+// Palautetaan vain se mikä vastaanottajalle kuuluu: kohteen nimi ja ladattavat
+// tiedostot, ei koko jakotietuetta.
+app.get('/api/shares/for-me', requireAuth, (req, res) => {
+  const shares = readCollection('fileShares') || [];
+  const tiedostot = readCollection('eventFiles') || [];
+  const nyt = new Date();
+
+  const omat = shares.filter((sh) => {
+    if (sh.mode !== 'users' || sh.revokedAt) return false;
+    if (!(sh.allowedUsernames || []).includes(req.username)) return false;
+    if (sh.expiresAt && new Date(sh.expiresAt) <= nyt) return false;
+    return true;
+  });
+
+  const tulos = omat.map((sh) => {
+    const kohde = tiedostot.find((f) => f.id === sh.targetId);
+    if (!kohde) return null;
+    // Kansiojaossa listataan koko alipuun tiedostot, kuten julkisessakin jaossa.
+    const sisalto = kohde.type === 'folder'
+      ? tiedostot
+          .filter((f) => f.type === 'file' && kuuluuJakoon(sh.targetId, f.id, tiedostot))
+          .map((f) => ({ id: f.id, name: f.name, uploadId: f.uploadId, size: f.size }))
+      : [{ id: kohde.id, name: kohde.name, uploadId: kohde.uploadId, size: kohde.size }];
+    return {
+      shareId: sh.id,
+      name: kohde.name,
+      type: kohde.type,
+      eventId: kohde.eventId,
+      sharedBy: sh.createdBy,
+      sharedAt: sh.createdAt,
+      expiresAt: sh.expiresAt,
+      files: sisalto,
+    };
+  }).filter(Boolean);
+
+  res.json({ ok: true, shares: tulos });
+});
+
+// Pääkäyttäjän hyväksyntää odottavat jakolinkit ilmoituskelloa varten. Erillinen
+// kevyt reitti, jotta kelloa varten ei tarvitse hakea koko fileShares-kokoelmaa
+// (johon ei-adminilla ei välttämättä ole lukuoikeutta lainkaan).
+app.get('/api/notifications', requireAuth, (req, res) => {
+  const ilmoitukset = [];
+
+  if (req.role === 'admin') {
+    const shares = readCollection('fileShares') || [];
+    const tiedostot = readCollection('eventFiles') || [];
+    for (const sh of shares) {
+      if (sh.approvalStatus !== 'pending' || sh.revokedAt) continue;
+      const kohde = tiedostot.find((f) => f.id === sh.targetId);
+      ilmoitukset.push({
+        id: `share-approval-${sh.id}`,
+        tyyppi: 'share_approval',
+        otsikko: 'Pysyvä jakolinkki odottaa hyväksyntää',
+        kuvaus: `${sh.createdBy} pyytää pysyvää linkkiä: ${kohde?.name || 'poistettu kohde'}`,
+        aika: sh.createdAt,
+        eventId: sh.eventId,
+        kohdeId: sh.id,
+      });
+    }
+  }
+
+  ilmoitukset.sort((a, b) => String(b.aika || '').localeCompare(String(a.aika || '')));
+  res.json({ ok: true, notifications: ilmoitukset });
+});
+
 app.get('/api/storage', requireAuth, requireAdmin, (req, res) => {
   try {
     res.json({ ok: true, ...getStorageUsage() });
@@ -958,7 +1029,14 @@ app.get('/api/uploads/:id', requireAuth, (req, res) => {
   // reports-kokoelmasta ja tarkistetaan sen lukuoikeus, ks. permissions.js.
   const reportsArr = readCollection('reports') || [];
   const eventsArr = readCollection('events') || [];
-  if (!canReadAttachment(req.role, req.permissions, req.eventAccess, req.params.id, reportsArr, eventsArr)) {
+  // Tapahtuman tiedostot ja niiden jaot mukaan: liite voi kuulua myös eventFiles-
+  // tietueeseen, ja käyttäjälle erikseen jaettu tiedosto avautuu ilman tapahtumaoikeutta.
+  const filesArr = readCollection('eventFiles') || [];
+  const sharesArr = readCollection('fileShares') || [];
+  if (!canReadAttachment(
+    req.role, req.permissions, req.eventAccess, req.params.id,
+    reportsArr, eventsArr, filesArr, sharesArr, req.username
+  )) {
     return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän liitteen lataamiseen.' });
   }
   res.sendFile(filePath);

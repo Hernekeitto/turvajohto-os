@@ -348,8 +348,55 @@ export function authorizeWrite(role, permissions, eventAccess, name, oldArr, new
 // sekä sama tapahtumarajaus että sama sen tapahtuman Sivukartta-oikeus kuin sen raportin
 // (typeId:n) lukeminen vaatisi. Jos mikään raportti ei viittaa liitteeseen, se evätään
 // aina (ei tunnettua omistajaa jonka oikeuksia vasten tarkistaa).
-export function canReadAttachment(role, permissions, eventAccess, attachmentId, reportsArr, eventsArr) {
+// filesArr = eventFiles-kokoelma, sharesArr = fileShares, username = kirjautunut käyttäjä.
+// Kolme viimeistä ovat valinnaisia, jotta vanhat kutsupaikat eivät riko mitään — mutta
+// ilman niitä tapahtuman tiedostoja ei voi ladata lainkaan (ks. eventFiles-haara alla).
+// Sama alipuulogiikka kuin shares.js:n kuuluuJakoon. Toistettu tässä tarkoituksella:
+// permissions.js on palvelimen oikeusportti eikä se saa riippua muista moduuleista kuin
+// omista apureistaan (ks. tiedoston alun kommentti kehäriippuvuuksista).
+function kuuluuJakoonPaikallinen(targetId, kohdeId, tiedostot) {
+  if (targetId === kohdeId) return true;
+  const byId = {};
+  for (const f of tiedostot || []) byId[f.id] = f;
+  let solmu = byId[kohdeId];
+  const nahdyt = new Set();
+  while (solmu && solmu.parentId && !nahdyt.has(solmu.id)) {
+    nahdyt.add(solmu.id);
+    if (solmu.parentId === targetId) return true;
+    solmu = byId[solmu.parentId];
+  }
+  return false;
+}
+
+export function canReadAttachment(
+  role, permissions, eventAccess, attachmentId, reportsArr, eventsArr,
+  filesArr = [], sharesArr = [], username = null
+) {
   if (role === 'admin') return true;
+
+  // Tapahtuman tiedostot (eventFiles) eivät ole raportin liitteitä eivätkä pohjakarttoja,
+  // joten ilman tätä haaraa ne eivät latautuisi ei-admineille lainkaan.
+  const omistavaTiedosto = (Array.isArray(filesArr) ? filesArr : []).find(
+    (f) => f?.uploadId === attachmentId
+  );
+  if (omistavaTiedosto) {
+    const tiedostonEventId = legacyEventId(omistavaTiedosto);
+
+    // Käyttäjälle erikseen jaettu tiedosto avautuu VAIKKA hänellä ei olisi oikeutta
+    // kyseisen tapahtuman tiedostosivulle eikä pääsyä tapahtumaan lainkaan — jakaminen
+    // on nimenomaan tarkoitettu antamaan pääsy tähän yhteen kohteeseen. Muuten
+    // "jaa nimetylle käyttäjälle" ei tekisi mitään.
+    const jaettuMinulle = username && (Array.isArray(sharesArr) ? sharesArr : []).some((sh) => {
+      if (sh?.mode !== 'users' || sh?.revokedAt) return false;
+      if (!(sh.allowedUsernames || []).includes(username)) return false;
+      if (sh.expiresAt && new Date(sh.expiresAt) <= new Date()) return false;
+      return kuuluuJakoonPaikallinen(sh.targetId, omistavaTiedosto.id, filesArr);
+    });
+    if (jaettuMinulle) return true;
+
+    if (!eventAllowed(eventAccess, tiedostonEventId)) return false;
+    return hasAnyView(permissions, tiedostonEventId, ['eventfiles']);
+  }
   // Tapahtuman pohjakartta on ainoa liite jolla ei ole omistavaa raporttia: se
   // talletetaan tapahtuman omiin tietoihin (formData.mapUploadId) ja näytetään
   // "Tapahtuman yleiskatsaus" -sivulla, joten lukuoikeus tulee postevent-solmusta.
