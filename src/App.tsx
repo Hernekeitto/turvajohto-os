@@ -1273,6 +1273,8 @@ export default function App() {
   const [roleError, setRoleError] = useState('');
   const [roleNotice, setRoleNotice] = useState('');
   const [newRoleName, setNewRoleName] = useState('');
+  // Minkä käyttäjätason käyttäjälista on auki Sovellusasetuksissa (tason id tai null).
+  const [roleUsersOpen, setRoleUsersOpen] = useState(null);
   // Tapahtumarajaus: tyhjä = ei rajoitusta (näkee kaikki tapahtumat), muuten lista
   // tapahtuma-id:itä joihin käyttäjä on rajattu (ks. server/permissions.js: eventAccess).
   const [permEventAccess, setPermEventAccess] = useState([]);
@@ -1488,8 +1490,10 @@ export default function App() {
   // Tallennustilan tilanne haetaan vasta kun Asetukset avataan (vain admin näkee sen).
   useEffect(() => {
     if (!viewingSettings) return;
-    // Käyttäjätasot näkyvät Sovellusasetusten omassa osiossaan.
+    // Käyttäjätasot näkyvät Sovellusasetusten omassa osiossaan. Käyttäjälista tarvitaan
+    // siihen, että kunkin tason kohdalla voi näyttää ketkä sillä ovat.
     fetchRoles();
+    fetchUserAdminList();
     setStorageError(null);
     fetch('/api/storage', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
@@ -2291,6 +2295,29 @@ export default function App() {
       .finally(() => setPermTotpLoading(false));
   };
 
+  // Yläpalkin "Turvajohto OS" vie etusivulle mistä tahansa näkymästä. Kaikki päällä
+  // olevat näkymätilat on nollattava yhdessä: ne ovat toisistaan riippumattomia lippuja,
+  // ja yksikin päälle jäänyt (esim. viewingSettings) pitäisi käyttäjän edelleen siinä
+  // näkymässä vaikka tapahtumavalinta olisi purettu.
+  const palaaEtusivulle = () => {
+    setSelectedEvent(null);
+    setShowEventPicker(false);
+    setViewingAllReports(false);
+    setViewingArchivedEvents(false);
+    setArchivedEventDetailId(null);
+    setViewingEmployeeBank(null);
+    setViewingUserAdmin(null);
+    setEditingPermUser(null);
+    setViewingAuditLog(false);
+    setViewingSettings(false);
+    setShowQuickActions(false);
+    // Kesken jäänyt tapahtumalomake nollataan samaan tapaan kuin "Takaisin
+    // tapahtumavalintaan" -painikkeessa: muuten editingEventId jäisi voimaan ja
+    // seuraava "Luo uusi tapahtuma" päivittäisikin vanhaa tapahtumaa.
+    setEditingEventId(null);
+    setNewEvent(emptyNewEvent);
+  };
+
   const fetchRoles = () => {
     setRolesLoading(true);
     fetch('/api/roles', { credentials: 'include' })
@@ -2589,7 +2616,9 @@ export default function App() {
       const data = await res.json();
       if (res.ok && data.ok) {
         if (editingRoleId === role.id) setEditingRoleId(null);
+        if (roleUsersOpen === role.id) setRoleUsersOpen(null);
         fetchRoles();
+        fetchUserAdminList();
         setRoleNotice('Käyttäjätaso poistettu.');
       } else {
         setRoleError(data.error || 'Poisto epäonnistui.');
@@ -7847,13 +7876,18 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
         <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={palaaEtusivulle}
+            title="Etusivulle"
+            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+          >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Työntekijäpankki</p>
             </div>
-          </div>
+          </button>
           <div className="flex items-center gap-4">
             <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
               <Clock size={16} className="text-indigo-400" />
@@ -8674,13 +8708,18 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
         <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={palaaEtusivulle}
+            title="Etusivulle"
+            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+          >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Käyttäjähallinta</p>
             </div>
-          </div>
+          </button>
           <div className="flex items-center gap-4">
             <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
               <Clock size={16} className="text-indigo-400" />
@@ -9185,13 +9224,18 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
         <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={palaaEtusivulle}
+            title="Etusivulle"
+            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+          >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Sovellusasetukset</p>
             </div>
-          </div>
+          </button>
           <ProfileMenu
             nickname={sessionNickname}
             isAdmin={session?.role === 'admin'}
@@ -9246,6 +9290,44 @@ export default function App() {
                           )}
                         </div>
                         <p className="text-xs text-slate-500 min-h-[2rem]">{role.description || '—'}</p>
+
+                        {(() => {
+                          const tasonKayttajat = userAdminList.filter((u) => u.roleId === role.id);
+                          const auki = roleUsersOpen === role.id;
+                          return (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setRoleUsersOpen(auki ? null : role.id)}
+                                className="mt-2 w-full flex items-center justify-between gap-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-md transition-colors"
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  <Users size={13} className="text-slate-400" />
+                                  {tasonKayttajat.length === 0
+                                    ? 'Ei käyttäjiä'
+                                    : `${tasonKayttajat.length} ${tasonKayttajat.length === 1 ? 'käyttäjä' : 'käyttäjää'}`}
+                                </span>
+                                {tasonKayttajat.length > 0 && (
+                                  <ChevronDown size={13} className={`transition-transform ${auki ? 'rotate-180' : ''}`} />
+                                )}
+                              </button>
+
+                              {auki && tasonKayttajat.length > 0 && (
+                                <ul className="mt-2 bg-white border border-slate-200 rounded-md divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                                  {tasonKayttajat.map((u) => (
+                                    <li key={u.username} className="px-3 py-2 flex items-baseline justify-between gap-2">
+                                      <span className="text-xs font-medium text-slate-800 truncate">{u.nickname}</span>
+                                      <span className="text-[11px] font-mono text-slate-400 shrink-0">
+                                        {u.displayId ? muotoileTunniste(u.displayId) : u.username}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </>
+                          );
+                        })()}
+
                         <div className="flex gap-2 mt-3">
                           {role.id === 'admin' ? (
                             <span className="text-xs text-slate-400 italic py-1.5">Aina täydet oikeudet</span>
@@ -9680,13 +9762,18 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
         <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={palaaEtusivulle}
+            title="Etusivulle"
+            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+          >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Audit-loki</p>
             </div>
-          </div>
+          </button>
           <div className="flex items-center gap-4">
             <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
               <Clock size={16} className="text-indigo-400" />
@@ -9847,13 +9934,18 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
         <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={palaaEtusivulle}
+            title="Etusivulle"
+            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+          >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut raportit</p>
             </div>
-          </div>
+          </button>
           <div className="flex items-center gap-4">
             <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
               <Clock size={16} className="text-indigo-400" />
@@ -9992,13 +10084,18 @@ export default function App() {
       return (
         <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
           <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-            <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={palaaEtusivulle}
+              title="Etusivulle"
+              className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+            >
               <ShieldCheck className="text-indigo-400" size={28} />
               <div>
                 <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
                 <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
               </div>
-            </div>
+            </button>
             <ProfileMenu
               nickname={sessionNickname}
               isAdmin={session?.role === 'admin'}
@@ -10164,13 +10261,18 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
         <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={palaaEtusivulle}
+            title="Etusivulle"
+            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+          >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
             </div>
-          </div>
+          </button>
           <ProfileMenu
             nickname={sessionNickname}
             isAdmin={session?.role === 'admin'}
@@ -10280,13 +10382,18 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
         <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={palaaEtusivulle}
+            title="Etusivulle"
+            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+          >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
             </div>
-          </div>
+          </button>
           <div className="flex items-center gap-4">
             <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
               <Clock size={16} className="text-indigo-400" />
@@ -10359,13 +10466,18 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
         <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={palaaEtusivulle}
+            title="Etusivulle"
+            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+          >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
             </div>
-          </div>
+          </button>
           <div className="flex items-center gap-4">
             {/* Tallennetut raportit / Tallennetut tapahtumat / Työntekijäpankki löytyvät
                 nyt etusivulta, eivät enää tämän näkymän yläpalkista. */}
@@ -10492,10 +10604,15 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
         <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md sticky top-0 z-50">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={palaaEtusivulle}
+            title="Etusivulle"
+            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+          >
             <ShieldCheck className="text-indigo-400" size={28} />
             <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
-          </div>
+          </button>
           <ProfileMenu
             nickname={sessionNickname}
             isAdmin={session?.role === 'admin'}
@@ -11010,16 +11127,18 @@ export default function App() {
           >
             <Menu size={24} />
           </button>
-          <div 
-            className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
-            onClick={() => setActiveTab('overview')}
+          <button
+            type="button"
+            onClick={palaaEtusivulle}
+            title="Etusivulle"
+            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
               <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
             </div>
-          </div>
+          </button>
         </div>
         <div className="flex items-center gap-4 sm:gap-6">
           
