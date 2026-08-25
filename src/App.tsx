@@ -10603,6 +10603,31 @@ export default function App() {
                         </div>
                       </div>
 
+                      {/* Umpikujavaroitus: tapahtuman sisäiset sivut eivät ole
+                          saavutettavissa ilman Tapahtumavalintaa, koska tapahtumaan
+                          mennään aina sen kautta. Ilman tätä varoitusta pääkäyttäjä voisi
+                          luoda tason joka näyttää oikein mutta jättää käyttäjän
+                          etusivulle ilman pääsyä mihinkään. */}
+                      {(() => {
+                        const TAPAHTUMAN_SISAISET = [
+                          'overview', 'reporting', 'planning', 'postevent', 'documents', 'eventfiles',
+                        ];
+                        const onSisaisia = TAPAHTUMAN_SISAISET.some((id) => roleDraft[id]?.view);
+                        const onTapahtumavalinta = !!roleDraft.landing?.view;
+                        if (!onSisaisia || onTapahtumavalinta) return null;
+                        return (
+                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 flex gap-2.5">
+                            <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                            <p className="text-xs text-amber-900 leading-relaxed">
+                              Tasolla on tapahtuman sisäisiä oikeuksia, mutta ei oikeutta
+                              <strong> Tapahtumavalintaan</strong>. Tapahtumaan mennään aina sen kautta,
+                              joten käyttäjä ei pääse näille sivuille lainkaan. Lisää näkyvyys
+                              Tapahtumavalintaan tai poista tapahtuman sisäiset oikeudet.
+                            </p>
+                          </div>
+                        );
+                      })()}
+
                       <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
                         <div className="flex items-center gap-3 py-2 pr-2 bg-slate-100 border-b border-slate-200">
                           <span className="flex-1 text-xs font-bold text-slate-500 uppercase tracking-wide pl-2">Sivu</span>

@@ -41,6 +41,9 @@ const PERUS_MUOKKAUS = [
   'postevent',
   'documents', 'documents_forms', 'documents_pdf', 'documents_trash', 'documents_emergency',
   'documents_risk', 'documents_risk_done', 'documents_risk_new',
+  // Tapahtuman tiedostot on operatiivista työtä: kansioiden ja tiedostojen hallinta
+  // sekä niiden jakaminen kuuluvat samaan joukkoon kuin kirjaukset ja asiakirjat.
+  'eventfiles',
 ];
 
 // Sivukartan solmut jotka Katselija näkee. Kaikki paitsi hallinta: 'settings' ja
