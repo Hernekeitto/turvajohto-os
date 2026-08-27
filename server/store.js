@@ -27,6 +27,12 @@ const COLLECTIONS = {
   // aina valitun tapahtuman kontekstissa (ks. server/sms.js). Kokoelmassa ei ole
   // henkilötietoa muuta kuin napin oma kiinteä numerolista (customNumbers).
   smsButtons: 'smsButtons.json',
+  // Lähetetyt hätäviestit ja niiden vastaanottajakohtaiset toimitustilat. Palvelin
+  // ylläpitää yksin (webhook-kutsut päivittävät tiloja) — ks. index.js:n
+  // PALVELIMEN_YLLAPITAMAT, joka estää kokoelman kirjoittamisen selaimesta.
+  smsLog: 'smsLog.json',
+  // Työntekijöiden vastaukset hätäviesteihin (Two-Way SMS). Sama: vain palvelin kirjoittaa.
+  smsReplies: 'smsReplies.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
@@ -70,6 +76,14 @@ const ENCRYPTED_FIELDS = {
   // personalId ja taxNumber ovat molemmat henkilön yksilöiviä viranomaistunnisteita,
   // joten kumpikaan ei saa olla levyllä selväkielisenä.
   employees: ['personalId', 'taxNumber'],
+  // Hätäviestin runko on vapaata tekstiä jonka lähettäjä kirjoittaa lähetysikkunassa,
+  // ja työntekijän VASTAUS on vapaata tekstiä jonka hän kirjoittaa puhelimellaan.
+  // Kumpaakaan ei voi kenttätasolla tietää sisällöltään, joten ne salataan samalla
+  // perusteella kuin reports.summary. Huom: tämä ei suojaa itse tekstiviestiä —
+  // se kulkee televerkossa salaamattomana, minkä takia runkoon ei saa alun perinkään
+  // kirjoittaa henkilötunnusta. Salaus koskee vain levylle jäävää kopiota.
+  smsLog: ['body'],
+  smsReplies: ['body'],
   reports: [
     'summary',
     'description',

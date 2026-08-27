@@ -44,6 +44,8 @@ import {
 } from './permissions.js';
 import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti } from './bulksms.js';
 import { kaytossaOlevatNapit, ratkaiseVastaanottajat, taytaPaikkamerkit } from './sms.js';
+import { lisaaJonoon, otaKasittelyyn, kuittaaKasitellyksi, jononPituus } from './smsqueue.js';
+import { salaisuusTasmaa, tulkitseTapahtuma, soveltaTilaraportit, soveltaVastaukset } from './smswebhook.js';
 import { logAudit, readAuditLog } from './audit.js';
 import { validateRecords, wouldWipeNonEmptyCollection } from './validation.js';
 
@@ -316,6 +318,10 @@ function requireAdmin(req, res, next) {
 // TÄRKEÄ: uusi liitteitä viittaava kokoelma ON LISÄTTÄVÄ TÄHÄN. Roskienkeruu poistaa
 // tiedostot joihin mikään kokoelma ei viittaa (armonajan jälkeen), joten puuttuva rivi
 // tarkoittaa että kyseisen kokoelman tiedostot katoavat levyltä vuorokaudessa.
+// Kokoelmat jotka syntyvät ja päivittyvät vain palvelimella. Frontti saa lukea ne
+// (GET /api/data/:name suodattaa oikeuksien mukaan normaalisti), mutta PUT hylätään.
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies']);
+
 const UPLOAD_VIITTAAJAT = {
   reports: (arr) => (Array.isArray(arr) ? arr : []).map((r) => r?.attachment?.id).filter(Boolean),
   events: (arr) => (Array.isArray(arr) ? arr : []).map((e) => e?.formData?.mapUploadId).filter(Boolean),
@@ -360,6 +366,17 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
     return res.status(403).json({
       ok: false,
       error: 'Jakolinkkejä hallitaan vain omien reittiensä kautta (/api/shares).',
+    });
+  }
+  // Samasta syystä kuin fileShares, mutta eri lähteestä: näiden sisältö syntyy
+  // lähetysreitillä ja päivittyy BulkSMS:n webhook-kutsuista. Frontti näyttää ne mutta ei
+  // omista niitä, joten sen automaattitallennus ylikirjoittaisi juuri saapuneet
+  // toimituskuittaukset vanhentuneella välimuistilla. Tämä koskee myös adminia, jonka
+  // authorizeWrite päästäisi muuten läpi ilman per-tietue-tarkistusta.
+  if (PALVELIMEN_YLLAPITAMAT.has(name)) {
+    return res.status(403).json({
+      ok: false,
+      error: 'Kokoelmaa ylläpitää palvelin, eikä sitä voi kirjoittaa selaimesta.',
     });
   }
   const current = readCollection(name) || [];
@@ -1083,10 +1100,18 @@ app.get('/api/sms/status', requireAuth, async (req, res) => {
   if (!saaLahettaa(req)) {
     return res.status(403).json({ ok: false, error: 'Ei oikeuksia hätäviestien lähettämiseen.' });
   }
+  // Webhookin tila kerrotaan myös ilman API-tunnuksia: se on oma asetuksensa, ja
+  // puuttuva salaisuus tarkoittaa ettei toimitusraportteja saada vaikka viestit lähtisivät.
+  const webhook = {
+    webhookKaytossa: Boolean(process.env.BULKSMS_WEBHOOK_SECRET),
+    jonossa: jononPituus(),
+  };
   if (!onkoKonfiguroitu()) {
-    return res.json({ ok: true, konfiguroitu: false, dryRun: true });
+    return res.json({ ok: true, konfiguroitu: false, dryRun: true, ...webhook });
   }
-  const saldo = await haeSaldo();
+  // pakota=1 ohittaa välimuistin ("Tarkista nyt" asetuksissa); muuten riittää
+  // taustavahdin viimeisin tulos eikä valikon avaaminen tee ulkoista HTTP-kutsua.
+  const saldo = (await saldoTiedot(req.query.pakota === '1' ? 0 : undefined)) || { ok: false, virhe: 'Saldoa ei ole vielä tarkistettu.' };
   // `ok` kertoo että TÄMÄ pyyntö onnistui, ei että BulkSMS vastasi — saldon haun oma
   // tulos kulkee erillisissä kentissä. Jos saldo.ok levitettäisiin tähän sellaisenaan,
   // se ylikirjoittaisi ok:n false:ksi, jolloin frontti hylkäisi koko vastauksen eikä
@@ -1095,10 +1120,13 @@ app.get('/api/sms/status', requireAuth, async (req, res) => {
     ok: true,
     konfiguroitu: true,
     dryRun: false,
+    ...webhook,
     saldoLuettu: saldo.ok === true,
     saldo: saldo.saldo ?? null,
     kiintioJaljella: saldo.kiintioJaljella ?? null,
     kiintioKoko: saldo.kiintioKoko ?? null,
+    saldoTarkistettu: saldo.tarkistettu || null,
+    varoitusraja: SALDO_VAROITUSRAJA,
     virhe: saldo.virhe || null,
   });
 });
@@ -1191,6 +1219,13 @@ app.post('/api/sms/send', requireAuth, smsLimiter, async (req, res) => {
   // sama kuin työntekijän) — ilman tätä hän saisi saman viestin kahdesti ja saldoa
   // kuluisi turhaan.
   const uniikit = [...new Set(numerot)];
+  // Numero -> kenelle se kuuluu, jotta lähetyshistoriaan (ja sitä kautta toimitusraportin
+  // riville) saadaan nimi eikä pelkkää numeroa. Ensimmäinen osuma voittaa: jos sama
+  // numero on kahdella rivillä, viesti menee kerran ja kirjautuu ensimmäiselle.
+  const numeronHaltija = new Map();
+  for (const v of vastaanottajat) {
+    if (v.numero && !numeronHaltija.has(v.numero)) numeronHaltija.set(v.numero, v);
+  }
 
   const tulos = await lahetaViestit({
     numerot: uniikit,
@@ -1221,18 +1256,69 @@ app.post('/api/sms/send', requireAuth, smsLimiter, async (req, res) => {
     return res.status(502).json({ ok: false, error: tulos.virhe, mitat: tulos.mitat });
   }
 
+  const ohitettu = vastaanottajat.filter((v) => !v.numero).map((v) => ({ nimi: v.nimi, syy: v.syy }));
+
+  // Lähetyshistoria: yksi tietue per lähetys, vastaanottajakohtaisine viesti-id:ineen.
+  // Nämä id:t ovat se avain jolla webhookista saapuva toimituskuittaus osataan liittää
+  // oikeaan henkilöön (ks. smswebhook.js: soveltaTilaraportit) — ilman tätä tietuetta
+  // kuittaukset saapuisivat mutta niitä ei voisi näyttää kenellekään.
+  const lahetysId = `sms-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+  const tietue = {
+    id: lahetysId,
+    ts: new Date().toISOString(),
+    eventId,
+    buttonId,
+    label: nappi.label,
+    group: nappi.group,
+    user: req.username,
+    body: runko,
+    dryRun: tulos.dryRun,
+    repliable: nappi.repliable,
+    encoding: tulos.mitat?.encoding || null,
+    parts: tulos.mitat?.osia ?? null,
+    recipients: tulos.tulokset.map((t, i) => {
+      // Vastauksen `to` pitäisi olla sama merkkijono kuin lähetetty, mutta rajapinta voi
+      // normalisoida sen (esim. plussan poisto). Verrataan siksi pelkkiä numeroita, ja
+      // viimeisenä keinona luotetaan järjestykseen — vastaus tulee samassa järjestyksessä
+      // kuin kuorman viestiobjektit.
+      const vastattu = t.numero || null;
+      const avain = vastattu
+        ? uniikit.find((n) => n === vastattu) || uniikit.find((n) => n.replace(/\D/g, '') === vastattu.replace(/\D/g, ''))
+        : null;
+      const haltija = numeronHaltija.get(avain || uniikit[i]) || {};
+      const numero = avain || uniikit[i] || vastattu;
+      return {
+        messageId: t.id === null || t.id === undefined ? null : String(t.id),
+        nimi: haltija.nimi || null,
+        rooli: haltija.rooli || null,
+        // Kokonaista numeroa ei säilytetä historiassa: se on jo työntekijäpankissa,
+        // eikä sitä ole syytä monistaa jokaiseen lähetystietueeseen.
+        numero: numero ? `${numero.slice(0, 5)}…${numero.slice(-3)}` : null,
+        status: t.status,
+        statusId: null,
+        updatedAt: null,
+      };
+    }),
+    skipped: ohitettu,
+  };
+  try {
+    // Uusin ensin, samaan tapaan kuin audit-loki ja ilmoitukset.
+    writeCollection('smsLog', [tietue, ...(readCollection('smsLog') || [])]);
+  } catch (err) {
+    // Historian kirjoitus ei saa kaataa itse lähetystä: viestit ovat jo lähteneet, ja
+    // käyttäjän on saatava siitä tieto. Virhe näkyy palvelinlokissa ja audit-loki on
+    // jo kirjoitettu yllä.
+    console.error('Lähetyshistorian kirjoitus epäonnistui:', err.message);
+  }
+
   res.json({
     ok: true,
+    sendId: lahetysId,
     dryRun: tulos.dryRun,
     mitat: tulos.mitat,
     lahetetty: tulos.tulokset.length,
-    ohitettu: vastaanottajat.filter((v) => !v.numero).map((v) => ({ nimi: v.nimi, syy: v.syy })),
-    tulokset: tulos.tulokset.map((t) => ({
-      // Sama peittäminen kuin esikatselussa: vastauksessa ei palauteta kokonaisia numeroita.
-      numero: t.numero ? `${t.numero.slice(0, 5)}…${t.numero.slice(-3)}` : null,
-      status: t.status,
-      osia: t.osia,
-    })),
+    ohitettu,
+    tulokset: tietue.recipients.map((r) => ({ numero: r.numero, nimi: r.nimi, status: r.status })),
   });
 });
 
@@ -1247,6 +1333,157 @@ function hashDedup(s) {
   return h;
 }
 
+// ---------------------------------------------------------------- Webhook (julkinen)
+//
+// BulkSMS kutsuu tätä kun viestin tila muuttuu (toimituskuittaus) tai kun työntekijä
+// vastaa hätäviestiin. Päätepiste on tarkoituksella ILMAN kirjautumista: kutsuja on
+// BulkSMS:n palvelin, jolla ei ole istuntoa. Palomuurirajaus ei myöskään auta, koska
+// BulkSMS varoittaa kutsujen tulevan dynaamisesta IP-avaruudesta.
+//
+// Ainoa pääsynhallinta on siis URL:n ?secret=-parametri, joka tarkistetaan ENSIMMÄISENÄ
+// ennen kuin rungosta luetaan mitään.
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  // Tuhannen työntekijän massaviestistä syntyy tuhat kuittausta lyhyessä ajassa, joten
+  // raja on korkea. Se on silti olemassa: ilman sitä väärällä salaisuudella tehty
+  // tulva täyttäisi lokin ja veisi prosessointiaikaa.
+  limit: 3000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Liikaa webhook-kutsuja.' },
+});
+
+app.post('/api/webhooks/bulksms', webhookLimiter, (req, res) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  const odotettu = process.env.BULKSMS_WEBHOOK_SECRET || '';
+  if (!odotettu) {
+    // Salaisuutta ei ole asetettu: päätepiste on tällöin pois käytöstä eikä sitä saa
+    // vahingossa jättää auki kaikille. 503 kertoo BulkSMS:lle että kyse on tilapäisestä
+    // häiriöstä, joten raportit yritetään toimittaa uudelleen kun asetus on kunnossa.
+    console.error('BULKSMS_WEBHOOK_SECRET puuttuu — webhook-päätepiste on pois käytöstä.');
+    return res.status(503).json({ ok: false });
+  }
+  if (!salaisuusTasmaa(typeof req.query.secret === 'string' ? req.query.secret : '', odotettu)) {
+    logAudit({ action: 'sms_webhook_rejected', ip: req.ip });
+    return res.status(403).json({ ok: false });
+  }
+
+  // Jonoon ja heti 200 OK. Rungon sisältöä EI tulkita tässä: BulkSMS vaatii vastauksen
+  // alle 30 sekunnissa, ja kuittausryöpyn aikana jokainen synkroninen kokoelmapäivitys
+  // kasvattaisi vastausaikaa kunnes osa raporteista aikakatkeaisi.
+  const lisatty = lisaaJonoon({
+    event: req.get('X-BulkSMS-Event') || null,
+    webhookId: req.get('X-BulkSMS-Webhook-Id') || null,
+    saapui: new Date().toISOString(),
+    payload: req.body ?? null,
+  });
+  if (!lisatty) {
+    // 503 (ei 400): BulkSMS tulkitsee tämän tilapäiseksi häiriöksi ja yrittää uudelleen.
+    // 400 hylkäisi raportin pysyvästi ja 410 lakkauttaisi koko webhook-konfiguraation.
+    return res.status(503).json({ ok: false });
+  }
+  res.status(200).json({ ok: true });
+});
+
+// Taustakäsittely: purkaa jonon ja päivittää lähetyshistorian. Ajetaan ajastimella eikä
+// pyynnön yhteydessä, jotta webhook-vastaus pysyy nopeana ruuhkassakin.
+function kasitteleWebhookJono() {
+  const tapahtumat = otaKasittelyyn();
+  if (tapahtumat.length === 0) return;
+
+  let log = readCollection('smsLog') || [];
+  let vastaukset = readCollection('smsReplies') || [];
+  let logMuuttui = false;
+  let uusiaVastauksia = 0;
+
+  for (const tapahtuma of tapahtumat) {
+    const { tyyppi, viestit } = tulkitseTapahtuma(tapahtuma?.event, tapahtuma?.payload);
+    if (tyyppi === 'status') {
+      const tulos = soveltaTilaraportit(log, viestit);
+      log = tulos.smsLog;
+      logMuuttui = logMuuttui || tulos.muuttui;
+    } else if (tyyppi === 'reply') {
+      const tulos = soveltaVastaukset(log, vastaukset, viestit);
+      vastaukset = tulos.smsReplies;
+      uusiaVastauksia += tulos.lisatty;
+    }
+    // Tuntematon tapahtumatyyppi sivuutetaan: rajapinta voi lisätä uusia, eikä
+    // integraatio saa kaatua siihen.
+  }
+
+  try {
+    if (logMuuttui) writeCollection('smsLog', log);
+    if (uusiaVastauksia > 0) {
+      writeCollection('smsReplies', vastaukset);
+      logAudit({ action: 'sms_replies', count: uusiaVastauksia });
+    }
+    // Kuittaus VASTA onnistuneen kirjoituksen jälkeen: jos kirjoitus heittää, samat
+    // tapahtumat käsitellään uudelleen seuraavalla kierroksella. Käsittely on
+    // idempotentti (ks. smswebhook.js), joten toisto ei riko mitään — mutta kadonnut
+    // toimituskuittaus olisi lopullinen menetys.
+    kuittaaKasitellyksi();
+  } catch (err) {
+    console.error('Webhook-jonon käsittely epäonnistui:', err.message);
+  }
+}
+
+// ---------------------------------------------------------------- Saldovahti
+//
+// Hätäviestintä ei saa keskeytyä siihen että tili on tyhjä. BulkSMS:n oma Auto Top-up
+// on ensisijainen turvaverkko (hallintapaneelin asetus), tämä on toinen: sovellus
+// tarkistaa saldon säännöllisesti ja varoittaa käyttöliittymässä ENNEN kuin oikea
+// hätätilanne on käsillä.
+const SALDO_VAROITUSRAJA = Number(process.env.BULKSMS_SALDO_VAROITUSRAJA || 1000);
+const SALDO_TARKISTUSVALI_MS = 6 * 60 * 60 * 1000;
+
+// Viimeisin tarkistus välimuistissa, jotta /api/sms/status ei tee ulkoista HTTP-kutsua
+// joka kerta kun Pikatoiminnot-valikko avataan.
+let saldoValimuisti = null;
+// Oliko saldo edellisellä tarkistuksella jo varoitusrajan alla. Käytetään siihen että
+// audit-lokiin kirjataan vain RAJAN ALITUS eikä samaa varoitusta joka kuudes tunti.
+let saldoOliAlle = false;
+
+async function tarkistaSaldo() {
+  if (!onkoKonfiguroitu()) return null;
+  const tulos = await haeSaldo();
+  saldoValimuisti = { ...tulos, tarkistettu: new Date().toISOString() };
+
+  if (tulos.ok && typeof tulos.saldo === 'number') {
+    const alle = tulos.saldo < SALDO_VAROITUSRAJA;
+    if (alle && !saldoOliAlle) {
+      logAudit({ action: 'sms_saldo_vahissa', balance: Math.round(tulos.saldo), threshold: SALDO_VAROITUSRAJA });
+    }
+    saldoOliAlle = alle;
+  }
+  return saldoValimuisti;
+}
+
+// Palauttaa välimuistin jos se on tuore, muuten hakee uudestaan. maxIkaMs = 0 pakottaa
+// tuoreen haun ("Tarkista nyt" -painike asetuksissa).
+async function saldoTiedot(maxIkaMs = SALDO_TARKISTUSVALI_MS) {
+  const ika = saldoValimuisti ? Date.now() - new Date(saldoValimuisti.tarkistettu).getTime() : Infinity;
+  if (saldoValimuisti && ika < maxIkaMs) return saldoValimuisti;
+  return (await tarkistaSaldo()) || saldoValimuisti;
+}
+
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`turvajohto-os-server kuuntelee portissa ${PORT}`);
+
+  // Webhook-jonon purku. 5 s on kompromissi: tarpeeksi tiheä että toimitustilat
+  // näkyvät käyttöliittymässä käytännössä heti, mutta harvempi kuin kuittausten
+  // saapumistahti, jolloin yksi kierros käsittelee koko ryöpyn kerralla eikä
+  // kokoelmaa kirjoiteta levylle sataa kertaa peräkkäin.
+  setInterval(kasitteleWebhookJono, 5000).unref();
+  // Käsitellään heti käynnistyksessä myös se mitä jonoon jäi edellisen ajon aikana
+  // (deploy käynnistää palvelimen uudelleen kesken kuittausryöpyn).
+  kasitteleWebhookJono();
+
+  if (onkoKonfiguroitu()) {
+    setInterval(() => { tarkistaSaldo().catch(() => {}); }, SALDO_TARKISTUSVALI_MS).unref();
+    // Ensimmäinen tarkistus pienellä viiveellä: käynnistyksen aikana ulkoinen HTTP-kutsu
+    // ei saa hidastaa palvelimen valmiiksi tuloa (deploy odottaa sitä).
+    setTimeout(() => { tarkistaSaldo().catch(() => {}); }, 10000).unref();
+  } else {
+    console.log('BulkSMS-tunnuksia ei ole asetettu — hätäviestit ovat kuivaharjoittelutilassa.');
+  }
 });

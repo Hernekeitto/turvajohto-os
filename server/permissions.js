@@ -164,6 +164,24 @@ const COLLECTIONS = {
     touch: () => ['settings'],
     eventScoped: false,
   },
+  // Lähetyshistoria ja vastaukset ovat PALVELIMEN yksin ylläpitämiä: ne syntyvät
+  // lähetysreitillä ja päivittyvät BulkSMS:n webhook-kutsuista, eikä niitä kirjoiteta
+  // selaimesta koskaan. Tyhjä touch tarkoittaa ettei mikään sivukartta-solmu oikeuta
+  // muutokseen, eli jokainen PUT joka muuttaisi jotain hylätään. Adminin PUT ohittaisi
+  // tämän (authorizeWrite päästää adminin aina läpi), joten reitillä on lisäksi
+  // erillinen esto — ks. index.js: PALVELIMEN_YLLAPITAMAT.
+  smsLog: {
+    view: ['quickactions'],
+    touch: () => [],
+    eventScoped: true,
+    eventIdOf: legacyEventId,
+  },
+  smsReplies: {
+    view: ['quickactions'],
+    touch: () => [],
+    eventScoped: true,
+    eventIdOf: legacyEventId,
+  },
   events: {
     // Tapahtumien luonti/muokkaus/poisto tehdään kaikki etusivun "Valitse tapahtuma"
     // -näkymästä (sivukartan solmu 'landing' — nimi on peruja ajalta jolloin se oli
