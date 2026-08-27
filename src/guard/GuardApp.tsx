@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList } from 'lucide-react';
+import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { Ylapalkki } from '../shared/komponentit/Ylapalkki';
 import { KohteenHallinta } from './KohteenHallinta';
 import { Tehtavat } from './Tehtavat';
-import { uusiId, type Kohde, type KohteenTiedosto, type TehtavaSuoritus } from './tyypit';
+import { Raportit } from './Raportit';
+import { KohteenTiedot } from './KohteenTiedot';
+import { uusiId, type GuardRaportti, type Kohde, type KohteenTiedosto, type RaporttiTyyppi, type TehtavaSuoritus } from './tyypit';
 
 // Turvajohto GUARD -puolen juurikomponentti. Vastaa näkymien välisestä vaihdosta ja
 // kohdedatan lataamisesta; yksittäiset näkymät ovat omissa tiedostoissaan, jotta tänne
@@ -38,6 +40,15 @@ export default function GuardApp() {
   // saa muokata kohteen perustietoja.
   const saaNahdaTehtavat = isAdmin || canView(perms, null, 'guard_tasks');
   const saaKuitata = isAdmin || canEdit(perms, null, 'guard_tasks');
+  const saaNahdaTiedot = isAdmin || canView(perms, null, 'guard_site_info');
+  // Raportointi on jaettu lomaketyypeittäin: tapahtumailmoitus sisältää kohdehenkilötiedot
+  // ja voi olla eri joukolla ihmisiä kuin päivittäinen toimenpidekirjaus.
+  const saaKirjataToimenpiteen = isAdmin || canEdit(perms, null, 'guard_report_action');
+  const saaKirjataIlmoituksen = isAdmin || canEdit(perms, null, 'guard_report_jv');
+  const saaNahdaRaportit = isAdmin
+    || canView(perms, null, 'guard_site_info')
+    || canView(perms, null, 'guard_report_action')
+    || canView(perms, null, 'guard_report_jv');
 
   const [kohteet, setKohteet] = useState<Kohde[]>([]);
   // Ladattu vasta onnistuneen haun jälkeen. Tallennus on estetty siihen asti: ilman tätä
@@ -58,6 +69,9 @@ export default function GuardApp() {
   // Kohde jonka tehtäviä ollaan kuittaamassa. Erillinen lomake-tilasta: sama kohde voi
   // olla auki joko hallintaa tai kuittausta varten, eikä niitä pidä sekoittaa.
   const [tehtavaKohde, setTehtavaKohde] = useState<Kohde | null>(null);
+  const [raportit, setRaportit] = useState<GuardRaportti[]>([]);
+  const [raporttiKohde, setRaporttiKohde] = useState<{ kohde: Kohde; tyyppi: RaporttiTyyppi } | null>(null);
+  const [tietoKohde, setTietoKohde] = useState<Kohde | null>(null);
 
   useEffect(() => {
     if (!saaNahda) return;
@@ -109,6 +123,40 @@ export default function GuardApp() {
       })
       .catch(() => { /* virhe näkyy tyhjänä suorituslistana */ });
   }, [saaNahdaTehtavat]);
+
+  useEffect(() => {
+    if (!saaNahdaRaportit) return;
+    fetch('/api/data/guardReports', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && res.ok === true && Array.isArray(res.data)) setRaportit(res.data);
+      })
+      .catch(() => { /* virhe näkyy tyhjänä raporttilistana */ });
+  }, [saaNahdaRaportit]);
+
+  // Raportti lisätään uutena tietueena samalla periaatteella kuin tehtäväsuoritus:
+  // kirjattua raporttia ei muokata jälkikäteen, vaan tarvittaessa kirjataan uusi.
+  const tallennaRaportti = async (raportti: GuardRaportti) => {
+    const uudet = [...raportit, raportti];
+    try {
+      const r = await fetch('/api/data/guardReports', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(uudet),
+      });
+      const res = await r.json().catch(() => null);
+      if (r.ok && res?.ok) {
+        setRaportit(uudet);
+        return true;
+      }
+      setVirhe(res?.error || 'Raportin tallennus epäonnistui.');
+      return false;
+    } catch {
+      setVirhe('Raportin tallennus epäonnistui: ei yhteyttä palvelimeen.');
+      return false;
+    }
+  };
 
   // Tehtäväsuoritus lisätään aina uutena tietueena eikä koskaan korvaa aiempaa: sama
   // kierros ajetaan joka vuorossa uudelleen, ja jokainen kerta on oma merkintänsä lokissa.
@@ -246,7 +294,7 @@ export default function GuardApp() {
     <Ylapalkki
       tuoteNimi="Turvajohto GUARD"
       alaotsikko={alaotsikko}
-      onLogo={() => { setLomake(null); setPoistettava(null); }}
+      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); }}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}
@@ -277,7 +325,9 @@ export default function GuardApp() {
   return (
     <div className="min-h-screen bg-canvas text-ink flex flex-col">
       {ylapalkki(
-        tehtavaKohde ? 'Työvuoron tehtävät'
+        raporttiKohde ? 'Raportointi'
+          : tietoKohde ? 'Kohteen tiedot'
+          : tehtavaKohde ? 'Työvuoron tehtävät'
           : lomake ? (lomake.id ? 'Kohteen hallinta' : 'Uusi kohde')
           : 'Kohdevalinta'
       )}
@@ -290,7 +340,23 @@ export default function GuardApp() {
             </p>
           )}
 
-          {tehtavaKohde ? (
+          {raporttiKohde ? (
+            <Raportit
+              kohde={raporttiKohde.kohde}
+              tyyppi={raporttiKohde.tyyppi}
+              vartija={session?.nickname || ''}
+              onTallenna={tallennaRaportti}
+              onTakaisin={() => setRaporttiKohde(null)}
+            />
+          ) : tietoKohde ? (
+            <KohteenTiedot
+              kohde={tietoKohde}
+              tiedostot={tiedostot}
+              suoritukset={suoritukset}
+              raportit={raportit}
+              onTakaisin={() => setTietoKohde(null)}
+            />
+          ) : tehtavaKohde ? (
             <Tehtavat
               kohde={tehtavaKohde}
               suoritukset={suoritukset}
@@ -389,7 +455,9 @@ export default function GuardApp() {
                         </div>
                       )}
 
-                      <div className="flex flex-wrap gap-3 pt-4 mt-3 border-t border-line-soft">
+                      {/* Vartijan päivittäiset toiminnot. Jokainen on oman oikeutensa
+                          takana, joten kortti näyttää vain sen mitä käyttäjä voi tehdä. */}
+                      <div className="flex flex-wrap gap-x-4 gap-y-2 pt-4 mt-3 border-t border-line-soft">
                         {saaNahdaTehtavat && (kohde.tehtavat?.length || 0) > 0 && (
                           <button
                             type="button"
@@ -397,7 +465,37 @@ export default function GuardApp() {
                             className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
                           >
                             <ClipboardList size={14} />
-                            Työvuoron tehtävät
+                            Tehtävät
+                          </button>
+                        )}
+                        {saaKirjataToimenpiteen && (
+                          <button
+                            type="button"
+                            onClick={() => setRaporttiKohde({ kohde, tyyppi: 'guard_action' })}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
+                          >
+                            <FileText size={14} />
+                            Toimenpide
+                          </button>
+                        )}
+                        {saaKirjataIlmoituksen && (
+                          <button
+                            type="button"
+                            onClick={() => setRaporttiKohde({ kohde, tyyppi: 'guard_jvreport' })}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
+                          >
+                            <ShieldAlert size={14} />
+                            Tapahtumailmoitus
+                          </button>
+                        )}
+                        {saaNahdaTiedot && (
+                          <button
+                            type="button"
+                            onClick={() => setTietoKohde(kohde)}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-body hover:text-accent transition-colors ml-auto"
+                          >
+                            <Info size={14} />
+                            Kohteen tiedot
                           </button>
                         )}
                       </div>

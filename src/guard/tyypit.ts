@@ -66,5 +66,40 @@ export type TehtavaSuoritus = {
   huomiot?: string;
 };
 
+// Vartijan raportti (guardReports). Kentät vastaavat EVENT-puolen raportteja, koska sama
+// laki koskee molempia ja palvelimen kenttäsalaus on identtinen (store.js: ENCRYPTED_FIELDS).
+export type RaporttiTyyppi = 'guard_action' | 'guard_jvreport';
+
+export type GuardRaportti = {
+  id: string;
+  siteId: string;
+  typeId: RaporttiTyyppi;
+  type: string;
+  author: string;
+  date: string;
+  time: string;
+  place?: string;
+  summary?: string;
+  description?: string;
+  luotu?: string;
+  // Toimenpiteiden lukumäärät ja voimakeinot.
+  denied?: number;
+  removed?: number;
+  detained?: number;
+  force?: boolean;
+  tools?: boolean;
+  firearm?: boolean;
+  firstAid?: boolean;
+  // Vain tapahtumailmoituksessa: LYTP:n nojalla kirjattavat kohdehenkilötiedot. Nämä
+  // salataan levylle — ks. server/store.js.
+  licenseHolder?: string;
+  subjectLastName?: string;
+  subjectFirstNames?: string;
+  subjectPersonalId?: string;
+  subjectAddress?: string;
+  subjectFeatures?: string;
+  subjectObservations?: string;
+};
+
 export const uusiId = () =>
   (crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
