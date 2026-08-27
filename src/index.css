@@ -1,25 +1,194 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   SEMANTTINEN VÄRITOKENISTO
+
+   Tarkoitus: sama komponentti näyttää EVENT-puolella nykyiseltä (slate + indigo)
+   ja GUARD-puolella graafisen ohjeistonsa mukaiselta, ilman että komponentti
+   tietää kummalla puolella se on. Siksi luokat kertovat ROOLIN eivätkä väriä:
+   `bg-surface text-ink-muted border-line` — ei `bg-white text-slate-500
+   border-slate-200`.
+
+   Arvot vaihtuvat juuren `data-tuote`-attribuutista, jonka main.tsx asettaa
+   ennen renderöintiä. Oletusarvot alla ovat EVENT-puolen nykyiset sävyt, joten
+   tokeneihin siirtyvä koodi näyttää tapahtumapuolella täsmälleen samalta kuin
+   ennen — ohjeisto koskee vain GUARDia.
+
+   Tokenien nimet ovat englanniksi, koska ne kirjoitetaan Tailwindin omien
+   luokkien sekaan (`bg-surface border-line p-4 rounded-lg`) ja sekakieli samassa
+   attribuutissa lukisi huonosti. Kommentit ovat suomeksi kuten muuallakin.
+
+   HUOM tokenien lisääminen: `@theme`-lohko ratkaisee mitkä luokat ylipäänsä
+   syntyvät. Pelkkä arvon ylikirjoitus data-lohkossa ei luo uutta luokkaa —
+   uusi token on lisättävä ENSIN tänne.
+   --------------------------------------------------------------------------- */
+
 @theme {
   --font-sans: "Fira Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 
-  /* Turvajohto GUARD -graafinen ohjeisto. Näitä käyttävät toistaiseksi vain mainossivu
-     ja Guard-puoli; Event-puoli on edelleen Tailwindin slate-paletissa. */
-  --color-guard-primary: #1e293b;
-  --color-guard-primary-hover: #0f172a;
+  /* --- Pinnat --------------------------------------------------------------
+     canvas = sivun pohja, surface = kortit ja modaalit, sunken = korostetusti
+     upotettu vyöhyke kortin sisällä (nykyisin bg-slate-50 / bg-slate-100). */
+  --color-canvas: #f8fafc;
+  --color-surface: #ffffff;
+  --color-sunken: #f1f5f9;
+
+  /* --- Tekstit -------------------------------------------------------------
+     Viisiportainen skaala tummimmasta hiljaisimpaan: strong = isot otsikot,
+     ink = otsikot ja korostettu teksti, body = leipäteksti ja kenttien nimet,
+     muted = aputekstit, subtle = hiljaisin (aikaleimat, placeholderit).
+     Tummien pintojen tekstit ovat erikseen, ks. ink-on-dark. */
+  --color-ink-strong: #0f172a;
+  --color-ink: #1e293b;
+  --color-ink-body: #334155;
+  --color-ink-muted: #64748b;
+  --color-ink-subtle: #94a3b8;
+
+  /* --- Viivat --------------------------------------------------------------
+     line = tavallinen kortin/kentän reuna, strong = korostettu reuna ja
+     erottimet, soft = kaikkein hienovaraisin jakoviiva. */
+  --color-line: #e2e8f0;
+  --color-line-strong: #cbd5e1;
+  --color-line-soft: #f1f5f9;
+
+  /* --- Korostus ------------------------------------------------------------
+     Tuotteen tunnusväri: aktiiviset tilat, linkit, valitut välilehdet.
+     soft = vaalea taustasävy merkeille, ink = luettava teksti softin päällä. */
+  --color-accent: #4f46e5;
+  --color-accent-hover: #4338ca;
+  --color-accent-soft: #eef2ff;
+  --color-accent-ink: #4338ca;
+
+  /* --- Toiminto ------------------------------------------------------------
+     Pääpainikkeet. EVENTillä tumma slate, GUARDilla ohjeiston Panssari. Erillään
+     accentista, koska molemmilla puolilla nappi ja tunnusväri ovat eri asioita. */
+  --color-action: #1e293b;
+  --color-action-hover: #334155;
+
+  /* --- Tummat pinnat -------------------------------------------------------
+     Yläpalkki ja sivuvalikko ovat tummia molemmilla puolilla, joten niillä on
+     oma tekstiskaalansa: ink-* olisi näiden päällä lukukelvoton. */
+  --color-surface-dark: #0f172a;
+  --color-ink-on-dark: #f1f5f9;
+  --color-ink-on-dark-muted: #94a3b8;
+
+  /* --- Tilavärit -----------------------------------------------------------
+     Kolmikko per tila: täysi väri (palkit, pisteet), soft (merkin tausta) ja
+     ink (merkin teksti). GUARDin arvot tulevat ohjeiston tilaväreistä. */
+  --color-danger: #e11d48;
+  --color-danger-soft: #fff1f2;
+  --color-danger-ink: #be123c;
+
+  --color-warning: #d97706;
+  --color-warning-soft: #fffbeb;
+  --color-warning-ink: #b45309;
+
+  --color-success: #059669;
+  --color-success-soft: #ecfdf5;
+  --color-success-ink: #047857;
+
+  --color-info: #0284c7;
+  --color-info-soft: #f0f9ff;
+  --color-info-ink: #0369a1;
+
+  --color-neutral: #64748b;
+  --color-neutral-soft: #f1f5f9;
+  --color-neutral-ink: #475569;
+
+  /* --- Tuotekohtaiset kiinteät värit ---------------------------------------
+     EIVÄT vaihdu data-tuotteen mukana. Vain mainossivua varten, joka esittää
+     molemmat puolet rinnakkain ja tarvitsee siksi kummankin tunnusvärin yhtä
+     aikaa. Älä käytä näitä tuotteiden sisällä — siellä on `accent`. */
+  --color-event-accent: #4f46e5;
   --color-guard-accent: #019765;
-  --color-guard-text: #232f40;
-  --color-guard-muted: #64748b;
-  --color-guard-border: #9da1a9;
-  --color-guard-bg: #f4f5f8;
-  --color-guard-surface: #ffffff;
-  --color-guard-danger: #e80140;
-  --color-guard-warning: #d8730b;
-  --color-guard-success: #019765;
-  --color-guard-info: #0ea5e9;
+  /* Kirkkaat variantit tummaa taustaa vasten: mainossivulla täysi tunnusväri jää
+     liian lähelle tummaa pohjaa, joten ikonit käyttävät näitä. */
+  --color-event-accent-bright: #818cf8;
+  --color-guard-accent-bright: #02c082;
+}
+
+/* ---------------------------------------------------------------------------
+   GUARD — Turvajohto GUARD -graafinen ohjeisto.
+
+   Osa arvoista on johdettu, koska ohjeisto määrittelee käyttöliittymän tarpeisiin
+   nähden karkeamman paletin: se antaa reunoille ja aputeksteille saman arvon
+   (#9da1a9), joka on kortinreunana liian tumma. Johdetut arvot on merkitty.
+   --------------------------------------------------------------------------- */
+[data-tuote="guard"] {
+  --color-canvas: #f4f5f8;
+  --color-surface: #ffffff;
+  --color-sunken: #eceef2;       /* johdettu: bg-bodyä aavistuksen tummempi */
+
+  --color-ink-strong: #1e293b;
+  --color-ink: #232f40;          /* ohjeiston text-main */
+  --color-ink-body: #3d4a5c;     /* johdettu: välisävy text-mainin ja mutedin väliin */
+  --color-ink-muted: #64748b;
+  --color-ink-subtle: #9da1a9;   /* ohjeiston muted-border, myös aputeksteille */
+
+  --color-line: #dcdfe4;         /* johdettu: #9da1a9 liian tumma kortinreunaksi */
+  --color-line-strong: #9da1a9;  /* ohjeiston muted-border korostettuna reunana */
+  --color-line-soft: #eceef2;    /* johdettu */
+
+  --color-accent: #019765;
+  --color-accent-hover: #017a51; /* johdettu: accent tummennettuna */
+  --color-accent-soft: #e6f5ef;  /* johdettu: accentin vaalea taustasävy */
+  --color-accent-ink: #016b47;   /* johdettu: luettava accent-softin päällä */
+
+  --color-action: #1e293b;       /* Panssari */
+  --color-action-hover: #0f172a;
+
+  --color-surface-dark: #1e293b; /* Panssari myös palkeissa */
+  --color-ink-on-dark: #f1f5f9;  /* johdettu */
+  --color-ink-on-dark-muted: #9da1a9;
+
+  --color-danger: #e80140;
+  --color-danger-soft: #fdf2f5;  /* ohjeiston hälytyslaatikon tausta */
+  --color-danger-ink: #c00135;   /* johdettu */
+
+  --color-warning: #d8730b;
+  --color-warning-soft: #fdf6ee; /* johdettu */
+  --color-warning-ink: #a85806;  /* johdettu */
+
+  /* HUOM: ohjeistossa success ja accent ovat sama #019765, eli "kaikki kunnossa"
+     ja "paina tästä" ovat samanvärisiä. Ne ovat tässä tarkoituksella ERI
+     tokeneita, joten päätöksen erottaa ne voi tehdä myöhemmin muuttamalla
+     alla olevaa yhtä riviä — ei sataa käyttökohtaa. */
+  --color-success: #019765;
+  --color-success-soft: #e6f5ef; /* johdettu */
+  --color-success-ink: #016b47;  /* johdettu */
+
+  --color-info: #0ea5e9;
+  --color-info-soft: #eff9fe;    /* johdettu */
+  --color-info-ink: #0284c7;     /* johdettu */
+
+  --color-neutral: #64748b;
+  --color-neutral-soft: #eceef2; /* johdettu */
+  --color-neutral-ink: #475569;  /* johdettu */
+}
+
+/* ---------------------------------------------------------------------------
+   OS — mainossivu. Ainoa tumma näkymä: pinnat ja tekstit kääntyvät päinvastoin,
+   ja tunnusvärit haetaan tuotekohtaisista kiinteistä tokeneista.
+   --------------------------------------------------------------------------- */
+[data-tuote="os"] {
+  --color-canvas: #232f40;
+  --color-surface: #2b3849;      /* johdettu: canvasia vaaleampi kortti */
+  --color-sunken: #1e293b;
+
+  --color-ink-strong: #ffffff;
+  --color-ink: #e2e8f0;
+  --color-ink-body: #cbd5e1;     /* johdettu */
+  --color-ink-muted: #94a3b8;
+  --color-ink-subtle: #64748b;
+
+  --color-line: #3b4a5f;         /* johdettu */
+  --color-line-strong: #4d5f78;  /* johdettu */
+  --color-line-soft: #2b3849;    /* johdettu */
 }
 
 body {
   margin: 0;
   font-family: var(--font-sans);
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
 }

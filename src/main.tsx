@@ -50,9 +50,15 @@ function normalisoiPolku(tuote: Tuote) {
 const tuote = ratkaiseTuote(window.location.pathname)
 normalisoiPolku(tuote)
 
+// Väritokenien arvot ratkeavat juuren data-tuote-attribuutista (ks. index.css), jolloin
+// sama komponentti näyttää EVENT-puolella slate/indigo-ilmeeltä ja GUARD-puolella
+// ohjeistonsa mukaiselta. Asetetaan ennen ensimmäistä renderöintiä, jottei sivu välähdä
+// väärän puolen väreissä. Mainossivu on oma teemansa: se on ainoa tumma näkymä.
+document.documentElement.dataset.tuote = tuote === 'landing' ? 'os' : tuote
+
 // Näytetään latauksen ajaksi tyhjä sivu eikä pyörivää indikaattoria: nippu tulee
 // samalta palvelimelta millisekunneissa, ja välähtävä spinneri näyttäisi virheeltä.
-const Latautuu = <div className="min-h-screen bg-guard-bg" />
+const Latautuu = <div className="min-h-screen bg-canvas" />
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

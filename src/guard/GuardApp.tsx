@@ -10,30 +10,30 @@ export default function GuardApp() {
   const session = useSession();
 
   return (
-    <div className="min-h-screen bg-guard-bg text-guard-text flex flex-col">
-      <header className="bg-guard-primary text-white px-6 py-4 flex items-center gap-3">
-        <ShieldCheck className="w-6 h-6 text-guard-accent" strokeWidth={1.75} />
+    <div className="min-h-screen bg-canvas text-ink flex flex-col">
+      <header className="bg-surface-dark text-ink-on-dark px-6 py-4 flex items-center gap-3">
+        <ShieldCheck className="w-6 h-6 text-accent" strokeWidth={1.75} />
         <div className="flex-1">
           <h1 className="font-bold leading-tight">
-            Turvajohto <span className="text-guard-accent">GUARD</span>
+            Turvajohto <span className="text-accent">GUARD</span>
           </h1>
-          <p className="text-xs text-slate-300">Vartiointi</p>
+          <p className="text-xs text-ink-on-dark-muted">Vartiointi</p>
         </div>
         {session && (
-          <span className="text-sm text-slate-300">{session.nickname}</span>
+          <span className="text-sm text-ink-on-dark-muted">{session.nickname}</span>
         )}
       </header>
 
       <main className="flex-1 flex items-center justify-center px-6 py-16">
-        <div className="w-full max-w-md bg-guard-surface border border-guard-border/40 rounded-xl p-6 text-center">
-          <h2 className="font-bold mb-2">Vartiointipuoli on rakenteilla</h2>
-          <p className="text-sm text-guard-muted leading-relaxed mb-6">
+        <div className="w-full max-w-md bg-surface border border-line rounded-xl p-6 text-center">
+          <h2 className="font-bold mb-2 text-ink-strong">Vartiointipuoli on rakenteilla</h2>
+          <p className="text-sm text-ink-muted leading-relaxed mb-6">
             Osoite, kirjautuminen ja visuaalinen ilme ovat valmiina. Kohdekierrokset,
             vartiovuorot ja poikkeamat tulevat tähän seuraavissa vaiheissa.
           </p>
           <a
             href="/event"
-            className="inline-flex items-center gap-2 text-sm font-medium text-guard-primary hover:text-guard-primary-hover transition-colors"
+            className="inline-flex items-center gap-2 text-sm font-medium text-accent hover:text-accent-hover transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Siirry tapahtumapuolelle

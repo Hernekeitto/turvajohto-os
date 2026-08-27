@@ -61,10 +61,10 @@ function ForcedPasswordChange({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
-      <form onSubmit={handleSubmit} className="w-full max-w-sm bg-white border border-slate-200 rounded-xl shadow-sm p-6">
-        <h1 className="text-lg font-semibold text-slate-800 mb-1">Vaihda salasana</h1>
-        <p className="text-sm text-slate-500 mb-4">
+    <div className="min-h-screen flex items-center justify-center bg-canvas px-4">
+      <form onSubmit={handleSubmit} className="w-full max-w-sm bg-white border border-line rounded-xl shadow-sm p-6">
+        <h1 className="text-lg font-semibold text-ink-strong mb-1">Vaihda salasana</h1>
+        <p className="text-sm text-ink-muted mb-4">
           Käytössäsi on pääkäyttäjän asettama väliaikainen salasana. Aseta oma salasanasi
           ennen kuin jatkat.
         </p>
@@ -75,7 +75,7 @@ function ForcedPasswordChange({ onDone }: { onDone: () => void }) {
           value={currentPassword}
           onChange={(e) => setCurrentPassword(e.target.value)}
           placeholder="Väliaikainen salasana"
-          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2 outline-none focus:ring-2 focus:ring-slate-300"
+          className="w-full border border-line-strong rounded-lg px-3 py-2 text-sm mb-2 outline-none focus:ring-2 focus:ring-line-strong"
         />
         <input
           type="password"
@@ -83,7 +83,7 @@ function ForcedPasswordChange({ onDone }: { onDone: () => void }) {
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
           placeholder="Uusi salasana"
-          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2 outline-none focus:ring-2 focus:ring-slate-300"
+          className="w-full border border-line-strong rounded-lg px-3 py-2 text-sm mb-2 outline-none focus:ring-2 focus:ring-line-strong"
         />
         <input
           type="password"
@@ -91,16 +91,16 @@ function ForcedPasswordChange({ onDone }: { onDone: () => void }) {
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
           placeholder="Vahvista uusi salasana"
-          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2 outline-none focus:ring-2 focus:ring-slate-300"
+          className="w-full border border-line-strong rounded-lg px-3 py-2 text-sm mb-2 outline-none focus:ring-2 focus:ring-line-strong"
         />
-        <p className="text-xs text-slate-400 mb-2">
+        <p className="text-xs text-ink-subtle mb-2">
           Vähintään 10 merkkiä, iso ja pieni kirjain sekä numero.
         </p>
-        {error && <p className="text-sm text-red-500 mb-2">{error}</p>}
+        {error && <p className="text-sm text-danger mb-2">{error}</p>}
         <button
           type="submit"
           disabled={submitting}
-          className="w-full bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium rounded-lg py-2 mt-2 transition-colors disabled:opacity-60"
+          className="w-full bg-action hover:bg-action-hover text-white text-sm font-medium rounded-lg py-2 mt-2 transition-colors disabled:opacity-60"
         >
           {submitting ? 'Tallennetaan…' : 'Aseta salasana ja jatka'}
         </button>
@@ -169,10 +169,13 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
   // Kirjautumislomake on yhteinen, mutta sen pitää kertoa kumman puolen portilla
   // ollaan — sama tunnus käy molempiin, joten pelkkä "Turvajohto OS" jättäisi
   // käyttäjän arvailemaan mihin hän on kirjautumassa.
+  // Värit tulevat teemasta (data-tuote), mutta valinta accentin ja actionin välillä on
+  // tuotekohtainen suunnitteluratkaisu eikä väriarvo: GUARDilla kirjautumisnappi kantaa
+  // tunnusvärin, EVENTillä se on nykyiseen tapaan tumma perusnappi.
   const guard = tuote === 'guard';
   const nappiTyyli = guard
-    ? 'bg-guard-accent hover:brightness-110'
-    : 'bg-slate-800 hover:bg-slate-700';
+    ? 'bg-accent hover:bg-accent-hover'
+    : 'bg-action hover:bg-action-hover';
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -214,24 +217,24 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-canvas px-4">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-sm bg-white border border-slate-200 rounded-xl shadow-sm p-6"
+        className="w-full max-w-sm bg-white border border-line rounded-xl shadow-sm p-6"
       >
-        <h1 className="text-lg font-semibold text-slate-800 mb-1">
-          Turvajohto <span className={guard ? 'text-guard-accent' : 'text-slate-500'}>{guard ? 'GUARD' : 'EVENT'}</span>
+        <h1 className="text-lg font-semibold text-ink-strong mb-1">
+          Turvajohto <span className={guard ? 'text-accent' : 'text-ink-muted'}>{guard ? 'GUARD' : 'EVENT'}</span>
         </h1>
 
         {expiredNotice && (
-          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+          <p className="text-sm text-warning-ink bg-warning-soft border border-warning/30 rounded-lg px-3 py-2 mb-3">
             Istuntosi päättyi. Kirjaudu uudelleen jatkaaksesi.
           </p>
         )}
 
         {!totpRequired ? (
           <>
-            <p className="text-sm text-slate-500 mb-4">Kirjaudu sisään jatkaaksesi.</p>
+            <p className="text-sm text-ink-muted mb-4">Kirjaudu sisään jatkaaksesi.</p>
             <input
               type="text"
               autoFocus
@@ -239,7 +242,7 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="Käyttäjätunnus"
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2 outline-none focus:ring-2 focus:ring-slate-300"
+              className="w-full border border-line-strong rounded-lg px-3 py-2 text-sm mb-2 outline-none focus:ring-2 focus:ring-line-strong"
             />
             <input
               type="password"
@@ -247,14 +250,14 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Salasana"
-              className={`w-full border rounded-lg px-3 py-2 text-sm mb-2 outline-none focus:ring-2 focus:ring-slate-300 ${
-                error ? 'border-red-400' : 'border-slate-300'
+              className={`w-full border rounded-lg px-3 py-2 text-sm mb-2 outline-none focus:ring-2 focus:ring-line-strong ${
+                error ? 'border-danger' : 'border-line-strong'
               }`}
             />
           </>
         ) : (
           <>
-            <p className="text-sm text-slate-500 mb-4">
+            <p className="text-sm text-ink-muted mb-4">
               Syötä Authenticator-sovelluksen näyttämä 6-numeroinen koodi.
             </p>
             <input
@@ -266,14 +269,14 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
               value={totpCode}
               onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
               placeholder="000000"
-              className={`w-full border rounded-lg px-3 py-2 text-center text-lg tracking-[0.5em] font-mono mb-2 outline-none focus:ring-2 focus:ring-slate-300 ${
-                error ? 'border-red-400' : 'border-slate-300'
+              className={`w-full border rounded-lg px-3 py-2 text-center text-lg tracking-[0.5em] font-mono mb-2 outline-none focus:ring-2 focus:ring-line-strong ${
+                error ? 'border-danger' : 'border-line-strong'
               }`}
             />
           </>
         )}
 
-        {error && <p className="text-sm text-red-500 mb-2">{error}</p>}
+        {error && <p className="text-sm text-danger mb-2">{error}</p>}
 
         <button
           type="submit"
@@ -285,7 +288,7 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
 
         <a
           href="/"
-          className="block text-center text-xs text-slate-400 hover:text-slate-600 mt-4 transition-colors"
+          className="block text-center text-xs text-ink-subtle hover:text-ink-muted mt-4 transition-colors"
         >
           Turvajohto OS – etusivu
         </a>
@@ -294,7 +297,7 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
           <button
             type="button"
             onClick={handleBackToPassword}
-            className="w-full text-xs text-slate-400 hover:text-slate-600 mt-3 transition-colors"
+            className="w-full text-xs text-ink-subtle hover:text-ink-muted mt-3 transition-colors"
           >
             Takaisin
           </button>
