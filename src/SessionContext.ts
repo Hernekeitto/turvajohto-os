@@ -1,5 +1,9 @@
 import { createContext, useContext } from 'react';
 
+// Tuotteet joihin sovellus jakautuu. Sama merkkijono palvelimella (server/index.js: TUOTTEET)
+// ja osoitepolussa (/event, /guard).
+export type Tuote = 'event' | 'guard';
+
 export type NodePermission = { view?: boolean; edit?: boolean };
 export type Permissions = Record<string, NodePermission>;
 
@@ -18,6 +22,10 @@ export interface SessionProfile {
   // true = pääkäyttäjä on asettanut väliaikaisen salasanan, joka on vaihdettava
   // ennen kuin sovellusta voi käyttää. Palvelin estää kaiken muun (server/index.js).
   mustChangePassword: boolean;
+  // Mihin puoliin tunnus pääsee: 'event' = Turvajohto EVENT, 'guard' = Turvajohto GUARD.
+  // Palvelin ratkaisee tämän (server/index.js: paaseeTuotteisiin) ja admin saa aina
+  // molemmat. Käyttöliittymän esto on kohteliaisuus — varsinainen portti on palvelimella.
+  tuotteet: Tuote[];
   permissions: Permissions;
   // Tämän istunnon kirjautumishetki ISO-muodossa, tai null jos käyttäjä ei ole
   // kirjautunut kertaakaan sen jälkeen kun palvelin alkoi tallentaa sitä.

@@ -39,6 +39,12 @@ function withDefaults(user) {
     // valitsemansa tapahtumat (ks. permissions.js: eventScoped-kokoelmat). Näin olemassa olevat
     // käyttäjät eivät menetä mitään pääsyä kun tämä kenttä otetaan käyttöön.
     eventAccess: Array.isArray(user.eventAccess) ? user.eventAccess : [],
+    // Tuotepääsy: mihin puoliin tunnus pääsee ('event' = Turvajohto EVENT,
+    // 'guard' = Turvajohto GUARD). Puuttuva tai tyhjä kenttä = ['event'], koska kaikki
+    // olemassa olevat tunnukset on luotu tapahtumapuolta varten eikä kenenkään pääsy saa
+    // muuttua kun kenttä otetaan käyttöön — sama periaate kuin eventAccessissa yllä.
+    // Adminia tämä ei rajaa: hän pääsee aina molempiin (ks. server/index.js: paaseeTuotteeseen).
+    tuotteet: Array.isArray(user.tuotteet) && user.tuotteet.length > 0 ? user.tuotteet : ['event'],
   };
   // Ei-adminit vaativat Authenticator-sovelluksen (TOTP) kirjautuessa — jokaiselle
   // ei-admin-tilille luodaan salaisuus automaattisesti jos sitä ei vielä ole, jotta
@@ -296,13 +302,14 @@ export function setMustChangePassword(username, required) {
   return existing;
 }
 
-export function updateUser(username, { nickname, permissions, eventAccess, roleId } = {}) {
+export function updateUser(username, { nickname, permissions, eventAccess, tuotteet, roleId } = {}) {
   const users = readUsers();
   const existing = users.find((u) => u.username === username);
   if (!existing) return null;
   if (nickname !== undefined) existing.nickname = nickname;
   if (permissions !== undefined) existing.permissions = permissions;
   if (eventAccess !== undefined) existing.eventAccess = eventAccess;
+  if (tuotteet !== undefined) existing.tuotteet = tuotteet;
   if (roleId !== undefined) {
     existing.roleId = roleId;
     // role-kenttä ('admin' | 'user') ohjaa yhä TOTP-pakkoa, istunnon kestoa ja

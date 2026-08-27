@@ -260,12 +260,24 @@ app.get('/api/session', (req, res) => {
     roleId: user.roleId || null,
     roleName: findRole(user.roleId)?.name || null,
     eventAccess: user.eventAccess,
+    tuotteet: paaseeTuotteisiin(user),
     // Tämän istunnon kirjautumishetki. EI johdeta JWT:n iat-kentästä, koska
     // ei-adminin istunto on liukuva: token uusitaan tässä samassa reitissä,
     // jolloin iat siirtyisi eteenpäin eikä kertoisi enää kirjautumisajasta.
     lastLoginAt: user.last_login_at || null,
   });
 });
+
+// Mihin tuotteisiin ('event' | 'guard') tunnus pääsee. Admin pääsee aina molempiin: hän
+// hallinnoi kumpaakin puolta eikä saa lukita itseään ulos siitä jota on juuri määrittämässä.
+const TUOTTEET = ['event', 'guard'];
+function paaseeTuotteisiin(user) {
+  if (user.role === 'admin') return [...TUOTTEET];
+  const omat = Array.isArray(user.tuotteet) ? user.tuotteet.filter((t) => TUOTTEET.includes(t)) : [];
+  // Tyhjä lista tarkoittaisi ettei käyttäjä pääse minnekään — se on lähes varmasti
+  // virhe datassa, joten palautetaan tapahtumapuoli kuten ennen kentän käyttöönottoa.
+  return omat.length > 0 ? omat : ['event'];
+}
 
 function requireAuth(req, res, next) {
   const username = getSessionUser(req);
@@ -295,6 +307,7 @@ function requireAuth(req, res, next) {
   // uudelleenkirjautumista — sama periaate kuin aiemmin käyttäjän omilla oikeuksilla.
   req.permissions = rolePermissions(user.roleId);
   req.eventAccess = user.eventAccess;
+  req.tuotteet = paaseeTuotteisiin(user);
   // Liukuva istunto: jokainen onnistunut kirjautunut pyyntö ei-adminilta pidentää
   // evästeen voimassaoloa uudelleen USER_SESSION_MINUTES eteenpäin. Admin pysyy
   // kiinteässä 12h istunnossa, ei koske automaattinen käyttämättömyyskatkaisu.
@@ -506,7 +519,7 @@ app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
 
 app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
   const { username } = req.params;
-  const { nickname, permissions, eventAccess, roleId } = req.body || {};
+  const { nickname, permissions, eventAccess, tuotteet, roleId } = req.body || {};
   const kohde = findUser(username);
   if (!kohde) {
     return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
@@ -532,10 +545,17 @@ app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
   if (eventAccess !== undefined && (!Array.isArray(eventAccess) || !eventAccess.every((id) => typeof id === 'string'))) {
     return res.status(400).json({ ok: false, error: 'Virheellinen tapahtumarajaus.' });
   }
+  // Tuotepääsy: tyhjä lista lukitsisi käyttäjän ulos kokonaan, joten vähintään yksi
+  // tunnettu tuote vaaditaan. Adminia rajaus ei koske (ks. paaseeTuotteisiin).
+  if (tuotteet !== undefined
+      && (!Array.isArray(tuotteet) || tuotteet.length === 0 || !tuotteet.every((t) => TUOTTEET.includes(t)))) {
+    return res.status(400).json({ ok: false, error: 'Valitse vähintään yksi puoli (EVENT tai GUARD).' });
+  }
   updateUser(username, {
     nickname: nickname !== undefined ? nickname.trim() : undefined,
     permissions,
     eventAccess,
+    tuotteet,
     roleId,
   });
   // Ei tallenneta permissions/eventAccess-sisältöä itseään lokiin (iso, nested rakenne,
@@ -545,6 +565,7 @@ app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
     nickname !== undefined && 'nickname',
     permissions !== undefined && 'permissions',
     eventAccess !== undefined && 'eventAccess',
+    tuotteet !== undefined && 'tuotteet',
   ].filter(Boolean);
   logAudit({ user: req.username, action: 'user_update', targetUser: username, fields: changedFields });
   res.json({ ok: true });

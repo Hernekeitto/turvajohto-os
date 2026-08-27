@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { SessionContext, type SessionProfile } from './SessionContext';
+import { ShieldAlert } from 'lucide-react';
+import { SessionContext, type SessionProfile, type Tuote } from './SessionContext';
 
 type SessionState = 'loading' | 'authed' | 'anon';
 
-// Kumman tuotteen portilla ollaan. Ratkaistaan osoiterivistä (ks. main.tsx).
-type Tuote = 'event' | 'guard';
+const TUOTTEEN_NIMI: Record<Tuote, string> = {
+  event: 'Turvajohto EVENT',
+  guard: 'Turvajohto GUARD',
+};
 
 async function loadSessionProfile(): Promise<SessionProfile | null> {
   const res = await fetch('/api/session', { credentials: 'include' });
@@ -19,6 +22,7 @@ async function loadSessionProfile(): Promise<SessionProfile | null> {
     roleId: data.roleId || null,
     roleName: data.roleName || null,
     mustChangePassword: !!data.mustChangePassword,
+    tuotteet: Array.isArray(data.tuotteet) && data.tuotteet.length > 0 ? data.tuotteet : ['event'],
     permissions: data.permissions || {},
     lastLoginAt: data.lastLoginAt || null,
   };
@@ -109,6 +113,38 @@ function ForcedPasswordChange({ onDone }: { onDone: () => void }) {
   );
 }
 
+// Kirjautunut käyttäjä, jolla ei ole pääsyä juuri tälle puolelle. Uloskirjautumista ei
+// tarjota ensisijaisena: useimmiten kyse on väärästä osoitteesta, ei väärästä tunnuksesta.
+function EiPaasyaTuotteeseen({ tuote, profile }: { tuote: Tuote; profile: SessionProfile }) {
+  const sallittu = profile.tuotteet[0];
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-canvas px-4">
+      <div className="w-full max-w-md bg-surface border border-line rounded-xl shadow-sm p-6 text-center">
+        <ShieldAlert className="w-10 h-10 text-warning mx-auto mb-4" strokeWidth={1.75} />
+        <h1 className="text-lg font-semibold text-ink-strong mb-2">
+          Ei käyttöoikeutta puolelle {TUOTTEEN_NIMI[tuote]}
+        </h1>
+        <p className="text-sm text-ink-muted leading-relaxed mb-6">
+          Olet kirjautunut tunnuksella <strong className="text-ink">{profile.nickname}</strong>,
+          mutta sille ei ole myönnetty pääsyä tälle puolelle. Pääkäyttäjä voi lisätä oikeuden
+          käyttäjähallinnasta.
+        </p>
+        {sallittu && sallittu !== tuote && (
+          <a
+            href={`/${sallittu}`}
+            className="inline-block bg-action hover:bg-action-hover text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
+          >
+            Siirry puolelle {TUOTTEEN_NIMI[sallittu]}
+          </a>
+        )}
+        <a href="/" className="block text-xs text-ink-subtle hover:text-ink-muted mt-4 transition-colors">
+          Turvajohto OS – etusivu
+        </a>
+      </div>
+    </div>
+  );
+}
+
 export default function PasswordGate({ children, tuote = 'event' }: { children: ReactNode; tuote?: Tuote }) {
   const [session, setSession] = useState<SessionState>('loading');
   const [profile, setProfile] = useState<SessionProfile | null>(null);
@@ -162,6 +198,12 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
           }}
         />
       );
+    }
+    // Sama tunnus käy molempiin puoliin, mutta pääsy myönnetään puolikohtaisesti
+    // (server/index.js: paaseeTuotteisiin). Ilman tätä väärälle puolelle päätynyt näkisi
+    // tyhjän tai puolittain toimivan sovelluksen sen sijaan että saisi tietää syyn.
+    if (!profile.tuotteet.includes(tuote)) {
+      return <EiPaasyaTuotteeseen tuote={tuote} profile={profile} />;
     }
     return <SessionContext.Provider value={profile}>{children}</SessionContext.Provider>;
   }
