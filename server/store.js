@@ -40,6 +40,18 @@ const COLLECTIONS = {
   // käyttöliittymän nimi on eri. Oma kokoelmansa eikä events, jotta tapahtumapuoli ei näe
   // kohteita listoissaan eikä olemassa olevaa dataa tarvitse migratoida.
   guardSites: 'guardSites.json',
+  // Kohteen tiedostot (toimeksiantosopimus, pohjapiirros, vartio-ohje). Sama rakenne kuin
+  // eventFiles: kansiot ja tiedostot samassa kokoelmassa, type erottaa ne ja parentId tekee
+  // sisäkkäisyyden. Käyttää samaa uploads-koneistoa (server/uploads.js).
+  guardFiles: 'guardFiles.json',
+  // Vartijan kirjaamat raportit. Oma kokoelmansa eikä reports, jotta tapahtumapuolen
+  // "Tallennetut raportit (kaikki tapahtumat)" ei sekoita niitä keskenään ja jotta
+  // tuoteportti (index.js: tuoteEstaa) suojaa ne automaattisesti.
+  guardReports: 'guardReports.json',
+  // Työvuoron tehtävien suoritukset: mikä tehtävä, kuka, milloin ja mitkä kohdat kuitattiin.
+  // Tehtävien MÄÄRITTELY on kohteen sisällä (guardSites.tehtavat) — se on kohteen ominaisuus,
+  // suoritus taas tapahtuma ajassa.
+  guardTaskRuns: 'guardTaskRuns.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
@@ -107,6 +119,30 @@ const ENCRYPTED_FIELDS = {
     'subjectFeatures',
     'subjectObservations',
   ],
+  // Vartijan raportit salataan TÄSMÄLLEEN samoin kuin tapahtumapuolen raportit: vartijan
+  // tapahtumailmoitus sisältää samat LYTP:n nojalla kirjattavat kohdehenkilötiedot
+  // (nimi, henkilötunnus, osoite, tuntomerkit) ja saman vapaan tekstin. Sama laki, sama
+  // arkaluonteisuus, sama suoja — lista on tarkoituksella identtinen reportsin kanssa,
+  // jotta puolien välille ei synny eroa jota kukaan ei ole päättänyt.
+  guardReports: [
+    'summary',
+    'description',
+    'tikeComment',
+    'taskTitle',
+    'taskDoneComment',
+    'actions',
+    'resources',
+    'employees',
+    'subjectLastName',
+    'subjectFirstNames',
+    'subjectPersonalId',
+    'subjectAddress',
+    'subjectFeatures',
+    'subjectObservations',
+  ],
+  // Tehtäväsuorituksen vapaa huomiokenttä: vartija kirjoittaa siihen mitä kierroksella
+  // havaittiin, eikä kenttätasolla voi tietää mitä sinne on kirjoitettu.
+  guardTaskRuns: ['huomiot'],
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });

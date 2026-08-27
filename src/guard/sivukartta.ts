@@ -16,6 +16,21 @@ import type { SivukarttaSolmu } from '../shared/oikeudet';
 export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // Kohdevalinta vastaa tapahtumapuolen 'landing'-solmua: kohteiden listaus, luonti ja
   // muokkaus. Globaali solmu palvelimella (server/permissions.js: GLOBAL_NODES), koska
-  // ilman kohdelistaa ei pääse yhteenkään kohteeseen.
-  { id: 'guard_sites', label: 'Kohdevalinta' },
+  // ilman kohdelistaa ei pääse yhteenkään kohteeseen. Kohteen hallintaan kuuluvat myös
+  // sen tiedostot, perehdytykset ja tehtäväpohjat — ne ovat kohteen ominaisuuksia.
+  { id: 'guard_sites', label: 'Kohdevalinta ja kohteen hallinta' },
+  // Kohteen tiedot: kooste siitä mitä kohteessa on tapahtunut (suoritetut tehtävät ja
+  // kirjatut raportit). Erillinen oikeus, koska tämä on katselunäkymä eikä sen näkeminen
+  // saa edellyttää oikeutta muokata kohteen perustietoja.
+  { id: 'guard_site_info', label: 'Kohteen tiedot (kooste)' },
+  // Työvuoron tehtävät: vartija kuittaa kohteelle määritellyt tehtävät suoritetuiksi.
+  { id: 'guard_tasks', label: 'Työvuoron tehtävät' },
+  // Raportointi. Omat solmunsa lomaketyypeittäin samaan tapaan kuin tapahtumapuolen
+  // tike_form_*-solmut: vartijan toimenpide on päivittäistä kirjaamista, kun taas
+  // tapahtumailmoitus sisältää LYTP:n nojalla kirjattavat kohdehenkilötiedot ja voi
+  // hyvin perustein olla eri joukolla ihmisiä.
+  { id: 'guard_reporting', label: 'Raportointi', children: [
+    { id: 'guard_report_action', label: 'Vartijan toimenpide' },
+    { id: 'guard_report_jv', label: 'Vartijan tapahtumailmoitus' },
+  ] },
 ];

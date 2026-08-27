@@ -204,10 +204,39 @@ const COLLECTIONS = {
   // tuote: 'guard' estää kokoelman kokonaan tunnuksilta joilla ei ole GUARD-pääsyä —
   // ilman tätä käyttöliittymän esto olisi ohitettavissa suoralla API-kutsulla.
   guardSites: {
-    view: ['guard_sites'],
+    // Kohteen tiedot -näkymä lukee samat kohteet kuin kohdevalinta, joten sillä on
+    // lukuoikeus tänne — muokkaus on silti vain kohdevalinnan takana.
+    view: ['guard_sites', 'guard_site_info'],
     touch: () => ['guard_sites'],
     eventScoped: true,
     eventIdOf: (item) => item?.id,
+    tuote: 'guard',
+  },
+  // Kohteen tiedostot kuuluvat kohteen hallintaan, samoin kuin eventFiles kuuluu
+  // tapahtuman tiedostoihin. Kohteen tiedot -näkymä näyttää ne mutta ei muokkaa.
+  guardFiles: {
+    view: ['guard_sites', 'guard_site_info'],
+    touch: () => ['guard_sites'],
+    eventScoped: true,
+    eventIdOf: (item) => item?.siteId,
+    tuote: 'guard',
+  },
+  // Vartijan raportit: kirjaaminen on lomakesolmujen takana, lukeminen myös kohteen
+  // tiedot -koosteessa. Sama jako kuin tapahtumapuolella (tike_form_* vs report_list).
+  guardReports: {
+    view: ['guard_report_action', 'guard_report_jv', 'guard_site_info'],
+    touch: () => ['guard_report_action', 'guard_report_jv'],
+    eventScoped: true,
+    eventIdOf: (item) => item?.siteId,
+    tuote: 'guard',
+  },
+  // Tehtäväsuoritukset: vartija kuittaa ne työvuoronäkymässä, ja ne näkyvät kohteen
+  // tiedoissa koottuna.
+  guardTaskRuns: {
+    view: ['guard_tasks', 'guard_site_info'],
+    touch: () => ['guard_tasks'],
+    eventScoped: true,
+    eventIdOf: (item) => item?.siteId,
     tuote: 'guard',
   },
   checkins: {
