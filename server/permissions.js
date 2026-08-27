@@ -31,6 +31,10 @@ const GLOBAL_NODES = new Set([
   'global_reports',
   'global_archived_events',
   'global_employee_bank',
+  // Pikatoiminnot-valikko on ylapalkissa eika minkaan yksittaisen tapahtuman sivulla,
+  // ja nappilista on koko sovelluksen yhteinen — vaikka viestin vastaanottajat
+  // ratkaistaan valitun tapahtuman mukaan. Oikeus haetaan siksi aina __default__:sta.
+  'quickactions',
 ]);
 
 function bucketFor(permissions, eventId, nodeId) {
@@ -146,6 +150,18 @@ const COLLECTIONS = {
   employees: {
     view: ['global_employee_bank'],
     touch: () => ['global_employee_bank'],
+    eventScoped: false,
+  },
+  // Pikatoimintonapit: nappien SISÄLLÖN näkee jokainen jolla on oikeus itse valikkoon
+  // (muuten valikko olisi tyhjä), mutta nappien MUOKKAUS on sovellusasetusten takana.
+  // Tämä on tarkoituksellinen ero muihin kokoelmiin: nappi määrää kenelle hätäviesti
+  // lähtee ja mitä siinä lukee, joten sen muuttaminen on hallinnollinen toimenpide eikä
+  // osa päivittäistä käyttöä. Viestin LÄHETTÄMISEN oikeus on erikseen quickactions:in
+  // muokkausoikeus (ks. POST /api/sms/send index.js:ssä) — nappien näkeminen ei siis
+  // vielä oikeuta lähettämään.
+  smsButtons: {
+    view: ['quickactions', 'settings'],
+    touch: () => ['settings'],
     eventScoped: false,
   },
   events: {

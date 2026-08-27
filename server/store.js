@@ -22,6 +22,11 @@ const COLLECTIONS = {
   eventFiles: 'eventFiles.json',
   // Tiedostojen ja kansioiden jakolinkit.
   fileShares: 'fileShares.json',
+  // Pikatoimintonapit (hätätekstiviestit): nimi, vastaanottajaryhmä ja viestipohja.
+  // EI tapahtumakohtainen — sama nappilista koko sovellukselle, mutta ryhmä ratkaistaan
+  // aina valitun tapahtuman kontekstissa (ks. server/sms.js). Kokoelmassa ei ole
+  // henkilötietoa muuta kuin napin oma kiinteä numerolista (customNumbers).
+  smsButtons: 'smsButtons.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain

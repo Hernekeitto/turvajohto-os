@@ -42,6 +42,8 @@ import {
   canUploadAttachment,
   canEdit,
 } from './permissions.js';
+import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti } from './bulksms.js';
+import { kaytossaOlevatNapit, ratkaiseVastaanottajat, taytaPaikkamerkit } from './sms.js';
 import { logAudit, readAuditLog } from './audit.js';
 import { validateRecords, wouldWipeNonEmptyCollection } from './validation.js';
 
@@ -1041,6 +1043,209 @@ app.get('/api/uploads/:id', requireAuth, (req, res) => {
   }
   res.sendFile(filePath);
 });
+
+// ====================== HÄTÄTEKSTIVIESTIT (BulkSMS) ======================
+//
+// Pikatoiminnot-valikon napit lähettävät tekstiviestin BulkSMS:n JSON REST API:n kautta.
+// API-tunnukset ovat VAIN palvelimella (ympäristömuuttujat, ks. bulksms.js) — selain ei
+// näe niitä eikä puhu rajapinnan kanssa suoraan. Yhtä lailla tärkeää: vastaanottajien
+// numerot ratkaistaan palvelimella napin id:n perusteella (sms.js), eikä niitä oteta
+// pyynnön rungosta. Muuten kuka tahansa kirjautunut voisi lähettää tililtä viestejä
+// mihin tahansa numeroon.
+
+// Hätätilanteessa napista voi tulla painetuksi useaan kertaan, ja jokainen painallus
+// maksaa saldoa. Raja on väljä oikealle käytölle (tilanne voi vaatia useita viestejä
+// peräkkäin) mutta pysäyttää silmukan tai väärinkäytön.
+const smsLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Liian monta viestilähetystä lyhyessä ajassa. Odota hetki.' },
+});
+
+// Saa käyttäjä lähettää hätäviestin? Nappien NÄKEMINEN riittää valikon näyttämiseen
+// (smsButtons-kokoelman lukuoikeus), mutta lähettäminen vaatii erikseen quickactions-
+// solmun muokkausoikeuden. Näin esim. järjestyksenvalvoja voi nähdä mitä nappeja on
+// olemassa ilman että hän voi laukaista massaviestin.
+function saaLahettaa(req) {
+  if (req.role === 'admin') return true;
+  // eventId on null koska 'quickactions' on globaali solmu (ks. permissions.js
+  // GLOBAL_NODES): oikeus luetaan aina __default__-bucketista eikä sitä voi asettaa
+  // tapahtumakohtaisesti. Sama kutsu kuin frontissa (src/App.tsx).
+  return canEdit(req.permissions, null, 'quickactions');
+}
+
+// Integraation tila käyttöliittymälle: onko tunnukset asetettu, ja paljonko saldoa on
+// jäljellä. Saldo haetaan rajapinnasta vain pyydettäessä (ei taustasilmukkaa), koska
+// näkymä avataan harvoin eikä jatkuva kysely ole tarpeen.
+app.get('/api/sms/status', requireAuth, async (req, res) => {
+  if (!saaLahettaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia hätäviestien lähettämiseen.' });
+  }
+  if (!onkoKonfiguroitu()) {
+    return res.json({ ok: true, konfiguroitu: false, dryRun: true });
+  }
+  const saldo = await haeSaldo();
+  // `ok` kertoo että TÄMÄ pyyntö onnistui, ei että BulkSMS vastasi — saldon haun oma
+  // tulos kulkee erillisissä kentissä. Jos saldo.ok levitettäisiin tähän sellaisenaan,
+  // se ylikirjoittaisi ok:n false:ksi, jolloin frontti hylkäisi koko vastauksen eikä
+  // näyttäisi virhettä lainkaan (integraation tila jäisi näyttämään "ei tarkistettu").
+  res.json({
+    ok: true,
+    konfiguroitu: true,
+    dryRun: false,
+    saldoLuettu: saldo.ok === true,
+    saldo: saldo.saldo ?? null,
+    kiintioJaljella: saldo.kiintioJaljella ?? null,
+    kiintioKoko: saldo.kiintioKoko ?? null,
+    virhe: saldo.virhe || null,
+  });
+});
+
+// Napin vastaanottajien esikatselu ennen lähetystä: ketkä saavat viestin ja ketkä eivät
+// (numero puuttuu tai on kelvoton). Erillinen reitti lähetyksestä, jotta vahvistusnäkymä
+// voidaan näyttää ilman että mitään lähtee liikkeelle.
+app.get('/api/sms/recipients', requireAuth, (req, res) => {
+  if (!saaLahettaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia hätäviestien lähettämiseen.' });
+  }
+  const { buttonId, eventId } = req.query;
+  if (typeof buttonId !== 'string' || typeof eventId !== 'string') {
+    return res.status(400).json({ ok: false, error: 'buttonId ja eventId vaaditaan.' });
+  }
+  // Tapahtumarajaus koskee myös tätä: käyttäjä ei saa nähdä (eikä siis lähettää) toisen
+  // tapahtuman työntekijöiden numeroita, vaikka nappilista on yhteinen.
+  if (req.role !== 'admin' && Array.isArray(req.eventAccess) && req.eventAccess.length > 0
+      && !req.eventAccess.includes(eventId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia tähän tapahtumaan.' });
+  }
+
+  const napit = kaytossaOlevatNapit(readCollection('smsButtons'));
+  const nappi = napit.find((n) => n.id === buttonId);
+  if (!nappi) return res.status(404).json({ ok: false, error: 'Tuntematon pikatoimintonappi.' });
+
+  const events = readCollection('events') || [];
+  const vastaanottajat = ratkaiseVastaanottajat(nappi, {
+    eventId,
+    checkins: readCollection('checkins') || [],
+    employees: readCollection('employees') || [],
+    events,
+  });
+  const tapahtumanNimi = events.find((e) => e?.id === eventId)?.name || '';
+  const runko = taytaPaikkamerkit(nappi.body, { tapahtumanNimi });
+
+  res.json({
+    ok: true,
+    nappi: { id: nappi.id, label: nappi.label, group: nappi.group, repliable: nappi.repliable },
+    runko,
+    mitat: laskeViesti(runko),
+    // Numerot palautetaan peitettyinä: vahvistusnäkymä tarvitsee vain tiedon KENELLE
+    // viesti lähtee, ei työntekijöiden puhelinnumeroita selaimen muistiin.
+    vastaanottajat: vastaanottajat.map((v) => ({
+      nimi: v.nimi,
+      rooli: v.rooli,
+      ok: Boolean(v.numero),
+      numero: v.numero ? `${v.numero.slice(0, 5)}…${v.numero.slice(-3)}` : null,
+      syy: v.syy || null,
+    })),
+  });
+});
+
+app.post('/api/sms/send', requireAuth, smsLimiter, async (req, res) => {
+  if (!saaLahettaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia hätäviestien lähettämiseen.' });
+  }
+  const { buttonId, eventId, body } = req.body || {};
+  if (typeof buttonId !== 'string' || typeof eventId !== 'string') {
+    return res.status(400).json({ ok: false, error: 'buttonId ja eventId vaaditaan.' });
+  }
+  if (req.role !== 'admin' && Array.isArray(req.eventAccess) && req.eventAccess.length > 0
+      && !req.eventAccess.includes(eventId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia tähän tapahtumaan.' });
+  }
+
+  const napit = kaytossaOlevatNapit(readCollection('smsButtons'));
+  const nappi = napit.find((n) => n.id === buttonId);
+  if (!nappi) return res.status(404).json({ ok: false, error: 'Tuntematon pikatoimintonappi.' });
+
+  const events = readCollection('events') || [];
+  const tapahtumanNimi = events.find((e) => e?.id === eventId)?.name || '';
+  // Käyttäjä saa muokata runkoa lähetysikkunassa (tilanne on harvoin täsmälleen se mitä
+  // pohjaan on kirjoitettu), mutta pohja on oletus. Paikkamerkit täytetään kummassakin
+  // tapauksessa, jotta {tapahtuma} toimii myös käsin kirjoitetussa tekstissä.
+  const raakaRunko = typeof body === 'string' && body.trim() !== '' ? body : nappi.body;
+  const runko = taytaPaikkamerkit(raakaRunko, { tapahtumanNimi });
+  if (!runko) {
+    return res.status(400).json({ ok: false, error: 'Viesti on tyhjä.' });
+  }
+
+  const vastaanottajat = ratkaiseVastaanottajat(nappi, {
+    eventId,
+    checkins: readCollection('checkins') || [],
+    employees: readCollection('employees') || [],
+    events,
+  });
+  const numerot = vastaanottajat.map((v) => v.numero).filter(Boolean);
+  // Sama numero voi esiintyä kahdesti (henkilö kahdella rosterirvillä, tai hätänumero
+  // sama kuin työntekijän) — ilman tätä hän saisi saman viestin kahdesti ja saldoa
+  // kuluisi turhaan.
+  const uniikit = [...new Set(numerot)];
+
+  const tulos = await lahetaViestit({
+    numerot: uniikit,
+    body: runko,
+    repliable: nappi.repliable,
+    // Deduplikointitunniste sitoo lähetyksen nappiin, tapahtumaan ja minuuttiin: jos
+    // vastaus jää verkkokatkoon ja käyttäjä painaa uudelleen, BulkSMS tunnistaa saman
+    // lähetyksen eikä viesti mene kahteen kertaan. Tunniste vanhenee ~12 tunnissa.
+    dedupId: Math.abs(hashDedup(`${buttonId}|${eventId}|${runko}|${Math.floor(Date.now() / 60000)}`)),
+  });
+
+  // Audit-lokiin EI kirjoiteta puhelinnumeroita eikä viestin tekstiä — sama periaate kuin
+  // muualla (ks. audit.js): loki kertoo kuka teki mitä ja milloin, ei tietueen sisältöä.
+  logAudit({
+    user: req.username,
+    action: tulos.ok ? (tulos.dryRun ? 'sms_dryrun' : 'sms_send') : 'sms_failed',
+    collection: 'smsButtons',
+    recordId: buttonId,
+    eventId,
+    recipients: uniikit.length,
+    skipped: vastaanottajat.length - uniikit.length,
+    parts: tulos.mitat?.osia ?? null,
+    encoding: tulos.mitat?.encoding ?? null,
+    ...(tulos.ok ? {} : { reason: tulos.virhe }),
+  });
+
+  if (!tulos.ok) {
+    return res.status(502).json({ ok: false, error: tulos.virhe, mitat: tulos.mitat });
+  }
+
+  res.json({
+    ok: true,
+    dryRun: tulos.dryRun,
+    mitat: tulos.mitat,
+    lahetetty: tulos.tulokset.length,
+    ohitettu: vastaanottajat.filter((v) => !v.numero).map((v) => ({ nimi: v.nimi, syy: v.syy })),
+    tulokset: tulos.tulokset.map((t) => ({
+      // Sama peittäminen kuin esikatselussa: vastauksessa ei palauteta kokonaisia numeroita.
+      numero: t.numero ? `${t.numero.slice(0, 5)}…${t.numero.slice(-3)}` : null,
+      status: t.status,
+      osia: t.osia,
+    })),
+  });
+});
+
+// Yksinkertainen 32-bittinen tiiviste deduplication-id:tä varten (rajapinta odottaa
+// int32:ta). Ei kryptografinen eikä tarvitse olla: tarkoitus on vain että SAMA lähetys
+// tuottaa saman tunnisteen ja eri lähetys eri tunnisteen.
+function hashDedup(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return h;
+}
 
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`turvajohto-os-server kuuntelee portissa ${PORT}`);

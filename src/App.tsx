@@ -59,6 +59,7 @@ import {
   Eye,
   EyeOff,
   HardDrive,
+  PlusCircle,
   Bell
 } from 'lucide-react';
 
@@ -893,6 +894,101 @@ const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onViewAuditLog, onLo
   );
 };
 
+// ====================== PIKATOIMINNOT / HÄTÄTEKSTIVIESTIT ======================
+//
+// Nämä ovat käyttöliittymän peilikuva server/sms.js:n ryhmistä ja oletusnapeista.
+// Vastaanottajien todellinen ratkaisu ja viestin lähetys tapahtuvat AINA palvelimella
+// (ks. server/sms.js ja server/index.js) — selain ei koskaan näe puhelinnumeroita
+// kokonaisina eikä puhu BulkSMS:n rajapinnan kanssa. Tämä lista on vain valikon ja
+// asetuseditorin tekstejä varten, samaan tapaan kuin canView/canEdit peilaavat
+// palvelimen oikeussääntöjä suodattamatta itse dataa.
+const SMS_RYHMAT = [
+  { id: 'checked_in', label: 'Sisäänkirjatut työntekijät', selite: 'Tapahtumaan sisäänkirjatut eli oikeasti paikalla olevat.' },
+  { id: 'roster', label: 'Kaikki tapahtuman työntekijät', selite: 'Kaikki tapahtumaan merkityt, myös vielä sisäänkirjaamattomat.' },
+  { id: 'emergency_numbers', label: 'Tapahtuman hätänumerot', selite: 'Tapahtuman perustietojen osio 14: Turva 1, Turva 2, TIKE ja EA-päivystys.' },
+  { id: 'custom', label: 'Oma numerolista', selite: 'Nappiin kirjatut kiinteät numerot, eivät riipu tapahtumasta.' },
+];
+
+const smsRyhmanLabel = (id: string) => SMS_RYHMAT.find((r) => r.id === id)?.label || id;
+
+// Oletusnapit kun smsButtons-kokoelmaa ei ole vielä tallennettu. PIDETTÄVÄ SYNKASSA
+// server/sms.js:n OLETUSNAPIT-listan kanssa: palvelin käyttää omaansa lähetykseen, tämä
+// on vain se mitä valikossa näkyy ennen ensimmäistä tallennusta.
+const SMS_OLETUSNAPIT = [
+  {
+    id: 'evacuate',
+    label: 'KAIKKIEN ALUEIDEN EVAKUOINTI',
+    group: 'checked_in',
+    customNumbers: [],
+    body: 'TURVAJOHTO {tapahtuma}: EVAKUOINTI. Ohjaa yleiso ulos lahimmasta poistumistiesta ja siirry kokoontumispaikalle. Kuittaa TIKE:lle.',
+    repliable: false,
+    style: 'danger',
+  },
+  {
+    id: 'authority_own',
+    label: 'Oma Turva',
+    group: 'emergency_numbers',
+    customNumbers: [],
+    body: 'TURVAJOHTO {tapahtuma}: Oman turvaorganisaation halytys klo {aika}. Ottakaa yhteys TIKE:en valittomasti.',
+    repliable: false,
+    style: 'neutral',
+  },
+  {
+    id: 'authority_vira',
+    label: 'Turva + VIRA',
+    group: 'emergency_numbers',
+    customNumbers: [],
+    body: 'TURVAJOHTO {tapahtuma}: Turva- ja viranomaishalytys klo {aika}. Viranomaiset halytetty. Ottakaa yhteys TIKE:en.',
+    repliable: false,
+    style: 'neutral',
+  },
+  {
+    id: 'authority_prep',
+    label: 'Varautumistilanne',
+    group: 'emergency_numbers',
+    customNumbers: [],
+    body: 'TURVAJOHTO {tapahtuma}: Varautumistilanne klo {aika}. Kohotettu valmius, ei viela toimenpiteita. Odota ohjeita.',
+    repliable: false,
+    style: 'neutral',
+  },
+  {
+    id: 'instructions',
+    label: 'Lähetä toimintaohjeita',
+    group: 'checked_in',
+    customNumbers: [],
+    body: '',
+    repliable: false,
+    style: 'neutral',
+  },
+];
+
+// GSM 03.38 -merkistö viestin pituuslaskuria varten. Sama taulukko kuin
+// server/bulksms.js:ssä — toistettu tässä tarkoituksella, koska laskurin on päivityttävä
+// jokaisella näppäinpainalluksella eikä sitä voi hakea palvelimelta. Palvelin laskee
+// pituuden itse uudelleen lähetyshetkellä; tämä on vain käyttäjäpalautetta.
+const GSM_PERUS =
+  '@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?' +
+  '¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà';
+const GSM_LAAJENNUS = '^{}\\[~]|€';
+
+const laskeViestinMitat = (text: string) => {
+  const s = typeof text === 'string' ? text : '';
+  let septetit = 0;
+  let gsm = true;
+  for (const ch of Array.from(s)) {
+    if (GSM_PERUS.includes(ch)) septetit += 1;
+    else if (GSM_LAAJENNUS.includes(ch)) septetit += 2;
+    else { gsm = false; break; }
+  }
+  if (!gsm) {
+    const yksikot = s.length;
+    const osia = yksikot === 0 ? 1 : yksikot <= 70 ? 1 : Math.ceil(yksikot / 67);
+    return { encoding: 'UNICODE', pituus: yksikot, osia, osanRaja: osia > 1 ? 67 : 70 };
+  }
+  const osia = septetit === 0 ? 1 : septetit <= 160 ? 1 : Math.ceil(septetit / 153);
+  return { encoding: 'TEXT', pituus: septetit, osia, osanRaja: osia > 1 ? 153 : 160 };
+};
+
 // Sivukartta: sovelluksen sivut/valikot solmupuuna. Id:t ovat pääosin olemassa
 // olevia activeTab-arvoja (uudelleenkäyttö) — backend ei tunne tätä puuta, se
 // tallentaa vain geneerisen { [id]: { view, edit } } -olion.
@@ -941,6 +1037,11 @@ const SITEMAP = [
   // (ks. server/shares.js). Sijaitsee sivuvalikossa Lomakekartoituksen ja
   // Sovellusasetusten välissä.
   { id: 'eventfiles', label: 'Tapahtuman tiedostot' },
+  // Yläpalkin Pikatoiminnot-valikko (hätätekstiviestit). Näkyvyysoikeus näyttää valikon;
+  // MUOKKAUSOIKEUS on se joka oikeuttaa viestin lähettämiseen — sama tarkistus tehdään
+  // palvelimella (server/index.js: saaLahettaa). Nappien sisällön muokkaus on erikseen
+  // Sovellusasetusten takana, koska se määrää kenelle viesti lähtee ja mitä siinä lukee.
+  { id: 'quickactions', label: 'Pikatoiminnot (hätäviestit)' },
   { id: 'settings', label: 'Sovellusasetukset' },
   { id: 'global_reports', label: 'Tallennetut raportit (kaikki tapahtumat)' },
   { id: 'global_archived_events', label: 'Tallennetut tapahtumat' },
@@ -987,6 +1088,7 @@ const GLOBAL_NODES = new Set([
   'global_reports',
   'global_archived_events',
   'global_employee_bank',
+  'quickactions',
 ]);
 
 function bucketFor(permissions, eventId, nodeId) {
@@ -1229,6 +1331,17 @@ export default function App() {
     setRevealedFields({});
   }, [openedReport]);
   const [showQuickActions, setShowQuickActions] = useState(false);
+
+  // Pikatoimintonapit. null = kokoelmaa ei ole vielä ladattu tai sitä ei ole koskaan
+  // tallennettu -> näytetään oletukset (sama päättely palvelimella, ks. sms.js:
+  // kaytossaOlevatNapit). Tyhjä taulukko on eri asia: kaikki napit on poistettu.
+  const [smsButtons, setSmsButtons] = useState<any[] | null>(null);
+  // BulkSMS-integraation tila: onko API-tunnukset asetettu ja paljonko saldoa jäljellä.
+  const [smsStatus, setSmsStatus] = useState<any>(null);
+  // Avoin lähetysikkuna: { nappi, runko, vastaanottajat, lataa, virhe, tulos, vahvistus }.
+  // null = ei auki. Vahvistus on erillinen vaihe, jotta massaviesti ei lähde yhdellä
+  // painalluksella vahingossa.
+  const [smsModal, setSmsModal] = useState<any>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
   // Overview Tab State
@@ -1912,6 +2025,152 @@ export default function App() {
     if (!readinessLoaded) return;
     tallennaKokoelma('readiness', readiness);
   }, [readiness, readinessLoaded]);
+
+  // Pikatoimintonapit. Tätä kokoelmaa EI tallenneta automaattisesti latauksen jälkeen
+  // kuten muita: napit muuttuvat vain asetuseditorissa, ja automaattitallennus kirjoittaisi
+  // oletusnapit levylle heti kun kuka tahansa avaa sovelluksen — myös käyttäjä jolla ei ole
+  // Sovellusasetusten muokkausoikeutta, jolloin hän näkisi turhan virhebannerin.
+  useEffect(() => {
+    fetch('/api/data/smsButtons', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && res.ok === true && Array.isArray(res.data)) setSmsButtons(res.data);
+      })
+      .catch(() => {
+        // Verkkovirhe: smsButtons jää null:iksi ja valikko näyttää oletusnapit. Lähetys
+        // toimii silti, koska palvelin ratkaisee napin omasta datastaan.
+      });
+  }, []);
+
+  // Käytössä olevat napit: tallennettu lista tai oletukset jos kokoelmaa ei ole.
+  const naytettavatNapit = Array.isArray(smsButtons) ? smsButtons : SMS_OLETUSNAPIT;
+
+  const tallennaNapit = async (uudet: any[]) => {
+    setSmsButtons(uudet);
+    // Palautusarvo kertoo onnistuiko palvelintallennus (ks. tallennaKokoelma): editori
+    // ei saa sulkeutua "valmiina" jos oikeudet eivät riittäneet tai yhteys katkesi.
+    return tallennaKokoelma('smsButtons', uudet, { allowEmpty: uudet.length === 0 });
+  };
+
+  // Asetusnäkymän nappieditori. Muokataan yksi nappi kerrallaan luonnoksena, jotta
+  // keskeneräinen viestipohja ei tallennu levylle (ja siis lähde napista) vahingossa.
+  const [smsButtonDraft, setSmsButtonDraft] = useState<any>(null);
+  const [smsButtonError, setSmsButtonError] = useState<string | null>(null);
+
+  const avaaNappiMuokkaus = (nappi: any) => {
+    setSmsButtonError(null);
+    setSmsButtonDraft({
+      ...nappi,
+      uusi: false,
+      // Numerolista muokataan tekstikenttänä (yksi per rivi) — se on kevyempi kuin
+      // dynaaminen rivilista eikä numeroita ole yleensä montaa.
+      customNumbersText: (nappi.customNumbers || []).join('\n'),
+    });
+  };
+
+  const avaaUusiNappi = () => {
+    setSmsButtonError(null);
+    setSmsButtonDraft({
+      id: `nappi-${Date.now()}`,
+      label: '',
+      group: 'checked_in',
+      body: '',
+      repliable: false,
+      style: 'neutral',
+      customNumbersText: '',
+      uusi: true,
+    });
+  };
+
+  const tallennaNappiLuonnos = async () => {
+    const d = smsButtonDraft;
+    if (!d) return;
+    if (!d.label.trim()) {
+      setSmsButtonError('Napille on annettava nimi.');
+      return;
+    }
+    const tietue = {
+      id: d.id,
+      label: d.label.trim(),
+      group: d.group,
+      body: d.body,
+      repliable: d.repliable === true,
+      style: d.style === 'danger' ? 'danger' : 'neutral',
+      customNumbers: d.group === 'custom'
+        ? d.customNumbersText.split('\n').map((r: string) => r.trim()).filter(Boolean)
+        : [],
+    };
+    // naytettavatNapit on tässä joko tallennettu lista tai oletukset: jos oletukset
+    // ovat vielä käytössä, ensimmäinen tallennus kirjoittaa ne levylle sellaisenaan
+    // muokattu nappi mukaan lukien — muuten muut oletusnapit katoaisivat.
+    const pohja = naytettavatNapit.map((n) => ({
+      id: n.id, label: n.label, group: n.group, body: n.body,
+      repliable: n.repliable === true, style: n.style, customNumbers: n.customNumbers || [],
+    }));
+    const uudet = d.uusi ? [...pohja, tietue] : pohja.map((n) => (n.id === d.id ? tietue : n));
+    const onnistui = await tallennaNapit(uudet);
+    if (onnistui !== false) setSmsButtonDraft(null);
+  };
+
+  const poistaNappi = async (nappi: any) => {
+    if (!window.confirm(`Poistetaanko pikatoimintonappi "${nappi.label}"?\n\nPoistoa ei voi perua.`)) return;
+    const pohja = naytettavatNapit.map((n) => ({
+      id: n.id, label: n.label, group: n.group, body: n.body,
+      repliable: n.repliable === true, style: n.style, customNumbers: n.customNumbers || [],
+    }));
+    await tallennaNapit(pohja.filter((n) => n.id !== nappi.id));
+    if (smsButtonDraft?.id === nappi.id) setSmsButtonDraft(null);
+  };
+
+  // Integraation tila haetaan vasta kun Pikatoiminnot-valikko avataan — saldokysely on
+  // ulkoinen HTTP-kutsu, eikä sitä ole syytä tehdä jokaisella sivunlatauksella.
+  const haeSmsTila = () => {
+    fetch('/api/sms/status', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => { if (res && res.ok === true) setSmsStatus(res); })
+      .catch(() => setSmsStatus(null));
+  };
+
+  // Avaa lähetysikkunan: hakee palvelimelta ketkä viestin saisivat ja valmiin
+  // viestirungon. Mitään ei lähde ennen kuin käyttäjä vahvistaa erikseen.
+  const avaaSmsLahetys = async (nappi: any) => {
+    setShowQuickActions(false);
+    setSmsModal({ nappi, runko: '', vastaanottajat: [], lataa: true, virhe: null, tulos: null, vahvistus: false });
+    try {
+      const params = new URLSearchParams({ buttonId: nappi.id, eventId: selectedEvent || '' });
+      const r = await fetch(`/api/sms/recipients?${params.toString()}`, { credentials: 'include' });
+      const res = await r.json().catch(() => null);
+      if (!r.ok || !res || res.ok !== true) {
+        setSmsModal((m: any) => (m ? { ...m, lataa: false, virhe: (res && res.error) || `Vastaanottajien haku epäonnistui (${r.status}).` } : m));
+        return;
+      }
+      setSmsModal((m: any) => (m ? { ...m, lataa: false, runko: res.runko || '', vastaanottajat: res.vastaanottajat || [] } : m));
+    } catch {
+      setSmsModal((m: any) => (m ? { ...m, lataa: false, virhe: 'Vastaanottajien haku epäonnistui: ei yhteyttä palvelimeen.' } : m));
+    }
+  };
+
+  const lahetaSmsViesti = async () => {
+    const nykyinen = smsModal;
+    if (!nykyinen) return;
+    setSmsModal({ ...nykyinen, lahettaa: true, virhe: null });
+    try {
+      const r = await fetch('/api/sms/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ buttonId: nykyinen.nappi.id, eventId: selectedEvent, body: nykyinen.runko }),
+      });
+      const res = await r.json().catch(() => null);
+      if (!r.ok || !res || res.ok !== true) {
+        setSmsModal((m: any) => (m ? { ...m, lahettaa: false, vahvistus: false, virhe: (res && res.error) || `Lähetys epäonnistui (${r.status}).` } : m));
+        return;
+      }
+      setSmsModal((m: any) => (m ? { ...m, lahettaa: false, tulos: res } : m));
+    } catch {
+      setSmsModal((m: any) => (m ? { ...m, lahettaa: false, vahvistus: false, virhe: 'Lähetys epäonnistui: ei yhteyttä palvelimeen.' } : m));
+    }
+  };
 
   // Avausvalmiuden lomakeluonnos synkataan tallennetusta tietueesta aina kun tapahtuma
   // vaihtuu tai data saapuu palvelimelta — mutta EI silloin kun `readiness` muuttuu:
@@ -9055,12 +9314,180 @@ export default function App() {
     </div>
   ) : null;
 
+  // Hätäviestin lähetysikkuna. Kolme vaihetta samassa modaalissa: esikatselu (ketkä
+  // saavat viestin, mitä siinä lukee), vahvistus ja lopputulos. Vahvistus on tarkoituksella
+  // erillinen klikkaus — massaviesti sadalle ihmiselle ei saa lähteä yhdellä painalluksella.
+  const smsLahetysModal = smsModal ? (() => {
+    const mitat = laskeViestinMitat(smsModal.runko);
+    const saajat = smsModal.vastaanottajat.filter((v: any) => v.ok);
+    const puuttuvat = smsModal.vastaanottajat.filter((v: any) => !v.ok);
+    const kuivaharjoittelu = smsStatus ? smsStatus.dryRun === true : true;
+    const voiLahettaa = !smsModal.lataa && !smsModal.lahettaa && saajat.length > 0 && smsModal.runko.trim() !== '';
+    const sulje = () => setSmsModal(null);
+
+    return (
+      <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={sulje}>
+        <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="flex justify-between items-center p-5 border-b border-slate-100 shrink-0">
+            <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2 min-w-0">
+              <Smartphone size={20} className="text-rose-500 shrink-0" />
+              <span className="truncate">{smsModal.nappi.label}</span>
+            </h2>
+            <button onClick={sulje} className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1 rounded-lg transition-colors shrink-0">
+              <X size={22} />
+            </button>
+          </div>
+
+          <div className="p-5 space-y-4 text-left overflow-y-auto">
+            {smsModal.lataa && <p className="text-sm text-slate-500">Haetaan vastaanottajia…</p>}
+
+            {smsModal.virhe && (
+              <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-3">{smsModal.virhe}</p>
+            )}
+
+            {/* Lopputulos: mitä oikeasti tapahtui. */}
+            {smsModal.tulos ? (
+              <>
+                <div className={`rounded-lg p-4 border ${smsModal.tulos.dryRun ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                  <p className={`text-sm font-bold ${smsModal.tulos.dryRun ? 'text-amber-800' : 'text-emerald-800'}`}>
+                    {smsModal.tulos.dryRun
+                      ? `Kuivaharjoittelu: ${smsModal.tulos.lahetetty} viestiä OLISI lähtenyt.`
+                      : `${smsModal.tulos.lahetetty} viestiä lähetetty.`}
+                  </p>
+                  <p className={`text-xs mt-1 ${smsModal.tulos.dryRun ? 'text-amber-700' : 'text-emerald-700'}`}>
+                    {smsModal.tulos.dryRun
+                      ? 'BulkSMS-API-tunnuksia ei ole asetettu palvelimelle, joten yhtään viestiä ei lähetetty eikä saldoa kulunut.'
+                      : `${smsModal.tulos.mitat?.osia || 1} viestiosaa per vastaanottaja (${smsModal.tulos.mitat?.encoding === 'UNICODE' ? 'Unicode' : 'GSM'}).`}
+                  </p>
+                </div>
+                {smsModal.tulos.ohitettu?.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Ei tavoitettu ({smsModal.tulos.ohitettu.length})</h4>
+                    <ul className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg divide-y divide-slate-200">
+                      {smsModal.tulos.ohitettu.map((v: any, i: number) => (
+                        <li key={i} className="px-3 py-2"><span className="font-medium">{v.nimi}</span> — {v.syy}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            ) : !smsModal.lataa && !smsModal.virhe && (
+              <>
+                {kuivaharjoittelu && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <strong>Kuivaharjoittelutila.</strong> BulkSMS-API-tunnuksia ei ole asetettu palvelimelle,
+                    joten lähetys kirjataan lokiin mutta yhtään tekstiviestiä ei lähde.
+                  </p>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Viesti</label>
+                  <textarea
+                    rows={4}
+                    value={smsModal.runko}
+                    onChange={(e) => setSmsModal((m: any) => (m ? { ...m, runko: e.target.value, vahvistus: false } : m))}
+                    className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                    placeholder="Kirjoita lähetettävä viesti…"
+                  />
+                  {/* Pituuslaskuri: usean osan viesti maksaa moninkertaisesti JA näkyy
+                      puhelimessa vasta kun kaikki osat ovat saapuneet. */}
+                  <p className={`text-xs mt-1 ${mitat.osia > 1 ? 'text-amber-600 font-medium' : 'text-slate-400'}`}>
+                    {mitat.pituus}/{mitat.osanRaja} merkkiä · {mitat.osia} viestiosa{mitat.osia === 1 ? '' : 'a'}
+                    {mitat.encoding === 'UNICODE' && ' · Unicode (erikoismerkki lyhentää viestin 70 merkkiin)'}
+                    {mitat.osia > 1 && ` · maksaa ${mitat.osia}× ja perillemeno hidastuu`}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Paikkamerkit: <code className="bg-slate-100 px-1 rounded">{'{tapahtuma}'}</code> ja{' '}
+                    <code className="bg-slate-100 px-1 rounded">{'{aika}'}</code>. Älä kirjoita viestiin henkilötunnuksia
+                    tai muuta arkaluontoista tietoa — tekstiviesti kulkee salaamattomassa televerkossa.
+                  </p>
+                </div>
+
+                <div>
+                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
+                    Vastaanottajat: {smsRyhmanLabel(smsModal.nappi.group)} ({saajat.length})
+                  </h4>
+                  {saajat.length === 0 ? (
+                    <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-3">
+                      Yhdelläkään vastaanottajalla ei ole kelvollista puhelinnumeroa — viestiä ei voi lähettää.
+                    </p>
+                  ) : (
+                    <ul className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg divide-y divide-slate-200 max-h-40 overflow-y-auto">
+                      {saajat.map((v: any, i: number) => (
+                        <li key={i} className="px-3 py-2 flex justify-between gap-2">
+                          <span className="truncate"><span className="font-medium text-slate-800">{v.nimi}</span>{v.rooli ? ` · ${v.rooli}` : ''}</span>
+                          <span className="font-mono text-slate-400 shrink-0">{v.numero}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                {puuttuvat.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1">
+                      Jää ilman viestiä ({puuttuvat.length})
+                    </h4>
+                    <ul className="text-xs text-slate-600 bg-amber-50 border border-amber-200 rounded-lg divide-y divide-amber-200 max-h-32 overflow-y-auto">
+                      {puuttuvat.map((v: any, i: number) => (
+                        <li key={i} className="px-3 py-2"><span className="font-medium">{v.nimi}</span> — {v.syy}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="p-5 border-t border-slate-100 flex justify-end gap-3 shrink-0">
+            {smsModal.tulos ? (
+              <button onClick={sulje} className="px-4 py-2 text-sm font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-lg transition-colors">
+                Sulje
+              </button>
+            ) : smsModal.vahvistus ? (
+              <>
+                <button
+                  onClick={() => setSmsModal((m: any) => (m ? { ...m, vahvistus: false } : m))}
+                  disabled={smsModal.lahettaa}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-60"
+                >
+                  Peruuta
+                </button>
+                <button
+                  onClick={lahetaSmsViesti}
+                  disabled={smsModal.lahettaa}
+                  className="px-4 py-2 text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors disabled:opacity-60"
+                >
+                  {smsModal.lahettaa ? 'Lähetetään…' : `Vahvista: lähetä ${saajat.length} viestiä`}
+                </button>
+              </>
+            ) : (
+              <>
+                <button onClick={sulje} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
+                  Peruuta
+                </button>
+                <button
+                  onClick={() => setSmsModal((m: any) => (m ? { ...m, vahvistus: true } : m))}
+                  disabled={!voiLahettaa}
+                  className="px-4 py-2 text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Lähetä {saajat.length} vastaanottajalle
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  })() : null;
+
   const globalOverlays = (
     <>
       {changePasswordModal}
       {pdfEsikatseluModal}
       {empUserModal}
       {jakoModal}
+      {smsLahetysModal}
       {saveErrorBanner}
     </>
   );
@@ -10672,6 +11099,238 @@ export default function App() {
               )}
             </div>
 
+            {/* ==================== PIKATOIMINTONAPIT (hätätekstiviestit) ==================== */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Smartphone size={18} className="text-rose-500" />
+                Pikatoiminnot (hätätekstiviestit)
+              </h3>
+              <p className="text-sm text-slate-500 mt-1 mb-5">
+                Yläpalkin Pikatoiminnot-valikon napit. Jokaiselle napille valitaan vastaanottajaryhmä
+                ja viestipohja. Vastaanottajat ratkaistaan aina sen tapahtuman mukaan, joka on auki —
+                sama nappi tavoittaa eri tapahtumassa eri ihmiset, joten nappeja ei tarvitse
+                määritellä tapahtumakohtaisesti.
+              </p>
+
+              {/* Integraation tila. Ilman API-tunnuksia kaikki napit ovat kuivaharjoittelua:
+                  toiminto toimii ja kirjautuu lokiin, mutta yhtään viestiä ei lähde. */}
+              <div className="mb-5">
+                {!smsStatus ? (
+                  <button
+                    type="button"
+                    onClick={haeSmsTila}
+                    className="text-sm font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+                  >
+                    Tarkista BulkSMS-yhteyden tila ja saldo
+                  </button>
+                ) : smsStatus.dryRun ? (
+                  <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <p className="font-bold">Kuivaharjoittelutila — viestit eivät lähde.</p>
+                    <p className="text-xs mt-1">
+                      Palvelimelle ei ole asetettu ympäristömuuttujia <code className="bg-amber-100 px-1 rounded">BULKSMS_TOKEN_ID</code> ja{' '}
+                      <code className="bg-amber-100 px-1 rounded">BULKSMS_TOKEN_SECRET</code>. Napit toimivat muuten
+                      normaalisti: vastaanottajat ratkaistaan, lähetys kirjataan audit-lokiin, mutta yhtään
+                      tekstiviestiä ei lähetetä eikä saldoa kulu.
+                    </p>
+                  </div>
+                ) : !smsStatus.saldoLuettu ? (
+                  <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-3">
+                    {smsStatus.virhe || 'BulkSMS-yhteyden tarkistus epäonnistui.'}
+                  </p>
+                ) : (
+                  <div className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                    <p className="font-bold">BulkSMS-yhteys kunnossa — napit lähettävät oikeita viestejä.</p>
+                    <p className="text-xs mt-1">
+                      Saldoa jäljellä {smsStatus.saldo === null ? '—' : Math.round(smsStatus.saldo)} yksikköä
+                      {typeof smsStatus.kiintioJaljella === 'number' && `, päivän kiintiöstä ${smsStatus.kiintioJaljella} viestiä`}.
+                      Yksi tavallinen viesti kuluttaa noin yhden yksikön per vastaanottaja.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                {naytettavatNapit.length === 0 && (
+                  <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    Yhtään nappia ei ole määritelty — Pikatoiminnot-valikko on tyhjä.
+                  </p>
+                )}
+
+                {naytettavatNapit.map((nappi) => {
+                  const mitat = laskeViestinMitat(nappi.body);
+                  return (
+                    <div key={nappi.id} className="border border-slate-200 rounded-xl p-4 bg-slate-50">
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                            {nappi.style === 'danger' && <AlertTriangle size={14} className="text-rose-500 shrink-0" />}
+                            <span className="truncate">{nappi.label}</span>
+                          </p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {smsRyhmanLabel(nappi.group)}
+                            {nappi.repliable && ' · vastattavissa'}
+                            {nappi.body
+                              ? ` · ${mitat.pituus} merkkiä, ${mitat.osia} viestiosa${mitat.osia === 1 ? '' : 'a'}`
+                              : ' · teksti kirjoitetaan lähetettäessä'}
+                          </p>
+                          {nappi.body && (
+                            <p className="text-xs text-slate-600 mt-2 bg-white border border-slate-200 rounded-lg p-2 font-mono leading-snug">
+                              {nappi.body}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => avaaNappiMuokkaus(nappi)}
+                            className="text-xs font-medium text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded transition-colors"
+                          >
+                            Muokkaa
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => poistaNappi(nappi)}
+                            className="text-xs font-medium text-rose-600 hover:text-rose-800 px-2 py-1 rounded transition-colors"
+                          >
+                            Poista
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {!smsButtonDraft && (
+                <button
+                  type="button"
+                  onClick={avaaUusiNappi}
+                  className="mt-4 px-4 py-2 text-sm font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <PlusCircle size={16} />
+                  Lisää nappi
+                </button>
+              )}
+
+              {smsButtonDraft && (
+                <div className="mt-5 pt-5 border-t border-slate-100 space-y-4">
+                  <h4 className="text-sm font-bold text-slate-700">
+                    {smsButtonDraft.uusi ? 'Uusi pikatoimintonappi' : `Muokataan: ${smsButtonDraft.label || '(nimetön)'}`}
+                  </h4>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Napin nimi</label>
+                    <input
+                      type="text"
+                      value={smsButtonDraft.label}
+                      onChange={(e) => setSmsButtonDraft((d: any) => ({ ...d, label: e.target.value }))}
+                      className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                      placeholder="esim. Kaikkien alueiden evakuointi"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Vastaanottajat</label>
+                    <select
+                      value={smsButtonDraft.group}
+                      onChange={(e) => setSmsButtonDraft((d: any) => ({ ...d, group: e.target.value }))}
+                      className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                    >
+                      {SMS_RYHMAT.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                    </select>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {SMS_RYHMAT.find((r) => r.id === smsButtonDraft.group)?.selite}
+                    </p>
+                  </div>
+
+                  {smsButtonDraft.group === 'custom' && (
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Numerot (yksi per rivi)</label>
+                      <textarea
+                        rows={3}
+                        value={smsButtonDraft.customNumbersText}
+                        onChange={(e) => setSmsButtonDraft((d: any) => ({ ...d, customNumbersText: e.target.value }))}
+                        className="w-full rounded-lg border-slate-300 border p-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500"
+                        placeholder={'040 123 4567\n+358 50 987 6543'}
+                      />
+                      <p className="text-xs text-slate-400 mt-1">
+                        Suomalaiset numerot muunnetaan automaattisesti kansainväliseen muotoon. Numerot joita
+                        ei voi tulkita näytetään lähetysikkunassa virheenä eikä niihin lähetetä mitään.
+                      </p>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Viestipohja</label>
+                    <textarea
+                      rows={3}
+                      value={smsButtonDraft.body}
+                      onChange={(e) => setSmsButtonDraft((d: any) => ({ ...d, body: e.target.value }))}
+                      className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Jätä tyhjäksi jos teksti kirjoitetaan aina lähetettäessä."
+                    />
+                    {(() => {
+                      const mitat = laskeViestinMitat(smsButtonDraft.body);
+                      return (
+                        <p className={`text-xs mt-1 ${mitat.osia > 1 ? 'text-amber-600 font-medium' : 'text-slate-400'}`}>
+                          {mitat.pituus}/{mitat.osanRaja} merkkiä · {mitat.osia} viestiosa{mitat.osia === 1 ? '' : 'a'}
+                          {mitat.encoding === 'UNICODE' && ' · erikoismerkki pudottaa rajan 70 merkkiin'}
+                          {mitat.osia > 1 && ' · usean osan viesti maksaa moninkertaisesti ja tulee perille hitaammin'}
+                        </p>
+                      );
+                    })()}
+                    <p className="text-xs text-slate-400 mt-1">
+                      Paikkamerkit: <code className="bg-slate-100 px-1 rounded">{'{tapahtuma}'}</code> ja{' '}
+                      <code className="bg-slate-100 px-1 rounded">{'{aika}'}</code>. Aloita viesti tunnisteella
+                      (esim. "TURVAJOHTO:"), koska lähettäjänä näkyy numero — aakkosnumeerinen lähettäjätunnus
+                      vaatii Traficomin rekisteröinnin, joka astuu voimaan vasta kolmen kuukauden kuluttua.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-5">
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={smsButtonDraft.style === 'danger'}
+                        onChange={(e) => setSmsButtonDraft((d: any) => ({ ...d, style: e.target.checked ? 'danger' : 'neutral' }))}
+                        className="rounded border-slate-300"
+                      />
+                      Korosta punaisena (hätätoiminto)
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={smsButtonDraft.repliable === true}
+                        onChange={(e) => setSmsButtonDraft((d: any) => ({ ...d, repliable: e.target.checked }))}
+                        className="rounded border-slate-300"
+                      />
+                      Vastattavissa (työntekijä voi kuitata viestiin)
+                    </label>
+                  </div>
+
+                  {smsButtonError && <p className="text-sm text-rose-600">{smsButtonError}</p>}
+
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setSmsButtonDraft(null); setSmsButtonError(null); }}
+                      className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                    >
+                      Peruuta
+                    </button>
+                    <button
+                      type="button"
+                      onClick={tallennaNappiLuonnos}
+                      className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
+                    >
+                      <CheckCircle size={18} />
+                      Tallenna nappi
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
               <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                 <HardDrive size={18} className="text-indigo-500" />
@@ -10967,6 +11626,9 @@ export default function App() {
       force_logout: 'Pakotti uloskirjautumaan',
       password_change: 'Vaihtoi salasanan',
       user_password_set: 'Asetti käyttäjän salasanan',
+      sms_send: 'Lähetti hätäviestin',
+      sms_dryrun: 'Hätäviesti (kuivaharjoittelu)',
+      sms_failed: 'Hätäviestin lähetys epäonnistui',
     };
     const collectionLabels = {
       checkins: 'Sisäänkirjaukset',
@@ -10974,8 +11636,11 @@ export default function App() {
       events: 'Tapahtumat',
       riskAssessments: 'Riskiarviot',
       employees: 'Työntekijäpankki',
+      smsButtons: 'Pikatoiminnot',
     };
-    const isFailedLogin = (a) => a === 'login_failed';
+    // Korostettavat rivit: epäonnistunut kirjautuminen ja epäonnistunut hätäviesti ovat
+    // molemmat asioita jotka lokia selaavan pitää huomata heti.
+    const korostaVirheena = (a: string) => a === 'login_failed' || a === 'sms_failed';
     const targetLabel = (e) => {
       if (e.collection) {
         const label = collectionLabels[e.collection] || e.collection;
@@ -11105,11 +11770,11 @@ export default function App() {
                       ) : auditEntries.length === 0 ? (
                         <tr><td colSpan={5} className="p-8 text-center text-sm text-slate-500">Ei lokirivejä.</td></tr>
                       ) : auditEntries.map((e, i) => (
-                        <tr key={i} className={`hover:bg-slate-50 transition-colors ${isFailedLogin(e.action) ? 'bg-rose-50/50' : ''}`}>
+                        <tr key={i} className={`hover:bg-slate-50 transition-colors ${korostaVirheena(e.action) ? 'bg-rose-50/50' : ''}`}>
                           <td className="p-4 text-slate-500 text-xs whitespace-nowrap">{new Date(e.ts).toLocaleString('fi-FI')}</td>
                           <td className="p-4 font-mono text-xs text-slate-700">{e.user || '—'}</td>
                           <td className="p-4">
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isFailedLogin(e.action) ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${korostaVirheena(e.action) ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
                               {actionLabels[e.action] || e.action}
                             </span>
                           </td>
@@ -12500,55 +13165,83 @@ export default function App() {
         </div>
         <div className="flex items-center gap-4 sm:gap-6">
           
-          {/* Pikatoiminnot -ponnahdusvalikko */}
+          {/* Pikatoiminnot -ponnahdusvalikko. Napit tulevat smsButtons-kokoelmasta
+              (Sovellusasetukset -> Pikatoiminnot), eivät enää koodista. Valikko näkyy
+              näkyvyysoikeudella, mutta LÄHETYS vaatii muokkausoikeuden — sama tarkistus
+              tehdään palvelimella (server/index.js: saaLahettaa), tämä suodattaa vain
+              käyttöliittymän. */}
+          {(isAdminUser || canView(perms, null, 'quickactions')) && (
           <div className="relative">
-            <button 
-              onClick={() => setShowQuickActions(!showQuickActions)}
+            <button
+              onClick={() => { const auki = !showQuickActions; setShowQuickActions(auki); if (auki && !smsStatus) haeSmsTila(); }}
               className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors shadow-sm"
             >
               <AlertTriangle size={16} />
               <span className="hidden sm:inline">Pikatoiminnot</span>
             </button>
-            
+
             {showQuickActions && (
               <div className="absolute right-0 mt-3 w-80 bg-slate-800 rounded-xl shadow-xl border border-slate-700 p-5 z-50 animate-in fade-in slide-in-from-top-2">
-                <div className="flex justify-end mb-3">
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-2">
+                    <Smartphone size={14} />
+                    Hätätekstiviestit
+                  </span>
                   <button onClick={() => setShowQuickActions(false)} className="text-slate-400 hover:text-white transition-colors">
                     <X size={18} />
                   </button>
                 </div>
 
-                <div className="space-y-5">
-                  <button className="w-full py-4 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg transition-colors flex justify-center items-center gap-2 shadow-sm text-center leading-tight">
-                    <AlertTriangle size={20} className="shrink-0" />
-                    KAIKKIEN ALUEIDEN EVAKUOINTI
-                  </button>
+                {/* Integraation tila näkyy ENNEN painallusta: käyttäjän on tiedettävä
+                    lähteekö napista oikea viesti vai onko kyseessä kuivaharjoittelu. */}
+                {smsStatus && smsStatus.dryRun && (
+                  <p className="text-[11px] text-amber-300 bg-amber-950/50 border border-amber-800 rounded-lg p-2 mb-3 leading-snug">
+                    Kuivaharjoittelutila: API-tunnuksia ei ole asetettu, viestit eivät lähde.
+                  </p>
+                )}
+                {smsStatus && smsStatus.konfiguroitu && typeof smsStatus.saldo === 'number' && smsStatus.saldo < 1000 && (
+                  <p className="text-[11px] text-amber-300 bg-amber-950/50 border border-amber-800 rounded-lg p-2 mb-3 leading-snug">
+                    Saldoa jäljellä {Math.round(smsStatus.saldo)} viestiä — täydennä ennen tapahtumaa.
+                  </p>
+                )}
 
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2">
-                      <PhoneCall size={14} />
-                      Yhteys viranomaisiin
-                    </h4>
-                    <div className="grid grid-cols-3 gap-2">
-                      <button className="py-3 px-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors border border-slate-600 leading-tight">
-                        Oma Turva
+                {!(isAdminUser || canEdit(perms, null, 'quickactions')) ? (
+                  <p className="text-xs text-slate-400 leading-snug">
+                    Sinulla ei ole oikeutta lähettää hätäviestejä. Ota yhteys turvallisuuspäällikköön.
+                  </p>
+                ) : naytettavatNapit.length === 0 ? (
+                  <p className="text-xs text-slate-400 leading-snug">
+                    Yhtään pikatoimintonappia ei ole määritelty. Ne lisätään Sovellusasetuksista.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {naytettavatNapit.map((nappi) => (
+                      <button
+                        key={nappi.id}
+                        onClick={() => avaaSmsLahetys(nappi)}
+                        className={`w-full py-3 px-4 text-white font-bold rounded-lg transition-colors flex items-center gap-2 shadow-sm text-left leading-tight ${
+                          nappi.style === 'danger'
+                            ? 'bg-rose-600 hover:bg-rose-700'
+                            : 'bg-slate-700 hover:bg-slate-600 border border-slate-600 font-medium'
+                        }`}
+                      >
+                        {nappi.style === 'danger'
+                          ? <AlertTriangle size={18} className="shrink-0" />
+                          : <PhoneCall size={16} className="shrink-0 text-slate-400" />}
+                        <span className="min-w-0">
+                          {nappi.label}
+                          <span className="block text-[11px] font-normal text-slate-300/80">
+                            {smsRyhmanLabel(nappi.group)}
+                          </span>
+                        </span>
                       </button>
-                      <button className="py-3 px-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors border border-slate-600 leading-tight">
-                        Turva + VIRA
-                      </button>
-                      <button className="py-3 px-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors border border-slate-600 leading-tight">
-                        Varautumis&shy;tilanne
-                      </button>
-                    </div>
+                    ))}
                   </div>
-
-                  <button className="w-full py-3 px-4 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors flex justify-center items-center gap-2">
-                    <Layers size={18} /> Lähetä toimintaohjeita
-                  </button>
-                </div>
+                )}
               </div>
             )}
           </div>
+          )}
 
           <button
             onClick={() => { setSelectedEvent(null); setShowEventPicker(true); setShowQuickActions(false); }}
