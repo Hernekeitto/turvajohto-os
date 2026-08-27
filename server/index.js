@@ -36,6 +36,7 @@ import {
 } from './shares.js';
 import {
   COLLECTION_NAMES,
+  collectionTuote,
   readableData,
   authorizeWrite,
   canReadAttachment,
@@ -350,10 +351,22 @@ const UPLOAD_VIITTAAJAT = {
   eventFiles: (arr) => (Array.isArray(arr) ? arr : []).map((f) => f?.uploadId).filter(Boolean),
 };
 
+// Tuoteportti: kokoelma joka kuuluu vain toiselle puolelle (esim. guardSites) on
+// kokonaan saavuttamaton tunnukselta jolla ei ole pääsyä sinne — riippumatta siitä mitä
+// sivukartta-oikeudet sanovat. Tämä on se oikea portti; käyttöliittymän esto
+// (PasswordGate) on vain kohteliaisuus ja ohitettavissa curlilla.
+function tuoteEstaa(req, name) {
+  const tuote = collectionTuote(name);
+  return tuote !== null && !(req.tuotteet || []).includes(tuote);
+}
+
 app.get('/api/data/:name', requireAuth, (req, res) => {
   const { name } = req.params;
   if (!KNOWN_COLLECTIONS.includes(name)) {
     return res.status(404).json({ ok: false, error: 'Tuntematon kokoelma.' });
+  }
+  if (tuoteEstaa(req, name)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän tiedon lukemiseen.' });
   }
   const result = readableData(req.role, req.permissions, req.eventAccess, name, readCollection(name));
   if (!result.ok) {
@@ -371,6 +384,9 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   const { name } = req.params;
   if (!KNOWN_COLLECTIONS.includes(name)) {
     return res.status(404).json({ ok: false, error: 'Tuntematon kokoelma.' });
+  }
+  if (tuoteEstaa(req, name)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän tiedon muokkaamiseen.' });
   }
   if (!Array.isArray(req.body)) {
     return res.status(400).json({ ok: false, error: 'Odotettiin taulukkoa.' });

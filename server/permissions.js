@@ -27,6 +27,10 @@ export const DEFAULT_BUCKET = '__default__';
 // asetuksesta riippumatta siitä minkä tapahtuman kontekstissa tarkistus tehdään.
 const GLOBAL_NODES = new Set([
   'landing',
+  // GUARD-puolen kohdevalitsin vastaa tapahtumapuolen 'landing'-solmua: "kuka näkee
+  // kohdelistan" ei ole järkevää asettaa kohdekohtaisesti, koska ilman listaa ei pääse
+  // yhteenkään kohteeseen.
+  'guard_sites',
   'settings',
   'global_reports',
   'global_archived_events',
@@ -194,6 +198,18 @@ const COLLECTIONS = {
     eventScoped: true,
     eventIdOf: (item) => item?.id,
   },
+  // --- Turvajohto GUARD ---
+  // Kohteet käyttäytyvät kuten tapahtumat: luonti ja muokkaus tehdään kohdevalitsimesta,
+  // ja kohteen id on se avain jolla käyttäjä rajataan tiettyihin kohteisiin (eventAccess).
+  // tuote: 'guard' estää kokoelman kokonaan tunnuksilta joilla ei ole GUARD-pääsyä —
+  // ilman tätä käyttöliittymän esto olisi ohitettavissa suoralla API-kutsulla.
+  guardSites: {
+    view: ['guard_sites'],
+    touch: () => ['guard_sites'],
+    eventScoped: true,
+    eventIdOf: (item) => item?.id,
+    tuote: 'guard',
+  },
   checkins: {
     view: ['overview', 'tike_form_in', 'tike_form_out', 'tike_form_jvaction', 'planning_employees', 'global_archived_events'],
     // Ei tietuekohtaista erottelua mahdollista (ei typeId-kenttää) — samat kolme solmua
@@ -249,6 +265,14 @@ const COLLECTIONS = {
 };
 
 export const COLLECTION_NAMES = Object.keys(COLLECTIONS);
+
+// Mihin tuotteeseen kokoelma kuuluu ('guard'), tai null jos se on yhteinen tai kuuluu
+// tapahtumapuolelle. Reitit käyttävät tätä porttina ENNEN oikeustarkistusta: käyttäjä jolla
+// ei ole pääsyä puolelle ei saa nähdä sen dataa vaikka sivukartta-oikeudet sattuisivat
+// olemaan kunnossa.
+export function collectionTuote(name) {
+  return COLLECTIONS[name]?.tuote || null;
+}
 
 // Palauttaa GET:in käyttäjälle näkyvän datan, tai null jos kokoelmaan ei ole minkäänlaista
 // oikeutta (-> 403). Tapahtumasidotuille kokoelmille (checkins/reports/riskAssessments/

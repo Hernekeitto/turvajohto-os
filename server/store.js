@@ -33,6 +33,13 @@ const COLLECTIONS = {
   smsLog: 'smsLog.json',
   // Työntekijöiden vastaukset hätäviesteihin (Two-Way SMS). Sama: vain palvelin kirjoittaa.
   smsReplies: 'smsReplies.json',
+  // --- Turvajohto GUARD ---
+  // Vartiointikohteet. Rakenteellisesti sama kuin events: pitkäkestoinen kokonaisuus jolla
+  // on omat työntekijänsä, kirjauksensa ja oikeutensa. Siksi kohteen id toimii samana
+  // oikeusavaimena kuin tapahtuman id (ks. permissions.js: eventScoped) — vain
+  // käyttöliittymän nimi on eri. Oma kokoelmansa eikä events, jotta tapahtumapuoli ei näe
+  // kohteita listoissaan eikä olemassa olevaa dataa tarvitse migratoida.
+  guardSites: 'guardSites.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain

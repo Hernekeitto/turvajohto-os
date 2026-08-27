@@ -16,6 +16,7 @@ import { Ylapalkki, YlapalkkiLogo } from './shared/komponentit/Ylapalkki';
 import { TakaisinLinkki } from './shared/komponentit/TakaisinLinkki';
 import { SitemapPermissionRow } from './shared/komponentit/SitemapPermissionRow';
 import { AlertBanner } from './shared/komponentit/AlertBanner';
+import { SITEMAP_GUARD } from './guard/sivukartta';
 import {
   AlertTriangle, 
   ShieldCheck, 
@@ -10642,7 +10643,26 @@ export default function App() {
                           <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-32">Muokattavissa</span>
                         </div>
                         <div className="bg-white divide-y divide-slate-50 max-h-[28rem] overflow-y-auto">
+                          {/* Molempien puolien sivukartat samassa listassa, omien
+                              otsikoidensa alla: sama käyttäjätaso voi kattaa kummankin
+                              puolen, ja ilman otsikoita ei näkisi kumpaan sivu kuuluu. */}
+                          <div className="px-3 py-2 bg-sunken text-xs font-bold text-ink-muted uppercase tracking-wide">
+                            Turvajohto EVENT
+                          </div>
                           {SITEMAP.map((node) => (
+                            <SitemapPermissionRow
+                              key={node.id}
+                              node={node}
+                              depth={0}
+                              permDraft={roleDraft}
+                              onToggle={vaihdaTasoOikeus}
+                              onCascade={vaihdaTasoOikeusRekursiivisesti}
+                            />
+                          ))}
+                          <div className="px-3 py-2 bg-sunken text-xs font-bold text-ink-muted uppercase tracking-wide">
+                            Turvajohto GUARD
+                          </div>
+                          {SITEMAP_GUARD.map((node) => (
                             <SitemapPermissionRow
                               key={node.id}
                               node={node}
