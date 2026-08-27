@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSession } from './SessionContext';
+// Jaetut apurit (ks. src/shared/). Nämä olivat aiemmin tässä tiedostossa, mutta ne eivät
+// koske App-komponentin tilaan ja GUARD-puoli tarvitsee ne samoina.
+import { TUNNISTE_ALKU, seuraavaTunnisteNumero, muotoileTunniste, taydennaTunnisteet } from './shared/tunnisteet';
+import { kayttajatunnusNimesta, splitFullName, buildFullName } from './shared/nimet';
+import { paikallinenPaiva, yhdistaPaivaJaAika, muotoileLaskuri, muotoileKirjautumisaika } from './shared/ajat';
+import { muotoileEuro, muotoileTavut, laskeKokonaispalkka, isValidPasswordClient } from './shared/muotoilu';
 import {
   AlertTriangle, 
   ShieldCheck, 
@@ -139,106 +145,6 @@ const emptyEmpForm = {
   languages: [],
 };
 
-// Vanha data tunsi työntekijän vain yhtenä "Sukunimi Etunimi ToisetNimet" -merkkijonona
-// (`name`). Uusi lomake kerää etu- ja sukunimen erikseen, mutta koko sovellus (haut,
-// sisäänkirjaukset, näytöt) tunnistaa työntekijän edelleen tällä samalla yhdistetyllä
-// nimellä, joten se lasketaan aina tallennettaessa eikä sitä koskaan muokata suoraan.
-// Tunnistenumerot alkavat #1000:sta. Numero on henkilön PYSYVÄ tunniste: se annetaan
-// työntekijäpankissa kerran eikä sitä muuteta, koska tallennetut raportit viittaavat
-// siihen kirjaajatiedossaan ("Ensiapu 1 #1028").
-const TUNNISTE_ALKU = 1000;
-
-// Seuraava vapaa tunnistenumero. Otetaan suurin käytössä oleva + 1 sekä työntekijöistä
-// ETTÄ käyttäjätunnuksista: pelkkä työntekijälista ei riitä, koska työntekijän poisto
-// vapauttaisi hänen numeronsa uudelleenkäyttöön ja kaksi eri henkilöä päätyisi samaan
-// numeroon jo tallennetuissa raporteissa.
-const seuraavaTunnisteNumero = (tyontekijat = [], kayttajat = []) => {
-  const numerot = [
-    ...tyontekijat.map((e) => e?.displayId),
-    ...kayttajat.map((u) => u?.displayId),
-  ]
-    .map((n) => parseInt(String(n ?? ''), 10))
-    .filter((n) => Number.isFinite(n));
-  return (numerot.length ? Math.max(...numerot) : TUNNISTE_ALKU - 1) + 1;
-};
-
-const muotoileTunniste = (numero) => (numero ? `#${numero}` : '');
-
-// Täydentää puuttuvat tunnistenumerot juoksevasti. Ennen tätä ominaisuutta tallennetuilla
-// työntekijöillä ei ole numeroa lainkaan, ja numero on pakollinen jotta kirjaaja voidaan
-// yksilöidä raporteissa. Jo annettuun numeroon ei kosketa koskaan.
-const taydennaTunnisteet = (tyontekijat) => {
-  if (!Array.isArray(tyontekijat)) return tyontekijat;
-  let seuraava = seuraavaTunnisteNumero(tyontekijat);
-  return tyontekijat.map((e) => {
-    const nykyinen = parseInt(String(e?.displayId ?? ''), 10);
-    if (Number.isFinite(nykyinen)) return e;
-    return { ...e, displayId: seuraava++ };
-  });
-};
-
-// Käyttäjätunnus johdetaan aina nimestä muodossa sukunimi_etunimi. Ääkköset korvataan,
-// koska tunnusta käytetään myös URL-poluissa (/api/users/:username).
-const kayttajatunnusNimesta = (form) => {
-  const siisti = (osa) =>
-    String(osa || '')
-      .trim()
-      .toLowerCase()
-      .replace(/[äå]/g, 'a')
-      .replace(/ö/g, 'o')
-      .replace(/[^a-z0-9]+/g, '')
-      .trim();
-  // Vain ensimmäinen etunimi: "Elli Marja Orvokki" -> "elli".
-  const etunimi = siisti(String(form?.firstName || '').trim().split(/\s+/)[0]);
-  const sukunimi = siisti(form?.lastName);
-  if (!etunimi || !sukunimi) return '';
-  return `${sukunimi}_${etunimi}`;
-};
-
-// Tämän päivän päivämäärä <input type="date">-kenttään sopivassa muodossa (YYYY-MM-DD).
-// toISOString() yksin antaisi UTC-päivän, joka on Suomen aikaa illalla jo eri vuorokausi.
-const paikallinenPaiva = (d = new Date()) =>
-  new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
-
-// Työsopimuksen palkkarivien summaus. Pilkku hyväksytään desimaalierottimena, koska
-// suomalainen näppäilee palkan muodossa "12,45".
-const euroLuku = (arvo: unknown) => {
-  const n = parseFloat(String(arvo ?? '').replace(',', '.').replace(/\s/g, ''));
-  return Number.isFinite(n) ? n : 0;
-};
-
-// Kokonaispalkka työsopimuslomakkeelle.
-//
-// HUOM tulkinta: "Henkilökohtainen palkka (jos sovittu)" KORVAA tasopalkan ja
-// henkilökohtaisen palkanosan summan silloin kun se on täytetty — TES:n tasopalkka on
-// vähimmäispalkka, ja erikseen sovittu henkilökohtainen palkka sovitaan sen tilalle
-// eikä sen päälle. "Muu palkka" lisätään aina päälle. Laskenta näytetään lomakkeella
-// auki (ks. Palkkaus-lohko), jotta virheellinen tulkinta huomataan heti.
-const laskeKokonaispalkka = (form: any) => {
-  const tasopalkka = euroLuku(form?.basePay);
-  const hlokohtainenOsa = euroLuku(form?.personalPayPart);
-  const hlokohtainenPalkka = euroLuku(form?.personalPay);
-  const muuPalkka = euroLuku(form?.otherPay);
-  const pohja = hlokohtainenPalkka > 0 ? hlokohtainenPalkka : tasopalkka + hlokohtainenOsa;
-  const kuukaudessa = pohja + muuPalkka;
-  const jakaja = euroLuku(form?.hourDivisor);
-  return {
-    kuukaudessa,
-    tunnissa: jakaja > 0 ? kuukaudessa / jakaja : 0,
-    // Kertoo kumpi laskutapa oli käytössä, jotta lomake voi selittää sen käyttäjälle.
-    korvaava: hlokohtainenPalkka > 0,
-  };
-};
-
-const muotoileEuro = (arvo: number, desimaalit = 2) =>
-  arvo.toLocaleString('fi-FI', { minimumFractionDigits: desimaalit, maximumFractionDigits: desimaalit });
-
-const splitFullName = (name) => {
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-  return { lastName: parts[0] || '', firstName: parts.slice(1).join(' ') };
-};
-const buildFullName = (form) => `${(form.lastName || '').trim()} ${(form.firstName || '').trim()}`.trim();
-
 // Muodostaa lomaketilan olemassa olevasta rekisterimerkinnästä (tai pelkästä nimestä),
 // ja täydentää etu-/sukunimen vanhasta datasta jos niitä ei ole vielä tallennettu erikseen.
 const employeeToFormState = (emp) => {
@@ -262,10 +168,6 @@ const employeeToFormState = (emp) => {
 // pelkkä kortin numero kelpaa myös (ks. employeeToFormState: vanha data).
 const onKortti = (emp: any, boolKey: string, numKey: string) => !!(emp?.[boolKey] || emp?.[numKey]);
 
-// Sama sääntö kuin palvelimella (server/index.js) — tämä on vain välitöntä
-// käyttäjäpalautetta varten, palvelin on todellinen portti.
-const isValidPasswordClient = (pw) =>
-  typeof pw === 'string' && pw.length >= 10 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /[0-9]/.test(pw);
 
 const initialEmployees = mockEmployees.map((name, idx) => ({
   ...emptyEmpForm,
@@ -623,23 +525,6 @@ const tapahtumanPoistoaikataulu = (tapahtuma: any, raportit: any[], nyt = new Da
   };
 };
 
-// Kirjautumishetki aloitussivulle. Aiemmin tässä juoksi kello (formatTime(currentTime)),
-// joka näytti kellonajalta mutta kertoi vain nykyhetken — ei siis mitään istunnosta.
-const muotoileKirjautumisaika = (iso?: string | null) => {
-  if (!iso) return 'ei tiedossa';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return 'ei tiedossa';
-  return d.toLocaleString('fi-FI', {
-    day: 'numeric', month: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
-};
-
-const muotoileTavut = (tavua: number) => {
-  if (!Number.isFinite(tavua)) return '—';
-  const gb = tavua / (1024 * 1024 * 1024);
-  if (gb >= 1) return `${gb.toFixed(1)} GB`;
-  return `${(tavua / (1024 * 1024)).toFixed(0)} MB`;
-};
 
 // Poikkeamiksi laskettavat kirjaustyypit
 // 'jvreport' = järjestyksenvalvojan tapahtumailmoitus (LYTP). Se on poikkeama samalla
@@ -697,27 +582,6 @@ const READINESS_CHECKS = [
 
 const tyhjatKuittaukset = () => Object.fromEntries(READINESS_CHECKS.map((i) => [i.key, false]));
 
-// Yhdistää <input type="date"> ja <input type="time"> -arvot paikalliseksi aikaleimaksi.
-// Palauttaa null jos kumpikaan ei kelpaa — kutsuja päättää mitä puuttuvalle ajalle tehdään.
-const yhdistaPaivaJaAika = (pvm?: string, klo?: string) => {
-  if (!pvm || !klo) return null;
-  const [v, kk, pv] = String(pvm).split('-').map(Number);
-  const [t, min] = String(klo).split(':').map(Number);
-  if ([v, kk, pv, t, min].some((n) => !Number.isFinite(n))) return null;
-  const d = new Date(v, kk - 1, pv, t, min, 0, 0);
-  return Number.isNaN(d.getTime()) ? null : d;
-};
-
-// Laskurin esitysmuoto: "2 pv 04:31:12" tai "04:31:12" kun alle vuorokausi.
-// Ottaa itseisarvon, joten samaa funktiota voi käyttää myös ylitetylle ajalle.
-const muotoileLaskuri = (ms: number) => {
-  const sekunnit = Math.floor(Math.abs(ms) / 1000);
-  const paivat = Math.floor(sekunnit / 86400);
-  const kello = [Math.floor((sekunnit % 86400) / 3600), Math.floor((sekunnit % 3600) / 60), sekunnit % 60]
-    .map((n) => String(n).padStart(2, '0'))
-    .join(':');
-  return paivat > 0 ? `${paivat} pv ${kello}` : kello;
-};
 
 // trend/trendUp ovat valinnaisia: yksikään nykyinen kortti ei käytä niitä, ja
 // ilman oletusarvoja TypeScript vaatisi ne jokaiselta kutsupaikalta.
