@@ -42,7 +42,7 @@ import {
   canUploadAttachment,
   canEdit,
 } from './permissions.js';
-import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti } from './bulksms.js';
+import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti, parsiJson } from './bulksms.js';
 import { kaytossaOlevatNapit, ratkaiseVastaanottajat, taytaPaikkamerkit } from './sms.js';
 import { lisaaJonoon, otaKasittelyyn, kuittaaKasitellyksi, jononPituus } from './smsqueue.js';
 import { salaisuusTasmaa, tulkitseTapahtuma, soveltaTilaraportit, soveltaVastaukset } from './smswebhook.js';
@@ -77,7 +77,16 @@ if (!JWT_SECRET) {
 
 const app = express();
 app.set('trust proxy', 1); // nginx on edessä
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({
+  limit: '5mb',
+  // Webhook-kuorman raakateksti talteen: BulkSMS:n viesti-id:t ovat niin suuria että
+  // tavallinen JSON.parse pyöristää ne (ks. bulksms.js: parsiJson). Kuorma jäsennetään
+  // reitillä uudelleen raakatekstistä. Rajaus polkuun pitää muistinkäytön ennallaan
+  // kaikilla muilla reiteillä, joilla tätä ei tarvita.
+  verify: (req, res, buf) => {
+    if (req.url && req.url.startsWith('/api/webhooks/')) req.rawBody = buf.toString('utf8');
+  },
+}));
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -1371,11 +1380,19 @@ app.post('/api/webhooks/bulksms', webhookLimiter, (req, res) => {
   // Jonoon ja heti 200 OK. Rungon sisältöä EI tulkita tässä: BulkSMS vaatii vastauksen
   // alle 30 sekunnissa, ja kuittausryöpyn aikana jokainen synkroninen kokoelmapäivitys
   // kasvattaisi vastausaikaa kunnes osa raporteista aikakatkeaisi.
+  // Kuorma jäsennetään raakatekstistä eikä oteta req.bodystä: express.json on jo
+  // pyöristänyt viesti-id:t (ks. bulksms.js: parsiJson). Jos raakatekstiä ei jostain
+  // syystä ole, req.body on parempi kuin ei mitään.
+  const kuorma = req.rawBody ? parsiJson(req.rawBody) : (req.body ?? null);
+
   const lisatty = lisaaJonoon({
     event: req.get('X-BulkSMS-Event') || null,
     webhookId: req.get('X-BulkSMS-Webhook-Id') || null,
+    // Toimitusyritysten numero kertoo uusinnoista: jos tämä kasvaa, päätepiste ei ole
+    // ehtinyt vastata ajoissa aiemmilla kerroilla.
+    yritys: req.get('X-BulkSMS-Delivery-Attempt') || null,
     saapui: new Date().toISOString(),
-    payload: req.body ?? null,
+    payload: kuorma,
   });
   if (!lisatty) {
     // 503 (ei 400): BulkSMS tulkitsee tämän tilapäiseksi häiriöksi ja yrittää uudelleen.
@@ -1396,6 +1413,14 @@ function kasitteleWebhookJono() {
   let logMuuttui = false;
   let uusiaVastauksia = 0;
 
+  // Käsittelemättä jääneet tapahtumat kerätään ja lokitetaan silmukan jälkeen.
+  //
+  // Aiemmin tuntematon tapahtuma ohitettiin TÄYSIN hiljaa: ei lokia, ei audit-merkintää,
+  // ja jono kuitattiin silti käsitellyksi. Se teki puuttuvan vastauksen selvittämisestä
+  // kohtuuttoman vaikeaa — tiedettiin vain että BulkSMS sai 200 OK ja että mitään ei
+  // tallentunut, eikä mistään voinut päätellä kumpi tapahtumatyyppi katosi. Hätäviestien
+  // kuittausketjussa juuri se on tieto jota ilman ei voi toimia.
+  const tuntemattomat = [];
   for (const tapahtuma of tapahtumat) {
     const { tyyppi, viestit } = tulkitseTapahtuma(tapahtuma?.event, tapahtuma?.payload);
     if (tyyppi === 'status') {
@@ -1406,9 +1431,26 @@ function kasitteleWebhookJono() {
       const tulos = soveltaVastaukset(log, vastaukset, viestit);
       vastaukset = tulos.smsReplies;
       uusiaVastauksia += tulos.lisatty;
+      // Tunnettu tapahtuma jossa oli viestejä mutta joka ei tuottanut yhtään uutta
+      // vastausta: joko kaksoiskappale (uusinta) tai jotain odottamatonta. Ei virhe,
+      // mutta jälki on jäätävä.
+      if (viestit.length > 0 && tulos.lisatty === 0) {
+        console.warn(`Webhook: ${viestit.length} vastausta ei tuottanut uutta tietuetta (kaksoiskappale?).`);
+      }
+    } else {
+      tuntemattomat.push({ event: tapahtuma?.event ?? null, viesteja: viestit.length });
     }
-    // Tuntematon tapahtumatyyppi sivuutetaan: rajapinta voi lisätä uusia, eikä
-    // integraatio saa kaatua siihen.
+  }
+
+  if (tuntemattomat.length > 0) {
+    // Tyhjä kuorma tunnetulla tai tuntemattomalla otsikolla on BulkSMS:n
+    // validointikutsu (webhookia luotaessa/aktivoitaessa) — se on normaalia eikä sitä
+    // kannata kirjata audit-lokiin, mutta palvelinlokiin kylläkin.
+    const merkittavat = tuntemattomat.filter((t) => t.viesteja > 0);
+    console.warn(`Webhook: ${tuntemattomat.length} käsittelemätöntä tapahtumaa: ${JSON.stringify(tuntemattomat)}`);
+    for (const t of merkittavat) {
+      logAudit({ action: 'sms_webhook_unknown', event: t.event, count: t.viesteja });
+    }
   }
 
   try {

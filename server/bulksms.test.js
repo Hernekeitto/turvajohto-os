@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalisoiNumero, laskeViesti, rakennaKuorma, onkoKonfiguroitu } from './bulksms.js';
+import { normalisoiNumero, laskeViesti, rakennaKuorma, onkoKonfiguroitu, parsiJson } from './bulksms.js';
 import { ratkaiseVastaanottajat, taytaPaikkamerkit, kaytossaOlevatNapit, OLETUSNAPIT } from './sms.js';
 
 // ---------------------------------------------------------------- numeron muotoilu
@@ -126,6 +126,45 @@ test('ilman API-tunnuksia integraatio on konfiguroimaton', () => {
   assert.equal(onkoKonfiguroitu(), false);
 });
 
+// ---------------------------------------------------------------- JSON ja viesti-id:t
+
+test('19-numeroinen viesti-id säilyy tarkkana', () => {
+  // Tavallinen JSON.parse pyöristäisi: 1674811778896240640 -> 1674811778896240600.
+  // Pyöristys on hiljainen ja toimitusraportit toimivat siitä huolimatta niin kauan
+  // kuin molemmat vertailtavat puolet pyöristyvät samalla tavalla — juuri siksi tämä
+  // on vaarallinen: vika paljastuisi vasta kun jompikumpi puoli tulee eri reittiä.
+  const vastaus = parsiJson('[{"id":1674813649253834752,"relatedSentMessageId":1674811778896240640}]');
+  assert.equal(vastaus[0].id, '1674813649253834752');
+  assert.equal(vastaus[0].relatedSentMessageId, '1674811778896240640');
+  // Vertailukohta: mitä olisi tapahtunut ilman korjausta
+  assert.notEqual(String(JSON.parse('{"id":1674813649253834752}').id), '1674813649253834752');
+});
+
+test('jo merkkijonona tullut id ei riko jäsennystä', () => {
+  const v = parsiJson('[{"id":"1674813649253834752"}]');
+  assert.equal(v[0].id, '1674813649253834752');
+});
+
+test('muut numerokentät säilyvät lukuina', () => {
+  // Regex osuu vain id-kenttiin: hinta ja osamäärä ovat laskennassa käytettäviä lukuja.
+  const v = parsiJson('[{"id":1674813649253834752,"creditCost":1.5,"numberOfParts":2}]');
+  assert.equal(v[0].creditCost, 1.5);
+  assert.equal(v[0].numberOfParts, 2);
+});
+
+test('lyhyet id:t eivät muutu merkkijonoiksi turhaan', () => {
+  // Alle 16 numeron id mahtuu turvalliseen alueeseen — mock- ja testidatassa id:t ovat
+  // pieniä, eikä niiden tyyppiä pidä muuttaa.
+  assert.equal(parsiJson('[{"id":1001}]')[0].id, 1001);
+});
+
+test('kelvoton JSON palauttaa null eikä heitä', () => {
+  // Välissä oleva proxy voi palauttaa HTML-virhesivun; sen ei pidä kaataa lähetystä.
+  assert.equal(parsiJson('<html>502 Bad Gateway</html>'), null);
+  assert.equal(parsiJson(''), null);
+  assert.equal(parsiJson(null), null);
+});
+
 // ---------------------------------------------------------------- vastaanottajat
 
 const employees = [
@@ -201,6 +240,17 @@ test('oma numerolista normalisoidaan samalla tavalla', () => {
     eventId: 'fesx', checkins, employees, events,
   });
   assert.deepEqual(r.map((v) => v.numero), ['+358409998888', null]);
+});
+
+test('oman numerolistan nimi on peitetty numero eikä selväkielinen', () => {
+  // Nimikenttä päätyy lähetyshistoriaan, vastauksiin ja käyttöliittymään. Jos siinä
+  // olisi koko numero, se vuotaisi ohi sen peittämisen jota numero-kenttään tehdään.
+  const r = ratkaiseVastaanottajat(nappi('custom', { customNumbers: ['045 161 4441'] }), {
+    eventId: 'fesx', checkins, employees, events,
+  });
+  assert.equal(r[0].nimi, '+3584…441');
+  assert.equal(r[0].numero, '+358451614441');
+  assert.ok(!r[0].nimi.includes('1614441'), 'nimessä ei saa näkyä koko numeroa');
 });
 
 test('tuntematon ryhmä ei ohita rajausta vaan putoaa checked_in:iin', () => {

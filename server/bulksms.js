@@ -172,14 +172,35 @@ async function kutsu(polku, { method = 'GET', body } = {}) {
   });
 
   const teksti = await res.text();
-  let data = null;
+  return { status: res.status, ok: res.ok, data: parsiJson(teksti), raaka: teksti };
+}
+
+// Viesti-id:t säilyttävä JSON-jäsennys.
+//
+// BulkSMS:n viesti-id:t ovat 19-numeroisia kokonaislukuja (esim. 1674813649253834752),
+// jotka ylittävät JavaScriptin turvallisen kokonaislukualueen (2^53-1 = 9007199254740991)
+// yli tuhatkertaisesti. Tavallinen JSON.parse muuttaa ne liukuluvuiksi ja PYÖRISTÄÄ:
+//   1674811778896240640  ->  1674811778896240600
+//
+// Tämä on hiljainen ja siksi vaarallinen: toimitusraportit toimivat siitä huolimatta,
+// koska sekä lähetysvastauksen että webhookin id käyvät saman pyöristyksen läpi ja
+// osuvat siksi yhteen. Se on onnenkauppa, ei suunnittelu — heti kun jompikumpi puoli
+// tulee eri reittiä (esim. rajapinta palauttaa id:n merkkijonona), vertailu lakkaa
+// täsmäämästä eikä mikään kerro miksi.
+//
+// Korjaus: lainausmerkitään pitkät kokonaisluvut id-kentissä ENNEN jäsennystä, jolloin
+// ne pysyvät merkkijonoina läpi koko käsittelyketjun. Regex osuu vain näihin kahteen
+// kenttänimeen, joten muut numerot (creditCost, numberOfParts) käyttäytyvät ennallaan.
+export function parsiJson(teksti) {
+  if (typeof teksti !== 'string' || teksti === '') return null;
+  const turvattu = teksti.replace(/"(id|relatedSentMessageId)"(\s*):(\s*)(\d{16,})/g, '"$1"$2:$3"$4"');
   try {
-    data = teksti ? JSON.parse(teksti) : null;
+    return JSON.parse(turvattu);
   } catch {
     // Rajapinta lupaa JSONia, mutta välissä oleva proxy voi palauttaa HTML-virhesivun.
     // Ei kaadeta tähän: status kertoo jo mitä tapahtui.
+    return null;
   }
-  return { status: res.status, ok: res.ok, data, raaka: teksti };
 }
 
 // Rajapinnan virhevastaus on { type, title, status, detail }. detail on se kenttä joka

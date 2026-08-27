@@ -165,7 +165,11 @@ export function ratkaiseVastaanottajat(nappi, { eventId, checkins, employees, ev
     return n.customNumbers.map((raaka) => {
       const numero = normalisoiNumero(raaka);
       return {
-        nimi: raaka,
+        // Omalla numerolistalla ei ole nimiä, joten tunnisteena on numero itse — mutta
+        // PEITETTYNÄ. Kutsuvat reitit peittävät `numero`-kentän ennen selaimeen
+        // palauttamista, joten selväkielinen numero tässä olisi vuoto ohi sen suojan:
+        // se päätyisi lähetyshistoriaan, vastauksiin ja käyttöliittymään sellaisenaan.
+        nimi: numero ? `${numero.slice(0, 5)}…${numero.slice(-3)}` : raaka,
         rooli: 'Oma numerolista',
         numero,
         ...(numero ? {} : { syy: 'Numeroa ei voi tulkita.' }),
