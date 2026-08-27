@@ -85,8 +85,25 @@ Jokaisella tilalla on kolmikko: täysi väri (palkit, pisteet), `-soft` (merkin 
 | `emerald-*` | `success` / `success-soft` / `success-ink` | 162 |
 | `blue-*` | `info` / `info-soft` / `info-ink` | 45 |
 
-Nyrkkisääntö sävyistä: `-50`/`-100` → `-soft`, `-500`/`-600` → täysi väri,
-`-700`/`-800` → `-ink`.
+Nyrkkisääntö sävyistä: `-50` → `-soft`, `-500` → täysi väri, `-700` → `-ink`. EVENT-teeman
+tilavärit on kalibroitu täsmälleen näihin App.tsx:n käyttämiin sävyihin, joten konversio ei
+muuta tapahtumapuolen ilmettä. Jos vastaan tulee `-600` tai `-800`, katso silmällä kumpi
+token on lähempänä — älä oleta.
+
+## Jo konvertoidut komponentit
+
+Nämä ovat `src/shared/komponentit/`-kansiossa ja käyttävät tokeneita — käytä niitä mallina:
+`DashboardCard`, `EmpStatusBadge`, `YlapalkkiOsat` (NotificationBell + ProfileMenu),
+`AlertBanner`, `SitemapPermissionRow`.
+
+Kaksi kohtaa niissä ei ollut suoraa luokkakorvausta:
+
+- **Yläpalkin ilmoituskellon nappi** oli `bg-slate-800` tumman palkin päällä. "Hieman
+  surface-darkia vaaleampi" ei ole oma tokeninsa, joten se on nyt `bg-white/10
+  hover:bg-white/20` — läpinäkyvä kerros toimii kummallakin teemalla. Tämä on ainoa kohta
+  jossa EVENT-puolen ulkoasu muuttui hitusen.
+- **Tilavärien reunat** merkeissä (`border-rose-200` yms.) ovat nyt `border-danger/30`
+  -tyylisiä opacity-muunnoksia, koska erillistä reunatokenia per tila ei kannata ylläpitää.
 
 ## Mitä EI konvertoida
 

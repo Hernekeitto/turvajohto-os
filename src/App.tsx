@@ -6,6 +6,14 @@ import { TUNNISTE_ALKU, seuraavaTunnisteNumero, muotoileTunniste, taydennaTunnis
 import { kayttajatunnusNimesta, splitFullName, buildFullName } from './shared/nimet';
 import { paikallinenPaiva, yhdistaPaivaJaAika, muotoileLaskuri, muotoileKirjautumisaika } from './shared/ajat';
 import { muotoileEuro, muotoileTavut, laskeKokonaispalkka, isValidPasswordClient } from './shared/muotoilu';
+import { htmlTeksti, tulostusDokumentti, tulostaDokumentti } from './shared/tuloste';
+import { sailytysaikaPaattyy, jaotteleSailytysajan, tapahtumanPoistoaikataulu } from './shared/sailytysaika';
+import { collectDescendantIds, findAncestorIds, DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab } from './shared/oikeudet';
+import { DashboardCard } from './shared/komponentit/DashboardCard';
+import { EmpStatusBadge, getEmpStatus } from './shared/komponentit/EmpStatusBadge';
+import { NotificationBell, ProfileMenu } from './shared/komponentit/YlapalkkiOsat';
+import { SitemapPermissionRow } from './shared/komponentit/SitemapPermissionRow';
+import { AlertBanner } from './shared/komponentit/AlertBanner';
 import {
   AlertTriangle, 
   ShieldCheck, 
@@ -66,7 +74,6 @@ import {
   EyeOff,
   HardDrive,
   PlusCircle,
-  Bell
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -220,114 +227,6 @@ function findEventName(eventId, eventsList) {
 // Tyhjät kentät jätetään näyttämättä (ks. suodatin openedReport-modaalissa), joten
 // sama lista kattaa kaikki raporttityypit: järjestyksenvalvojan tapahtumailmoituksen
 // kohdehenkilökentät näkyvät vain niissä raporteissa joissa ne on täytetty.
-// ---------------------------------------------------------------------------
-// Raportin tulostusversio (PDF)
-//
-// PDF tuotetaan selaimen omalla tulostustoiminnolla ("Tallenna PDF-tiedostona")
-// eikä erillisellä PDF-kirjastolla. Perustelut:
-//   - ei uutta riippuvuutta (nykyinen bundle on jo ~520 kB)
-//   - ääkköset toimivat oikein ilman fontin upottamista; jsPDF vaatisi erillisen
-//     TTF-fontin ja pdf-lib rajoittuisi WinAnsi-merkistöön
-//   - sivutus, sivunumerot ja marginaalit tulevat selaimelta
-//   - sama dokumentti voidaan tulostaa myös paperille viranomaista varten
-//   - toimii suljetussa verkossa, koska mitään ei haeta ulkopuolelta
-//
-// Dokumentti kirjoitetaan omaan ikkunaansa eikä sovelluksen DOMiin, jottei
-// sovelluksen oma tyyli vuoda tulosteeseen.
-// ---------------------------------------------------------------------------
-
-// Kaikki tulosteeseen menevä teksti on käyttäjän syöttämää, joten se escapetaan.
-const htmlTeksti = (arvo: unknown) =>
-  String(arvo ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-
-const PDF_TYYLIT = `
-  @page { size: A4; margin: 18mm 16mm 20mm 16mm; }
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    color: #0f172a; margin: 0; font-size: 11pt; line-height: 1.5; }
-  .tunnus { display: flex; justify-content: space-between; align-items: flex-start;
-    border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 18px; gap: 16px; }
-  .tunnus .sovellus { font-size: 9pt; letter-spacing: .08em; text-transform: uppercase; color: #475569; }
-  .tunnus h1 { font-size: 16pt; margin: 2px 0 0; }
-  .tunnus .id { font-family: ui-monospace, "Courier New", monospace; font-size: 10pt;
-    text-align: right; white-space: nowrap; }
-  .meta { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 24px; margin: 0 0 18px; }
-  .meta > div { border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
-  .meta dt { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
-  .meta dd { margin: 2px 0 0; font-weight: 600; }
-  h2 { font-size: 10pt; text-transform: uppercase; letter-spacing: .06em; color: #475569;
-    margin: 18px 0 6px; border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; }
-  .kentta { margin-bottom: 10px; page-break-inside: avoid; }
-  .kentta .otsikko { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
-  .kentta .arvo { white-space: pre-wrap; margin-top: 1px; }
-  .tyhja-rivi { border-bottom: 1px solid #94a3b8; height: 22px; margin-top: 4px; }
-  .huomio { margin-top: 22px; border-top: 1px solid #e2e8f0; padding-top: 8px;
-    font-size: 8.5pt; color: #475569; page-break-inside: avoid; }
-  .huomio strong { color: #0f172a; }
-  @media screen {
-    body { background: #f1f5f9; padding: 24px; }
-    .arkki { background: #fff; max-width: 210mm; margin: 0 auto; padding: 18mm 16mm;
-      box-shadow: 0 2px 12px rgba(15, 23, 42, .12); }
-    .ohje { max-width: 210mm; margin: 0 auto 16px; font-size: 10pt; color: #334155;
-      background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; }
-  }
-  @media print { .ohje { display: none; } .arkki { padding: 0; box-shadow: none; } }
-`;
-
-type TulosteMeta = { otsikko: string; arvo?: string };
-// tyhja: kentästä piirretään tyhjä kirjoitusrivi arvon sijaan (tyhjät lomakepohjat).
-type TulosteKentta = { otsikko: string; arvo?: string; tyhja?: boolean };
-type TulosteOsat = {
-  otsikko: string;
-  tunniste?: string;
-  meta: TulosteMeta[];
-  kentat: TulosteKentta[];
-  huomio: string;
-};
-
-// Kokoaa valmiin, itsenäisen HTML-dokumentin.
-const tulostusDokumentti = ({ otsikko, tunniste, meta, kentat, huomio }: TulosteOsat) => `<!doctype html>
-<html lang="fi"><head><meta charset="utf-8"><title>${htmlTeksti(tunniste || otsikko)}</title>
-<style>${PDF_TYYLIT}</style></head><body>
-<div class="arkki">
-  <div class="tunnus">
-    <div><div class="sovellus">Turvajohto OS</div><h1>${htmlTeksti(otsikko)}</h1></div>
-    ${tunniste ? `<div class="id">${htmlTeksti(tunniste)}</div>` : ''}
-  </div>
-  <dl class="meta">${meta.map((m) => `<div><dt>${htmlTeksti(m.otsikko)}</dt><dd>${htmlTeksti(m.arvo || '—')}</dd></div>`).join('')}</dl>
-  ${kentat.map((k) => `<div class="kentta"><div class="otsikko">${htmlTeksti(k.otsikko)}</div>${
-    k.tyhja ? '<div class="tyhja-rivi"></div>' : `<div class="arvo">${htmlTeksti(k.arvo)}</div>`
-  }</div>`).join('')}
-  <div class="huomio">${huomio}</div>
-</div></body></html>`;
-
-// Tulostaa dokumentin näkymättömän iframen kautta. Tässä EI käytetä
-// window.openia: sovelluksen sisäinen selain ja moni työpaikkaympäristö estää
-// ponnahdusikkunat oletuksena, jolloin koko toiminto katkeaisi. Iframe toimii
-// aina, koska se on osa samaa sivua.
-const tulostaDokumentti = (html: string) => {
-  const kehys = document.createElement('iframe');
-  kehys.setAttribute('aria-hidden', 'true');
-  kehys.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
-  kehys.srcdoc = html;
-  kehys.onload = () => {
-    const ikkuna = kehys.contentWindow;
-    if (!ikkuna) return;
-    // Siivotaan vasta kun tulostusdialogi on suljettu. afterprint ei laukea
-    // kaikissa selaimissa, joten varmistuksena myös ajastin.
-    let siivottu = false;
-    const siivoa = () => { if (!siivottu) { siivottu = true; kehys.remove(); } };
-    ikkuna.addEventListener('afterprint', siivoa);
-    setTimeout(siivoa, 60000);
-    ikkuna.focus();
-    ikkuna.print();
-  };
-  document.body.appendChild(kehys);
-};
 
 const REPORT_DETAIL_FIELDS = [
   { key: 'date', label: 'Päivämäärä' },
@@ -458,79 +357,6 @@ const initialCheckedInEmployees = [
   { id: 3, eventId: 'fesx', name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05", checkInDate: "", checkInTime: "10:40", checkOutDate: "", checkOutTime: "", comment: "", checkOutComment: "", status: 'checked_in' }
 ];
 
-// Lakisääteinen säilytysaika: tapahtumailmoitukset on säilytettävä kaksi vuotta
-// niiden laatimispäivän kalenterivuoden päättymisen jälkeen, minkä jälkeen
-// henkilötietoja sisältävät ilmoitukset on hävitettävä viipymättä ja viimeistään
-// kuukauden kuluessa. Vuonna 2026 laadittu ilmoitus on siis säilytettävä
-// 31.12.2028 asti ja hävitettävä tammikuun 2029 aikana.
-const SAILYTYSVUOSIA = 2;
-
-const sailytysaikaPaattyy = (createdAt: any) => {
-  if (!createdAt) return null;
-  const d = new Date(createdAt);
-  if (Number.isNaN(d.getTime())) return null;
-  return new Date(d.getFullYear() + SAILYTYSVUOSIA, 11, 31, 23, 59, 59);
-};
-
-// Jakaa raportit säilytysajan mukaan. "paivamaaraPuuttuu" on olennainen ryhmä eikä
-// virhe: createdAt lisättiin vasta 18.8.2026, joten sitä aiemmat raportit eivät
-// kerro laatimispäiväänsä. Niiden säilytysaikaa ei voi laskea, joten niitä ei myöskään
-// poisteta automaattisesti — ne näytetään erikseen jotta ne voi käydä läpi käsin.
-const jaotteleSailytysajan = (raportit: any[], nyt = new Date()) => {
-  const vanhentuneet: any[] = [];
-  const voimassa: any[] = [];
-  const paivamaaraPuuttuu: any[] = [];
-  for (const r of raportit || []) {
-    const paattyy = sailytysaikaPaattyy(r?.createdAt);
-    if (!paattyy) paivamaaraPuuttuu.push(r);
-    else if (nyt > paattyy) vanhentuneet.push(r);
-    else voimassa.push(r);
-  }
-  return { vanhentuneet, voimassa, paivamaaraPuuttuu };
-};
-
-// Arkistoidun tapahtuman poistoaikataulu. Tapahtuman tiedot voi hävittää vasta kun
-// sen VIIMEISENKIN ilmoituksen säilytysaika on umpeutunut — siksi maksimi eikä
-// minimi. Hävitys on tehtävä viipymättä ja viimeistään kuukauden kuluessa, joten
-// takaraja on kuukausi myöhemmin. Säilytysaika päättyy aina 31.12., joten kuukauden
-// lisäys osuu 31.1. eikä kalenterilaskenta voi yllättää (esim. 31.1. + 1 kk
-// venyisi maaliskuulle).
-const tapahtumanPoistoaikataulu = (tapahtuma: any, raportit: any[], nyt = new Date()) => {
-  const omat = (raportit || []).filter((r) => (r?.eventId || 'fesx') === tapahtuma?.id);
-  const paattymiset = omat.map((r) => sailytysaikaPaattyy(r?.createdAt));
-  const tiedossa = paattymiset.filter((p) => p !== null) as Date[];
-  const puuttuvia = paattymiset.length - tiedossa.length;
-  const voiPoistaa = tiedossa.length > 0 ? new Date(Math.max(...tiedossa.map((d) => d.getTime()))) : null;
-  const pitaaPoistaa = voiPoistaa
-    ? new Date(voiPoistaa.getFullYear(), voiPoistaa.getMonth() + 1, voiPoistaa.getDate())
-    : null;
-  return {
-    ilmoituksia: omat.length,
-    puuttuvia,
-    voiPoistaa,
-    pitaaPoistaa,
-    // Tapahtuma jolla ei ole yhtään ilmoitusta on poistettavissa heti: säilytettävää
-    // ei ole.
-    //
-    // Jos yhdenkin ilmoituksen laatimisaika puuttuu, tapahtumaa EI merkitä
-    // poistettavaksi eikä myöhässä olevaksi, vaikka tiedossa olevien ilmoitusten
-    // säilytysaika olisi umpeutunut: päivämäärätön ilmoitus voi olla uudempi kuin
-    // mikään tiedossa oleva, jolloin todellinen säilytysaika on vielä voimassa.
-    // Väärä suunta olisi kehottaa poistamaan dataa jota laki vaatii säilyttämään,
-    // joten epävarmuus näytetään epävarmuutena (voiPoistaa on tällöin aikaisin
-    // mahdollinen ajankohta, ei varma).
-    epavarma: puuttuvia > 0,
-    poistettavissa: puuttuvia > 0 ? false : voiPoistaa ? nyt > voiPoistaa : omat.length === 0,
-    myohassa: puuttuvia > 0 ? false : pitaaPoistaa ? nyt > pitaaPoistaa : false,
-  };
-};
-
-
-// Poikkeamiksi laskettavat kirjaustyypit
-// 'jvreport' = järjestyksenvalvojan tapahtumailmoitus (LYTP). Se on poikkeama samalla
-// perusteella kuin 'jvaction': kirjaus toimenpiteestä joka kohdistui henkilöön.
-// Sisäänkirjauksen roolit. "Ensiapu" ja "Muu" lisättiin, koska työntekijätilanteen
-// laatikoissa oli niille kovakoodatut luvut (12 ja 8) ilman mitään datalähdettä.
 // Radiokanavien oletusjako. Tämä on uuden tapahtuman ESITÄYTTÖ, ei kiinteä lista:
 // kanavat tallentuvat tapahtuman omiin tietoihin ja jokainen tapahtuma voi muuttaa
 // niitä. Aiemmin lista oli kovakoodattu suoraan näkymään, jolloin se näytti samalta
@@ -546,8 +372,13 @@ const OLETUS_RADIOKANAVAT = [
   'Turvallisuusjohto ja tike (tarvittaessa viranomaiset)',
 ];
 
+// Sisäänkirjauksen roolit. "Ensiapu" ja "Muu" lisättiin, koska työntekijätilanteen
+// laatikoissa oli niille kovakoodatut luvut (12 ja 8) ilman mitään datalähdettä.
 const CHECKIN_ROLES = ['Järjestyksenvalvoja', 'Vartija', 'Ensiapu', 'Muu'];
 
+// Poikkeamiksi laskettavat kirjaustyypit.
+// 'jvreport' = järjestyksenvalvojan tapahtumailmoitus (LYTP). Se on poikkeama samalla
+// perusteella kuin 'jvaction': kirjaus toimenpiteestä joka kohdistui henkilöön.
 const DEVIATION_TYPES = ['jvaction', 'jvreport', 'firstaid', 'threat', 'fence', 'damage'];
 
 // Raportit ovat polymorfisia: 14 eri typeId:tä, joilla kullakin omat lisäkenttänsä
@@ -583,39 +414,7 @@ const READINESS_CHECKS = [
 const tyhjatKuittaukset = () => Object.fromEntries(READINESS_CHECKS.map((i) => [i.key, false]));
 
 
-// trend/trendUp ovat valinnaisia: yksikään nykyinen kortti ei käytä niitä, ja
-// ilman oletusarvoja TypeScript vaatisi ne jokaiselta kutsupaikalta.
-const DashboardCard = ({ title, icon: Icon, value, subtitle, trend = null, trendUp = false }) => (
-  <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col justify-between">
-    <div className="flex justify-between items-start mb-4">
-      <div className="p-3 rounded-lg bg-slate-50 text-slate-600">
-        <Icon size={24} />
-      </div>
-      {trend && (
-        <span className={`text-sm font-medium ${trendUp ? 'text-emerald-500' : 'text-rose-500'} flex items-center`}>
-          {trend}
-        </span>
-      )}
-    </div>
-    <div>
-      <h3 className="text-3xl font-bold text-slate-800 mb-1">{value}</h3>
-      <p className="text-sm font-medium text-slate-500">{title}</p>
-      {subtitle && <p className="text-xs text-slate-400 mt-1">{subtitle}</p>}
-    </div>
-  </div>
-);
 
-// Tapahtumaan merkityn työntekijän tila: pending = merkitty tapahtumaan mutta ei
-// vielä sisäänkirjattu TIKE:llä, checked_in = TIKE:n sisäänkirjaus tehty,
-// checked_out = TIKE:n uloskirjaus tehty. Puuttuva status (vanha data ennen tätä
-// ominaisuutta) tulkitaan sisäänkirjatuksi, koska vanhassa mallissa listalla oleminen
-// tarkoitti aina sisäänkirjausta.
-const EMP_STATUS_META = {
-  pending: { dot: 'bg-rose-500', label: 'Ei sisäänkirjattu' },
-  checked_in: { dot: 'bg-emerald-500', label: 'Sisäänkirjattu' },
-  checked_out: { dot: 'bg-blue-500', label: 'Uloskirjattu' },
-};
-const getEmpStatus = (emp) => emp.status || 'checked_in';
 
 // Sisäänkirjausrivin kommentit listana ({id, text, author, date, time}) — vanha data
 // tunsi vain yhden merkkijonokentän (comment), joka näytetään taannehtivasti yhtenä
@@ -628,135 +427,7 @@ const getEmpComments = (emp) => {
   return [];
 };
 
-const EmpStatusBadge = ({ emp }) => {
-  const status = getEmpStatus(emp);
-  const meta = EMP_STATUS_META[status];
-  const time = status === 'checked_in' ? emp.checkInTime : status === 'checked_out' ? emp.checkOutTime : '';
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${meta.dot}`} title={meta.label} />
-      <span className="text-xs text-slate-600 whitespace-nowrap">{meta.label}{time ? ` · ${time}` : ''}</span>
-    </span>
-  );
-};
 
-// Nimimerkin alkukirjaimet profiilipainikkeeseen (esim. "Turva 1" -> "T1", "TIKE Päivystäjä" -> "TP").
-const getInitials = (name) => {
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-};
-
-// Yläpalkin ilmoituskello. Rakenne on tarkoituksella yleinen (tyyppi/otsikko/kuvaus/aika),
-// jotta muut ilmoituslajit voi lisätä palvelimen /api/notifications-reittiin ilman että
-// tätä komponenttia tarvitsee muuttaa. Toistaiseksi ainoa laji on pääkäyttäjälle tuleva
-// jakolinkin hyväksymispyyntö.
-const NotificationBell = ({ notifications, onOpen }) => {
-  const [open, setOpen] = useState(false);
-  const maara = notifications.length;
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        title={maara === 0 ? 'Ei uusia ilmoituksia' : `${maara} ilmoitusta`}
-        className="relative w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 hover:text-white transition-colors"
-      >
-        <Bell size={16} />
-        {maara > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[1.05rem] h-[1.05rem] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
-            {maara > 9 ? '9+' : maara}
-          </span>
-        )}
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50 text-left">
-            <div className="px-4 py-2 border-b border-slate-100">
-              <p className="text-sm font-bold text-slate-800">Ilmoitukset</p>
-            </div>
-            {maara === 0 ? (
-              <p className="px-4 py-6 text-sm text-slate-500 text-center">Ei uusia ilmoituksia.</p>
-            ) : (
-              <div className="max-h-80 overflow-y-auto divide-y divide-slate-50">
-                {notifications.map((ilm) => (
-                  <button
-                    key={ilm.id}
-                    onClick={() => { setOpen(false); onOpen(ilm); }}
-                    className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors"
-                  >
-                    <p className="text-sm font-medium text-slate-800">{ilm.otsikko}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">{ilm.kuvaus}</p>
-                    {ilm.aika && (
-                      <p className="text-[11px] text-slate-400 mt-1">
-                        {new Date(ilm.aika).toLocaleString('fi-FI')}
-                      </p>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </>
-      )}
-    </div>
-  );
-};
-
-// Yläpalkin profiilipainike + pudotusvalikko. Korvaa aiemman kovakoodatun "TJ"-badgen
-// kaikissa nav-palkeissa (ks. käyttöpaikat renderöinnin puolella).
-// HUOM: "Muokkaa käyttäjiä" ja "Sovellusasetukset" eivät ole enää täällä vaan etusivun
-// painikkeina — valikkoon jäävät vain omaan tunnukseen liittyvät toiminnot.
-const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onViewAuditLog, onLogout }) => {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        title={nickname}
-        className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-500 flex items-center justify-center font-bold text-sm text-white transition-colors"
-      >
-        {getInitials(nickname)}
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50 text-left">
-            <div className="px-4 py-2 border-b border-slate-100">
-              <p className="text-sm font-bold text-slate-800 truncate">{nickname}</p>
-              {isAdmin && <p className="text-xs text-indigo-600 font-medium mt-0.5">Pääkäyttäjä</p>}
-            </div>
-            <button
-              onClick={() => { setOpen(false); onChangePassword(); }}
-              className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
-            >
-              <KeyRound size={16} className="text-slate-400" />
-              Vaihda salasana
-            </button>
-            {isAdmin && (
-              <button
-                onClick={() => { setOpen(false); onViewAuditLog(); }}
-                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
-              >
-                <History size={16} className="text-slate-400" />
-                Audit-loki
-              </button>
-            )}
-            <div className="border-t border-slate-100 my-1" />
-            <button
-              onClick={() => { setOpen(false); onLogout(); }}
-              className="w-full text-left px-4 py-2 text-sm text-rose-600 hover:bg-rose-50 flex items-center gap-2 transition-colors"
-            >
-              <LogOut size={16} />
-              Kirjaudu ulos
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-};
 
 // ====================== PIKATOIMINNOT / HÄTÄTEKSTIVIESTIT ======================
 //
@@ -939,117 +610,7 @@ const SITEMAP = [
   { id: 'global_employee_bank', label: 'Työntekijäpankki' },
 ];
 
-function collectDescendantIds(node, out = []) {
-  if (node.children) {
-    for (const child of node.children) {
-      out.push(child.id);
-      collectDescendantIds(child, out);
-    }
-  }
-  return out;
-}
 
-// Etsii solmun esi-isien id:t (ei sisällä solmua itseään) — käytetään siihen että
-// näkyvyysoikeuden myöntäminen alasivulle myöntää automaattisesti näkyvyyden myös
-// sen yläsivuille, muuten se ei koskaan näy valikoissa.
-function findAncestorIds(nodeId, nodes = SITEMAP, path = []) {
-  for (const node of nodes) {
-    if (node.id === nodeId) return path;
-    if (node.children) {
-      const found = findAncestorIds(nodeId, node.children, [...path, node.id]);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-// Oikeudet tallennetaan kaksitasoisena: { __default__: {node:{view,edit}}, [eventId]:
-// {node:{view,edit}} } — sama muoto kuin server/permissions.js:ssä (pidettävä synkassa).
-// __default__ on aina läsnä ja toimii oletuksena tapahtumille joilla ei ole omaa
-// erillistä asetusta (ks. Käyttöoikeudet-näkymä).
-const DEFAULT_BUCKET = '__default__';
-
-// Nämä solmut EIVÄT ole sidottu yhteen tapahtumaan — haetaan aina __default__-asetuksesta
-// riippumatta mille tapahtumalle tarkistus muuten tehtäisiin (sama lista kuin
-// server/permissions.js:n GLOBAL_NODES, ks. sen kommentti täydestä perustelusta).
-// Nämä solmut ratkaisevat myös sen, mitkä painikkeet etusivulla näkyvät.
-const GLOBAL_NODES = new Set([
-  'landing',
-  'settings',
-  'global_reports',
-  'global_archived_events',
-  'global_employee_bank',
-  'quickactions',
-]);
-
-function bucketFor(permissions, eventId, nodeId) {
-  const perms = permissions || {};
-  if (!GLOBAL_NODES.has(nodeId) && eventId && perms[eventId]) return perms[eventId];
-  return perms[DEFAULT_BUCKET] || {};
-}
-
-// perms[bucket]['*'] on admin-oikotie kyseisessä bucketissa: kaikki näkyy ja on
-// muokattavissa riippumatta yksittäisistä solmumerkinnöistä. eventId kertoo minkä
-// tapahtuman kontekstissa tarkistus tehdään (globaaleille solmuille sillä ei ole väliä).
-function canView(permissions, eventId, nodeId) {
-  const bucket = bucketFor(permissions, eventId, nodeId);
-  if (bucket['*']?.view) return true;
-  return !!bucket[nodeId]?.view;
-}
-function canEdit(permissions, eventId, nodeId) {
-  const bucket = bucketFor(permissions, eventId, nodeId);
-  if (bucket['*']?.edit) return true;
-  return !!bucket[nodeId]?.edit;
-}
-
-// "Lisää tapahtumaan työntekijä" ei ole oma sivukartta-solmu — se kuuluu samaan
-// oikeuteen kuin "Tapahtuman työntekijät" (planning_employees), josta se avataan.
-function sitemapIdForTab(tab) {
-  return tab === 'planning_employee_add' ? 'planning_employees' : tab;
-}
-
-// Sivukartan yksi rivi (+ lapset rekursiivisesti) admin-oikeuseditorissa.
-const SitemapPermissionRow = ({ node, depth, permDraft, onToggle, onCascade }) => {
-  const perm = permDraft[node.id] || {};
-  const hasChildren = !!(node.children && node.children.length > 0);
-  return (
-    <div>
-      <div
-        className={`flex items-center gap-3 py-2 pr-2 ${depth > 0 ? 'border-l-2 border-slate-100' : ''}`}
-        style={{ paddingLeft: `${depth * 20 + 8}px` }}
-      >
-        <span className={`flex-1 text-sm truncate ${hasChildren ? 'font-bold text-slate-800' : 'font-medium text-slate-600'}`}>
-          {node.label}
-        </span>
-        <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer shrink-0 w-28">
-          <input
-            type="checkbox"
-            checked={!!perm.view}
-            onChange={(e) => { onToggle(node.id, 'view', e.target.checked); if (hasChildren) onCascade(node, 'view', e.target.checked); }}
-            className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-          />
-          Näkyy
-        </label>
-        <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer shrink-0 w-32">
-          <input
-            type="checkbox"
-            checked={!!perm.edit}
-            onChange={(e) => { onToggle(node.id, 'edit', e.target.checked); if (hasChildren) onCascade(node, 'edit', e.target.checked); }}
-            className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-          />
-          Muokattavissa
-        </label>
-      </div>
-      {hasChildren && node.children.map((child) => (
-        <SitemapPermissionRow key={child.id} node={child} depth={depth + 1} permDraft={permDraft} onToggle={onToggle} onCascade={onCascade} />
-      ))}
-    </div>
-  );
-};
-
-// Montako hälytystä Tilannekuvan paneeliin mahtuu ennen kuin loput siirtyvät
-// "Näytä kaikki" -painikkeen taakse. Ilman rajaa paneeli kasvaisi rajatta ja
-// työntäisi muun tilannekuvan näytön alareunan alle.
 // Tehtävän kiireellisyys. Tehtävä syntyy TIKE:n avoimesta kirjauksesta, kun
 // kirjaaja rastii "Merkitse tehtäväksi" — tieto tallentuu raportin kenttiin
 // taskTitle/taskUrgency, joten erillistä kokoelmaa ei tarvita ja tehtävä säilyy
@@ -1093,34 +654,11 @@ const TEHTAVA_KIIRE_OLETUS: TehtavaKiire = 'blue';
 const tehtavanKiire = (avain?: string) =>
   TEHTAVA_KIIREET[avain as TehtavaKiire] || TEHTAVA_KIIREET[TEHTAVA_KIIRE_OLETUS];
 
+// Montako hälytystä Tilannekuvan paneeliin mahtuu ennen kuin loput siirtyvät
+// "Näytä kaikki" -painikkeen taakse. Ilman rajaa paneeli kasvaisi rajatta ja
+// työntäisi muun tilannekuvan näytön alareunan alle.
 const HALYTYKSET_NAYTOSSA = 5;
 
-const AlertBanner = ({ alert }) => {
-  const colors = {
-    critical: 'bg-rose-50 border-rose-200 text-rose-800',
-    warning: 'bg-amber-50 border-amber-200 text-amber-800',
-    info: 'bg-blue-50 border-blue-200 text-blue-800'
-  };
-  
-  const iconColors = {
-    critical: 'text-rose-600',
-    warning: 'text-amber-600',
-    info: 'text-blue-600'
-  };
-
-  return (
-    <div className={`p-4 rounded-lg border flex items-start gap-4 mb-3 ${colors[alert.type]}`}>
-      <AlertTriangle className={`mt-0.5 ${iconColors[alert.type]}`} size={20} />
-      <div className="flex-1">
-        <div className="flex justify-between items-center mb-1">
-          <span className="font-semibold text-sm">{alert.location}</span>
-          <span className="text-xs font-medium opacity-80">{alert.time}</span>
-        </div>
-        <p className="text-sm">{alert.message}</p>
-      </div>
-    </div>
-  );
-};
 
 // --- MAIN APP COMPONENT ---
 
@@ -2898,7 +2436,7 @@ export default function App() {
       // Alasivun näkyvyys ei auta jos yläsivu on piilotettu — myönnetään esi-isät
       // automaattisesti, sama sääntö kuin käyttäjäkohtaisissa oikeuksissa aiemmin.
       if (seuraava.view) {
-        for (const esiisa of findAncestorIds(nodeId) || []) {
+        for (const esiisa of findAncestorIds(nodeId, SITEMAP) || []) {
           uusi[esiisa] = { ...(uusi[esiisa] || {}), view: true };
         }
       }
@@ -2921,7 +2459,7 @@ export default function App() {
         uusi[id] = seuraava;
       }
       if (!kaikillaOn) {
-        for (const esiisa of findAncestorIds(node.id) || []) {
+        for (const esiisa of findAncestorIds(node.id, SITEMAP) || []) {
           uusi[esiisa] = { ...(uusi[esiisa] || {}), view: true };
         }
       }
