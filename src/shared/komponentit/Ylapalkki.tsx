@@ -46,8 +46,8 @@ type YlapalkkiProps = YlapalkkiLogoProps & {
   onIlmoitus: (ilmoitus: Ilmoitus) => void;
   nimimerkki: string;
   isAdmin: boolean;
-  onChangePassword: () => void;
-  onViewAuditLog: () => void;
+  onChangePassword?: () => void;
+  onViewAuditLog?: () => void;
   onLogout: () => void;
 };
 

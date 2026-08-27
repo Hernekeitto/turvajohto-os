@@ -21,8 +21,10 @@ type NotificationBellProps = {
 type ProfileMenuProps = {
   nickname: string;
   isAdmin: boolean;
-  onChangePassword: () => void;
-  onViewAuditLog: () => void;
+  // Salasananvaihto ja audit-loki ovat valinnaisia: GUARD-puolella ne odottavat vielä
+  // purkamista jaetuksi, ja rivi joka ei tee mitään olisi pahempi kuin puuttuva rivi.
+  onChangePassword?: () => void;
+  onViewAuditLog?: () => void;
   onLogout: () => void;
 };
 
@@ -113,14 +115,16 @@ export const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onViewAuditLo
               <p className="text-sm font-bold text-ink truncate">{nickname}</p>
               {isAdmin && <p className="text-xs text-accent font-medium mt-0.5">Pääkäyttäjä</p>}
             </div>
-            <button
-              onClick={() => { setOpen(false); onChangePassword(); }}
-              className="w-full text-left px-4 py-2 text-sm text-ink-body hover:bg-sunken flex items-center gap-2 transition-colors"
-            >
-              <KeyRound size={16} className="text-ink-subtle" />
-              Vaihda salasana
-            </button>
-            {isAdmin && (
+            {onChangePassword && (
+              <button
+                onClick={() => { setOpen(false); onChangePassword(); }}
+                className="w-full text-left px-4 py-2 text-sm text-ink-body hover:bg-sunken flex items-center gap-2 transition-colors"
+              >
+                <KeyRound size={16} className="text-ink-subtle" />
+                Vaihda salasana
+              </button>
+            )}
+            {isAdmin && onViewAuditLog && (
               <button
                 onClick={() => { setOpen(false); onViewAuditLog(); }}
                 className="w-full text-left px-4 py-2 text-sm text-ink-body hover:bg-sunken flex items-center gap-2 transition-colors"
