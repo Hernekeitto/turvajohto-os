@@ -1,5 +1,25 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: "Fira Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* Turvajohto GUARD -graafinen ohjeisto. Näitä käyttävät toistaiseksi vain mainossivu
+     ja Guard-puoli; Event-puoli on edelleen Tailwindin slate-paletissa. */
+  --color-guard-primary: #1e293b;
+  --color-guard-primary-hover: #0f172a;
+  --color-guard-accent: #019765;
+  --color-guard-text: #232f40;
+  --color-guard-muted: #64748b;
+  --color-guard-border: #9da1a9;
+  --color-guard-bg: #f4f5f8;
+  --color-guard-surface: #ffffff;
+  --color-guard-danger: #e80140;
+  --color-guard-warning: #d8730b;
+  --color-guard-success: #019765;
+  --color-guard-info: #0ea5e9;
+}
+
 body {
   margin: 0;
+  font-family: var(--font-sans);
 }

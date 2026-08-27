@@ -3,6 +3,9 @@ import { SessionContext, type SessionProfile } from './SessionContext';
 
 type SessionState = 'loading' | 'authed' | 'anon';
 
+// Kumman tuotteen portilla ollaan. Ratkaistaan osoiterivistä (ks. main.tsx).
+type Tuote = 'event' | 'guard';
+
 async function loadSessionProfile(): Promise<SessionProfile | null> {
   const res = await fetch('/api/session', { credentials: 'include' });
   const data = await res.json();
@@ -106,7 +109,7 @@ function ForcedPasswordChange({ onDone }: { onDone: () => void }) {
   );
 }
 
-export default function PasswordGate({ children }: { children: ReactNode }) {
+export default function PasswordGate({ children, tuote = 'event' }: { children: ReactNode; tuote?: Tuote }) {
   const [session, setSession] = useState<SessionState>('loading');
   const [profile, setProfile] = useState<SessionProfile | null>(null);
   const [username, setUsername] = useState('');
@@ -163,6 +166,14 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
     return <SessionContext.Provider value={profile}>{children}</SessionContext.Provider>;
   }
 
+  // Kirjautumislomake on yhteinen, mutta sen pitää kertoa kumman puolen portilla
+  // ollaan — sama tunnus käy molempiin, joten pelkkä "Turvajohto OS" jättäisi
+  // käyttäjän arvailemaan mihin hän on kirjautumassa.
+  const guard = tuote === 'guard';
+  const nappiTyyli = guard
+    ? 'bg-guard-accent hover:brightness-110'
+    : 'bg-slate-800 hover:bg-slate-700';
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
@@ -208,7 +219,9 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
         onSubmit={handleSubmit}
         className="w-full max-w-sm bg-white border border-slate-200 rounded-xl shadow-sm p-6"
       >
-        <h1 className="text-lg font-semibold text-slate-800 mb-1">Turvajohto OS</h1>
+        <h1 className="text-lg font-semibold text-slate-800 mb-1">
+          Turvajohto <span className={guard ? 'text-guard-accent' : 'text-slate-500'}>{guard ? 'GUARD' : 'EVENT'}</span>
+        </h1>
 
         {expiredNotice && (
           <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
@@ -265,10 +278,17 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
         <button
           type="submit"
           disabled={submitting || (totpRequired && totpCode.length !== 6)}
-          className="w-full bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium rounded-lg py-2 mt-2 transition-colors disabled:opacity-60"
+          className={`w-full ${nappiTyyli} text-white text-sm font-medium rounded-lg py-2 mt-2 transition-all disabled:opacity-60`}
         >
           {submitting ? 'Kirjaudutaan…' : totpRequired ? 'Vahvista koodi' : 'Kirjaudu'}
         </button>
+
+        <a
+          href="/"
+          className="block text-center text-xs text-slate-400 hover:text-slate-600 mt-4 transition-colors"
+        >
+          Turvajohto OS – etusivu
+        </a>
 
         {totpRequired && (
           <button

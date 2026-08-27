@@ -1,0 +1,45 @@
+import { ShieldCheck, ArrowLeft } from 'lucide-react';
+import { useSession } from '../SessionContext';
+
+// Turvajohto GUARD -puolen juurikomponentti. Toistaiseksi pelkkä kuori: osoite
+// /guard, kirjautuminen ja graafinen ohjeisto ovat paikallaan, mutta varsinaiset
+// näkymät rakennetaan vasta kun App.tsx:n yhteiset osat (työntekijäpankki,
+// tiedostot, raportointi, käyttäjähallinta) on purettu jaettuun kansioon —
+// muuten sama koodi kirjoitettaisiin toiseen kertaan.
+export default function GuardApp() {
+  const session = useSession();
+
+  return (
+    <div className="min-h-screen bg-guard-bg text-guard-text flex flex-col">
+      <header className="bg-guard-primary text-white px-6 py-4 flex items-center gap-3">
+        <ShieldCheck className="w-6 h-6 text-guard-accent" strokeWidth={1.75} />
+        <div className="flex-1">
+          <h1 className="font-bold leading-tight">
+            Turvajohto <span className="text-guard-accent">GUARD</span>
+          </h1>
+          <p className="text-xs text-slate-300">Vartiointi</p>
+        </div>
+        {session && (
+          <span className="text-sm text-slate-300">{session.nickname}</span>
+        )}
+      </header>
+
+      <main className="flex-1 flex items-center justify-center px-6 py-16">
+        <div className="w-full max-w-md bg-guard-surface border border-guard-border/40 rounded-xl p-6 text-center">
+          <h2 className="font-bold mb-2">Vartiointipuoli on rakenteilla</h2>
+          <p className="text-sm text-guard-muted leading-relaxed mb-6">
+            Osoite, kirjautuminen ja visuaalinen ilme ovat valmiina. Kohdekierrokset,
+            vartiovuorot ja poikkeamat tulevat tähän seuraavissa vaiheissa.
+          </p>
+          <a
+            href="/event"
+            className="inline-flex items-center gap-2 text-sm font-medium text-guard-primary hover:text-guard-primary-hover transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Siirry tapahtumapuolelle
+          </a>
+        </div>
+      </main>
+    </div>
+  );
+}

@@ -2779,7 +2779,7 @@ export default function App() {
       .finally(() => setPermTotpLoading(false));
   };
 
-  // Yläpalkin "Turvajohto OS" vie etusivulle mistä tahansa näkymästä. Kaikki päällä
+  // Yläpalkin "Turvajohto EVENT" vie etusivulle mistä tahansa näkymästä. Kaikki päällä
   // olevat näkymätilat on nollattava yhdessä: ne ovat toisistaan riippumattomia lippuja,
   // ja yksikin päälle jäänyt (esim. viewingSettings) pitäisi käyttäjän edelleen siinä
   // näkymässä vaikka tapahtumavalinta olisi purettu.
@@ -9584,7 +9584,7 @@ export default function App() {
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Työntekijäpankki</p>
             </div>
           </button>
@@ -10417,7 +10417,7 @@ export default function App() {
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Käyttäjähallinta</p>
             </div>
           </button>
@@ -10924,7 +10924,7 @@ export default function App() {
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Hätäviestien lähetyshistoria</p>
             </div>
           </button>
@@ -11154,7 +11154,7 @@ export default function App() {
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Sovellusasetukset</p>
             </div>
           </button>
@@ -12006,7 +12006,7 @@ export default function App() {
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Audit-loki</p>
             </div>
           </button>
@@ -12179,7 +12179,7 @@ export default function App() {
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut raportit</p>
             </div>
           </button>
@@ -12330,7 +12330,7 @@ export default function App() {
             >
               <ShieldCheck className="text-indigo-400" size={28} />
               <div>
-                <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+                <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
                 <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
               </div>
             </button>
@@ -12508,7 +12508,7 @@ export default function App() {
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
             </div>
           </button>
@@ -12595,7 +12595,7 @@ export default function App() {
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Minulle jaetut</p>
             </div>
           </button>
@@ -12755,7 +12755,7 @@ export default function App() {
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
             </div>
           </button>
@@ -12780,7 +12780,7 @@ export default function App() {
             <div className="w-24 h-24 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner ring-8 ring-indigo-50/50">
               <ShieldCheck size={48} />
             </div>
-            <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-3 tracking-tight">Turvajohto OS</h1>
+            <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-3 tracking-tight">Turvajohto EVENT</h1>
 
             <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 mt-6 mb-10">
               <h2 className="text-xl md:text-2xl font-semibold text-slate-700">
@@ -12840,7 +12840,7 @@ export default function App() {
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
             </div>
           </button>
@@ -12978,7 +12978,7 @@ export default function App() {
             className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
           >
             <ShieldCheck className="text-indigo-400" size={28} />
-            <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+            <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
           </button>
           <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
           <ProfileMenu
@@ -13503,7 +13503,7 @@ export default function App() {
           >
             <ShieldCheck className="text-indigo-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto OS</h1>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
               <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
             </div>
           </button>
