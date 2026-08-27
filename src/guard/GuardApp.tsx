@@ -1,27 +1,18 @@
 import { useEffect, useState } from 'react';
-import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2 } from 'lucide-react';
+import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { Ylapalkki } from '../shared/komponentit/Ylapalkki';
-import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
+import { KohteenHallinta } from './KohteenHallinta';
+import { uusiId, type Kohde } from './tyypit';
 
-// Turvajohto GUARD -puolen juurikomponentti. Ensimmäinen oikea näkymä on kohdelista:
-// vartiointikohteiden luonti, muokkaus ja poisto. Kaikki muu vartiointitoiminnallisuus
-// (kierrokset, vuorot, poikkeamat) kiinnittyy kohteeseen, joten tämä on niiden pohja.
+// Turvajohto GUARD -puolen juurikomponentti. Vastaa näkymien välisestä vaihdosta ja
+// kohdedatan lataamisesta; yksittäiset näkymät ovat omissa tiedostoissaan, jotta tänne
+// ei synny toista App.tsx:ää.
 //
 // Kohteet ovat guardSites-kokoelmassa (server/store.js). Kohteen id toimii samana
 // oikeusavaimena kuin tapahtuman id EVENT-puolella, joten käyttäjän rajaus tiettyihin
 // kohteisiin toimii samalla eventAccess-listalla.
-
-export type Kohde = {
-  id: string;
-  name: string;
-  address?: string;
-  contactName?: string;
-  contactPhone?: string;
-  notes?: string;
-  archived?: boolean;
-};
 
 const tyhjaKohde = (): Kohde => ({
   id: '',
@@ -30,45 +21,9 @@ const tyhjaKohde = (): Kohde => ({
   contactName: '',
   contactPhone: '',
   notes: '',
+  perehdytykset: [],
+  tehtavat: [],
 });
-
-// Lomakekentän kehys. Toistuu tässä tiedostossa kuusi kertaa, ja EVENT-puolen vastaava
-// rakenne on yhä App.tsx:ssä 52 kopiona — kun se aikanaan puretaan jaetuksi, tämä korvataan
-// sillä. Ei siirretä jaettuun kansioon vielä, koska GUARDin tarpeet voivat vielä muuttua.
-const Kentta = ({
-  label,
-  arvo,
-  onChange,
-  placeholder,
-  monirivinen = false,
-}: {
-  label: string;
-  arvo: string;
-  onChange: (arvo: string) => void;
-  placeholder?: string;
-  monirivinen?: boolean;
-}) => (
-  <label className="block">
-    <span className="block text-sm font-medium text-ink-body mb-1">{label}</span>
-    {monirivinen ? (
-      <textarea
-        value={arvo}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        rows={3}
-        className="w-full rounded-lg border border-line-strong p-2.5 text-sm outline-none focus:ring-2 focus:ring-accent"
-      />
-    ) : (
-      <input
-        type="text"
-        value={arvo}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full rounded-lg border border-line-strong p-2.5 text-sm outline-none focus:ring-2 focus:ring-accent"
-      />
-    )}
-  </label>
-);
 
 export default function GuardApp() {
   const session = useSession();
@@ -89,6 +44,9 @@ export default function GuardApp() {
   // null = lista näkyvissä, muuten muokattavana oleva kohde (uudella id === '').
   const [lomake, setLomake] = useState<Kohde | null>(null);
   const [poistettava, setPoistettava] = useState<Kohde | null>(null);
+  // Työntekijäpankki perehdytysvalintaa varten. Jää tyhjäksi jos käyttäjällä ei ole
+  // siihen lukuoikeutta — silloin perehdytettävän nimi kirjoitetaan käsin.
+  const [tyontekijat, setTyontekijat] = useState<{ id?: string; name?: string; displayId?: number | null }[]>([]);
 
   useEffect(() => {
     if (!saaNahda) return;
@@ -103,6 +61,19 @@ export default function GuardApp() {
         }
       })
       .catch(() => setVirhe('Kohteita ei voitu hakea: ei yhteyttä palvelimeen.'));
+  }, [saaNahda]);
+
+  useEffect(() => {
+    if (!saaNahda) return;
+    // 403 on tässä normaali lopputulos eikä virhe: kaikilla GUARD-käyttäjillä ei ole
+    // oikeutta koko yrityksen työntekijärekisteriin. Silloin perehdytyslistaan
+    // kirjoitetaan nimi käsin.
+    fetch('/api/data/employees', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && res.ok === true && Array.isArray(res.data)) setTyontekijat(res.data);
+      })
+      .catch(() => { /* ei kriittinen */ });
   }, [saaNahda]);
 
   // salliTyhja=true ohittaa palvelimen romahdussuojan, joka muuten hylkää tallennuksen
@@ -148,11 +119,7 @@ export default function GuardApp() {
       return;
     }
     const uusi = !lomake.id;
-    const kohde: Kohde = {
-      ...lomake,
-      name: nimi,
-      id: lomake.id || (crypto.randomUUID?.() ?? `kohde-${Date.now()}`),
-    };
+    const kohde: Kohde = { ...lomake, name: nimi, id: lomake.id || uusiId() };
     const uudet = uusi
       ? [...kohteet, kohde]
       : kohteet.map((k) => (k.id === kohde.id ? kohde : k));
@@ -204,7 +171,7 @@ export default function GuardApp() {
 
   return (
     <div className="min-h-screen bg-canvas text-ink flex flex-col">
-      {ylapalkki(lomake ? (lomake.id ? 'Muokkaa kohdetta' : 'Uusi kohde') : 'Kohdevalinta')}
+      {ylapalkki(lomake ? (lomake.id ? 'Kohteen hallinta' : 'Uusi kohde') : 'Kohdevalinta')}
 
       <main className="flex-1 p-6 md:p-10">
         <div className="max-w-5xl mx-auto">
@@ -215,62 +182,14 @@ export default function GuardApp() {
           )}
 
           {lomake ? (
-            <div className="bg-surface rounded-xl shadow-sm border border-line-soft p-6 md:p-8 max-w-2xl">
-              <TakaisinLinkki onClick={() => setLomake(null)}>Takaisin kohdelistaan</TakaisinLinkki>
-              <h2 className="text-xl font-bold text-ink-strong mb-6">
-                {lomake.id ? 'Muokkaa kohdetta' : 'Uusi kohde'}
-              </h2>
-              <div className="space-y-4">
-                <Kentta
-                  label="Kohteen nimi"
-                  arvo={lomake.name}
-                  onChange={(v) => setLomake({ ...lomake, name: v })}
-                  placeholder="esim. Kauppakeskus Alfa"
-                />
-                <Kentta
-                  label="Osoite"
-                  arvo={lomake.address || ''}
-                  onChange={(v) => setLomake({ ...lomake, address: v })}
-                  placeholder="Katuosoite, postinumero ja kaupunki"
-                />
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Kentta
-                    label="Yhteyshenkilö"
-                    arvo={lomake.contactName || ''}
-                    onChange={(v) => setLomake({ ...lomake, contactName: v })}
-                  />
-                  <Kentta
-                    label="Puhelin"
-                    arvo={lomake.contactPhone || ''}
-                    onChange={(v) => setLomake({ ...lomake, contactPhone: v })}
-                  />
-                </div>
-                <Kentta
-                  label="Ohjeet vartijalle"
-                  arvo={lomake.notes || ''}
-                  onChange={(v) => setLomake({ ...lomake, notes: v })}
-                  placeholder="Kulkuohjeet, hälytysjärjestelmä, erityishuomiot"
-                  monirivinen
-                />
-              </div>
-              <div className="flex justify-end gap-3 pt-6 mt-2 border-t border-line-soft">
-                <button
-                  type="button"
-                  onClick={() => setLomake(null)}
-                  className="px-5 py-2.5 text-sm font-medium text-ink-body bg-sunken hover:bg-line rounded-lg transition-colors"
-                >
-                  Peruuta
-                </button>
-                <button
-                  type="button"
-                  disabled={tallentaa}
-                  onClick={tallennaLomake}
-                  className="px-5 py-2.5 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors disabled:opacity-60"
-                >
-                  {tallentaa ? 'Tallennetaan…' : 'Tallenna kohde'}
-                </button>
-              </div>
-            </div>
+            <KohteenHallinta
+              kohde={lomake}
+              onChange={setLomake}
+              onTallenna={tallennaLomake}
+              onPeruuta={() => setLomake(null)}
+              tallentaa={tallentaa}
+              tyontekijat={tyontekijat}
+            />
           ) : (
             <>
               <div className="flex items-start justify-between gap-4 mb-8">
@@ -297,9 +216,7 @@ export default function GuardApp() {
                 <div className="bg-surface border border-line rounded-xl p-10 text-center">
                   <Building2 className="w-10 h-10 text-ink-subtle mx-auto mb-4" strokeWidth={1.5} />
                   <p className="text-sm text-ink-muted">
-                    {ladattu
-                      ? 'Yhtään kohdetta ei ole vielä lisätty.'
-                      : 'Ladataan kohteita…'}
+                    {ladattu ? 'Yhtään kohdetta ei ole vielä lisätty.' : 'Ladataan kohteita…'}
                   </p>
                 </div>
               ) : (
@@ -330,15 +247,39 @@ export default function GuardApp() {
                           <p className="text-xs text-ink-subtle pt-1 leading-relaxed">{kohde.notes}</p>
                         )}
                       </div>
+
+                      {/* Kohteen sisältö lukuina: kertoo yhdellä silmäyksellä onko kohde
+                          valmis vartioitavaksi vai vasta perustettu. */}
+                      {((kohde.perehdytykset?.length || 0) > 0 || (kohde.tehtavat?.length || 0) > 0) && (
+                        <div className="flex flex-wrap gap-3 pt-3 text-xs text-ink-muted">
+                          {(kohde.perehdytykset?.length || 0) > 0 && (
+                            <span className="inline-flex items-center gap-1.5">
+                              <GraduationCap size={13} />
+                              {kohde.perehdytykset?.length} perehdytetty
+                            </span>
+                          )}
+                          {(kohde.tehtavat?.length || 0) > 0 && (
+                            <span className="inline-flex items-center gap-1.5">
+                              <ClipboardList size={13} />
+                              {kohde.tehtavat?.length} tehtävää
+                            </span>
+                          )}
+                        </div>
+                      )}
+
                       {saaMuokata && (
                         <div className="flex gap-2 pt-4 mt-3 border-t border-line-soft">
                           <button
                             type="button"
-                            onClick={() => setLomake({ ...kohde })}
+                            onClick={() => setLomake({
+                              ...kohde,
+                              perehdytykset: [...(kohde.perehdytykset || [])],
+                              tehtavat: (kohde.tehtavat || []).map((t) => ({ ...t, kohdat: [...t.kohdat] })),
+                            })}
                             className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-body hover:text-accent transition-colors"
                           >
                             <Pencil size={14} />
-                            Muokkaa
+                            Hallitse
                           </button>
                           <button
                             type="button"
