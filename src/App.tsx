@@ -12,6 +12,8 @@ import { collectDescendantIds, findAncestorIds, DEFAULT_BUCKET, canView, canEdit
 import { DashboardCard } from './shared/komponentit/DashboardCard';
 import { EmpStatusBadge, getEmpStatus } from './shared/komponentit/EmpStatusBadge';
 import { NotificationBell, ProfileMenu } from './shared/komponentit/YlapalkkiOsat';
+import { Ylapalkki, YlapalkkiLogo } from './shared/komponentit/Ylapalkki';
+import { TakaisinLinkki } from './shared/komponentit/TakaisinLinkki';
 import { SitemapPermissionRow } from './shared/komponentit/SitemapPermissionRow';
 import { AlertBanner } from './shared/komponentit/AlertBanner';
 import {
@@ -2244,6 +2246,27 @@ export default function App() {
       setActiveTab('eventfiles');
     }
   };
+
+  // Yläpalkin yhteiset propsit kerran. Kaikki 12 kutsupaikkaa saavat samat ilmoitukset,
+  // saman profiilin ja samat käsittelijät, joten niiden toistaminen jokaisessa näkymässä
+  // olisi juuri sitä toistoa jonka Ylapalkki-komponentti poistaa. Vain alaotsikko ja se,
+  // näkyykö kello, vaihtelevat näkymittäin.
+  const ylapalkki = (alaotsikko?: string, valinnat: { kello?: boolean; sticky?: boolean } = {}) => (
+    <Ylapalkki
+      tuoteNimi="Turvajohto EVENT"
+      alaotsikko={alaotsikko}
+      onLogo={palaaEtusivulle}
+      kello={valinnat.kello ? formatTime(currentTime) : undefined}
+      sticky={valinnat.sticky}
+      ilmoitukset={notifications}
+      onIlmoitus={avaaIlmoitus}
+      nimimerkki={sessionNickname}
+      isAdmin={session?.role === 'admin'}
+      onChangePassword={() => setShowChangePassword(true)}
+      onViewAuditLog={() => setViewingAuditLog(true)}
+      onLogout={handleLogout}
+    />
+  );
 
   const fetchRoles = () => {
     setRolesLoading(true);
@@ -4545,13 +4568,9 @@ export default function App() {
       case 'report_list':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
-             <button 
-              onClick={() => setActiveTab('reporting')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+             <TakaisinLinkki onClick={() => setActiveTab('reporting')}>
               Takaisin raportointivalikkoon
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 flex justify-between items-end border-b border-slate-100 pb-4">
               <div>
@@ -4639,13 +4658,9 @@ export default function App() {
       case 'report_jv':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
-            <button 
-              onClick={() => setActiveTab('reporting')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('reporting')}>
               Takaisin raportointivalikkoon
-            </button>
+            </TakaisinLinkki>
             <div className="mb-6 border-b border-slate-100 pb-4">
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                 <FileText className="text-indigo-500" size={24} />
@@ -4933,13 +4948,9 @@ export default function App() {
 
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
-            <button 
-              onClick={() => setActiveTab('reporting')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('reporting')}>
               Takaisin raportointivalikkoon
-            </button>
+            </TakaisinLinkki>
             
             <div className="mb-8 border-b border-slate-100 pb-4">
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -4979,8 +4990,7 @@ export default function App() {
 
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
-            <button
-              onClick={() => {
+            <TakaisinLinkki onClick={() => {
                 if (editingCheckIn) {
                   resetCheckInForm();
                   setActiveTab('planning_employees');
@@ -4989,12 +4999,9 @@ export default function App() {
                   setSelectedEmp('');
                   setEmpSearch('');
                 }
-              }}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+              }}>
               {editingCheckIn ? 'Takaisin työntekijälistaan' : 'Takaisin TIKE-valikkoon'}
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end">
               <div>
@@ -5346,13 +5353,9 @@ export default function App() {
       case 'tike_form_out':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
-            <button 
-              onClick={() => { setActiveTab('report_tike'); setSelectedOutEmp(null); setOutEmpSearch(''); setShowOutTimeInput(false); setCheckOutComment(''); }}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => { setActiveTab('report_tike'); setSelectedOutEmp(null); setOutEmpSearch(''); setShowOutTimeInput(false); setCheckOutComment(''); }}>
               Takaisin TIKE-valikkoon
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end">
               <div>
@@ -5594,13 +5597,9 @@ export default function App() {
       case 'tike_form_open':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
-            <button 
-              onClick={() => setActiveTab('report_tike')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('report_tike')}>
               Takaisin TIKE-valikkoon
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end gap-4 flex-wrap">
               <div>
@@ -5789,13 +5788,9 @@ export default function App() {
       case 'tike_form_firstaid':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
-            <button 
-              onClick={() => setActiveTab('report_tike')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('report_tike')}>
               Takaisin TIKE-valikkoon
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end gap-4 flex-wrap">
               <div>
@@ -5956,13 +5951,9 @@ export default function App() {
         const jvaSelectedCount = [jvaDenied, jvaRemoved, jvaDetained].filter(Boolean).length;
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
-            <button
-              onClick={() => setActiveTab('report_tike')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('report_tike')}>
               Takaisin TIKE-valikkoon
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end gap-4 flex-wrap">
               <div>
@@ -6389,17 +6380,13 @@ export default function App() {
 
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
-            <button 
-              onClick={() => {
+            <TakaisinLinkki onClick={() => {
                 setActiveTab('report_tike');
                 setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps('');
                 setGenRepFile(''); setGenRepFileUploadId('');
-              }}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+              }}>
               Takaisin TIKE-valikkoon
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end gap-4 flex-wrap">
               <div>
@@ -6646,13 +6633,9 @@ export default function App() {
       case 'planning_readiness':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-3xl mx-auto">
-            <button 
-              onClick={() => setActiveTab('planning')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('planning')}>
               Takaisin suunnitteluvalikkoon
-            </button>
+            </TakaisinLinkki>
             
             <div className="mb-6 border-b border-slate-100 pb-4">
               <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
@@ -6902,13 +6885,9 @@ export default function App() {
       case 'planning_employees':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
-            <button 
-              onClick={() => setActiveTab('planning')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('planning')}>
               Takaisin suunnitteluvalikkoon
-            </button>
+            </TakaisinLinkki>
             
             <div className="mb-6 flex justify-between items-end border-b border-slate-100 pb-4">
               <div>
@@ -7029,13 +7008,9 @@ export default function App() {
 
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
-            <button
-              onClick={() => { setAddEmpSearch(''); setAddEmpSelectedIds([]); setAddEmpNicknames({}); setActiveTab('planning_employees'); }}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => { setAddEmpSearch(''); setAddEmpSelectedIds([]); setAddEmpNicknames({}); setActiveTab('planning_employees'); }}>
               Takaisin työntekijälistaan
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4">
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -7214,13 +7189,9 @@ export default function App() {
 
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
-            <button
-              onClick={() => setActiveTab('documents')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('documents')}>
               Takaisin asiakirjavalikkoon
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-8 border-b border-slate-100 pb-4">
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -7254,13 +7225,9 @@ export default function App() {
       case 'documents_risk_done': {
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
-            <button
-              onClick={() => setActiveTab('documents_risk')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('documents_risk')}>
               Takaisin riskiarviointiin
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end gap-4 flex-wrap">
               <div>
@@ -7348,13 +7315,9 @@ export default function App() {
 
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl">
-            <button
-              onClick={() => setActiveTab('documents_risk')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('documents_risk')}>
               Takaisin riskiarviointiin
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end gap-4 flex-wrap">
               <div>
@@ -7712,13 +7675,9 @@ export default function App() {
         };
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
-            <button
-              onClick={() => setActiveTab('documents')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('documents')}>
               Takaisin asiakirjavalikkoon
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
               <div>
@@ -7877,13 +7836,9 @@ export default function App() {
       case 'documents_pdf':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
-            <button
-              onClick={() => setActiveTab('documents')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('documents')}>
               Takaisin asiakirjavalikkoon
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4">
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -7957,13 +7912,9 @@ export default function App() {
       case 'documents_trash':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
-            <button
-              onClick={() => setActiveTab('documents')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('documents')}>
               Takaisin asiakirjavalikkoon
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-end gap-4 flex-wrap">
               <div>
@@ -8077,13 +8028,9 @@ export default function App() {
 
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
-            <button
-              onClick={() => setActiveTab('documents')}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setActiveTab('documents')}>
               Takaisin asiakirjavalikkoon
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6 border-b border-slate-100 pb-4">
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -8169,13 +8116,9 @@ export default function App() {
         if (activeTab.startsWith('tike_form_')) {
           return (
              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-4xl text-center py-16">
-               <button 
-                onClick={() => setActiveTab('report_tike')}
-                className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6 mx-auto"
-              >
-                <ArrowLeft size={16} />
+               <TakaisinLinkki onClick={() => setActiveTab('report_tike')} keskita>
                 Takaisin TIKE-valikkoon
-              </button>
+              </TakaisinLinkki>
               <Wrench className="text-slate-300 mx-auto mb-4" size={48} />
               <h2 className="text-2xl font-bold text-slate-800 mb-2">Osio rakenteilla</h2>
               <p className="text-slate-500 max-w-md mx-auto">Tämä lomakepohja ({activeTab.replace('tike_form_', '')}) toteutetaan seuraavassa vaiheessa.</p>
@@ -8976,40 +8919,12 @@ export default function App() {
       : employees;
 
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Työntekijäpankki</p>
-            </div>
-          </button>
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
-              <Clock size={16} className="text-indigo-400" />
-              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
-            </div>
-            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-            <ProfileMenu
-              nickname={sessionNickname}
-              isAdmin={session?.role === 'admin'}
-              onChangePassword={() => setShowChangePassword(true)}
-              onViewAuditLog={() => setViewingAuditLog(true)}
-              onLogout={handleLogout}
-            />
-          </div>
-        </nav>
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki('Työntekijäpankki', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-5xl mx-auto">
-            <button
-              onClick={() => {
+            <TakaisinLinkki onClick={() => {
                 if (viewingEmployeeBank === 'form') {
                   setViewingEmployeeBank('list');
                   setEditingEmp(null);
@@ -9017,12 +8932,9 @@ export default function App() {
                 } else {
                   setViewingEmployeeBank(null);
                 }
-              }}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+              }}>
               {viewingEmployeeBank === 'form' ? 'Takaisin työntekijälistaan' : 'Takaisin'}
-            </button>
+            </TakaisinLinkki>
 
             {viewingEmployeeBank === 'form' ? (
               <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
@@ -9809,40 +9721,12 @@ export default function App() {
     );
 
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Käyttäjähallinta</p>
-            </div>
-          </button>
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
-              <Clock size={16} className="text-indigo-400" />
-              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
-            </div>
-            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-            <ProfileMenu
-              nickname={sessionNickname}
-              isAdmin={isAdmin}
-              onChangePassword={() => setShowChangePassword(true)}
-              onViewAuditLog={() => setViewingAuditLog(true)}
-              onLogout={handleLogout}
-            />
-          </div>
-        </nav>
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki('Käyttäjähallinta', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-4xl mx-auto">
-            <button
-              onClick={() => {
+            <TakaisinLinkki onClick={() => {
                 if (viewingUserAdmin === 'list') {
                   setViewingUserAdmin(null);
                 } else {
@@ -9850,12 +9734,9 @@ export default function App() {
                   resetNewUserForm();
                   setEditingPermUser(null);
                 }
-              }}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+              }}>
               {viewingUserAdmin === 'list' ? 'Takaisin' : 'Takaisin käyttäjälistaan'}
-            </button>
+            </TakaisinLinkki>
 
             {!isAdmin ? (
               <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-10 text-center">
@@ -10316,45 +10197,14 @@ export default function App() {
       .sort((a: any, b: any) => String(b.ts || '').localeCompare(String(a.ts || '')));
 
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Hätäviestien lähetyshistoria</p>
-            </div>
-          </button>
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
-              <Clock size={16} className="text-indigo-400" />
-              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
-            </div>
-            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-            <ProfileMenu
-              nickname={sessionNickname}
-              isAdmin={session?.role === 'admin'}
-              onChangePassword={() => setShowChangePassword(true)}
-              onViewAuditLog={() => setViewingAuditLog(true)}
-              onLogout={handleLogout}
-            />
-          </div>
-        </nav>
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki('Hätäviestien lähetyshistoria', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-4xl mx-auto text-left">
-            <button
-              onClick={() => { setViewingSmsLog(false); setAvattuLahetys(null); }}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => { setViewingSmsLog(false); setAvattuLahetys(null); }}>
               Takaisin
-            </button>
+            </TakaisinLinkki>
 
             <h2 className="text-2xl font-bold text-slate-800 mb-1">Lähetetyt hätäviestit</h2>
             <p className="text-sm text-slate-500 mb-6">
@@ -10546,39 +10396,14 @@ export default function App() {
             : 'bg-emerald-500';
 
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Sovellusasetukset</p>
-            </div>
-          </button>
-          <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-          <ProfileMenu
-            nickname={sessionNickname}
-            isAdmin={session?.role === 'admin'}
-            onChangePassword={() => setShowChangePassword(true)}
-            onViewAuditLog={() => setViewingAuditLog(true)}
-            onLogout={handleLogout}
-          />
-        </nav>
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki('Sovellusasetukset')}
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-4xl mx-auto text-left">
-            <button
-              onClick={() => setViewingSettings(false)}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setViewingSettings(false)}>
               Takaisin
-            </button>
+            </TakaisinLinkki>
 
             <h2 className="text-2xl font-bold text-slate-800 mb-1">Sovellusasetukset</h2>
             <p className="text-sm text-slate-500 mb-8">Käyttäjätasot, palvelimen tallennustila ja lakisääteiset säilytysajat.</p>
@@ -11398,45 +11223,14 @@ export default function App() {
     };
 
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Audit-loki</p>
-            </div>
-          </button>
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
-              <Clock size={16} className="text-indigo-400" />
-              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
-            </div>
-            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-            <ProfileMenu
-              nickname={sessionNickname}
-              isAdmin={isAdmin}
-              onChangePassword={() => setShowChangePassword(true)}
-              onViewAuditLog={() => setViewingAuditLog(true)}
-              onLogout={handleLogout}
-            />
-          </div>
-        </nav>
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki('Audit-loki', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-5xl mx-auto">
-            <button
-              onClick={() => setViewingAuditLog(false)}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setViewingAuditLog(false)}>
               Takaisin
-            </button>
+            </TakaisinLinkki>
 
             {!isAdmin ? (
               <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-10 text-center">
@@ -11571,45 +11365,14 @@ export default function App() {
     ];
 
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut raportit</p>
-            </div>
-          </button>
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
-              <Clock size={16} className="text-indigo-400" />
-              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
-            </div>
-            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-            <ProfileMenu
-              nickname={sessionNickname}
-              isAdmin={session?.role === 'admin'}
-              onChangePassword={() => setShowChangePassword(true)}
-              onViewAuditLog={() => setViewingAuditLog(true)}
-              onLogout={handleLogout}
-            />
-          </div>
-        </nav>
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki('Tallennetut raportit', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-6xl mx-auto">
-            <button
-              onClick={() => setViewingAllReports(false)}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setViewingAllReports(false)}>
               Takaisin etusivulle
-            </button>
+            </TakaisinLinkki>
 
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
               <div>
@@ -11722,39 +11485,14 @@ export default function App() {
       const eventRisks = riskAssessments.filter(r => (r.eventId || 'fesx') === detailEvent.id);
 
       return (
-        <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-          <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-            <button
-              type="button"
-              onClick={palaaEtusivulle}
-              title="Etusivulle"
-              className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-            >
-              <ShieldCheck className="text-indigo-400" size={28} />
-              <div>
-                <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-                <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
-              </div>
-            </button>
-            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-            <ProfileMenu
-              nickname={sessionNickname}
-              isAdmin={session?.role === 'admin'}
-              onChangePassword={() => setShowChangePassword(true)}
-              onViewAuditLog={() => setViewingAuditLog(true)}
-              onLogout={handleLogout}
-            />
-          </nav>
+        <div className="min-h-screen bg-canvas font-sans flex flex-col">
+          {ylapalkki('Tallennetut tapahtumat')}
 
           <main className="flex-1 p-6 md:p-10">
             <div className="max-w-6xl mx-auto">
-              <button
-                onClick={() => setArchivedEventDetailId(null)}
-                className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-              >
-                <ArrowLeft size={16} />
-                Takaisin tallennettuihin tapahtumiin
-              </button>
+              <TakaisinLinkki onClick={() => setArchivedEventDetailId(null)}>
+              Takaisin tallennettuihin tapahtumiin
+            </TakaisinLinkki>
 
               <div className="mb-6 bg-slate-100 border border-slate-200 rounded-xl p-4 flex items-start gap-3">
                 <Archive className="text-slate-500 shrink-0 mt-0.5" size={18} />
@@ -11900,39 +11638,14 @@ export default function App() {
     }
 
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Tallennetut tapahtumat</p>
-            </div>
-          </button>
-          <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-          <ProfileMenu
-            nickname={sessionNickname}
-            isAdmin={session?.role === 'admin'}
-            onChangePassword={() => setShowChangePassword(true)}
-            onViewAuditLog={() => setViewingAuditLog(true)}
-            onLogout={handleLogout}
-          />
-        </nav>
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki('Tallennetut tapahtumat')}
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-5xl mx-auto">
-            <button
-              onClick={() => setViewingArchivedEvents(false)}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setViewingArchivedEvents(false)}>
               Takaisin etusivulle
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-8">
               <h2 className="text-2xl font-bold text-slate-800">Tallennetut tapahtumat</h2>
@@ -11987,45 +11700,14 @@ export default function App() {
   // ei ole pääsyä lainkaan — silloin sitä ei näkisi missään tapahtuman sisällä.
   if (viewingSharedWithMe) {
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Minulle jaetut</p>
-            </div>
-          </button>
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
-              <Clock size={16} className="text-indigo-400" />
-              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
-            </div>
-            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-            <ProfileMenu
-              nickname={sessionNickname}
-              isAdmin={session?.role === 'admin'}
-              onChangePassword={() => setShowChangePassword(true)}
-              onViewAuditLog={() => setViewingAuditLog(true)}
-              onLogout={handleLogout}
-            />
-          </div>
-        </nav>
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki('Minulle jaetut', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-4xl mx-auto">
-            <button
-              onClick={() => setViewingSharedWithMe(false)}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setViewingSharedWithMe(false)}>
               Takaisin etusivulle
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-8">
               <h2 className="text-2xl font-bold text-slate-800">Minulle jaetut</h2>
@@ -12147,35 +11829,8 @@ export default function App() {
     ].filter((painike) => painike.nakyy);
 
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
-            </div>
-          </button>
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
-              <Clock size={16} className="text-indigo-400" />
-              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
-            </div>
-            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-            <ProfileMenu
-              nickname={sessionNickname}
-              isAdmin={session?.role === 'admin'}
-              onChangePassword={() => setShowChangePassword(true)}
-              onViewAuditLog={() => setViewingAuditLog(true)}
-              onLogout={handleLogout}
-            />
-          </div>
-        </nav>
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki('Tapahtumaturvallisuuden hallintatyökalu', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10 flex flex-col items-center justify-center">
           <div className="bg-white p-8 md:p-12 rounded-3xl shadow-xl border border-slate-100 text-center max-w-2xl w-full animate-in fade-in zoom-in-95 duration-500">
@@ -12232,47 +11887,14 @@ export default function App() {
   // ====================== TAPAHTUMAN VALINTA ======================
   if (selectedEvent === null) {
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
-            </div>
-          </button>
-          <div className="flex items-center gap-4">
-            {/* Tallennetut raportit / Tallennetut tapahtumat / Työntekijäpankki löytyvät
-                nyt etusivulta, eivät enää tämän näkymän yläpalkista. */}
-            <div className="hidden md:flex items-center gap-2 bg-slate-800 px-4 py-2 rounded-lg">
-              <Clock size={16} className="text-indigo-400" />
-              <span className="font-mono text-sm tracking-widest">{formatTime(currentTime)}</span>
-            </div>
-            <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-            <ProfileMenu
-              nickname={sessionNickname}
-              isAdmin={session?.role === 'admin'}
-              onChangePassword={() => setShowChangePassword(true)}
-              onViewAuditLog={() => setViewingAuditLog(true)}
-              onLogout={handleLogout}
-            />
-          </div>
-        </nav>
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki('Tapahtumaturvallisuuden hallintatyökalu', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-5xl mx-auto">
-            <button
-              onClick={() => setShowEventPicker(false)}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => setShowEventPicker(false)}>
               Takaisin etusivulle
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-8">
               <h2 className="text-2xl font-bold text-slate-800">Valitse tapahtuma</h2>
@@ -12371,36 +11993,14 @@ export default function App() {
     const headCls = "text-md font-bold text-slate-800 mb-4 pb-3 border-b border-slate-100 flex items-center gap-2";
 
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex flex-col">
-        <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shadow-md sticky top-0 z-50">
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-          </button>
-          <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
-          <ProfileMenu
-            nickname={sessionNickname}
-            isAdmin={session?.role === 'admin'}
-            onChangePassword={() => setShowChangePassword(true)}
-            onViewAuditLog={() => setViewingAuditLog(true)}
-            onLogout={handleLogout}
-          />
-        </nav>
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki(undefined, { sticky: true })}
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-4xl mx-auto">
-            <button
-              onClick={() => { setSelectedEvent(null); setShowEventPicker(true); setNewEvent(emptyNewEvent); setEditingEventId(null); }}
-              className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors mb-6"
-            >
-              <ArrowLeft size={16} />
+            <TakaisinLinkki onClick={() => { setSelectedEvent(null); setShowEventPicker(true); setNewEvent(emptyNewEvent); setEditingEventId(null); }}>
               Takaisin tapahtumavalintaan
-            </button>
+            </TakaisinLinkki>
 
             <div className="mb-6">
               <h2 className="text-2xl font-bold text-slate-800">{editingEventId ? 'Muokkaa tapahtumaa' : 'Luo uusi tapahtuma'}</h2>
@@ -12886,29 +12486,25 @@ export default function App() {
   // ====================== MALLITAPAHTUMA FESTIVAALIÖ ======================
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans">
+    <div className="min-h-screen bg-canvas font-sans">
       {/* Top Navigation Bar */}
-      <nav className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center sticky top-0 z-50 shadow-md">
+      {/* Tapahtumanäkymän oma yläpalkki: sivuvalikkonappi ja pikatoiminnot tekevät siitä
+          aidosti erilaisen kuin muiden näkymien palkki, joten se ei käytä Ylapalkkia —
+          vain sen logo-osaa, jotta tuotenimi on silti yhdessä paikassa. */}
+      <nav className="bg-surface-dark text-ink-on-dark px-6 py-4 flex justify-between items-center sticky top-0 z-50 shadow-md">
         <div className="flex items-center gap-4">
-          <button 
+          <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white transition-colors"
+            className="p-1.5 hover:bg-white/10 rounded-lg text-ink-on-dark/80 hover:text-ink-on-dark transition-colors"
             aria-label="Kutista tai laajenna sivuvalikko"
           >
             <Menu size={24} />
           </button>
-          <button
-            type="button"
-            onClick={palaaEtusivulle}
-            title="Etusivulle"
-            className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
-          >
-            <ShieldCheck className="text-indigo-400" size={28} />
-            <div>
-              <h1 className="text-xl font-bold leading-tight tracking-tight">Turvajohto EVENT</h1>
-              <p className="hidden md:block text-xs text-slate-400 font-medium">Tapahtumaturvallisuuden hallintatyökalu</p>
-            </div>
-          </button>
+          <YlapalkkiLogo
+            tuoteNimi="Turvajohto EVENT"
+            alaotsikko="Tapahtumaturvallisuuden hallintatyökalu"
+            onLogo={palaaEtusivulle}
+          />
         </div>
         <div className="flex items-center gap-4 sm:gap-6">
           

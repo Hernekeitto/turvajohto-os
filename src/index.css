@@ -71,6 +71,8 @@
   --color-surface-dark: #0f172a;
   --color-ink-on-dark: #f1f5f9;
   --color-ink-on-dark-muted: #94a3b8;
+  /* Tunnusväri tumman palkin päällä: täysi accent jää siellä liian tummaksi. */
+  --color-accent-on-dark: #818cf8;
 
   /* --- Tilavärit -----------------------------------------------------------
      Kolmikko per tila: täysi väri (palkit, pisteet), soft (merkin tausta) ja
@@ -144,6 +146,7 @@
   --color-surface-dark: #1e293b; /* Panssari myös palkeissa */
   --color-ink-on-dark: #f1f5f9;  /* johdettu */
   --color-ink-on-dark-muted: #9da1a9;
+  --color-accent-on-dark: #02c082; /* johdettu: kirkas turvavihreä tummaa vasten */
 
   --color-danger: #e80140;
   --color-danger-soft: #fdf2f5;  /* ohjeiston hälytyslaatikon tausta */
