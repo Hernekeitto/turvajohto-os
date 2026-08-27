@@ -935,6 +935,9 @@ export default function App() {
   // Tapahtumarajaus: tyhjä = ei rajoitusta (näkee kaikki tapahtumat), muuten lista
   // tapahtuma-id:itä joihin käyttäjä on rajattu (ks. server/permissions.js: eventAccess).
   const [permEventAccess, setPermEventAccess] = useState([]);
+  // Tuotepääsy: mihin puoliin ('event' / 'guard') tunnus pääsee. Palvelin torjuu tyhjän
+  // listan, joten UI ei anna poistaa viimeistä valintaa (ks. vaihdaTuote).
+  const [permTuotteet, setPermTuotteet] = useState(['event']);
   const [permNickname, setPermNickname] = useState('');
   const [permSaveError, setPermSaveError] = useState('');
   const [permSaving, setPermSaving] = useState(false);
@@ -2280,6 +2283,8 @@ export default function App() {
   const handleOpenPermissions = (user) => {
     setEditingPermUser(user);
     setPermEventAccess(user.eventAccess || []);
+    setPermTuotteet(Array.isArray(user.tuotteet) && user.tuotteet.length > 0 ? user.tuotteet : ['event']);
+    setPermTuotteet(Array.isArray(user.tuotteet) && user.tuotteet.length > 0 ? user.tuotteet : ['event']);
     setPermNickname(user.nickname || '');
     setPermRoleId(user.roleId || '');
     setUusiSalasanaNaytto(null);
@@ -2369,6 +2374,16 @@ export default function App() {
     ));
   };
 
+  // Tuotepääsyn vaihto. Viimeistä valintaa ei voi poistaa: tyhjä lista lukitsisi käyttäjän
+  // ulos molemmilta puolilta, ja palvelin torjuisi tallennuksen joka tapauksessa (PUT
+  // /api/users). Parempi estää se tässä kuin näyttää virhe vasta tallennettaessa.
+  const vaihdaTuote = (tuote: string) => {
+    setPermTuotteet((prev) => {
+      if (!prev.includes(tuote)) return [...prev, tuote];
+      return prev.length > 1 ? prev.filter((t) => t !== tuote) : prev;
+    });
+  };
+
   const handleSavePermissions = async () => {
     if (!editingPermUser) return;
     setPermSaveError('');
@@ -2387,6 +2402,7 @@ export default function App() {
         body: JSON.stringify({
           nickname: permNickname.trim(),
           eventAccess: permEventAccess,
+          tuotteet: permTuotteet,
           ...(permRoleId ? { roleId: permRoleId } : {}),
         }),
       });
@@ -10018,7 +10034,48 @@ export default function App() {
                   )}
                 </div>
 
+                {/* Tuotepääsy. Uusi koodi käyttää teematokeneita (ks. src/TEEMA.md) — värit ovat
+                    EVENT-puolella samat kuin viereisissä slate-luokissa, mutta lohko siirtyy
+                    aikanaan jaettuun kansioon sellaisenaan. */}
                 {editingPermUser.role !== 'admin' && (
+                  <>
+                  <div className="mt-6 bg-sunken border border-line rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-ink mb-1 flex items-center gap-2">
+                      <ShieldCheck className="text-accent" size={16} />
+                      Puolet
+                    </h3>
+                    <p className="text-xs text-ink-muted mb-4">
+                      Mihin puoliin tunnus pääsee kirjautumaan. Sama tunnus käy molempiin, ja
+                      valinta ratkaisee vain sen kumman osoitteen takaa sovellus aukeaa —
+                      sivukartta-oikeudet määräävät edelleen mitä hän siellä näkee. Vähintään
+                      yksi puoli on valittava.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { id: 'event', nimi: 'Turvajohto EVENT', selite: 'Tapahtumat' },
+                        { id: 'guard', nimi: 'Turvajohto GUARD', selite: 'Vartiointi' },
+                      ].map((t) => (
+                        <label
+                          key={t.id}
+                          className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer transition-colors ${
+                            permTuotteet.includes(t.id)
+                              ? 'bg-accent-soft border-accent text-accent-ink'
+                              : 'bg-surface border-line text-ink-body hover:bg-sunken'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={permTuotteet.includes(t.id)}
+                            onChange={() => vaihdaTuote(t.id)}
+                            className="w-4 h-4 text-accent rounded border-line-strong focus:ring-accent"
+                          />
+                          {t.nimi}
+                          <span className="text-xs text-ink-subtle">({t.selite})</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5">
                     <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
                       <Layers className="text-indigo-500" size={16} />
@@ -10057,6 +10114,7 @@ export default function App() {
                       </div>
                     )}
                   </div>
+                  </>
                 )}
 
                 {permSaveError && <p className="text-sm text-rose-600 mt-4">{permSaveError}</p>}
