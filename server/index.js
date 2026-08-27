@@ -349,6 +349,12 @@ const UPLOAD_VIITTAAJAT = {
   reports: (arr) => (Array.isArray(arr) ? arr : []).map((r) => r?.attachment?.id).filter(Boolean),
   events: (arr) => (Array.isArray(arr) ? arr : []).map((e) => e?.formData?.mapUploadId).filter(Boolean),
   eventFiles: (arr) => (Array.isArray(arr) ? arr : []).map((f) => f?.uploadId).filter(Boolean),
+  // GUARD-puolen liitteet on oltava tässä samasta syystä kuin tapahtumapuolen: rekisteri
+  // kertoo roskienkeruulle mitkä liitteet ovat vielä käytössä. Ilman näitä rivejä
+  // esimerkiksi tapahtumapuolen tallennus tulkitsisi kohteen pohjapiirroksen orvoksi ja
+  // poistaisi sen levyltä armonajan jälkeen.
+  guardFiles: (arr) => (Array.isArray(arr) ? arr : []).map((f) => f?.uploadId).filter(Boolean),
+  guardReports: (arr) => (Array.isArray(arr) ? arr : []).map((r) => r?.attachment?.id).filter(Boolean),
 };
 
 // Tuoteportti: kokoelma joka kuuluu vain toiselle puolelle (esim. guardSites) on
@@ -1098,10 +1104,20 @@ app.get('/api/uploads/:id', requireAuth, (req, res) => {
   // tietueeseen, ja käyttäjälle erikseen jaettu tiedosto avautuu ilman tapahtumaoikeutta.
   const filesArr = readCollection('eventFiles') || [];
   const sharesArr = readCollection('fileShares') || [];
-  if (!canReadAttachment(
+  const tapahtumaPuoli = canReadAttachment(
     req.role, req.permissions, req.eventAccess, req.params.id,
     reportsArr, eventsArr, filesArr, sharesArr, req.username
-  )) {
+  );
+  // GUARD-liitteet tarkistetaan erikseen, ja vain jos käyttäjällä on pääsy sille puolelle:
+  // pelkkä liitteen id ei saa avata vartiointipuolen tiedostoa tunnukselle joka ei pääse
+  // sinne lainkaan. Sama portti kuin /api/data-reiteillä (tuoteEstaa).
+  const guardPuoli = !tapahtumaPuoli
+    && (req.tuotteet || []).includes('guard')
+    && canReadGuardAttachment(
+      req.role, req.permissions, req.eventAccess, req.params.id,
+      readCollection('guardFiles') || [], readCollection('guardReports') || []
+    );
+  if (!tapahtumaPuoli && !guardPuoli) {
     return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän liitteen lataamiseen.' });
   }
   res.sendFile(filePath);

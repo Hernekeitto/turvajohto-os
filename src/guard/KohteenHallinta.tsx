@@ -1,19 +1,21 @@
 import { useState } from 'react';
-import { Plus, Trash2, ClipboardList, GraduationCap, Building2, CheckSquare, ListChecks } from 'lucide-react';
+import { Plus, Trash2, ClipboardList, GraduationCap, Building2, CheckSquare, ListChecks, FolderOpen } from 'lucide-react';
 import { Kentta } from './Kentta';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { paikallinenPaiva } from '../shared/ajat';
 import { muotoileTunniste } from '../shared/tunnisteet';
-import { uusiId, type Kohde, type Perehdytys, type Tehtava } from './tyypit';
+import { KohteenTiedostot } from './KohteenTiedostot';
+import { uusiId, type Kohde, type KohteenTiedosto, type Perehdytys, type Tehtava } from './tyypit';
 
 // Kohteen hallinta: perustiedot, perehdytykset ja työvuoron tehtävät omilla välilehdillään.
 // Kaikki kolme ovat kohteen omia kenttiä, joten ne tallennetaan yhtenä kokonaisuutena —
 // käyttäjän kannalta "tallenna kohde" tallentaa sen mitä hän on juuri muokannut.
 
-type Valilehti = 'perustiedot' | 'perehdytys' | 'tehtavat';
+type Valilehti = 'perustiedot' | 'tiedostot' | 'perehdytys' | 'tehtavat';
 
 const VALILEHDET: { id: Valilehti; label: string; Ikoni: typeof Building2 }[] = [
   { id: 'perustiedot', label: 'Perustiedot', Ikoni: Building2 },
+  { id: 'tiedostot', label: 'Tiedostot', Ikoni: FolderOpen },
   { id: 'perehdytys', label: 'Perehdytykset', Ikoni: GraduationCap },
   { id: 'tehtavat', label: 'Työvuoron tehtävät', Ikoni: ClipboardList },
 ];
@@ -28,6 +30,12 @@ type Props = {
   // tyhjää rekisteriä tai puuttuvaa oikeutta — kummassakin tapauksessa perehdytettävän
   // nimi kirjoitetaan käsin, eikä käyttäjälle valehdella että rekisteri olisi tyhjä.
   tyontekijat: { id?: string; name?: string; displayId?: number | null }[];
+  // Tiedostot ovat omassa kokoelmassaan (guardFiles) ja tallentuvat heti, joten ne
+  // kulkevat omien käsittelijöidensä kautta eivätkä kohteen onChange-ketjussa.
+  tiedostot: KohteenTiedosto[];
+  onLisaaTiedosto: (tiedosto: File) => Promise<void>;
+  onPoistaTiedosto: (id: string) => Promise<void>;
+  saaMuokata: boolean;
 };
 
 export const KohteenHallinta = ({
@@ -37,6 +45,10 @@ export const KohteenHallinta = ({
   onPeruuta,
   tallentaa,
   tyontekijat,
+  tiedostot,
+  onLisaaTiedosto,
+  onPoistaTiedosto,
+  saaMuokata,
 }: Props) => {
   const [valilehti, setValilehti] = useState<Valilehti>('perustiedot');
   const [uusiPerehdytys, setUusiPerehdytys] = useState({ nimi: '', employeeId: '', pvm: paikallinenPaiva(), perehdyttaja: '' });
@@ -111,6 +123,9 @@ export const KohteenHallinta = ({
           >
             <Ikoni size={16} />
             {label}
+            {id === 'tiedostot' && tiedostot.length > 0 && (
+              <span className="text-xs text-ink-subtle">({tiedostot.length})</span>
+            )}
             {id === 'perehdytys' && perehdytykset.length > 0 && (
               <span className="text-xs text-ink-subtle">({perehdytykset.length})</span>
             )}
@@ -156,6 +171,16 @@ export const KohteenHallinta = ({
             monirivinen
           />
         </div>
+      )}
+
+      {valilehti === 'tiedostot' && (
+        <KohteenTiedostot
+          tiedostot={tiedostot}
+          saaMuokata={saaMuokata}
+          onLisaa={onLisaaTiedosto}
+          onPoista={onPoistaTiedosto}
+          kohdeTallennettu={!!kohde.id}
+        />
       )}
 
       {valilehti === 'perehdytys' && (

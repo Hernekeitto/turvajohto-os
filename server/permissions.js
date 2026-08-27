@@ -92,6 +92,10 @@ const TIKE_FORM_NODES = [
 // src/App.tsx: uploadAttachment-kutsut). Käytetään POST /api/uploads -reitillä: mihin
 // tahansa näistä riittävä muokkausoikeus (missä tahansa bucketissa) oikeuttaa liitteen
 // lähettämisen.
+// GUARD-puolen solmut jotka oikeuttavat liitteen lähettämiseen: kohteen hallinta (kohteen
+// omat tiedostot, esim. toimeksiantosopimus ja pohjapiirros) sekä vartijan raporttilomakkeet.
+const GUARD_ATTACHMENT_NODES = ['guard_sites', 'guard_report_action', 'guard_report_jv'];
+
 const REPORT_ATTACHMENT_NODES = [
   'tike_form_open', 'tike_form_firstaid', 'tike_form_threat', 'tike_form_fence', 'tike_form_damage',
   'tike_form_lostfound', 'tike_form_patrol', 'tike_form_queue', 'tike_form_weather',
@@ -514,5 +518,36 @@ export function canReadAttachment(
 export function canUploadAttachment(role, permissions) {
   if (role === 'admin') return true;
   const bucketKeys = permissions ? Object.keys(permissions) : [];
-  return bucketKeys.some((eventId) => hasAnyEdit(permissions, eventId, REPORT_ATTACHMENT_NODES));
+  const nodes = [...REPORT_ATTACHMENT_NODES, ...GUARD_ATTACHMENT_NODES];
+  return bucketKeys.some((eventId) => hasAnyEdit(permissions, eventId, nodes));
+}
+
+// GUARD-liitteiden lukuoikeus. Erillinen funktio eikä haara canReadAttachmentiin, koska
+// GUARD-puolen liitteillä on eri omistajat (guardFiles, guardReports) ja eri solmut —
+// yhdistäminen olisi tehnyt jo ennestään pitkästä funktiosta vaikeasti luettavan, eikä
+// tapahtumapuolen liitelogiikkaan ole tarpeen koskea.
+export function canReadGuardAttachment(
+  role, permissions, eventAccess, attachmentId, guardFilesArr = [], guardReportsArr = []
+) {
+  if (role === 'admin') return true;
+
+  const tiedosto = (Array.isArray(guardFilesArr) ? guardFilesArr : []).find(
+    (f) => f?.uploadId === attachmentId
+  );
+  if (tiedosto) {
+    if (!eventAllowed(eventAccess, tiedosto.siteId)) return false;
+    return hasAnyView(permissions, tiedosto.siteId, ['guard_sites', 'guard_site_info']);
+  }
+
+  const raportti = (Array.isArray(guardReportsArr) ? guardReportsArr : []).find(
+    (r) => r?.attachment?.id === attachmentId
+  );
+  if (raportti) {
+    if (!eventAllowed(eventAccess, raportti.siteId)) return false;
+    return hasAnyView(permissions, raportti.siteId, [
+      'guard_report_action', 'guard_report_jv', 'guard_site_info',
+    ]);
+  }
+
+  return false;
 }

@@ -4,7 +4,8 @@ import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { Ylapalkki } from '../shared/komponentit/Ylapalkki';
 import { KohteenHallinta } from './KohteenHallinta';
-import { uusiId, type Kohde } from './tyypit';
+import { Tehtavat } from './Tehtavat';
+import { uusiId, type Kohde, type KohteenTiedosto, type TehtavaSuoritus } from './tyypit';
 
 // Turvajohto GUARD -puolen juurikomponentti. Vastaa näkymien välisestä vaihdosta ja
 // kohdedatan lataamisesta; yksittäiset näkymät ovat omissa tiedostoissaan, jotta tänne
@@ -33,6 +34,10 @@ export default function GuardApp() {
   // tarkistus tehdään aina __default__-asetusta vasten — siksi eventId on null.
   const saaNahda = isAdmin || canView(perms, null, 'guard_sites');
   const saaMuokata = isAdmin || canEdit(perms, null, 'guard_sites');
+  // Tehtävien kuittaus on oma oikeutensa: vartija kuittaa tehtäviä mutta ei välttämättä
+  // saa muokata kohteen perustietoja.
+  const saaNahdaTehtavat = isAdmin || canView(perms, null, 'guard_tasks');
+  const saaKuitata = isAdmin || canEdit(perms, null, 'guard_tasks');
 
   const [kohteet, setKohteet] = useState<Kohde[]>([]);
   // Ladattu vasta onnistuneen haun jälkeen. Tallennus on estetty siihen asti: ilman tätä
@@ -47,6 +52,12 @@ export default function GuardApp() {
   // Työntekijäpankki perehdytysvalintaa varten. Jää tyhjäksi jos käyttäjällä ei ole
   // siihen lukuoikeutta — silloin perehdytettävän nimi kirjoitetaan käsin.
   const [tyontekijat, setTyontekijat] = useState<{ id?: string; name?: string; displayId?: number | null }[]>([]);
+  const [tiedostot, setTiedostot] = useState<KohteenTiedosto[]>([]);
+  const [tiedostotLadattu, setTiedostotLadattu] = useState(false);
+  const [suoritukset, setSuoritukset] = useState<TehtavaSuoritus[]>([]);
+  // Kohde jonka tehtäviä ollaan kuittaamassa. Erillinen lomake-tilasta: sama kohde voi
+  // olla auki joko hallintaa tai kuittausta varten, eikä niitä pidä sekoittaa.
+  const [tehtavaKohde, setTehtavaKohde] = useState<Kohde | null>(null);
 
   useEffect(() => {
     if (!saaNahda) return;
@@ -75,6 +86,100 @@ export default function GuardApp() {
       })
       .catch(() => { /* ei kriittinen */ });
   }, [saaNahda]);
+
+  useEffect(() => {
+    if (!saaNahda) return;
+    fetch('/api/data/guardFiles', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && res.ok === true) {
+          if (Array.isArray(res.data)) setTiedostot(res.data);
+          setTiedostotLadattu(true);
+        }
+      })
+      .catch(() => { /* virhe näkyy tiedostovälilehdellä tyhjänä listana */ });
+  }, [saaNahda]);
+
+  useEffect(() => {
+    if (!saaNahdaTehtavat) return;
+    fetch('/api/data/guardTaskRuns', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res && res.ok === true && Array.isArray(res.data)) setSuoritukset(res.data);
+      })
+      .catch(() => { /* virhe näkyy tyhjänä suorituslistana */ });
+  }, [saaNahdaTehtavat]);
+
+  // Tehtäväsuoritus lisätään aina uutena tietueena eikä koskaan korvaa aiempaa: sama
+  // kierros ajetaan joka vuorossa uudelleen, ja jokainen kerta on oma merkintänsä lokissa.
+  const suoritaTehtava = async (suoritus: TehtavaSuoritus) => {
+    const uudet = [...suoritukset, suoritus];
+    try {
+      const r = await fetch('/api/data/guardTaskRuns', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(uudet),
+      });
+      const res = await r.json().catch(() => null);
+      if (r.ok && res?.ok) {
+        setSuoritukset(uudet);
+        return true;
+      }
+      setVirhe(res?.error || 'Suorituksen kirjaus epäonnistui.');
+      return false;
+    } catch {
+      setVirhe('Suorituksen kirjaus epäonnistui: ei yhteyttä palvelimeen.');
+      return false;
+    }
+  };
+
+  // Tiedoston lisäys on kaksivaiheinen: itse tiedosto menee uploads-hakemistoon ja siitä
+  // saatu id tallennetaan guardFiles-kokoelmaan. Jos jälkimmäinen epäonnistuu, liite jää
+  // orvoksi levylle — palvelimen roskienkeruu siivoaa sen armonajan jälkeen (uploads.js).
+  const lisaaTiedosto = async (tiedosto: File) => {
+    if (!lomake?.id) throw new Error('Tallenna kohde ennen tiedostojen lisäämistä.');
+    if (!tiedostotLadattu) throw new Error('Tiedostoja ei ole vielä ladattu — yritä hetken kuluttua uudelleen.');
+    const lomakedata = new FormData();
+    lomakedata.append('file', tiedosto);
+    const lataus = await fetch('/api/uploads', { method: 'POST', credentials: 'include', body: lomakedata });
+    const latausRes = await lataus.json().catch(() => null);
+    if (!lataus.ok || !latausRes?.ok) {
+      throw new Error(latausRes?.error || 'Tiedoston lähetys epäonnistui.');
+    }
+    const merkinta: KohteenTiedosto = {
+      id: uusiId(),
+      siteId: lomake.id,
+      name: latausRes.name || tiedosto.name,
+      uploadId: latausRes.id,
+      size: latausRes.size,
+      lisatty: new Date().toISOString(),
+      lisaaja: session?.nickname || undefined,
+    };
+    const uudet = [...tiedostot, merkinta];
+    const r = await fetch('/api/data/guardFiles', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(uudet),
+    });
+    const res = await r.json().catch(() => null);
+    if (!r.ok || !res?.ok) throw new Error(res?.error || 'Tiedoston tallennus epäonnistui.');
+    setTiedostot(uudet);
+  };
+
+  const poistaTiedosto = async (id: string) => {
+    const jaljelle = tiedostot.filter((t) => t.id !== id);
+    const r = await fetch(`/api/data/guardFiles${jaljelle.length === 0 ? '?allowEmpty=1' : ''}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(jaljelle),
+    });
+    const res = await r.json().catch(() => null);
+    if (r.ok && res?.ok) setTiedostot(jaljelle);
+    else setVirhe(res?.error || 'Tiedoston poisto epäonnistui.');
+  };
 
   // salliTyhja=true ohittaa palvelimen romahdussuojan, joka muuten hylkää tallennuksen
   // joka korvaisi olemassa olevan datan tyhjällä (server/index.js: wouldWipeNonEmptyCollection).
@@ -171,7 +276,11 @@ export default function GuardApp() {
 
   return (
     <div className="min-h-screen bg-canvas text-ink flex flex-col">
-      {ylapalkki(lomake ? (lomake.id ? 'Kohteen hallinta' : 'Uusi kohde') : 'Kohdevalinta')}
+      {ylapalkki(
+        tehtavaKohde ? 'Työvuoron tehtävät'
+          : lomake ? (lomake.id ? 'Kohteen hallinta' : 'Uusi kohde')
+          : 'Kohdevalinta'
+      )}
 
       <main className="flex-1 p-6 md:p-10">
         <div className="max-w-5xl mx-auto">
@@ -181,7 +290,16 @@ export default function GuardApp() {
             </p>
           )}
 
-          {lomake ? (
+          {tehtavaKohde ? (
+            <Tehtavat
+              kohde={tehtavaKohde}
+              suoritukset={suoritukset}
+              vartija={session?.nickname || ''}
+              saaKuitata={saaKuitata}
+              onSuorita={suoritaTehtava}
+              onTakaisin={() => setTehtavaKohde(null)}
+            />
+          ) : lomake ? (
             <KohteenHallinta
               kohde={lomake}
               onChange={setLomake}
@@ -189,6 +307,10 @@ export default function GuardApp() {
               onPeruuta={() => setLomake(null)}
               tallentaa={tallentaa}
               tyontekijat={tyontekijat}
+              tiedostot={tiedostot.filter((t) => t.siteId === lomake.id)}
+              onLisaaTiedosto={lisaaTiedosto}
+              onPoistaTiedosto={poistaTiedosto}
+              saaMuokata={saaMuokata}
             />
           ) : (
             <>
@@ -267,8 +389,21 @@ export default function GuardApp() {
                         </div>
                       )}
 
+                      <div className="flex flex-wrap gap-3 pt-4 mt-3 border-t border-line-soft">
+                        {saaNahdaTehtavat && (kohde.tehtavat?.length || 0) > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setTehtavaKohde(kohde)}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
+                          >
+                            <ClipboardList size={14} />
+                            Työvuoron tehtävät
+                          </button>
+                        )}
+                      </div>
+
                       {saaMuokata && (
-                        <div className="flex gap-2 pt-4 mt-3 border-t border-line-soft">
+                        <div className="flex gap-2 pt-3 border-t border-line-soft">
                           <button
                             type="button"
                             onClick={() => setLomake({

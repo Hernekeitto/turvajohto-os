@@ -38,6 +38,19 @@ export type Kohde = {
   tehtavat?: Tehtava[];
 };
 
+// Kohteen tiedosto (guardFiles). Oma kokoelmansa eikä kohteen kenttä, koska liitetiedosto
+// elää palvelimen uploads-hakemistossa ja sen elinkaari (lataus, roskienkeruu) on eri kuin
+// kohteen perustietojen. siteId sitoo sen kohteeseen ja toimii oikeusavaimena.
+export type KohteenTiedosto = {
+  id: string;
+  siteId: string;
+  name: string;
+  uploadId: string;
+  size?: number;
+  lisatty: string;
+  lisaaja?: string;
+};
+
 // Tehtävän suoritus. Oma kokoelmansa (guardTaskRuns), koska suoritus on tapahtuma ajassa
 // toisin kuin tehtävän määrittely joka on kohteen ominaisuus.
 export type TehtavaSuoritus = {
