@@ -31,7 +31,11 @@ export const ROLE_VIEWER = 'viewer';
 // (withBuiltins luo puuttuvat takaisin) — muuten GUARDin käyttöönotto vaatisi tason
 // rakentamisen käsin joka asennuksessa erikseen.
 export const ROLE_GUARD = 'vartija';
-const BUILTIN_IDS = new Set([ROLE_ADMIN, ROLE_BASIC, ROLE_VIEWER, ROLE_GUARD]);
+// Vartioesimies on Vartija + kohteen hallinta. Oma tasonsa eikä pelkkä ohje "kopioi
+// Vartija ja lisää yksi rasti", koska työnjako vartijan ja esimiehen välillä on sama
+// jokaisessa asennuksessa — ja käsin rakennettu taso eroaisi joka kerta hieman.
+export const ROLE_GUARD_LEAD = 'vartioesimies';
+const BUILTIN_IDS = new Set([ROLE_ADMIN, ROLE_BASIC, ROLE_VIEWER, ROLE_GUARD, ROLE_GUARD_LEAD]);
 
 // Sivukartan solmut, joita Peruskäyttäjä saa oletuksena muokata. Nämä ovat operatiivista
 // työtä (kirjaukset, suunnittelu, asiakirjat) — eivät hallintaa (settings, global_*).
@@ -71,6 +75,16 @@ const VARTIJA_KATSELU = ['guard_sites', 'guard_site_info', 'guard_reporting'];
 // on mukana, koska sen kirjaa se joka toimenpiteen teki — jos kirjaus kuuluu jossain
 // organisaatiossa vain esimiehelle, oikeus otetaan pois Sovellusasetuksista.
 const VARTIJA_MUOKKAUS = ['guard_tasks', 'guard_report_action', 'guard_report_jv'];
+// Se mitä Vartioesimiehellä on Vartijan lisäksi: kohteen hallinta. Yksi solmu kattaa
+// kohteen perustiedot, tiedostot, perehdytysmerkinnät ja tehtäväpohjat (ks.
+// server/permissions.js: guardSites ja guardFiles käyttävät samaa touch-solmua).
+//
+// HUOM: perehdytettävän valinta työntekijäpankista vaatisi lisäksi EVENT-puolen
+// 'global_employee_bank'-solmun. Sitä EI anneta oletuksena: se avaisi koko yrityksen
+// henkilöstörekisterin GUARD-tunnukselle, ja käyttöliittymässä on tätä tilannetta varten
+// vapaa nimikenttä (src/guard/KohteenHallinta.tsx). Pudotusvalikon saa käyttöön
+// lisäämällä solmun tasolle Sovellusasetuksista.
+const ESIMIES_MUOKKAUS = ['guard_sites'];
 
 function bucketista(nodeIds, { view, edit }) {
   return Object.fromEntries(nodeIds.map((id) => [id, { view, edit }]));
@@ -108,6 +122,23 @@ function oletusTasot() {
         [DEFAULT_BUCKET]: {
           ...bucketista(VARTIJA_KATSELU, { view: true, edit: false }),
           ...bucketista(VARTIJA_MUOKKAUS, { view: true, edit: true }),
+        },
+      },
+    },
+    {
+      id: ROLE_GUARD_LEAD,
+      name: 'Vartioesimies',
+      description:
+        'Turvajohto GUARD: kohteiden hallinta, perehdytykset ja tehtäväpohjat sekä kaikki '
+        + 'vartijan oikeudet. Ei tapahtumapuolen sivuja.',
+      builtin: true,
+      permissions: {
+        [DEFAULT_BUCKET]: {
+          ...bucketista(VARTIJA_KATSELU, { view: true, edit: false }),
+          ...bucketista(VARTIJA_MUOKKAUS, { view: true, edit: true }),
+          // Viimeisenä, koska tämä nostaa guard_sitesin muokattavaksi — sama solmu on
+          // VARTIJA_KATSELUssa pelkkänä katseluoikeutena.
+          ...bucketista(ESIMIES_MUOKKAUS, { view: true, edit: true }),
         },
       },
     },
