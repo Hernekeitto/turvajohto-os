@@ -33,4 +33,9 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
     { id: 'guard_report_action', label: 'Vartijan toimenpide' },
     { id: 'guard_report_jv', label: 'Vartijan tapahtumailmoitus' },
   ] },
+  // Sovellusasetukset. Oma solmunsa eikä EVENTin 'settings', vaikka näkymä on sama:
+  // muuten GUARD-tunnuksen asetusoikeus avaisi myös tapahtumapuolen asetukset ja
+  // päinvastoin. Sisältö on sama kuin EVENT-puolella lukuun ottamatta pikatoimintoja
+  // (hätätekstiviestit), jotka ovat tapahtumapuolen toiminto.
+  { id: 'guard_settings', label: 'Sovellusasetukset' },
 ];

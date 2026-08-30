@@ -5,18 +5,20 @@ import { useSession } from './SessionContext';
 import { TUNNISTE_ALKU, seuraavaTunnisteNumero, muotoileTunniste, taydennaTunnisteet } from './shared/tunnisteet';
 import { kayttajatunnusNimesta, splitFullName, buildFullName } from './shared/nimet';
 import { paikallinenPaiva, yhdistaPaivaJaAika, muotoileLaskuri, muotoileKirjautumisaika } from './shared/ajat';
-import { muotoileEuro, muotoileTavut, laskeKokonaispalkka, isValidPasswordClient } from './shared/muotoilu';
+import { muotoileEuro, laskeKokonaispalkka, isValidPasswordClient } from './shared/muotoilu';
 import { htmlTeksti, tulostusDokumentti, tulostaDokumentti } from './shared/tuloste';
-import { sailytysaikaPaattyy, jaotteleSailytysajan, tapahtumanPoistoaikataulu } from './shared/sailytysaika';
-import { collectDescendantIds, findAncestorIds, DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab, type SivukarttaSolmu } from './shared/oikeudet';
+import { jaotteleSailytysajan, tapahtumanPoistoaikataulu } from './shared/sailytysaika';
+import { DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab } from './shared/oikeudet';
 import { DashboardCard } from './shared/komponentit/DashboardCard';
 import { EmpStatusBadge, getEmpStatus } from './shared/komponentit/EmpStatusBadge';
 import { NotificationBell, ProfileMenu } from './shared/komponentit/YlapalkkiOsat';
 import { Ylapalkki, YlapalkkiLogo } from './shared/komponentit/Ylapalkki';
 import { TakaisinLinkki } from './shared/komponentit/TakaisinLinkki';
-import { SitemapPermissionRow } from './shared/komponentit/SitemapPermissionRow';
 import { AlertBanner } from './shared/komponentit/AlertBanner';
-import { SITEMAP_GUARD } from './guard/sivukartta';
+import { ASETUSTEN_SIVUKARTAT } from './asetusten-sivukartat';
+import { Kayttajatasot } from './shared/asetukset/Kayttajatasot';
+import { Tallennustila } from './shared/asetukset/Tallennustila';
+import { Sailytysajat } from './shared/asetukset/Sailytysajat';
 import {
   AlertTriangle, 
   ShieldCheck, 
@@ -75,7 +77,6 @@ import {
   History,
   Eye,
   EyeOff,
-  HardDrive,
   PlusCircle,
 } from 'lucide-react';
 
@@ -554,64 +555,6 @@ const laskeViestinMitat = (text: string) => {
   return { encoding: 'TEXT', pituus: septetit, osia, osanRaja: osia > 1 ? 153 : 160 };
 };
 
-// Sivukartta: sovelluksen sivut/valikot solmupuuna. Id:t ovat pääosin olemassa
-// olevia activeTab-arvoja (uudelleenkäyttö) — backend ei tunne tätä puuta, se
-// tallentaa vain geneerisen { [id]: { view, edit } } -olion.
-const SITEMAP = [
-  // 'landing' oli aiemmin tapahtuman sisäinen Aloitussivu-välilehti. Välilehteä ei enää
-  // ole: solmu ratkaisee nyt sen, kuka näkee etusivun "Valitse tapahtuma" -näkymän (ja
-  // tapahtumien luonnin/muokkauksen, ks. server/permissions.js COLLECTIONS.events).
-  { id: 'landing', label: 'Tapahtumavalinta' },
-  { id: 'overview', label: 'Tilannekuva' },
-  { id: 'reporting', label: 'Raportointi', children: [
-    { id: 'report_jv', label: 'Järjestyksenvalvojan tapahtumailmoitus' },
-    { id: 'report_tike', label: 'TIKE:n raportointi', children: [
-      { id: 'tike_form_in', label: 'Työntekijän sisäänkirjaus' },
-      { id: 'tike_form_out', label: 'Työntekijän uloskirjaus' },
-      { id: 'tike_form_jvaction', label: 'JV:n tai vartijan toimenpide' },
-      { id: 'tike_form_open', label: 'Avoin kirjaus' },
-      { id: 'tike_form_firstaid', label: 'Ensiaputilanne' },
-      { id: 'tike_form_threat', label: 'Uhkatilanne' },
-      { id: 'tike_form_fence', label: 'Aitojen ylitys / luvaton sisäänpääsy' },
-      { id: 'tike_form_damage', label: 'Omaisuusvaurio' },
-      { id: 'tike_form_lostfound', label: 'Löytötavara' },
-      { id: 'tike_form_patrol', label: 'Kierrosraportti' },
-      { id: 'tike_form_queue', label: 'Portin jonon odotusaika' },
-      { id: 'tike_form_weather', label: 'Sääraportti' },
-      { id: 'tike_form_briefing', label: 'Briefing' },
-      { id: 'tike_form_management', label: 'Johdon tilannekatsaus' },
-    ] },
-    { id: 'report_list', label: 'Tallennetut raportit (tapahtuma)' },
-  ] },
-  { id: 'planning', label: 'Ennen tapahtumaa', children: [
-    { id: 'planning_readiness', label: 'Avausvalmius' },
-    { id: 'planning_employees', label: 'Tapahtuman työntekijät' },
-  ] },
-  { id: 'postevent', label: 'Tapahtuman yleiskatsaus' },
-  { id: 'documents', label: 'Lomakekartoitus', children: [
-    { id: 'documents_forms', label: 'Täytettävät lomakkeet' },
-    { id: 'documents_pdf', label: 'Raporttien PDF-versiot' },
-    { id: 'documents_trash', label: 'Roskakori' },
-    { id: 'documents_emergency', label: 'Hätätilanneohjeet' },
-    { id: 'documents_risk', label: 'Riskiarviointi', children: [
-      { id: 'documents_risk_done', label: 'Tehdyt riskiarviot' },
-      { id: 'documents_risk_new', label: 'Riskin arviointi' },
-    ] },
-  ] },
-  // Tapahtuman tiedostot: omat kansiot ja tiedostot, joita voi jakaa myös ulkopuolisille
-  // (ks. server/shares.js). Sijaitsee sivuvalikossa Lomakekartoituksen ja
-  // Sovellusasetusten välissä.
-  { id: 'eventfiles', label: 'Tapahtuman tiedostot' },
-  // Yläpalkin Pikatoiminnot-valikko (hätätekstiviestit). Näkyvyysoikeus näyttää valikon;
-  // MUOKKAUSOIKEUS on se joka oikeuttaa viestin lähettämiseen — sama tarkistus tehdään
-  // palvelimella (server/index.js: saaLahettaa). Nappien sisällön muokkaus on erikseen
-  // Sovellusasetusten takana, koska se määrää kenelle viesti lähtee ja mitä siinä lukee.
-  { id: 'quickactions', label: 'Pikatoiminnot (hätäviestit)' },
-  { id: 'settings', label: 'Sovellusasetukset' },
-  { id: 'global_reports', label: 'Tallennetut raportit (kaikki tapahtumat)' },
-  { id: 'global_archived_events', label: 'Tallennetut tapahtumat' },
-  { id: 'global_employee_bank', label: 'Työntekijäpankki' },
-];
 
 
 // Tehtävän kiireellisyys. Tehtävä syntyy TIKE:n avoimesta kirjauksesta, kun
@@ -856,10 +799,6 @@ export default function App() {
   // käyttäjähallinnan muutokset, kirjautumiset) — vain admin, ks. server/audit.js.
   const [viewingAuditLog, setViewingAuditLog] = useState(false);
   const [viewingSettings, setViewingSettings] = useState(false);
-  // Säilytysaika-osio on oletuksena kiinni: Asetukset-näkymän pitää avautua tiiviinä.
-  const [sailytysAvattu, setSailytysAvattu] = useState(false);
-  const [storageInfo, setStorageInfo] = useState<any>(null);
-  const [storageError, setStorageError] = useState<string | null>(null);
   const [auditEntries, setAuditEntries] = useState([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState('');
@@ -878,18 +817,6 @@ export default function App() {
   const [permRoleId, setPermRoleId] = useState('');
   // Palvelimen arvoma salasana näytetään kertaalleen luonnin/nollauksen jälkeen.
   const [uusiSalasanaNaytto, setUusiSalasanaNaytto] = useState(null); // { username, password }
-  // Sovellusasetusten tasoeditori: valittu taso ja sen muokattavat oikeudet.
-  const [editingRoleId, setEditingRoleId] = useState(null);
-  // { [nodeId]: { view, edit } } — sama muoto kuin tason permissions.__default__.
-  const [roleDraft, setRoleDraft] = useState<Record<string, { view?: boolean; edit?: boolean }>>({});
-  const [roleDraftName, setRoleDraftName] = useState('');
-  const [roleDraftDesc, setRoleDraftDesc] = useState('');
-  const [roleSaving, setRoleSaving] = useState(false);
-  const [roleError, setRoleError] = useState('');
-  const [roleNotice, setRoleNotice] = useState('');
-  const [newRoleName, setNewRoleName] = useState('');
-  // Minkä käyttäjätason käyttäjälista on auki Sovellusasetuksissa (tason id tai null).
-  const [roleUsersOpen, setRoleUsersOpen] = useState(null);
 
   // Ilmoituskello. Palvelin koostaa listan (/api/notifications), joten uusia
   // ilmoituslajeja voi lisätä ilman frontin muutoksia.
@@ -1149,21 +1076,13 @@ export default function App() {
     if (viewingAuditLog) fetchAuditLog();
   }, [viewingAuditLog]);
 
-  // Tallennustilan tilanne haetaan vasta kun Asetukset avataan (vain admin näkee sen).
+  // Käyttäjätasot näkyvät Sovellusasetusten omassa osiossaan. Käyttäjälista tarvitaan
+  // siihen, että kunkin tason kohdalla voi näyttää ketkä sillä ovat. Tallennustilan
+  // mittari hakee omat tietonsa itse (shared/asetukset/Tallennustila.tsx).
   useEffect(() => {
     if (!viewingSettings) return;
-    // Käyttäjätasot näkyvät Sovellusasetusten omassa osiossaan. Käyttäjälista tarvitaan
-    // siihen, että kunkin tason kohdalla voi näyttää ketkä sillä ovat.
     fetchRoles();
     fetchUserAdminList();
-    setStorageError(null);
-    fetch('/api/storage', { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((res) => {
-        if (res && res.ok === true) setStorageInfo(res);
-        else setStorageError('Tallennustilan lukeminen ei onnistunut.');
-      })
-      .catch(() => setStorageError('Tallennustilan lukeminen ei onnistunut: ei yhteyttä palvelimeen.'));
   }, [viewingSettings]);
 
   // Istunto voi mitätöityä palvelimella milloin tahansa ilman että selain tietää siitä
@@ -2463,158 +2382,6 @@ export default function App() {
       }
     } catch {
       setPermSaveError('Yhteysvirhe. Yritä uudelleen.');
-    }
-  };
-
-  // ---- Käyttäjätasojen muokkaus (Sovellusasetukset) ----
-  // Tason oikeudet ovat samaa muotoa kuin käyttäjän vanhat sivukartta-oikeudet, joten
-  // SitemapPermissionRow-komponentti kelpaa sellaisenaan. Muokataan vain __default__-
-  // bucketia: tapahtumakohtainen hienosäätö kuuluu käyttäjälle (eventAccess), ei tasolle.
-  const avaaTasoMuokkaukseen = (role) => {
-    setEditingRoleId(role.id);
-    setRoleDraft({ ...(role.permissions?.[DEFAULT_BUCKET] || {}) });
-    setRoleDraftName(role.name || '');
-    setRoleDraftDesc(role.description || '');
-    setRoleError('');
-    setRoleNotice('');
-  };
-
-  // Esi-isät haetaan MOLEMMISTA sivukartoista: sama käyttäjätaso voi kattaa kummankin
-  // puolen solmut, ja pelkkä EVENTin SITEMAP jättäisi GUARDin alasivut (esim.
-  // guard_report_jv) ilman yläsivun näkyvyyttä — oikeus olisi myönnetty mutta sivu ei
-  // näkyisi valikossa.
-  const tasonEsiisat = (nodeId: string): string[] =>
-    findAncestorIds(nodeId, SITEMAP) || findAncestorIds(nodeId, SITEMAP_GUARD) || [];
-
-  // Arvo tulee ruudun omasta tilasta (SitemapPermissionRow antaa e.target.checked) eikä
-  // sitä päätellä tässä kääntämällä nykyistä: yläsivun ruutu kutsuu sekä tätä että
-  // vaihdaTasoOikeusRekursiivisesti, ja jos molemmat päättelisivät suunnan itse, ne
-  // kumoaisivat toisensa — yläsivun rastia ei saanut aiemmin otettua pois lainkaan.
-  const vaihdaTasoOikeus = (nodeId: string, kentta: 'view' | 'edit', arvo: boolean) => {
-    setRoleDraft((prev) => {
-      const nykyinen = prev[nodeId] || {};
-      const seuraava = { ...nykyinen, [kentta]: arvo };
-      // Muokkausoikeus ilman näkyvyyttä ei tarkoita mitään: sivu ei näy valikossa,
-      // joten sinne ei pääse muokkaamaan. Näkyvyyden poisto vie siis myös muokkauksen.
-      if (kentta === 'view' && !seuraava.view) seuraava.edit = false;
-      if (kentta === 'edit' && seuraava.edit) seuraava.view = true;
-      const uusi = { ...prev, [nodeId]: seuraava };
-      // Alasivun näkyvyys ei auta jos yläsivu on piilotettu — myönnetään esi-isät
-      // automaattisesti, sama sääntö kuin käyttäjäkohtaisissa oikeuksissa aiemmin.
-      if (seuraava.view) {
-        for (const esiisa of tasonEsiisat(nodeId)) {
-          uusi[esiisa] = { ...(uusi[esiisa] || {}), view: true };
-        }
-      }
-      return uusi;
-    });
-  };
-
-  const vaihdaTasoOikeusRekursiivisesti = (node: SivukarttaSolmu, kentta: 'view' | 'edit', arvo: boolean) => {
-    const idt = [node.id, ...collectDescendantIds(node)];
-    setRoleDraft((prev) => {
-      const uusi = { ...prev };
-      for (const id of idt) {
-        const nykyinen = uusi[id] || {};
-        const seuraava = { ...nykyinen, [kentta]: arvo };
-        if (kentta === 'view' && !arvo) seuraava.edit = false;
-        if (kentta === 'edit' && arvo) seuraava.view = true;
-        uusi[id] = seuraava;
-      }
-      if (arvo) {
-        for (const esiisa of tasonEsiisat(node.id)) {
-          uusi[esiisa] = { ...(uusi[esiisa] || {}), view: true };
-        }
-      }
-      return uusi;
-    });
-  };
-
-  const tallennaTaso = async () => {
-    if (!editingRoleId) return;
-    setRoleError('');
-    setRoleNotice('');
-    if (!roleDraftName.trim()) {
-      setRoleError('Käyttäjätason nimi ei voi olla tyhjä.');
-      return;
-    }
-    setRoleSaving(true);
-    try {
-      const res = await fetch(`/api/roles/${encodeURIComponent(editingRoleId)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          name: roleDraftName.trim(),
-          description: roleDraftDesc.trim(),
-          permissions: { [DEFAULT_BUCKET]: roleDraft },
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        setRoleNotice('Käyttäjätaso tallennettu. Muutos koskee heti kaikkia tason käyttäjiä.');
-        fetchRoles();
-      } else {
-        setRoleError(data.error || 'Tallennus epäonnistui.');
-      }
-    } catch {
-      setRoleError('Yhteysvirhe. Yritä uudelleen.');
-    } finally {
-      setRoleSaving(false);
-    }
-  };
-
-  const luoTaso = async () => {
-    setRoleError('');
-    setRoleNotice('');
-    if (!newRoleName.trim()) {
-      setRoleError('Anna uudelle käyttäjätasolle nimi.');
-      return;
-    }
-    try {
-      const res = await fetch('/api/roles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        // Uusi taso aloittaa ilman oikeuksia: turvallisempi lähtökohta kuin kopioida
-        // jotain olemassa olevaa, koska oikeudet on joka tapauksessa käytävä läpi.
-        body: JSON.stringify({ name: newRoleName.trim(), description: '', permissions: { [DEFAULT_BUCKET]: {} } }),
-      });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        setNewRoleName('');
-        fetchRoles();
-        avaaTasoMuokkaukseen(data.role);
-        setRoleNotice(`Taso "${data.role.name}" luotu. Valitse sille oikeudet alta.`);
-      } else {
-        setRoleError(data.error || 'Tason luonti epäonnistui.');
-      }
-    } catch {
-      setRoleError('Yhteysvirhe. Yritä uudelleen.');
-    }
-  };
-
-  const poistaTaso = async (role) => {
-    if (!window.confirm(`Poistetaanko käyttäjätaso "${role.name}"? Tätä ei voi perua.`)) return;
-    setRoleError('');
-    setRoleNotice('');
-    try {
-      const res = await fetch(`/api/roles/${encodeURIComponent(role.id)}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        if (editingRoleId === role.id) setEditingRoleId(null);
-        if (roleUsersOpen === role.id) setRoleUsersOpen(null);
-        fetchRoles();
-        fetchUserAdminList();
-        setRoleNotice('Käyttäjätaso poistettu.');
-      } else {
-        setRoleError(data.error || 'Poisto epäonnistui.');
-      }
-    } catch {
-      setRoleError('Yhteysvirhe. Yritä uudelleen.');
     }
   };
 
@@ -10492,20 +10259,10 @@ export default function App() {
   }
 
   if (viewingSettings) {
-    const sailytys = jaotteleSailytysajan(reports);
     const arkistoidutAikataulut = events
       .filter((e: any) => e.archived)
       .map((tapahtuma: any) => ({ tapahtuma, aikataulu: tapahtumanPoistoaikataulu(tapahtuma, reports) }));
     const arkistoidutPoistettavissa = arkistoidutAikataulut.filter(({ aikataulu }: any) => aikataulu.poistettavissa).length;
-    const kaytettyProsentti = storageInfo ? storageInfo.usedPercent : null;
-    const mittariVari =
-      kaytettyProsentti === null
-        ? 'bg-slate-300'
-        : kaytettyProsentti >= 90
-          ? 'bg-rose-500'
-          : kaytettyProsentti >= 70
-            ? 'bg-amber-500'
-            : 'bg-emerald-500';
 
     return (
       <div className="min-h-screen bg-canvas font-sans flex flex-col">
@@ -10520,258 +10277,14 @@ export default function App() {
             <h2 className="text-2xl font-bold text-slate-800 mb-1">Sovellusasetukset</h2>
             <p className="text-sm text-slate-500 mb-8">Käyttäjätasot, palvelimen tallennustila ja lakisääteiset säilytysajat.</p>
 
-            {/* ==================== KÄYTTÄJÄTASOT ==================== */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <ShieldCheck size={18} className="text-indigo-500" />
-                Käyttäjätasot
-              </h3>
-              <p className="text-sm text-slate-500 mt-1 mb-5">
-                Taso määrää mitä sivuja sen käyttäjät näkevät ja voivat muokata. Muutos vaikuttaa
-                heti kaikkiin tason käyttäjiin. Käyttäjän tason valitset "Muokkaa käyttäjiä"
-                -näkymästä.
-              </p>
-
-              {rolesLoading && roles.length === 0 ? (
-                <p className="text-sm text-slate-500">Ladataan käyttäjätasoja…</p>
-              ) : (
-                <>
-                  {/* Tasojen lista */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
-                    {roles.map((role) => (
-                      <div
-                        key={role.id}
-                        className={`rounded-xl border p-4 transition-colors ${
-                          editingRoleId === role.id ? 'bg-indigo-50 border-indigo-300' : 'bg-slate-50 border-slate-200'
-                        }`}
-                      >
-                        <div className="flex justify-between items-start gap-2 mb-1">
-                          <p className="text-sm font-bold text-slate-800 min-w-0 truncate">{role.name}</p>
-                          {role.builtin && (
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide shrink-0">vakio</span>
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-500 min-h-[2rem]">{role.description || '—'}</p>
-
-                        {(() => {
-                          const tasonKayttajat = userAdminList.filter((u) => u.roleId === role.id);
-                          const auki = roleUsersOpen === role.id;
-                          return (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => setRoleUsersOpen(auki ? null : role.id)}
-                                className="mt-2 w-full flex items-center justify-between gap-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-md transition-colors"
-                              >
-                                <span className="flex items-center gap-1.5">
-                                  <Users size={13} className="text-slate-400" />
-                                  {tasonKayttajat.length === 0
-                                    ? 'Ei käyttäjiä'
-                                    : `${tasonKayttajat.length} ${tasonKayttajat.length === 1 ? 'käyttäjä' : 'käyttäjää'}`}
-                                </span>
-                                {tasonKayttajat.length > 0 && (
-                                  <ChevronDown size={13} className={`transition-transform ${auki ? 'rotate-180' : ''}`} />
-                                )}
-                              </button>
-
-                              {auki && tasonKayttajat.length > 0 && (
-                                <ul className="mt-2 bg-white border border-slate-200 rounded-md divide-y divide-slate-100 max-h-48 overflow-y-auto">
-                                  {tasonKayttajat.map((u) => (
-                                    <li key={u.username} className="px-3 py-2 flex items-baseline justify-between gap-2">
-                                      <span className="text-xs font-medium text-slate-800 truncate">{u.nickname}</span>
-                                      <span className="text-[11px] font-mono text-slate-400 shrink-0">
-                                        {u.displayId ? muotoileTunniste(u.displayId) : u.username}
-                                      </span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </>
-                          );
-                        })()}
-
-                        <div className="flex gap-2 mt-3">
-                          {role.id === 'admin' ? (
-                            <span className="text-xs text-slate-400 italic py-1.5">Aina täydet oikeudet</span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => avaaTasoMuokkaukseen(role)}
-                              className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
-                            >
-                              Muokkaa oikeuksia
-                            </button>
-                          )}
-                          {!role.builtin && (
-                            <button
-                              type="button"
-                              onClick={() => poistaTaso(role)}
-                              title="Poista käyttäjätaso"
-                              className="text-xs font-medium text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
-                            >
-                              Poista
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Uuden tason luonti */}
-                  <div className="flex flex-col sm:flex-row gap-2 mb-5 pb-5 border-b border-slate-100">
-                    <input
-                      type="text"
-                      value={newRoleName}
-                      onChange={(e) => setNewRoleName(e.target.value)}
-                      placeholder="Uuden käyttäjätason nimi, esim. Ensiapuvastaava"
-                      className="flex-1 rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={luoTaso}
-                      className="shrink-0 px-4 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-sm"
-                    >
-                      <Plus size={16} />
-                      Luo käyttäjätaso
-                    </button>
-                  </div>
-
-                  {roleError && <p className="text-sm text-rose-600 mb-3">{roleError}</p>}
-                  {roleNotice && <p className="text-sm text-emerald-700 font-medium mb-3">{roleNotice}</p>}
-
-                  {/* Valitun tason oikeudet sivu kerrallaan */}
-                  {editingRoleId && (
-                    <div className="border-t border-slate-100 pt-5">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Tason nimi</label>
-                          <input
-                            type="text"
-                            value={roleDraftName}
-                            onChange={(e) => setRoleDraftName(e.target.value)}
-                            className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Kuvaus</label>
-                          <input
-                            type="text"
-                            value={roleDraftDesc}
-                            onChange={(e) => setRoleDraftDesc(e.target.value)}
-                            placeholder="Mihin tasoa käytetään"
-                            className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Umpikujavaroitus: tapahtuman sisäiset sivut eivät ole
-                          saavutettavissa ilman Tapahtumavalintaa, koska tapahtumaan
-                          mennään aina sen kautta. Ilman tätä varoitusta pääkäyttäjä voisi
-                          luoda tason joka näyttää oikein mutta jättää käyttäjän
-                          etusivulle ilman pääsyä mihinkään. */}
-                      {(() => {
-                        const TAPAHTUMAN_SISAISET = [
-                          'overview', 'reporting', 'planning', 'postevent', 'documents', 'eventfiles',
-                        ];
-                        const onSisaisia = TAPAHTUMAN_SISAISET.some((id) => roleDraft[id]?.view);
-                        const onTapahtumavalinta = !!roleDraft.landing?.view;
-                        if (!onSisaisia || onTapahtumavalinta) return null;
-                        return (
-                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 flex gap-2.5">
-                            <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
-                            <p className="text-xs text-amber-900 leading-relaxed">
-                              Tasolla on tapahtuman sisäisiä oikeuksia, mutta ei oikeutta
-                              <strong> Tapahtumavalintaan</strong>. Tapahtumaan mennään aina sen kautta,
-                              joten käyttäjä ei pääse näille sivuille lainkaan. Lisää näkyvyys
-                              Tapahtumavalintaan tai poista tapahtuman sisäiset oikeudet.
-                            </p>
-                          </div>
-                        );
-                      })()}
-
-                      {/* Sama tarkistus GUARD-puolelle: kohdevalinta on ainoa reitti kohteeseen,
-                          joten ilman sitä muut GUARD-oikeudet eivät johda mihinkään. */}
-                      {(() => {
-                        const GUARD_SISAISET = [
-                          'guard_site_info', 'guard_tasks', 'guard_reporting',
-                          'guard_report_action', 'guard_report_jv',
-                        ];
-                        const onSisaisia = GUARD_SISAISET.some((id) => roleDraft[id]?.view);
-                        if (!onSisaisia || roleDraft.guard_sites?.view) return null;
-                        return (
-                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 flex gap-2.5">
-                            <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
-                            <p className="text-xs text-amber-900 leading-relaxed">
-                              Tasolla on GUARD-puolen oikeuksia, mutta ei oikeutta
-                              <strong> Kohdevalintaan</strong>. Kohteeseen mennään aina sen kautta,
-                              joten käyttäjä ei pääse näille sivuille lainkaan.
-                            </p>
-                          </div>
-                        );
-                      })()}
-
-                      <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
-                        <div className="flex items-center gap-3 py-2 pr-2 bg-slate-100 border-b border-slate-200">
-                          <span className="flex-1 text-xs font-bold text-slate-500 uppercase tracking-wide pl-2">Sivu</span>
-                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-28">Näkyy</span>
-                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wide shrink-0 w-32">Muokattavissa</span>
-                        </div>
-                        <div className="bg-white divide-y divide-slate-50 max-h-[28rem] overflow-y-auto">
-                          {/* Molempien puolien sivukartat samassa listassa, omien
-                              otsikoidensa alla: sama käyttäjätaso voi kattaa kummankin
-                              puolen, ja ilman otsikoita ei näkisi kumpaan sivu kuuluu. */}
-                          <div className="px-3 py-2 bg-sunken text-xs font-bold text-ink-muted uppercase tracking-wide">
-                            Turvajohto EVENT
-                          </div>
-                          {SITEMAP.map((node) => (
-                            <SitemapPermissionRow
-                              key={node.id}
-                              node={node}
-                              depth={0}
-                              permDraft={roleDraft}
-                              onToggle={vaihdaTasoOikeus}
-                              onCascade={vaihdaTasoOikeusRekursiivisesti}
-                            />
-                          ))}
-                          <div className="px-3 py-2 bg-sunken text-xs font-bold text-ink-muted uppercase tracking-wide">
-                            Turvajohto GUARD
-                          </div>
-                          {SITEMAP_GUARD.map((node) => (
-                            <SitemapPermissionRow
-                              key={node.id}
-                              node={node}
-                              depth={0}
-                              permDraft={roleDraft}
-                              onToggle={vaihdaTasoOikeus}
-                              onCascade={vaihdaTasoOikeusRekursiivisesti}
-                            />
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="flex justify-end gap-3 mt-4">
-                        <button
-                          type="button"
-                          onClick={() => setEditingRoleId(null)}
-                          className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                        >
-                          Sulje
-                        </button>
-                        <button
-                          type="button"
-                          disabled={roleSaving}
-                          onClick={tallennaTaso}
-                          className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                        >
-                          <CheckCircle size={18} />
-                          {roleSaving ? 'Tallennetaan…' : 'Tallenna käyttäjätaso'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+            <Kayttajatasot
+              roles={roles}
+              rolesLoading={rolesLoading}
+              kayttajat={userAdminList}
+              sivukartat={ASETUSTEN_SIVUKARTAT}
+              isAdmin={isAdminUser}
+              onMuuttui={() => { fetchRoles(); fetchUserAdminList(); }}
+            />
 
             {/* ==================== PIKATOIMINTONAPIT (hätätekstiviestit) ==================== */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
@@ -11051,192 +10564,20 @@ export default function App() {
               )}
             </div>
 
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <HardDrive size={18} className="text-indigo-500" />
-                Tallennustila
-              </h3>
+            <Tallennustila isAdmin={isAdminUser} />
 
-              {storageError ? (
-                <p className="text-sm text-rose-600 mt-3">{storageError}</p>
-              ) : !storageInfo ? (
-                <p className="text-sm text-slate-500 mt-3">Luetaan tallennustilaa...</p>
-              ) : (
-                <>
-                  <div className="mt-4 flex items-end justify-between">
-                    <span className="text-3xl font-bold text-slate-800">{storageInfo.usedPercent} %</span>
-                    <span className="text-sm text-slate-500">
-                      {muotoileTavut(storageInfo.used)} / {muotoileTavut(storageInfo.total)} käytössä
-                    </span>
-                  </div>
-                  <div className="mt-3 h-4 w-full bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className={mittariVari + ' h-full transition-all'}
-                      style={{ width: Math.min(100, Math.max(0, storageInfo.usedPercent)) + '%' }}
-                    />
-                  </div>
-                  <div className="mt-3 flex justify-between text-xs text-slate-500">
-                    <span>Vapaana {muotoileTavut(storageInfo.free)}</span>
-                    <span>
-                      {storageInfo.usedPercent >= 90
-                        ? 'Tila loppumassa'
-                        : storageInfo.usedPercent >= 70
-                          ? 'Tilaa syytä seurata'
-                          : 'Tilaa riittää'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-4">
-                    Mittari kertoo palvelimen levyn tilanteen: sama levy sisältää käyttöjärjestelmän,
-                    sovelluksen ja kaiken datan. Levy on salattu, ja siitä otetaan varmuuskopio joka yö
-                    (säilytys 7 vrk).
-                  </p>
-                </>
-              )}
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-              <button
-                type="button"
-                onClick={() => setSailytysAvattu((o) => !o)}
-                className="w-full flex items-center justify-between gap-3 p-6 text-left hover:bg-slate-50 transition-colors rounded-xl"
-              >
-                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                  <History size={18} className="text-indigo-500" />
-                  Tapahtumailmoitusten säilytysajat
-                </h3>
-                <div className="flex items-center gap-3 shrink-0">
-                  {/* Hävitettävien määrä näkyy myös suljettuna, jottei se jää huomaamatta */}
-                  {sailytys.vanhentuneet.length > 0 && (
-                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-rose-100 text-rose-700">
-                      {sailytys.vanhentuneet.length} hävitettävää
-                    </span>
-                  )}
-                  {arkistoidutPoistettavissa > 0 && (
-                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">
-                      {arkistoidutPoistettavissa} tapahtumaa poistettavissa
-                    </span>
-                  )}
-                  {sailytysAvattu ? (
-                    <ChevronDown size={20} className="text-slate-400" />
-                  ) : (
-                    <ChevronRight size={20} className="text-slate-400" />
-                  )}
-                </div>
-              </button>
-
-              {sailytysAvattu && (
-                <div className="px-6 pb-6">
-                  <p className="text-sm text-slate-600">
-                    Tapahtumailmoitukset on säilytettävä kaksi vuotta niiden laatimispäivän kalenterivuoden
-                    päättymisen jälkeen, minkä jälkeen henkilötietoja sisältävät ilmoitukset on hävitettävä
-                    viipymättä ja viimeistään kuukauden kuluessa.
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5">
-                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-center">
-                      <div className="text-2xl font-bold text-slate-800">{sailytys.voimassa.length}</div>
-                      <div className="text-xs text-slate-500 font-medium uppercase tracking-wide mt-1">
-                        Säilytysaika voimassa
-                      </div>
-                    </div>
-                    <div
-                      className={
-                        sailytys.vanhentuneet.length > 0
-                          ? 'border rounded-lg p-4 text-center bg-rose-50 border-rose-200'
-                          : 'border rounded-lg p-4 text-center bg-slate-50 border-slate-200'
-                      }
-                    >
-                      <div
-                        className={
-                          sailytys.vanhentuneet.length > 0
-                            ? 'text-2xl font-bold text-rose-700'
-                            : 'text-2xl font-bold text-slate-800'
-                        }
-                      >
-                        {sailytys.vanhentuneet.length}
-                      </div>
-                      <div
-                        className={
-                          sailytys.vanhentuneet.length > 0
-                            ? 'text-xs font-medium uppercase tracking-wide mt-1 text-rose-600'
-                            : 'text-xs font-medium uppercase tracking-wide mt-1 text-slate-500'
-                        }
-                      >
-                        Hävitettävä
-                      </div>
-                    </div>
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center">
-                      <div className="text-2xl font-bold text-amber-700">{sailytys.paivamaaraPuuttuu.length}</div>
-                      <div className="text-xs text-amber-600 font-medium uppercase tracking-wide mt-1">
-                        Päivämäärä puuttuu
-                      </div>
-                    </div>
-                  </div>
-
-                  {sailytys.paivamaaraPuuttuu.length > 0 && (
-                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
-                      {sailytys.paivamaaraPuuttuu.length} ilmoituksesta ei löydy laatimisaikaa (createdAt-kenttä
-                      otettiin käyttöön 18.8.2026). Niiden säilytysaikaa ei voi laskea, joten niitä ei myöskään
-                      poisteta automaattisesti — käy ne läpi käsin.
-                    </p>
-                  )}
-
-                  {sailytys.vanhentuneet.length > 0 ? (
-                    <div className="mt-5">
-                      <h4 className="text-sm font-bold text-slate-700 mb-2">Hävitettävät ilmoitukset</h4>
-                      <div className="border border-slate-200 rounded-lg overflow-hidden">
-                        <table className="w-full text-sm">
-                          <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                            <tr>
-                              <th className="p-3 text-left font-semibold">Tunniste</th>
-                              <th className="p-3 text-left font-semibold">Tyyppi</th>
-                              <th className="p-3 text-left font-semibold">Laadittu</th>
-                              <th className="p-3 text-left font-semibold">Säilytysaika päättyi</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {sailytys.vanhentuneet.slice(0, 50).map((r: any) => (
-                              <tr key={r.id}>
-                                <td className="p-3 font-mono text-xs text-slate-600">{r.id}</td>
-                                <td className="p-3 text-slate-700">{r.type}</td>
-                                <td className="p-3 text-slate-600">
-                                  {new Date(r.createdAt).toLocaleDateString('fi-FI')}
-                                </td>
-                                <td className="p-3 text-slate-600">
-                                  {sailytysaikaPaattyy(r.createdAt)?.toLocaleDateString('fi-FI')}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                      {sailytys.vanhentuneet.length > 50 && (
-                        <p className="text-xs text-slate-500 mt-2">
-                          Näytetään 50 ensimmäistä {sailytys.vanhentuneet.length} ilmoituksesta.
-                        </p>
-                      )}
-                      {isAdminUser ? (
-                        <button
-                          type="button"
-                          onClick={handleDeleteExpiredReports}
-                          className="mt-4 px-5 py-2 text-sm font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-2"
-                        >
-                          <Trash2 size={16} />
-                          Hävitä {sailytys.vanhentuneet.length} vanhentunut ilmoitus
-                        </button>
-                      ) : (
-                        <p className="mt-4 text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                          Hävittäminen on peruuttamatonta ja kuuluu pääkäyttäjälle. Ilmoita
-                          pääkäyttäjälle, että säilytysaika on umpeutunut.
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-3 mt-5">
-                      Yhdenkään ilmoituksen säilytysaika ei ole umpeutunut — hävitettävää ei ole.
-                    </p>
-                  )}
-
+            <Sailytysajat
+              raportit={reports}
+              isAdmin={isAdminUser}
+              onHavita={handleDeleteExpiredReports}
+              lisamerkki={
+                arkistoidutPoistettavissa > 0 ? (
+                  <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-warning-soft text-warning-ink">
+                    {arkistoidutPoistettavissa} tapahtumaa poistettavissa
+                  </span>
+                ) : null
+              }
+            >
                   {/* Arkistoidut tapahtumat ja niiden poistoaikataulu */}
                   <div className="mt-8 pt-6 border-t border-slate-100">
                     <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
@@ -11321,9 +10662,7 @@ export default function App() {
                       </div>
                     )}
                   </div>
-                </div>
-              )}
-            </div>
+            </Sailytysajat>
           </div>
         </main>
         {globalOverlays}

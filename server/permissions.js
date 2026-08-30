@@ -32,6 +32,9 @@ const GLOBAL_NODES = new Set([
   // yhteenkään kohteeseen.
   'guard_sites',
   'settings',
+  // GUARD-puolen sovellusasetukset. Sama globaali luonne kuin 'settings': asetukset eivät
+  // liity yhteenkään yksittäiseen kohteeseen.
+  'guard_settings',
   'global_reports',
   'global_archived_events',
   'global_employee_bank',

@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
-import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info } from 'lucide-react';
+import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
+import { jaotteleSailytysajan } from '../shared/sailytysaika';
 import { Ylapalkki } from '../shared/komponentit/Ylapalkki';
 import { KohteenHallinta } from './KohteenHallinta';
 import { Tehtavat } from './Tehtavat';
 import { Raportit } from './Raportit';
 import { KohteenTiedot } from './KohteenTiedot';
+import { Asetukset } from './Asetukset';
 import { uusiId, type GuardRaportti, type Kohde, type KohteenTiedosto, type RaporttiTyyppi, type TehtavaSuoritus } from './tyypit';
 
 // Turvajohto GUARD -puolen juurikomponentti. Vastaa näkymien välisestä vaihdosta ja
@@ -45,6 +47,9 @@ export default function GuardApp() {
   // ja voi olla eri joukolla ihmisiä kuin päivittäinen toimenpidekirjaus.
   const saaKirjataToimenpiteen = isAdmin || canEdit(perms, null, 'guard_report_action');
   const saaKirjataIlmoituksen = isAdmin || canEdit(perms, null, 'guard_report_jv');
+  // Sovellusasetukset on oma solmunsa (guard_settings), ei EVENTin 'settings': muuten
+  // toisen puolen asetusoikeus avaisi myös tämän puolen asetukset.
+  const saaNahdaAsetukset = isAdmin || canView(perms, null, 'guard_settings');
   const saaNahdaRaportit = isAdmin
     || canView(perms, null, 'guard_site_info')
     || canView(perms, null, 'guard_report_action')
@@ -72,6 +77,7 @@ export default function GuardApp() {
   const [raportit, setRaportit] = useState<GuardRaportti[]>([]);
   const [raporttiKohde, setRaporttiKohde] = useState<{ kohde: Kohde; tyyppi: RaporttiTyyppi } | null>(null);
   const [tietoKohde, setTietoKohde] = useState<Kohde | null>(null);
+  const [asetuksissa, setAsetuksissa] = useState(false);
 
   useEffect(() => {
     if (!saaNahda) return;
@@ -285,6 +291,51 @@ export default function GuardApp() {
     if (await tallenna(jaljelle, { salliTyhja: jaljelle.length === 0 })) setPoistettava(null);
   };
 
+  // Vanhentuneiden raporttien havitys. Sama kaksivaiheinen vahvistus kuin
+  // tapahtumapuolella: poisto on peruuttamaton ja koskee lakisaateisesti sailytettya
+  // aineistoa, joten pelkka OK-nappi ei riita.
+  const havitaVanhentuneet = async () => {
+    const { vanhentuneet } = jaotteleSailytysajan(
+      raportit.map((r) => ({ ...r, createdAt: r.luotu || null }))
+    );
+    if (vanhentuneet.length === 0) return;
+    const rivi = String.fromCharCode(10);
+    const vahvistus = window.prompt(
+      [
+        `HÄVITETÄÄN ${vanhentuneet.length} ilmoitusta pysyvästi.`,
+        '',
+        'Näiden lakisääteinen säilytysaika (2 vuotta laatimisvuoden päättymisestä)',
+        'on umpeutunut. Poistoa ei voi perua, ja myös liitetiedostot poistetaan.',
+        '',
+        'Vahvista kirjoittamalla: HÄVITÄ',
+      ].join(rivi)
+    );
+    if (vahvistus === null) return;
+    if (vahvistus.trim().toUpperCase() !== 'HÄVITÄ') {
+      window.alert('Vahvistus ei täsmää — mitään ei poistettu.');
+      return;
+    }
+    const poistettavat = new Set(vanhentuneet.map((r: any) => r.id));
+    const jaljelle = raportit.filter((r) => !poistettavat.has(r.id));
+    try {
+      const r = await fetch(`/api/data/guardReports${jaljelle.length === 0 ? '?allowEmpty=1' : ''}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(jaljelle),
+      });
+      const res = await r.json().catch(() => null);
+      if (!r.ok || !res?.ok) {
+        setVirhe(res?.error || 'Hävitys epäonnistui.');
+        return;
+      }
+      setRaportit(jaljelle);
+      window.alert(`${vanhentuneet.length} ilmoitusta hävitettiin pysyvästi.`);
+    } catch {
+      setVirhe('Hävitys epäonnistui: ei yhteyttä palvelimeen.');
+    }
+  };
+
   const kirjauduUlos = async () => {
     await fetch('/api/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
     window.location.reload();
@@ -294,7 +345,7 @@ export default function GuardApp() {
     <Ylapalkki
       tuoteNimi="Turvajohto GUARD"
       alaotsikko={alaotsikko}
-      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); }}
+      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); }}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}
@@ -325,7 +376,8 @@ export default function GuardApp() {
   return (
     <div className="min-h-screen bg-canvas text-ink flex flex-col">
       {ylapalkki(
-        raporttiKohde ? 'Raportointi'
+        asetuksissa ? 'Sovellusasetukset'
+          : raporttiKohde ? 'Raportointi'
           : tietoKohde ? 'Kohteen tiedot'
           : tehtavaKohde ? 'Työvuoron tehtävät'
           : lomake ? (lomake.id ? 'Kohteen hallinta' : 'Uusi kohde')
@@ -340,7 +392,14 @@ export default function GuardApp() {
             </p>
           )}
 
-          {raporttiKohde ? (
+          {asetuksissa ? (
+            <Asetukset
+              raportit={raportit}
+              isAdmin={!!isAdmin}
+              onHavita={havitaVanhentuneet}
+              onTakaisin={() => setAsetuksissa(false)}
+            />
+          ) : raporttiKohde ? (
             <Raportit
               kohde={raporttiKohde.kohde}
               tyyppi={raporttiKohde.tyyppi}
@@ -388,16 +447,28 @@ export default function GuardApp() {
                     kirjataan aina kohteelle.
                   </p>
                 </div>
-                {saaMuokata && (
-                  <button
-                    type="button"
-                    onClick={() => setLomake(tyhjaKohde())}
-                    className="shrink-0 inline-flex items-center gap-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
-                  >
-                    <Plus size={16} />
-                    Uusi kohde
-                  </button>
-                )}
+                <div className="flex items-center gap-2 shrink-0">
+                  {saaNahdaAsetukset && (
+                    <button
+                      type="button"
+                      onClick={() => setAsetuksissa(true)}
+                      className="inline-flex items-center gap-2 bg-surface hover:bg-sunken text-ink-body border border-line text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
+                    >
+                      <Settings size={16} />
+                      Sovellusasetukset
+                    </button>
+                  )}
+                  {saaMuokata && (
+                    <button
+                      type="button"
+                      onClick={() => setLomake(tyhjaKohde())}
+                      className="inline-flex items-center gap-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
+                    >
+                      <Plus size={16} />
+                      Uusi kohde
+                    </button>
+                  )}
+                </div>
               </div>
 
               {kohteet.length === 0 ? (
