@@ -8,7 +8,7 @@ import { paikallinenPaiva, yhdistaPaivaJaAika, muotoileLaskuri, muotoileKirjautu
 import { muotoileEuro, muotoileTavut, laskeKokonaispalkka, isValidPasswordClient } from './shared/muotoilu';
 import { htmlTeksti, tulostusDokumentti, tulostaDokumentti } from './shared/tuloste';
 import { sailytysaikaPaattyy, jaotteleSailytysajan, tapahtumanPoistoaikataulu } from './shared/sailytysaika';
-import { collectDescendantIds, findAncestorIds, DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab } from './shared/oikeudet';
+import { collectDescendantIds, findAncestorIds, DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab, type SivukarttaSolmu } from './shared/oikeudet';
 import { DashboardCard } from './shared/komponentit/DashboardCard';
 import { EmpStatusBadge, getEmpStatus } from './shared/komponentit/EmpStatusBadge';
 import { NotificationBell, ProfileMenu } from './shared/komponentit/YlapalkkiOsat';
@@ -873,14 +873,15 @@ export default function App() {
   const [editingPermUser, setEditingPermUser] = useState(null);
   // Käyttäjätasot (server/roles.js). Taso määrää sivukartta-oikeudet — käyttäjäkohtaista
   // sivukarttaa ei enää muokata, joten "Muokkaa oikeuksia" -näkymässä valitaan vain taso.
-  const [roles, setRoles] = useState([]);
+  const [roles, setRoles] = useState<any[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [permRoleId, setPermRoleId] = useState('');
   // Palvelimen arvoma salasana näytetään kertaalleen luonnin/nollauksen jälkeen.
   const [uusiSalasanaNaytto, setUusiSalasanaNaytto] = useState(null); // { username, password }
   // Sovellusasetusten tasoeditori: valittu taso ja sen muokattavat oikeudet.
   const [editingRoleId, setEditingRoleId] = useState(null);
-  const [roleDraft, setRoleDraft] = useState({});      // { [nodeId]: { view, edit } }
+  // { [nodeId]: { view, edit } } — sama muoto kuin tason permissions.__default__.
+  const [roleDraft, setRoleDraft] = useState<Record<string, { view?: boolean; edit?: boolean }>>({});
   const [roleDraftName, setRoleDraftName] = useState('');
   const [roleDraftDesc, setRoleDraftDesc] = useState('');
   const [roleSaving, setRoleSaving] = useState(false);
@@ -2285,7 +2286,6 @@ export default function App() {
     setEditingPermUser(user);
     setPermEventAccess(user.eventAccess || []);
     setPermTuotteet(Array.isArray(user.tuotteet) && user.tuotteet.length > 0 ? user.tuotteet : ['event']);
-    setPermTuotteet(Array.isArray(user.tuotteet) && user.tuotteet.length > 0 ? user.tuotteet : ['event']);
     setPermNickname(user.nickname || '');
     setPermRoleId(user.roleId || '');
     setUusiSalasanaNaytto(null);
@@ -2385,6 +2385,21 @@ export default function App() {
     });
   };
 
+  // Mille puolille käyttäjätaso antaa sivuja. Tuotepääsy (Puolet) on käyttäjäkohtainen ja
+  // taso on kaikille yhteinen, joten ne voivat olla ristiriidassa: Vartija-tason käyttäjä
+  // jolla on vain EVENT-pääsy näkee tason nimen mutta ei pääse kirjautumaan GUARDiin.
+  // Palvelin ei voi päätellä tätä puolestaan — sama taso voi hyvin olla tarkoitettu
+  // molemmille puolille — joten ristiriita nostetaan tässä näkyviin.
+  const tasonPuolet = (roleId: string): string[] => {
+    const bucket = roles.find((r) => r.id === roleId)?.permissions?.[DEFAULT_BUCKET] || {};
+    const solmut = Object.keys(bucket).filter((id) => bucket[id]?.view || bucket[id]?.edit);
+    if (solmut.includes('*')) return ['event', 'guard'];
+    const puolet = [];
+    if (solmut.some((id) => !id.startsWith('guard_'))) puolet.push('event');
+    if (solmut.some((id) => id.startsWith('guard_'))) puolet.push('guard');
+    return puolet;
+  };
+
   const handleSavePermissions = async () => {
     if (!editingPermUser) return;
     setPermSaveError('');
@@ -2464,10 +2479,21 @@ export default function App() {
     setRoleNotice('');
   };
 
-  const vaihdaTasoOikeus = (nodeId, kentta) => {
+  // Esi-isät haetaan MOLEMMISTA sivukartoista: sama käyttäjätaso voi kattaa kummankin
+  // puolen solmut, ja pelkkä EVENTin SITEMAP jättäisi GUARDin alasivut (esim.
+  // guard_report_jv) ilman yläsivun näkyvyyttä — oikeus olisi myönnetty mutta sivu ei
+  // näkyisi valikossa.
+  const tasonEsiisat = (nodeId: string): string[] =>
+    findAncestorIds(nodeId, SITEMAP) || findAncestorIds(nodeId, SITEMAP_GUARD) || [];
+
+  // Arvo tulee ruudun omasta tilasta (SitemapPermissionRow antaa e.target.checked) eikä
+  // sitä päätellä tässä kääntämällä nykyistä: yläsivun ruutu kutsuu sekä tätä että
+  // vaihdaTasoOikeusRekursiivisesti, ja jos molemmat päättelisivät suunnan itse, ne
+  // kumoaisivat toisensa — yläsivun rastia ei saanut aiemmin otettua pois lainkaan.
+  const vaihdaTasoOikeus = (nodeId: string, kentta: 'view' | 'edit', arvo: boolean) => {
     setRoleDraft((prev) => {
       const nykyinen = prev[nodeId] || {};
-      const seuraava = { ...nykyinen, [kentta]: !nykyinen[kentta] };
+      const seuraava = { ...nykyinen, [kentta]: arvo };
       // Muokkausoikeus ilman näkyvyyttä ei tarkoita mitään: sivu ei näy valikossa,
       // joten sinne ei pääse muokkaamaan. Näkyvyyden poisto vie siis myös muokkauksen.
       if (kentta === 'view' && !seuraava.view) seuraava.edit = false;
@@ -2476,7 +2502,7 @@ export default function App() {
       // Alasivun näkyvyys ei auta jos yläsivu on piilotettu — myönnetään esi-isät
       // automaattisesti, sama sääntö kuin käyttäjäkohtaisissa oikeuksissa aiemmin.
       if (seuraava.view) {
-        for (const esiisa of findAncestorIds(nodeId, SITEMAP) || []) {
+        for (const esiisa of tasonEsiisat(nodeId)) {
           uusi[esiisa] = { ...(uusi[esiisa] || {}), view: true };
         }
       }
@@ -2484,22 +2510,19 @@ export default function App() {
     });
   };
 
-  const vaihdaTasoOikeusRekursiivisesti = (node, kentta) => {
+  const vaihdaTasoOikeusRekursiivisesti = (node: SivukarttaSolmu, kentta: 'view' | 'edit', arvo: boolean) => {
     const idt = [node.id, ...collectDescendantIds(node)];
     setRoleDraft((prev) => {
-      // Jos yksikin puuttuu, myönnetään kaikille; muuten poistetaan kaikilta.
-      const kaikillaOn = idt.every((id) => prev[id]?.[kentta]);
       const uusi = { ...prev };
       for (const id of idt) {
         const nykyinen = uusi[id] || {};
-        const arvo = !kaikillaOn;
         const seuraava = { ...nykyinen, [kentta]: arvo };
         if (kentta === 'view' && !arvo) seuraava.edit = false;
         if (kentta === 'edit' && arvo) seuraava.view = true;
         uusi[id] = seuraava;
       }
-      if (!kaikillaOn) {
-        for (const esiisa of findAncestorIds(node.id, SITEMAP) || []) {
+      if (arvo) {
+        for (const esiisa of tasonEsiisat(node.id)) {
           uusi[esiisa] = { ...(uusi[esiisa] || {}), view: true };
         }
       }
@@ -9998,6 +10021,36 @@ export default function App() {
                       tasojen hallinta. Anna tämä taso vain harkiten.
                     </p>
                   )}
+
+                  {(() => {
+                    if (permRoleId === 'admin') return null;
+                    const puuttuvat = tasonPuolet(permRoleId).filter((t) => !permTuotteet.includes(t));
+                    if (puuttuvat.length === 0) return null;
+                    const nimet: Record<string, string> = {
+                      event: 'Turvajohto EVENT',
+                      guard: 'Turvajohto GUARD',
+                    };
+                    return (
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-3 flex gap-2.5">
+                        <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs text-amber-900 leading-relaxed">
+                            Taso antaa sivuja puolelta{' '}
+                            <strong>{puuttuvat.map((t) => nimet[t]).join(' ja ')}</strong>, mutta
+                            tunnuksella ei ole sinne pääsyä. Ilman sitä käyttäjä ei pääse
+                            kirjautumaan kyseiselle puolelle lainkaan.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setPermTuotteet((prev) => [...new Set([...prev, ...puuttuvat])])}
+                            className="mt-2 text-xs font-bold text-amber-900 underline hover:no-underline"
+                          >
+                            Lisää {puuttuvat.map((t) => nimet[t]).join(' ja ')} alla oleviin puoliin
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Salasanan nollaus: käyttäjä ei muista omaansa */}
@@ -10631,6 +10684,27 @@ export default function App() {
                               <strong> Tapahtumavalintaan</strong>. Tapahtumaan mennään aina sen kautta,
                               joten käyttäjä ei pääse näille sivuille lainkaan. Lisää näkyvyys
                               Tapahtumavalintaan tai poista tapahtuman sisäiset oikeudet.
+                            </p>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Sama tarkistus GUARD-puolelle: kohdevalinta on ainoa reitti kohteeseen,
+                          joten ilman sitä muut GUARD-oikeudet eivät johda mihinkään. */}
+                      {(() => {
+                        const GUARD_SISAISET = [
+                          'guard_site_info', 'guard_tasks', 'guard_reporting',
+                          'guard_report_action', 'guard_report_jv',
+                        ];
+                        const onSisaisia = GUARD_SISAISET.some((id) => roleDraft[id]?.view);
+                        if (!onSisaisia || roleDraft.guard_sites?.view) return null;
+                        return (
+                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 flex gap-2.5">
+                            <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                            <p className="text-xs text-amber-900 leading-relaxed">
+                              Tasolla on GUARD-puolen oikeuksia, mutta ei oikeutta
+                              <strong> Kohdevalintaan</strong>. Kohteeseen mennään aina sen kautta,
+                              joten käyttäjä ei pääse näille sivuille lainkaan.
                             </p>
                           </div>
                         );

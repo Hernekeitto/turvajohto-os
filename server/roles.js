@@ -26,7 +26,12 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 export const ROLE_ADMIN = 'admin';
 export const ROLE_BASIC = 'basic';
 export const ROLE_VIEWER = 'viewer';
-const BUILTIN_IDS = new Set([ROLE_ADMIN, ROLE_BASIC, ROLE_VIEWER]);
+// Vartija on GUARD-puolen vastine Peruskäyttäjälle. Se on sisäänrakennettu eikä
+// asennuskohtainen lisäys, jotta se ilmestyy myös jo käytössä oleviin asennuksiin
+// (withBuiltins luo puuttuvat takaisin) — muuten GUARDin käyttöönotto vaatisi tason
+// rakentamisen käsin joka asennuksessa erikseen.
+export const ROLE_GUARD = 'vartija';
+const BUILTIN_IDS = new Set([ROLE_ADMIN, ROLE_BASIC, ROLE_VIEWER, ROLE_GUARD]);
 
 // Sivukartan solmut, joita Peruskäyttäjä saa oletuksena muokata. Nämä ovat operatiivista
 // työtä (kirjaukset, suunnittelu, asiakirjat) — eivät hallintaa (settings, global_*).
@@ -54,6 +59,19 @@ const KATSELU_NAKYVA = [
   'global_reports', 'global_archived_events',
 ];
 
+// GUARD-puolen solmut Vartija-tasolle (ks. src/guard/sivukartta.ts). Työnjako on sama kuin
+// tapahtumapuolella: vartija tekee työvuoron mutta ei hallinnoi kohdetta.
+//
+// Kohteen hallinta (guard_sites edit) kattaa kohteen perustiedot, tiedostot,
+// perehdytysmerkinnät ja tehtäväpohjat — ne ovat esimiehen työtä, joten vartijalle jää
+// niihin vain katseluoikeus. Ilman guard_sites-näkyvyyttä hän ei pääsisi yhteenkään
+// kohteeseen, koska kohdevalinta on ainoa reitti sinne.
+const VARTIJA_KATSELU = ['guard_sites', 'guard_site_info', 'guard_reporting'];
+// Työvuoron tekeminen: tehtävien kuittaus ja omien raporttien kirjaaminen. Tapahtumailmoitus
+// on mukana, koska sen kirjaa se joka toimenpiteen teki — jos kirjaus kuuluu jossain
+// organisaatiossa vain esimiehelle, oikeus otetaan pois Sovellusasetuksista.
+const VARTIJA_MUOKKAUS = ['guard_tasks', 'guard_report_action', 'guard_report_jv'];
+
 function bucketista(nodeIds, { view, edit }) {
   return Object.fromEntries(nodeIds.map((id) => [id, { view, edit }]));
 }
@@ -76,6 +94,20 @@ function oletusTasot() {
         [DEFAULT_BUCKET]: {
           ...bucketista(['landing', 'global_reports', 'global_archived_events'], { view: true, edit: false }),
           ...bucketista(PERUS_MUOKKAUS, { view: true, edit: true }),
+        },
+      },
+    },
+    {
+      id: ROLE_GUARD,
+      name: 'Vartija',
+      description:
+        'Turvajohto GUARD: työvuoron tehtävät ja omat raportit. Ei kohteiden hallintaa '
+        + 'eikä tapahtumapuolen sivuja.',
+      builtin: true,
+      permissions: {
+        [DEFAULT_BUCKET]: {
+          ...bucketista(VARTIJA_KATSELU, { view: true, edit: false }),
+          ...bucketista(VARTIJA_MUOKKAUS, { view: true, edit: true }),
         },
       },
     },
@@ -112,10 +144,10 @@ function writeRoles(roles) {
 // hallintaan enää koskaan.
 function withBuiltins(roles) {
   const olemassa = new Map(roles.map((r) => [r.id, r]));
-  const tulos = [...roles];
-  for (const oletus of oletusTasot()) {
-    if (!olemassa.has(oletus.id)) tulos.unshift(oletus);
-  }
+  // Puuttuvat lisätään loppuun oletusTasot():n järjestyksessä. Loppuun eikä alkuun, jotta
+  // myöhemmin lisätty sisäänrakennettu taso (esim. Vartija) ei hyppää olemassa olevan
+  // asennuksen listassa Pääkäyttäjän edelle.
+  const tulos = [...roles, ...oletusTasot().filter((oletus) => !olemassa.has(oletus.id))];
   // Pääkäyttäjän oikeuksia ei voi rajata: '*' palautetaan aina.
   return tulos.map((r) =>
     r.id === ROLE_ADMIN
