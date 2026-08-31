@@ -345,8 +345,20 @@ function requireAdmin(req, res, next) {
 // (GET /api/data/:name suodattaa oikeuksien mukaan normaalisti), mutta PUT hylätään.
 const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies']);
 
+// Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
+// `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
+// toista, toisen kentän liitteet tulkittaisiin orvoiksi ja roskienkeruu poistaisi ne
+// vuorokaudessa.
+const raportinLiitteet = (arr) =>
+  (Array.isArray(arr) ? arr : [])
+    .flatMap((r) => [
+      r?.attachment?.id,
+      ...(Array.isArray(r?.attachments) ? r.attachments.map((a) => a?.id) : []),
+    ])
+    .filter(Boolean);
+
 const UPLOAD_VIITTAAJAT = {
-  reports: (arr) => (Array.isArray(arr) ? arr : []).map((r) => r?.attachment?.id).filter(Boolean),
+  reports: raportinLiitteet,
   events: (arr) => (Array.isArray(arr) ? arr : []).map((e) => e?.formData?.mapUploadId).filter(Boolean),
   eventFiles: (arr) => (Array.isArray(arr) ? arr : []).map((f) => f?.uploadId).filter(Boolean),
   // GUARD-puolen liitteet on oltava tässä samasta syystä kuin tapahtumapuolen: rekisteri
@@ -354,7 +366,7 @@ const UPLOAD_VIITTAAJAT = {
   // esimerkiksi tapahtumapuolen tallennus tulkitsisi kohteen pohjapiirroksen orvoksi ja
   // poistaisi sen levyltä armonajan jälkeen.
   guardFiles: (arr) => (Array.isArray(arr) ? arr : []).map((f) => f?.uploadId).filter(Boolean),
-  guardReports: (arr) => (Array.isArray(arr) ? arr : []).map((r) => r?.attachment?.id).filter(Boolean),
+  guardReports: raportinLiitteet,
 };
 
 // Tuoteportti: kokoelma joka kuuluu vain toiselle puolelle (esim. guardSites) on
@@ -488,6 +500,15 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
       collection: name,
       recordId: change.id,
       eventId: change.eventId,
+      // Tilamuutos ja korjausmerkinnän lisäys ovat tarkoituksellinen poikkeus tämän
+      // moduulin periaatteeseen "vain metadata, ei tietueen sisältöä" (ks. audit.js):
+      // kumpikaan ei ole henkilötietoa, ja juuri niiden historia on se mitä
+      // jälkikäteisessä selvityksessä kysytään. Lisätiedot tulevat authorizeWritelta,
+      // joka on ainoa paikka jossa vanha ja uusi tietue ovat molemmat käsillä.
+      ...(change.statusFrom !== undefined
+        ? { statusFrom: change.statusFrom, statusTo: change.statusTo }
+        : {}),
+      ...(change.correctionAdded ? { correctionAdded: true } : {}),
     });
   }
   res.json({ ok: true });

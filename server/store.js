@@ -118,6 +118,10 @@ const ENCRYPTED_FIELDS = {
     'subjectAddress',
     'subjectFeatures',
     'subjectObservations',
+    // Korjausmerkinnän teksti (ks. kirjaukset.js): lukittua kirjausta ei muuteta
+    // ylikirjoittamalla vaan lisäämällä merkintä, ja se merkintä on vapaata tekstiä
+    // samalla tavalla kuin description — eli se voi sisältää kohdehenkilön tietoja.
+    'corrections[].text',
   ],
   // Vartijan raportit salataan TÄSMÄLLEEN samoin kuin tapahtumapuolen raportit: vartijan
   // tapahtumailmoitus sisältää samat LYTP:n nojalla kirjattavat kohdehenkilötiedot
@@ -139,6 +143,10 @@ const ENCRYPTED_FIELDS = {
     'subjectAddress',
     'subjectFeatures',
     'subjectObservations',
+    // Korjausmerkinnän teksti (ks. kirjaukset.js): lukittua kirjausta ei muuteta
+    // ylikirjoittamalla vaan lisäämällä merkintä, ja se merkintä on vapaata tekstiä
+    // samalla tavalla kuin description — eli se voi sisältää kohdehenkilön tietoja.
+    'corrections[].text',
   ],
   // Tehtäväsuorituksen vapaa huomiokenttä: vartija kirjoittaa siihen mitä kierroksella
   // havaittiin, eikä kenttätasolla voi tietää mitä sinne on kirjoitettu.
@@ -152,6 +160,20 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 // PUT-reitti, joka lokittaa ja palauttaa saman datan) pitää edelleen käytössään
 // selväkielisen version. Tämä on sama sudenkuoppa joka väistettiin db.js:n
 // writeUsers()-funktiossa TOTP-salauksen kanssa.
+// Kenttänimi voi olla myös muotoa 'taulukko[].kentta', jolloin salaus kohdistuu
+// taulukossa olevien olioiden yhteen kenttään. Ilman tätä muotoa taulukkokenttä
+// näyttäisi suojatulta olematta sitä: alla oleva silmukka ohittaa kaiken mikä ei ole
+// merkkijono, joten pelkkä 'corrections' listalla ei salaisi mitään eikä myöskään
+// kertoisi siitä mitenkään.
+function jaaTaulukkopolku(field) {
+  const i = field.indexOf('[].');
+  if (i === -1) return null;
+  return { taulukko: field.slice(0, i), kentta: field.slice(i + 3) };
+}
+
+const onSelvakielinen = (value) =>
+  typeof value === 'string' && value !== '' && !isEncryptedValue(value);
+
 function mapEncryptedFields(name, records, transform) {
   const fields = ENCRYPTED_FIELDS[name];
   if (!fields || !Array.isArray(records)) return records;
@@ -159,6 +181,26 @@ function mapEncryptedFields(name, records, transform) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) return record;
     let copy = null; // luodaan vain jos jokin kenttä oikeasti muuttuu
     for (const field of fields) {
+      const polku = jaaTaulukkopolku(field);
+      if (polku) {
+        const taulukko = record[polku.taulukko];
+        if (!Array.isArray(taulukko)) continue;
+        let muuttui = false;
+        const uusi = taulukko.map((alkio) => {
+          if (!alkio || typeof alkio !== 'object' || Array.isArray(alkio)) return alkio;
+          const arvo = alkio[polku.kentta];
+          if (typeof arvo !== 'string' || arvo === '') return alkio;
+          const seuraava = transform(arvo);
+          if (seuraava === arvo) return alkio;
+          muuttui = true;
+          return { ...alkio, [polku.kentta]: seuraava };
+        });
+        if (muuttui) {
+          if (!copy) copy = { ...record };
+          copy[polku.taulukko] = uusi;
+        }
+        continue;
+      }
       const value = record[field];
       // Tyhjä tai puuttuva arvo jätetään koskematta: ei haluta tallentaa salattua
       // tyhjää merkkijonoa, joka näyttäisi levyllä täytetyltä kentältä.
@@ -182,7 +224,14 @@ function hasPlaintextFields(name, records) {
     (record) =>
       record &&
       typeof record === 'object' &&
-      fields.some((field) => typeof record[field] === 'string' && record[field] !== '' && !isEncryptedValue(record[field]))
+      fields.some((field) => {
+        const polku = jaaTaulukkopolku(field);
+        if (polku) {
+          const taulukko = record[polku.taulukko];
+          return Array.isArray(taulukko) && taulukko.some((alkio) => onSelvakielinen(alkio?.[polku.kentta]));
+        }
+        return onSelvakielinen(record[field]);
+      })
   );
 }
 

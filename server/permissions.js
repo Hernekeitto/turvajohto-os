@@ -11,6 +11,8 @@
 // pysyvät synkassa (ks. myös index.js:n käynnistystarkistus joka vertaa tätä store.js:n
 // KNOWN_COLLECTIONS-listaan).
 
+import { lukitusEstaaMuokkauksen, lukitusEstaaPoiston, muutoksenLisatiedot } from './kirjaukset.js';
+
 // Oikeudet tallennetaan kaksitasoisena: { __default__: {node:{view,edit}}, [eventId]:
 // {node:{view,edit}} }. __default__ on aina läsnä (ks. db.js: migratePermissions) ja
 // toimii oletuksena tapahtumille joilla ei ole omaa erillistä asetusta admin-editorissa.
@@ -354,6 +356,15 @@ export function authorizeWrite(role, permissions, eventAccess, name, oldArr, new
   const safeNew = Array.isArray(newArr) ? newArr : [];
   const eventIdOfChange = (item) => (rule.eventScoped ? rule.eventIdOf(item) : null);
 
+  // Kirjausten muuttumattomuus (ks. kirjaukset.js) koskee vain raporttikokoelmia. Nämä
+  // apurit ovat roolihaarautumisen YLÄPUOLELLA tarkoituksella: lukitus sitoo myös
+  // adminia, joten sama tarkistus on tehtävä molemmissa haaroissa. Jos tarkistus olisi
+  // vain ei-admin-haarassa, admin voisi ylikirjoittaa voimakeinokirjauksen hiljaa.
+  const raporttikokoelma = name === 'reports' || name === 'guardReports';
+  const muokkausEste = (before, item) => (raporttikokoelma ? lukitusEstaaMuokkauksen(before, item) : null);
+  const poistoEste = (item) => (raporttikokoelma ? lukitusEstaaPoiston(item) : null);
+  const lisatiedot = (before, item) => (raporttikokoelma ? muutoksenLisatiedot(before, item) : {});
+
   if (role === 'admin') {
     const changes = [];
     const oldByIdAdmin = new Map(safeOld.map((item) => [String(item?.id ?? ''), item]));
@@ -365,11 +376,17 @@ export function authorizeWrite(role, permissions, eventAccess, name, oldArr, new
       if (!before) {
         changes.push({ action: 'create', id, eventId: eventIdOfChange(item) });
       } else if (JSON.stringify(before) !== JSON.stringify(item)) {
-        changes.push({ action: 'update', id, eventId: eventIdOfChange(item) });
+        const este = muokkausEste(before, item);
+        if (este) return { ok: false, error: este };
+        changes.push({ action: 'update', id, eventId: eventIdOfChange(item), ...lisatiedot(before, item) });
       }
     }
     for (const [id, item] of oldByIdAdmin) {
-      if (!seenIdsAdmin.has(id)) changes.push({ action: 'delete', id, eventId: eventIdOfChange(item) });
+      if (!seenIdsAdmin.has(id)) {
+        const este = poistoEste(item);
+        if (este) return { ok: false, error: este };
+        changes.push({ action: 'delete', id, eventId: eventIdOfChange(item) });
+      }
     }
     return { ok: true, data: newArr, changes };
   }
@@ -421,7 +438,9 @@ export function authorizeWrite(role, permissions, eventAccess, name, oldArr, new
       if (!allowed(before, 'remove') || !allowed(item, 'add')) {
         return { ok: false, error: 'Ei oikeuksia muokata joitakin lähetetyistä tietueista.' };
       }
-      changes.push({ action: 'update', id, eventId: eventIdOfChange(item) });
+      const este = muokkausEste(before, item);
+      if (este) return { ok: false, error: este };
+      changes.push({ action: 'update', id, eventId: eventIdOfChange(item), ...lisatiedot(before, item) });
     }
   }
   for (const [id, item] of oldById) {
@@ -429,6 +448,8 @@ export function authorizeWrite(role, permissions, eventAccess, name, oldArr, new
       if (!allowed(item, 'remove')) {
         return { ok: false, error: 'Ei oikeuksia poistaa joitakin tietueista.' };
       }
+      const este = poistoEste(item);
+      if (este) return { ok: false, error: este };
       changes.push({ action: 'delete', id, eventId: eventIdOfChange(item) });
     }
   }
