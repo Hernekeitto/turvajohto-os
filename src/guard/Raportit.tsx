@@ -3,6 +3,7 @@ import { FileText, ShieldAlert } from 'lucide-react';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { Kentta } from './Kentta';
 import { paikallinenPaiva } from '../shared/ajat';
+import { lomakeRaportille } from '../shared/lomakerekisteri';
 import { uusiId, type Kohde, type GuardRaportti, type RaporttiTyyppi } from './tyypit';
 
 // Vartijan raportit. Kaksi lomaketta, jotka vastaavat tapahtumapuolen omia:
@@ -109,11 +110,28 @@ export const Raportit = ({ kohde, tyyppi, vartija, onTallenna, onTakaisin }: Pro
     }
     setVirhe(null);
     setTallentaa(true);
+    // Erän 1 kentät myös vartijan raportteihin: molemmat GUARD-tyypit ovat
+    // poikkeamakirjauksia, joten ne saavat tilan heti. Lomaketunnus luetaan
+    // rekisteristä samalla tavalla kuin EVENT-puolella.
+    const lomakepohja = lomakeRaportille(tyyppi);
     const raportti: GuardRaportti = {
       ...lomake,
       id: uusiId(),
       summary: koottuYhteenveto(),
       luotu: new Date().toISOString(),
+      status: 'open',
+      severity: null,
+      zoneId: null,
+      assignedTo: null,
+      closedAt: null,
+      closedBy: null,
+      attachments: [],
+      location: { img: null, gps: null },
+      formCode: lomakepohja?.koodi ?? null,
+      formVersion: lomakepohja?.pohjaVersio ?? null,
+      policeDeliveredAt: null,
+      policeStation: null,
+      corrections: [],
     };
     const ok = await onTallenna(raportti);
     setTallentaa(false);

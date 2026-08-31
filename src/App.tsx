@@ -9,6 +9,9 @@ import { muotoileEuro, laskeKokonaispalkka, isValidPasswordClient } from './shar
 import { htmlTeksti, tulostusDokumentti, tulostaDokumentti } from './shared/tuloste';
 import { jaotteleSailytysajan, tapahtumanPoistoaikataulu } from './shared/sailytysaika';
 import { DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab } from './shared/oikeudet';
+import { TILAT, VAKAVUUDET, tila as kirjauksenTila, onLukittu, onPoikkeama, uusiKorjausmerkinta } from './shared/kirjaukset';
+import { lomakeRaportille, lomakeTunnus } from './shared/lomakerekisteri';
+import { TilaMerkki, VakavuusMerkki, LukkoMerkki } from './shared/komponentit/TilaMerkki';
 import { DashboardCard } from './shared/komponentit/DashboardCard';
 import { EmpStatusBadge, getEmpStatus } from './shared/komponentit/EmpStatusBadge';
 import { NotificationBell, ProfileMenu } from './shared/komponentit/YlapalkkiOsat';
@@ -250,6 +253,15 @@ const REPORT_DETAIL_FIELDS = [
   { key: 'subjectObservations', label: 'Havainnot käyttäytymisestä ja tilasta' },
   { key: 'description', label: 'Vapaa kuvaus' },
   { key: 'tikeComment', label: 'TIKE:n kommentti' },
+  // Erässä 1 lisätyt käsittelykentät. Tila ja vakavuus EIVÄT ole tässä listassa, koska
+  // ne ovat myös muokattavia — ne näytetään modaalissa omina merkkeinään.
+  { key: 'assignedTo', label: 'Vastuutettu' },
+  { key: 'closedAt', label: 'Suljettu', muotoile: (v: string) => new Date(v).toLocaleString('fi-FI') },
+  { key: 'closedBy', label: 'Sulkija' },
+  // Tapahtumailmoitus on toimitettava poliisilaitokselle, jos kiinni otettu vapautetaan
+  // (LYTP 8 § ja 33 § 3 mom).
+  { key: 'policeDeliveredAt', label: 'Toimitettu poliisille', muotoile: (v: string) => new Date(v).toLocaleString('fi-FI') },
+  { key: 'policeStation', label: 'Vastaanottava poliisilaitos' },
   { key: 'taskTitle', label: 'Tehtävän otsikko' },
   // muotoile: kentän arvo on koneluettava (ISO-aikaleima), joten se muotoillaan
   // vasta näytettäessä — sekä avatussa raportissa että PDF-tulosteessa.
@@ -702,9 +714,17 @@ export default function App() {
   // Nollataan aina kun avattu raportti vaihtuu tai modaali suljetaan, jottei paljastus
   // vahingossa periydy seuraavalle raportille.
   const [revealedFields, setRevealedFields] = useState<Record<string, boolean>>({});
+  // Korjausmerkinnän luonnos. Nollataan samalla kun paljastukset: kesken jäänyt teksti
+  // ei saa siirtyä seuraavaan kirjaukseen, koska se päätyisi väärään tietueeseen.
+  const [korjausTeksti, setKorjausTeksti] = useState('');
+  // Status boardin suodattimet. Oletuksena vain keskeneräiset: jos suljetut näkyisivät
+  // oletuksena, lista olisi arkisto eikä työjono.
+  const [boardTila, setBoardTila] = useState('avoimet');
+  const [boardVakavuus, setBoardVakavuus] = useState('');
   useEffect(() => {
     setRevealedFields({});
-  }, [openedReport]);
+    setKorjausTeksti('');
+  }, [openedReport?.id]);
   const [showQuickActions, setShowQuickActions] = useState(false);
 
   // Pikatoimintonapit. null = kokoelmaa ei ole vielä ladattu tai sitä ei ole koskaan
@@ -2951,10 +2971,39 @@ export default function App() {
       kentat.push({ otsikko: 'Liite', arvo: `${report.attachment.name} (ei sisälly tähän tulosteeseen)` });
     }
 
+    // Korjausmerkinnät tulostuvat alkuperäisen rinnalle: lukitun kirjauksen korjaus ei
+    // ole ylikirjoitus, joten tulosteesta on näyttävä sekä alkuperäinen tieto että se
+    // mitä siitä on myöhemmin korjattu.
+    for (const merkinta of Array.isArray(report.corrections) ? report.corrections : []) {
+      const aika = merkinta?.at ? new Date(merkinta.at).toLocaleString('fi-FI') : '';
+      kentat.push({
+        otsikko: `Korjausmerkintä${aika ? ` ${aika}` : ''}${merkinta?.by ? ` · ${merkinta.by}` : ''}`,
+        arvo: String(merkinta?.text || ''),
+      });
+    }
+
+    // Alatunniste: millä lomakepohjalla ja minkä pohjaversion mukaan kirjaus on tehty.
+    // Vanhoilta kirjauksilta formCode puuttuu, jolloin tunnus johdetaan rekisteristä
+    // tyypin perusteella — mutta pohjaversiota EI arvata, koska tietue ei kerro sitä.
+    const lomake = report.formCode
+      ? { koodi: report.formCode, lakiviite: lomakeRaportille(report.typeId)?.lakiviite ?? null }
+      : lomakeRaportille(report.typeId);
+    const alatunnisteOsat = [];
+    if (lomake?.koodi) {
+      alatunnisteOsat.push(
+        lomakeTunnus(lomake.koodi, '01') + (report.formVersion ? ` v${report.formVersion}` : '')
+      );
+    }
+    if (lomake?.lakiviite) alatunnisteOsat.push(lomake.lakiviite);
+    // V7: pohja on johdettu säädöksestä, ei viranomaisen vahvistama. Merkintä kuuluu
+    // näkyviin juuri siihen paperiin jota viranomaiselle näytetään.
+    if (lomake?.lakiviite) alatunnisteOsat.push('Pohja johdettu säädöksestä, ei viranomaisen vahvistama lomake');
+
     const luotu = new Date().toLocaleString('fi-FI');
     const html = tulostusDokumentti({
       otsikko: report.type || 'Raportti',
       tunniste: report.id,
+      alatunniste: alatunnisteOsat.join(' · ') || undefined,
       meta: [
         { otsikko: 'Tapahtuma', arvo: findEventName(report.eventId, events) },
         { otsikko: 'Laatija', arvo: report.author },
@@ -3031,6 +3080,76 @@ export default function App() {
       ? { ...r, deletedAt: new Date().toISOString(), deletedBy: sessionNickname || '' }
       : r)));
     setOpenedReport(null);
+  };
+
+  // Erässä 1 lisätyt kentät uudelle kirjaukselle, yhdestä paikasta. Ilman tätä jokainen
+  // kuudesta tallennuskäsittelijästä toistaisi saman listan ja yksi niistä jäisi
+  // ennemmin tai myöhemmin päivittämättä.
+  //
+  // Lomaketunnus luetaan rekisteristä (shared/lomakerekisteri.ts) eikä kirjoiteta tähän
+  // käsin — se on koko rekisterin olemassaolon syy. Pohjaversio tallennetaan tietueeseen
+  // sellaisena kuin se on NYT: kun pohjaa myöhemmin muutetaan, vanha kirjaus kertoo yhä
+  // millä versiolla se tehtiin.
+  const uudenKirjauksenKentat = (typeId: string) => {
+    const lomake = lomakeRaportille(typeId);
+    return {
+      formCode: lomake?.koodi ?? null,
+      formVersion: lomake?.pohjaVersio ?? null,
+      // Tila vain poikkeamille: sisäänkirjausta tai sääraporttia ei käsitellä.
+      status: onPoikkeama({ typeId }) ? 'open' : null,
+      severity: null,
+      zoneId: null,
+      assignedTo: null,
+      closedAt: null,
+      closedBy: null,
+      attachments: [],
+      location: { img: null, gps: null },
+      policeDeliveredAt: null,
+      policeStation: null,
+      corrections: [],
+    };
+  };
+
+  // Tilan vaihto ja korjausmerkintä ovat ainoat muutokset jotka lukittuun kirjaukseen
+  // voi tehdä (ks. shared/kirjaukset.ts ja server/kirjaukset.js). Molemmat päivittävät
+  // myös avatun kirjauksen, jotta modaali näyttää muutoksen heti eikä vasta uudelleen
+  // avattaessa. Viiteyhtäläisyys kuten handleDeleteReportissa: raporttien tunnisteet
+  // eivät ole taatusti uniikkeja tapahtumien välillä.
+  const paivitaKirjaus = (report: any, muutos: any) => {
+    const paivitetty = { ...report, ...muutos };
+    setReports(prev => prev.map(r => (r === report ? paivitetty : r)));
+    setOpenedReport(paivitetty);
+  };
+
+  // Sama oikeus kuin poistopainikkeella: kirjauksen käsittely (tila, korjausmerkintä)
+  // kuuluu sille joka saa muokata sitä näkymää josta kirjaus avattiin.
+  const saaKasitellaKirjauksen = isAdminUser || canEdit(perms, selectedEvent, openedReportSource || 'overview');
+
+  const handleSetReportStatus = (report: any, status: string) => {
+    if (report.status === status) return;
+    // Sulkeminen kirjaa kuka sulki ja milloin; muu tilanvaihto tyhjentää ne, jottei
+    // uudelleen avattuun kirjaukseen jää merkintää sulkijasta joka ei enää pidä
+    // paikkaansa.
+    paivitaKirjaus(report, status === 'closed'
+      ? { status, closedAt: new Date().toISOString(), closedBy: sessionNickname || '' }
+      : { status, closedAt: null, closedBy: null });
+  };
+
+  // Vakavuus on sama 1–5 asteikko kuin riskiarvioinnissa (ks. shared/kirjaukset.ts).
+  // Saman arvon painaminen uudelleen poistaa luokituksen: väärin annettua vakavuutta
+  // ei saisi muuten pois muuten kuin arvaamalla jokin toinen.
+  const handleSetReportSeverity = (report: any, severity: number) => {
+    paivitaKirjaus(report, { severity: report.severity === severity ? null : severity });
+  };
+
+  const handleAddCorrection = (report: any) => {
+    const teksti = korjausTeksti.trim();
+    if (!teksti) return;
+    const merkinnat = Array.isArray(report.corrections) ? report.corrections : [];
+    paivitaKirjaus(report, {
+      corrections: [...merkinnat, uusiKorjausmerkinta(teksti, sessionNickname || '')],
+    });
+    setKorjausTeksti('');
   };
 
   const handleRestoreReport = (report) => {
@@ -3173,6 +3292,7 @@ export default function App() {
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId: 'open',
+      ...uudenKirjauksenKentat('open'),
       type: 'Avoin kirjaus',
       author: kirjaajanTunniste(),
       date: checkInDate || now.toLocaleDateString('sv-SE'),
@@ -3302,6 +3422,7 @@ export default function App() {
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId: 'jvreport',
+      ...uudenKirjauksenKentat('jvreport'),
       type: 'Järjestyksenvalvojan tapahtumailmoitus',
       author: jvrGuardName.trim(),
       licenseHolder: jvrLicenseHolder.trim(),
@@ -3353,6 +3474,7 @@ export default function App() {
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId: 'jvaction',
+      ...uudenKirjauksenKentat('jvaction'),
       type: 'JV:n tai vartijan toimenpide',
       author: jvaName,
       date: jvaDate || now.toLocaleDateString('sv-SE'),
@@ -3426,6 +3548,7 @@ export default function App() {
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId: 'open',
+      ...uudenKirjauksenKentat('open'),
       type: 'Avoin kirjaus',
       author: kirjaajanTunniste(),
       date: openKirjausDate || now.toLocaleDateString('sv-SE'),
@@ -3468,6 +3591,7 @@ export default function App() {
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId: 'firstaid',
+      ...uudenKirjauksenKentat('firstaid'),
       type: 'Ensiaputilanne',
       author: kirjaajanTunniste('EA-Päivystys'),
       date: faDate || now.toLocaleDateString('sv-SE'),
@@ -3503,6 +3627,7 @@ export default function App() {
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
       typeId,
+      ...uudenKirjauksenKentat(typeId),
       type: title,
       author: kirjaajanTunniste(),
       date: genRepDate || now.toLocaleDateString('sv-SE'),
@@ -4305,6 +4430,92 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {/* Status board. Työjono eikä arkisto: järjestys on kiireellisyyden mukaan
+                (eskaloitu ensin) eikä aikajärjestyksessä, ja suljetut ovat oletuksena
+                piilossa. Kirjaus jolta puuttuu tila kokonaan on migroimatta jäänyt vanha
+                tietue — se näkyy tässä ilman merkkiä, mikä on rehellisempää kuin arvata
+                sille tila. */}
+            {(() => {
+              const TILAJARJESTYS: Record<string, number> = { escalated: 0, open: 1, in_progress: 2, closed: 4 };
+              const rivit = deviationReports
+                .filter(r => (boardTila === 'avoimet' ? r.status !== 'closed' : !boardTila || r.status === boardTila))
+                .filter(r => !boardVakavuus || String(r.severity) === boardVakavuus)
+                .sort((a, b) =>
+                  (TILAJARJESTYS[a.status] ?? 3) - (TILAJARJESTYS[b.status] ?? 3) ||
+                  String(b.time || '').localeCompare(String(a.time || ''))
+                );
+              const suodattimet = [{ id: 'avoimet', nimi: 'Keskeneräiset' }, ...TILAT, { id: '', nimi: 'Kaikki' }];
+              return (
+                <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+                  <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+                    <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                      <Clipboard className="text-indigo-500" size={20} />
+                      Kirjausten tila
+                    </h2>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {suodattimet.map(s => (
+                        <button
+                          key={s.id || 'kaikki'}
+                          type="button"
+                          onClick={() => setBoardTila(s.id)}
+                          className={`px-2.5 py-1 rounded-md border text-xs font-medium transition-colors ${
+                            boardTila === s.id
+                              ? 'bg-slate-800 text-white border-slate-800'
+                              : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          {s.nimi}
+                        </button>
+                      ))}
+                      <select
+                        value={boardVakavuus}
+                        onChange={(e) => setBoardVakavuus(e.target.value)}
+                        aria-label="Suodata vakavuuden mukaan"
+                        className="rounded-md border border-slate-200 text-xs text-slate-600 py-1 pl-2 pr-6"
+                      >
+                        <option value="">Kaikki vakavuudet</option>
+                        {[1, 2, 3, 4, 5].map(taso => (
+                          <option key={taso} value={String(taso)}>{taso} — {VAKAVUUDET[taso].nimi}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {rivit.length === 0 ? (
+                    <p className="text-sm text-slate-500 py-4 text-center">
+                      {deviationReports.length === 0
+                        ? 'Poikkeamakirjauksia ei ole vielä tehty.'
+                        : 'Ei kirjauksia valituilla suodattimilla.'}
+                    </p>
+                  ) : (
+                    <div className="space-y-1">
+                      {rivit.map(rep => (
+                        <button
+                          key={rep.id}
+                          type="button"
+                          onClick={() => { setOpenedReport(rep); setOpenedReportSource('overview'); }}
+                          className={`w-full text-left flex items-start gap-3 p-3 rounded-lg border border-slate-100 border-l-4 hover:bg-slate-50 transition-colors ${
+                            kirjauksenTila(rep.status)?.reuna || 'border-l-slate-200'
+                          }`}
+                        >
+                          <span className="font-mono text-xs text-slate-400 pt-0.5 shrink-0">{rep.time || '—'}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-medium text-slate-800 text-sm">{rep.type}</span>
+                            {rep.summary && <span className="block text-xs text-slate-500 truncate">{rep.summary}</span>}
+                          </span>
+                          <span className="flex items-center gap-1.5 shrink-0">
+                            <VakavuusMerkki kirjaus={rep} />
+                            <TilaMerkki kirjaus={rep} />
+                            {onLukittu(rep) && <LukkoMerkki teksti="" />}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         );
       case 'reporting':
@@ -12332,7 +12543,19 @@ export default function App() {
             <div className="flex justify-between items-start p-5 border-b border-slate-100">
               <div>
                 <h2 className="font-bold text-lg text-slate-800">{openedReport.type}</h2>
-                <p className="text-xs font-mono text-slate-400 mt-0.5">{openedReport.id}</p>
+                <p className="text-xs font-mono text-slate-400 mt-0.5">
+                  {openedReport.id}
+                  {/* Lomaketunnus on eri asia kuin kirjaustunniste: tunniste yksilöi tämän
+                      kirjauksen, lomaketunnus sen pohjan jolla se täytettiin. Versio
+                      luetaan TIETUEESTA eikä rekisteristä — rekisterissä on pohjan
+                      nykyinen versio, tietueessa se jolla kirjaus tehtiin. */}
+                  {openedReport.formCode && (
+                    <span className="ml-2 text-slate-500">
+                      {lomakeTunnus(openedReport.formCode, '01')}
+                      {openedReport.formVersion ? ` v${openedReport.formVersion}` : ''}
+                    </span>
+                  )}
+                </p>
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 {(isAdminUser || canEdit(perms, selectedEvent, openedReportSource || 'overview')) && (
@@ -12354,6 +12577,66 @@ export default function App() {
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4 text-sm text-left">
+              {(openedReport.status || openedReport.severity || onLukittu(openedReport)) && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <TilaMerkki kirjaus={openedReport} />
+                  <VakavuusMerkki kirjaus={openedReport} />
+                  {onLukittu(openedReport) && <LukkoMerkki />}
+                </div>
+              )}
+
+              {/* Tilanvaihto vain poikkeamakirjauksille: sisäänkirjausta tai sääraporttia
+                  ei käsitellä eikä suljeta, joten napit lupaisivat niille toimintoa jolla
+                  ei ole merkitystä. */}
+              {saaKasitellaKirjauksen && onPoikkeama(openedReport) && (
+                <div className="flex flex-wrap gap-1.5">
+                  {TILAT.map(t => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => handleSetReportStatus(openedReport, t.id)}
+                      className={`px-2.5 py-1 rounded-md border text-xs font-medium transition-colors ${
+                        openedReport.status === t.id
+                          ? t.luokka
+                          : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {t.nimi}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {saaKasitellaKirjauksen && onPoikkeama(openedReport) && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs text-slate-400 uppercase tracking-wide mr-1">Vakavuus</span>
+                  {[1, 2, 3, 4, 5].map(taso => (
+                    <button
+                      key={taso}
+                      type="button"
+                      onClick={() => handleSetReportSeverity(openedReport, taso)}
+                      title={VAKAVUUDET[taso].nimi}
+                      className={`w-7 h-7 rounded-md border text-xs font-bold transition-colors ${
+                        Number(openedReport.severity) === taso
+                          ? VAKAVUUDET[taso].luokka
+                          : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {taso}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {onLukittu(openedReport) && (
+                <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                  <strong className="text-slate-700">Lukittu kirjaus.</strong> Kiinniottoon tai
+                  voimakeinoihin liittyvän kirjauksen sisältöä ei voi muuttaa jälkikäteen — sen
+                  todistusarvo perustuu siihen että se on laadittu heti. Korjaus tehdään
+                  korjausmerkintänä, joka jää näkyviin alkuperäisen rinnalle.
+                </p>
+              )}
+
               <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
                 <div>
                   <dt className="text-xs text-slate-400 uppercase tracking-wide">Laatija</dt>
@@ -12420,6 +12703,73 @@ export default function App() {
                     <Paperclip size={14} />
                     {openedReport.attachment.name}
                   </a>
+                </div>
+              )}
+
+              {/* Erässä 1 lisätty monen liitteen tuki. Vanha yksittäinen attachment
+                  näytetään yhä yllä: sitä ei migroitu tänne, jottei samaan tiedostoon
+                  jäisi kahta viittausta. */}
+              {Array.isArray(openedReport.attachments) && openedReport.attachments.length > 0 && (
+                <div>
+                  <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Liitteet</p>
+                  <div className="flex flex-wrap gap-2">
+                    {openedReport.attachments.map((liite) => (
+                      <a
+                        key={liite.id}
+                        href={`/api/uploads/${liite.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-indigo-600 hover:text-indigo-800 font-medium bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
+                      >
+                        <Paperclip size={14} />
+                        {liite.name || liite.id}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {Array.isArray(openedReport.corrections) && openedReport.corrections.length > 0 && (
+                <div>
+                  <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Korjausmerkinnät</p>
+                  <ul className="space-y-2">
+                    {openedReport.corrections.map((merkinta) => (
+                      <li key={merkinta.id} className="bg-amber-50 border border-amber-100 rounded-lg p-3">
+                        <p className="text-slate-700 whitespace-pre-wrap">{merkinta.text}</p>
+                        <p className="text-xs text-slate-500 mt-1.5">
+                          {merkinta.by || '—'}
+                          {merkinta.at ? ` · ${new Date(merkinta.at).toLocaleString('fi-FI')}` : ''}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {saaKasitellaKirjauksen && (
+                <div className="border-t border-slate-100 pt-4">
+                  <label htmlFor="korjausmerkinta" className="block text-xs text-slate-400 uppercase tracking-wide mb-1">
+                    Lisää korjausmerkintä
+                  </label>
+                  <textarea
+                    id="korjausmerkinta"
+                    rows={2}
+                    value={korjausTeksti}
+                    onChange={(e) => setKorjausTeksti(e.target.value)}
+                    placeholder="Mikä alkuperäisessä kirjauksessa oli virheellistä ja mikä on oikea tieto."
+                    className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <div className="flex items-center justify-between gap-3 mt-2">
+                    <p className="text-xs text-slate-400">Merkintää ei voi poistaa eikä muuttaa jälkikäteen.</p>
+                    <button
+                      type="button"
+                      onClick={() => handleAddCorrection(openedReport)}
+                      disabled={!korjausTeksti.trim()}
+                      className="shrink-0 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold rounded-lg transition-colors"
+                    >
+                      Lisää merkintä
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

@@ -49,6 +49,8 @@ const PDF_TYYLIT = `
   .huomio { margin-top: 22px; border-top: 1px solid #e2e8f0; padding-top: 8px;
     font-size: 8.5pt; color: #475569; page-break-inside: avoid; }
   .huomio strong { color: #0f172a; }
+  .alatunniste { margin-top: 10px; font-size: 8pt; color: #64748b;
+    font-family: ui-monospace, "Courier New", monospace; page-break-inside: avoid; }
   @media screen {
     body { background: #f1f5f9; padding: 24px; }
     .arkki { background: #fff; max-width: 210mm; margin: 0 auto; padding: 18mm 16mm;
@@ -68,10 +70,14 @@ type TulosteOsat = {
   meta: TulosteMeta[];
   kentat: TulosteKentta[];
   huomio: string;
+  // Lomaketunnus, pohjaversio ja lakiviite ("TI-01 v1.0 · LYTP 33 § ja VNA 874/2016 18 §").
+  // Erillään huomiosta, koska tämä on paperin yksilöivä tieto eikä ohje lukijalle: siitä
+  // näkee jälkikäteen millä pohjaversiolla tuloste on tehty.
+  alatunniste?: string;
 };
 
 // Kokoaa valmiin, itsenäisen HTML-dokumentin.
-export const tulostusDokumentti = ({ otsikko, tunniste, meta, kentat, huomio }: TulosteOsat) => `<!doctype html>
+export const tulostusDokumentti = ({ otsikko, tunniste, meta, kentat, huomio, alatunniste }: TulosteOsat) => `<!doctype html>
 <html lang="fi"><head><meta charset="utf-8"><title>${htmlTeksti(tunniste || otsikko)}</title>
 <style>${PDF_TYYLIT}</style></head><body>
 <div class="arkki">
@@ -84,6 +90,7 @@ export const tulostusDokumentti = ({ otsikko, tunniste, meta, kentat, huomio }: 
     k.tyhja ? '<div class="tyhja-rivi"></div>' : `<div class="arvo">${htmlTeksti(k.arvo)}</div>`
   }</div>`).join('')}
   <div class="huomio">${huomio}</div>
+  ${alatunniste ? `<div class="alatunniste">${htmlTeksti(alatunniste)}</div>` : ''}
 </div></body></html>`;
 
 // Tulostaa dokumentin näkymättömän iframen kautta. Tässä EI käytetä

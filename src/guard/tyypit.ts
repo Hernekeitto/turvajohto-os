@@ -99,6 +99,21 @@ export type GuardRaportti = {
   subjectAddress?: string;
   subjectFeatures?: string;
   subjectObservations?: string;
+  // Erässä 1 lisätyt kentät. Samat kuin EVENT-puolen raporteilla, koska molempia
+  // koskee sama tilamalli ja sama muuttumattomuussääntö (ks. server/kirjaukset.js).
+  status?: string | null;
+  severity?: number | null;
+  zoneId?: string | null;
+  assignedTo?: string | null;
+  closedAt?: string | null;
+  closedBy?: string | null;
+  attachments?: { id: string; name?: string }[];
+  location?: { img: unknown; gps: unknown };
+  formCode?: string | null;
+  formVersion?: string | null;
+  policeDeliveredAt?: string | null;
+  policeStation?: string | null;
+  corrections?: { id: string; at: string; by: string; text: string }[];
 };
 
 export const uusiId = () =>
