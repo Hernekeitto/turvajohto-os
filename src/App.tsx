@@ -12,6 +12,12 @@ import { DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab } from './shared/oike
 import { TILAT, VAKAVUUDET, tila as kirjauksenTila, onLukittu, onPoikkeama, uusiKorjausmerkinta } from './shared/kirjaukset';
 import { lomakeRaportille, lomakeTunnus } from './shared/lomakerekisteri';
 import { TilaMerkki, VakavuusMerkki, LukkoMerkki } from './shared/komponentit/TilaMerkki';
+import { Kartta } from './shared/komponentit/Kartta';
+import { SijaintiValinta } from './shared/komponentit/SijaintiValinta';
+import {
+  VYOHYKEVARIT, VYOHYKKEEN_MIN_PISTEET, uusiVyohykeId, vyohykkeet as haeVyohykkeet,
+  vyohykkeenNimi, type Piste,
+} from './shared/vyohykkeet';
 import { DashboardCard } from './shared/komponentit/DashboardCard';
 import { EmpStatusBadge, getEmpStatus } from './shared/komponentit/EmpStatusBadge';
 import { NotificationBell, ProfileMenu } from './shared/komponentit/YlapalkkiOsat';
@@ -721,6 +727,25 @@ export default function App() {
   // oletuksena, lista olisi arkisto eikä työjono.
   const [boardTila, setBoardTila] = useState('avoimet');
   const [boardVakavuus, setBoardVakavuus] = useState('');
+  const [boardVyohyke, setBoardVyohyke] = useState('');
+  const [boardTyyppi, setBoardTyyppi] = useState('');
+  // Kirjauksen sijainti: vyöhyke ja tarkka kohta kartalla. YHTEINEN kaikille
+  // raporttilomakkeille, koska vain yksi lomake on kerrallaan auki ja sijainti kysytään
+  // niissä kaikissa samalla tavalla. Nollataan lomakkeen vaihtuessa, jottei edellisen
+  // kirjauksen paikka päädy seuraavaan.
+  const [kirjausVyohyke, setKirjausVyohyke] = useState('');
+  const [kirjausPiste, setKirjausPiste] = useState<Piste | null>(null);
+  // Tyhjä on sallittu arvo: kaikki kirjaukset eivät tapahdu rajatulla alueella, ja
+  // pakollinen valinta johtaisi vain siihen että valitaan mikä tahansa.
+  useEffect(() => {
+    setKirjausVyohyke('');
+    setKirjausPiste(null);
+  }, [activeTab]);
+  // Vyöhyke-editori: kesken oleva monikulmio ja uuden vyöhykkeen tiedot.
+  const [vyohykeMuokkaus, setVyohykeMuokkaus] = useState(false);
+  const [piirrettava, setPiirrettava] = useState<Piste[]>([]);
+  const [uusiVyohykeNimi, setUusiVyohykeNimi] = useState('');
+  const [uusiVyohykeVari, setUusiVyohykeVari] = useState(VYOHYKEVARIT[0].id);
   useEffect(() => {
     setRevealedFields({});
     setKorjausTeksti('');
@@ -3009,6 +3034,7 @@ export default function App() {
         { otsikko: 'Laatija', arvo: report.author },
         { otsikko: 'Päivämäärä', arvo: report.date ? formatFiDate(report.date) : '' },
         { otsikko: 'Kellonaika', arvo: report.time },
+        ...(raportinVyohyke(report) ? [{ otsikko: 'Vyöhyke', arvo: raportinVyohyke(report) }] : []),
       ],
       kentat,
       huomio:
@@ -3082,6 +3108,47 @@ export default function App() {
     setOpenedReport(null);
   };
 
+  // Vyöhykkeet ovat tapahtuman kenttä (päätös V5), joten ne tallentuvat samalla
+  // events-kokoelman tallennuksella kuin muutkin tapahtuman tiedot.
+  const nykyisenTapahtumanVyohykkeet = haeVyohykkeet(events.find((e) => e.id === selectedEvent));
+  const nykyisenTapahtumanKartta =
+    (events.find((e) => e.id === selectedEvent) as any)?.formData?.mapUploadId || null;
+
+  // Kirjauksen vyöhyke haetaan SEN tapahtuman vyöhykkeistä johon kirjaus kuuluu, ei
+  // valitun tapahtuman: "Tallennetut raportit (kaikki tapahtumat)" näyttää useamman
+  // tapahtuman kirjauksia kerralla, ja väärän tapahtuman vyöhykenimi olisi väärä tieto.
+  const raportinVyohyke = (report: any) =>
+    vyohykkeenNimi(haeVyohykkeet(events.find((e) => e.id === (report?.eventId || 'fesx'))), report?.zoneId);
+
+  const tallennaVyohykkeet = (zones: any[]) => {
+    setEvents(prev => prev.map(e => (e.id === selectedEvent ? { ...e, zones } : e)));
+  };
+
+  const lisaaVyohyke = () => {
+    if (piirrettava.length < VYOHYKKEEN_MIN_PISTEET) return;
+    const nimi = uusiVyohykeNimi.trim();
+    if (!nimi) {
+      alert('Anna vyöhykkeelle nimi. Nimetön alue kartalla ei kerro kenellekään mitään.');
+      return;
+    }
+    tallennaVyohykkeet([
+      ...nykyisenTapahtumanVyohykkeet,
+      { id: uusiVyohykeId(), nimi, vari: uusiVyohykeVari, pisteet: piirrettava },
+    ]);
+    setPiirrettava([]);
+    setUusiVyohykeNimi('');
+  };
+
+  // Vyöhykkeen poisto ei poista sitä kirjauksista jotka viittaavat siihen: kirjaus
+  // kertoo missä jotain tapahtui, ja se tieto ei muutu vääräksi siksi että alue
+  // poistettiin kartalta jälkikäteen. Poistetun vyöhykkeen tunnus näkyy kirjauksessa
+  // tyhjänä, ei virheenä.
+  const poistaVyohyke = (id: string) => {
+    const kohde = nykyisenTapahtumanVyohykkeet.find((v) => v.id === id);
+    if (!window.confirm(`Poistetaanko vyöhyke "${kohde?.nimi || id}" kartalta?`)) return;
+    tallennaVyohykkeet(nykyisenTapahtumanVyohykkeet.filter((v) => v.id !== id));
+  };
+
   // Erässä 1 lisätyt kentät uudelle kirjaukselle, yhdestä paikasta. Ilman tätä jokainen
   // kuudesta tallennuskäsittelijästä toistaisi saman listan ja yksi niistä jäisi
   // ennemmin tai myöhemmin päivittämättä.
@@ -3098,12 +3165,15 @@ export default function App() {
       // Tila vain poikkeamille: sisäänkirjausta tai sääraporttia ei käsitellä.
       status: onPoikkeama({ typeId }) ? 'open' : null,
       severity: null,
-      zoneId: null,
+      // Sijainti luetaan lomakkeen yhteisestä tilasta, jolloin jokainen kuudesta
+      // tallennuskäsittelijästä saa sen ilman omaa riviään.
+      zoneId: kirjausVyohyke || null,
       assignedTo: null,
       closedAt: null,
       closedBy: null,
       attachments: [],
-      location: { img: null, gps: null },
+      // GPS täytetään vasta erässä 3; kuvakoordinaatti tulee kartalta osoittamalla.
+      location: { img: kirjausPiste, gps: null },
       policeDeliveredAt: null,
       policeStation: null,
       corrections: [],
@@ -4441,11 +4511,26 @@ export default function App() {
               const rivit = deviationReports
                 .filter(r => (boardTila === 'avoimet' ? r.status !== 'closed' : !boardTila || r.status === boardTila))
                 .filter(r => !boardVakavuus || String(r.severity) === boardVakavuus)
+                .filter(r => !boardVyohyke || r.zoneId === boardVyohyke)
+                .filter(r => !boardTyyppi || r.typeId === boardTyyppi)
                 .sort((a, b) =>
                   (TILAJARJESTYS[a.status] ?? 3) - (TILAJARJESTYS[b.status] ?? 3) ||
                   String(b.time || '').localeCompare(String(a.time || ''))
                 );
               const suodattimet = [{ id: 'avoimet', nimi: 'Keskeneräiset' }, ...TILAT, { id: '', nimi: 'Kaikki' }];
+              // Tyyppivalikko kootaan siitä mitä kirjauksia oikeasti on: kiinteä lista
+              // näyttäisi tyyppejä joita tästä tapahtumasta ei ole yhtään.
+              //
+              // HUOM: tässä tiedostossa EI voi käyttää `new Map()`. Nimi `Map` on varattu
+              // lucide-reactin karttaikonille (ks. importit), joka varjostaa globaalin
+              // konstruktorin — `new Map()` kaataa koko näkymän virheeseen
+              // "Map is not a constructor".
+              const tyyppiNimet: Record<string, string> = {};
+              for (const r of deviationReports) {
+                if (r.typeId && !tyyppiNimet[r.typeId]) tyyppiNimet[r.typeId] = r.type;
+              }
+              const tyypit = Object.entries(tyyppiNimet)
+                .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'fi'));
               return (
                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
                   <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
@@ -4479,6 +4564,32 @@ export default function App() {
                           <option key={taso} value={String(taso)}>{taso} — {VAKAVUUDET[taso].nimi}</option>
                         ))}
                       </select>
+                      {tyypit.length > 1 && (
+                        <select
+                          value={boardTyyppi}
+                          onChange={(e) => setBoardTyyppi(e.target.value)}
+                          aria-label="Suodata kirjaustyypin mukaan"
+                          className="rounded-md border border-slate-200 text-xs text-slate-600 py-1 pl-2 pr-6"
+                        >
+                          <option value="">Kaikki tyypit</option>
+                          {tyypit.map(([id, nimi]) => (
+                            <option key={id} value={id}>{nimi}</option>
+                          ))}
+                        </select>
+                      )}
+                      {nykyisenTapahtumanVyohykkeet.length > 0 && (
+                        <select
+                          value={boardVyohyke}
+                          onChange={(e) => setBoardVyohyke(e.target.value)}
+                          aria-label="Suodata vyöhykkeen mukaan"
+                          className="rounded-md border border-slate-200 text-xs text-slate-600 py-1 pl-2 pr-6"
+                        >
+                          <option value="">Kaikki vyöhykkeet</option>
+                          {nykyisenTapahtumanVyohykkeet.map(v => (
+                            <option key={v.id} value={v.id}>{v.nimi}</option>
+                          ))}
+                        </select>
+                      )}
                     </div>
                   </div>
 
@@ -4766,6 +4877,14 @@ export default function App() {
                       placeholder="Esim. Main Stage, portti 2..."
                     />
                   </div>
+                  <SijaintiValinta
+                    karttaId={nykyisenTapahtumanKartta}
+                    vyohykkeet={nykyisenTapahtumanVyohykkeet}
+                    vyohyke={kirjausVyohyke}
+                    onVyohyke={setKirjausVyohyke}
+                    piste={kirjausPiste}
+                    onPiste={setKirjausPiste}
+                  />
                 </div>
               </div>
 
@@ -5666,10 +5785,19 @@ export default function App() {
                 </div>
               </div>
 
+              <SijaintiValinta
+                karttaId={nykyisenTapahtumanKartta}
+                vyohykkeet={nykyisenTapahtumanVyohykkeet}
+                vyohyke={kirjausVyohyke}
+                onVyohyke={setKirjausVyohyke}
+                piste={kirjausPiste}
+                onPiste={setKirjausPiste}
+              />
+
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">Kuvaus tapahtuneesta</label>
-                <textarea 
-                  rows="6" 
+                <textarea
+                  rows="6"
                   value={openKirjausText}
                   onChange={(e) => setOpenKirjausText(e.target.value)}
                   className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-indigo-500" 
@@ -5858,10 +5986,20 @@ export default function App() {
               </div>
 
               <div className="space-y-4">
+                <SijaintiValinta
+                  karttaId={nykyisenTapahtumanKartta}
+                  vyohykkeet={nykyisenTapahtumanVyohykkeet}
+                  vyohyke={kirjausVyohyke}
+                  onVyohyke={setKirjausVyohyke}
+                  piste={kirjausPiste}
+                  onPiste={setKirjausPiste}
+                  focusRing="focus:ring-rose-500"
+                />
+
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">Tapahtuman kuvaus</label>
-                  <textarea 
-                    rows="3" 
+                  <textarea
+                    rows="3"
                     value={faDesc}
                     onChange={(e) => setFaDesc(e.target.value)}
                     className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-rose-500" 
@@ -6092,6 +6230,16 @@ export default function App() {
                     placeholder="Esim. Portti 2, Main Stage etualue, VIP-alue"
                   />
                 </div>
+
+                <SijaintiValinta
+                  karttaId={nykyisenTapahtumanKartta}
+                  vyohykkeet={nykyisenTapahtumanVyohykkeet}
+                  vyohyke={kirjausVyohyke}
+                  onVyohyke={setKirjausVyohyke}
+                  piste={kirjausPiste}
+                  onPiste={setKirjausPiste}
+                  focusRing="focus:ring-amber-500"
+                />
               </div>
 
               {/* Aika */}
@@ -6452,10 +6600,20 @@ export default function App() {
               </div>
 
               <div className="space-y-4">
+                <SijaintiValinta
+                  karttaId={nykyisenTapahtumanKartta}
+                  vyohykkeet={nykyisenTapahtumanVyohykkeet}
+                  vyohyke={kirjausVyohyke}
+                  onVyohyke={setKirjausVyohyke}
+                  piste={kirjausPiste}
+                  onPiste={setKirjausPiste}
+                  focusRing={config.focusRing}
+                />
+
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">Tapahtuman kuvaus</label>
-                  <textarea 
-                    rows="3" 
+                  <textarea
+                    rows="3"
                     value={genRepDesc}
                     onChange={(e) => setGenRepDesc(e.target.value)}
                     className={`w-full rounded-lg border-slate-300 border p-3 text-sm ${config.focusRing}`}
@@ -6816,25 +6974,133 @@ export default function App() {
                 )}
               </div>
 
-              <div className="w-full bg-slate-50 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center min-h-[300px] md:min-h-[500px]">
-                {karttaId ? (
-                  <img
-                    src={`/api/uploads/${karttaId}`}
-                    alt="Tapahtuman pohjakartta"
-                    className="max-w-full h-auto object-contain"
-                  />
-                ) : (
-                  <div className="text-center p-8">
-                    <Map className="text-slate-300 mx-auto mb-3" size={40} />
-                    <p className="text-sm font-medium text-slate-600">Pohjakarttaa ei ole ladattu.</p>
-                    <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                      {saaMuokataTapahtumaa
-                        ? 'Lataa alueen pohjakartta yllä olevalla painikkeella. Kartta tallentuu tähän tapahtumaan.'
-                        : 'Pyydä pääkäyttäjää lataamaan alueen pohjakartta tähän tapahtumaan.'}
-                    </p>
+              <Kartta
+                karttaId={karttaId}
+                vyohykkeet={nykyisenTapahtumanVyohykkeet}
+                // Kirjaustaso: vain ne kirjaukset joille on osoitettu kohta kartalta.
+                // Piirtotilassa merkit piilotetaan, jottei uutta vyöhykettä piirrettäessä
+                // osu vahingossa kirjausmerkkiin.
+                merkit={vyohykeMuokkaus ? [] : currentEventReports
+                  .filter(r => r.location?.img)
+                  .map(r => ({
+                    id: r.id,
+                    x: r.location.img.x,
+                    y: r.location.img.y,
+                    // Tilaton kirjaus (sisäänkirjaus, sääraportti) on harmaa: tilaväri
+                    // lupaisi käsittelyä jota sille ei kuulu tehdä.
+                    vari: kirjauksenTila(r.status)?.merkki || '#64748b',
+                    otsikko: `${r.time || ''} ${r.type}`.trim(),
+                    onKlikkaus: () => { setOpenedReport(r); setOpenedReportSource('overview'); },
+                  }))}
+                piirrettava={vyohykeMuokkaus ? piirrettava : undefined}
+                onKarttaKlikkaus={vyohykeMuokkaus ? (p) => setPiirrettava(prev => [...prev, p]) : undefined}
+                tyhjaTeksti={
+                  saaMuokataTapahtumaa
+                    ? 'Pohjakarttaa ei ole ladattu. Lataa alueen kartta yllä olevalla painikkeella — vyöhykkeet piirretään sen päälle.'
+                    : 'Pohjakarttaa ei ole ladattu. Pyydä pääkäyttäjää lataamaan alueen kartta tähän tapahtumaan.'
+                }
+              />
+
+              {/* Vyöhykkeet. Piirtäminen vaatii saman oikeuden kuin tapahtuman muokkaus:
+                  vyöhyke on tapahtuman kenttä, ja se ohjaa kirjausten luokittelua. */}
+              {karttaId && (
+                <div className="mt-4 border-t border-slate-100 pt-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                    <h4 className="text-sm font-bold text-slate-700">
+                      Vyöhykkeet
+                      {nykyisenTapahtumanVyohykkeet.length > 0 && (
+                        <span className="ml-1.5 font-normal text-slate-400">({nykyisenTapahtumanVyohykkeet.length})</span>
+                      )}
+                    </h4>
+                    {saaMuokataTapahtumaa && (
+                      <button
+                        type="button"
+                        onClick={() => { setVyohykeMuokkaus(o => !o); setPiirrettava([]); }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                          vyohykeMuokkaus
+                            ? 'bg-slate-800 text-white hover:bg-slate-700'
+                            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        {vyohykeMuokkaus ? 'Lopeta muokkaus' : 'Piirrä vyöhykkeitä'}
+                      </button>
+                    )}
                   </div>
-                )}
-              </div>
+
+                  {vyohykeMuokkaus && (
+                    <div className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-4 mb-3 space-y-3">
+                      <p className="text-xs text-slate-600">
+                        Napsauta karttaa alueen kulmiin. Vähintään {VYOHYKKEEN_MIN_PISTEET} pistettä,
+                        sitten anna nimi ja tallenna. Napsautettu: {piirrettava.length}.
+                      </p>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <input
+                          type="text"
+                          value={uusiVyohykeNimi}
+                          onChange={(e) => setUusiVyohykeNimi(e.target.value)}
+                          placeholder="Esim. Lohko C tai Portti 2"
+                          className="flex-1 min-w-[180px] rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <select
+                          value={uusiVyohykeVari}
+                          onChange={(e) => setUusiVyohykeVari(e.target.value)}
+                          aria-label="Vyöhykkeen väri"
+                          className="rounded-lg border border-slate-300 p-2 text-sm"
+                        >
+                          {VYOHYKEVARIT.map(v => <option key={v.id} value={v.id}>{v.nimi}</option>)}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={lisaaVyohyke}
+                          disabled={piirrettava.length < VYOHYKKEEN_MIN_PISTEET}
+                          className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold rounded-lg transition-colors"
+                        >
+                          Tallenna vyöhyke
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPiirrettava(prev => prev.slice(0, -1))}
+                          disabled={piirrettava.length === 0}
+                          className="px-3 py-2 bg-white border border-slate-200 text-slate-600 disabled:text-slate-300 text-xs font-medium rounded-lg hover:bg-slate-50 transition-colors"
+                        >
+                          Kumoa piste
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {nykyisenTapahtumanVyohykkeet.length === 0 ? (
+                    <p className="text-xs text-slate-500">
+                      Vyöhykkeitä ei ole piirretty. Ilman niitä kirjauksia ei voi kohdistaa alueelle.
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {nykyisenTapahtumanVyohykkeet.map(v => {
+                        const varit = VYOHYKEVARIT.find(x => x.id === v.vari) || VYOHYKEVARIT[0];
+                        return (
+                          <span
+                            key={v.id}
+                            className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border text-xs font-medium bg-white"
+                            style={{ borderColor: varit.reuna, color: varit.reuna }}
+                          >
+                            {v.nimi}
+                            {saaMuokataTapahtumaa && (
+                              <button
+                                type="button"
+                                onClick={() => poistaVyohyke(v.id)}
+                                title={`Poista vyöhyke ${v.nimi}`}
+                                className="text-slate-400 hover:text-rose-600"
+                              >
+                                <X size={13} />
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Grid for Radios and Supervisors */}
@@ -12577,10 +12843,16 @@ export default function App() {
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4 text-sm text-left">
-              {(openedReport.status || openedReport.severity || onLukittu(openedReport)) && (
+              {(openedReport.status || openedReport.severity || openedReport.zoneId || onLukittu(openedReport)) && (
                 <div className="flex flex-wrap items-center gap-2">
                   <TilaMerkki kirjaus={openedReport} />
                   <VakavuusMerkki kirjaus={openedReport} />
+                  {raportinVyohyke(openedReport) && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-200 bg-white text-xs font-medium text-slate-600">
+                      <Map size={11} />
+                      {raportinVyohyke(openedReport)}
+                    </span>
+                  )}
                   {onLukittu(openedReport) && <LukkoMerkki />}
                 </div>
               )}
