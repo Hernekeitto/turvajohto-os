@@ -42,7 +42,11 @@ import {
   canReadAttachment,
   canUploadAttachment,
   canEdit,
+  canView,
+  eventAllowed,
 } from './permissions.js';
+import { liitaKanava, laheta as lahetaKanavalle, lahetaViesti } from './kanava.js';
+import { seurantaKaytossa, paivita as paivitaSijainti, kaikki as sijainnit, unohda as unohdaSijainti } from './sijainti.js';
 import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti, parsiJson } from './bulksms.js';
 import { kaytossaOlevatNapit, ratkaiseVastaanottajat, taytaPaikkamerkit } from './sms.js';
 import { lisaaJonoon, otaKasittelyyn, kuittaaKasitellyksi, jononPituus } from './smsqueue.js';
@@ -231,6 +235,11 @@ app.post('/api/login', loginLimiter, (req, res) => {
 });
 
 app.post('/api/logout', (req, res) => {
+  // Uloskirjautuminen unohtaa sijainnin. Tämä on GDPR 25 artiklan tekninen minimointi
+  // käytännössä, ja samalla vastaus siihen kysymykseen jonka jokainen työntekijä esittää:
+  // vapaa-ajalla ei seurata, koska tietoa ei silloin ole olemassa.
+  const username = getSessionUser(req);
+  if (username) unohdaSijainti(username);
   clearSessionCookie(res);
   res.json({ ok: true });
 });
@@ -401,6 +410,23 @@ app.get('/api/data/:name', requireAuth, (req, res) => {
   res.json({ ok: true, data });
 });
 
+// Henkilöstön sijainnit juuri nyt. Kanava kertoo muutokset sitä mukaa kun niitä tulee,
+// mutta juuri avattu näkymä tarvitsee lähtötilanteen — ilman tätä kartta olisi tyhjä
+// siihen asti kunnes joku sattuu liikkumaan.
+//
+// `kaytossa: false` on eri asia kuin tyhjä lista: se kertoo käyttöliittymälle että
+// seurantaa ei ole kytketty päälle lainkaan, jolloin karttaan ei piirretä tyhjää
+// henkilöstötasoa eikä luvata toimintoa jota ei ole.
+app.get('/api/sijainnit', requireAuth, (req, res) => {
+  if (!seurantaKaytossa()) return res.json({ ok: true, kaytossa: false, sijainnit: [] });
+  const eventId = typeof req.query.eventId === 'string' ? req.query.eventId : null;
+  const saa =
+    req.role === 'admin' ||
+    (eventAllowed(req.eventAccess, eventId) && canView(req.permissions, eventId, 'locations'));
+  if (!saa) return res.status(403).json({ ok: false, error: 'Ei oikeutta henkilöstön sijainteihin.' });
+  res.json({ ok: true, kaytossa: true, sijainnit: sijainnit({ eventId }) });
+});
+
 app.put('/api/data/:name', requireAuth, (req, res) => {
   const { name } = req.params;
   if (!KNOWN_COLLECTIONS.includes(name)) {
@@ -495,6 +521,16 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   // Lokitetaan vasta kirjoituksen onnistuttua — ei koskaan lokiin muutosta joka ei
   // oikeasti mennyt levylle. Yksi rivi per tietue (ei yksi rivi per PUT-pyyntö),
   // koska sama pyyntö voi sisältää usean tietueen muutoksia kerralla.
+  // Kerrotaan muutoksesta avoimille istunnoille. Vasta kirjoituksen JÄLKEEN: ilmoitus
+  // muutoksesta jota ei tallennettu saisi selaimet hakemaan vanhan datan uudelleen ja
+  // näyttämään sen tuoreena. Kanava kuljettaa vain id:t — sisältö haetaan GETillä, joka
+  // tekee saman oikeustarkistuksen kuin ennenkin (ks. kanava.js).
+  lahetaKanavalle(name, verdict.changes, {
+    lahettaja: req.username,
+    saaNahda: (istunto, eventId) =>
+      istunto?.role === 'admin' || eventAllowed(istunto?.eventAccess, eventId),
+  });
+
   for (const change of verdict.changes || []) {
     logAudit({
       user: req.username,
@@ -1586,8 +1622,54 @@ async function saldoTiedot(maxIkaMs = SALDO_TARKISTUSVALI_MS) {
   return (await tarkistaSaldo()) || saldoValimuisti;
 }
 
-app.listen(PORT, '127.0.0.1', () => {
+// Kanavan istunnon tunnistus. Upgrade-pyynnössä on samat otsakkeet kuin tavallisessa
+// pyynnössä, joten getSessionUser kelpaa sellaisenaan — kanava ei siis ole oma
+// tunnistautumisreittinsä vaan käyttää samaa evästettä ja samaa mitätöintisääntöä.
+//
+// Pakkosalasananvaihdon aikana kanavaa ei avata lainkaan: silloin istunnolla ei saa tehdä
+// mitään muuta kuin vaihtaa salasana (sama sääntö kuin requireAuthissa).
+function tunnistaKanava(req) {
+  const username = getSessionUser(req);
+  if (!username) return null;
+  const user = findUser(username);
+  if (!user || user.must_change_password) return null;
+  return {
+    username,
+    role: user.role,
+    // roleId eikä valmiit oikeudet: taso luetaan vasta lähetyshetkellä, jolloin tason
+    // muokkaus vaikuttaa heti eikä vasta kun käyttäjä avaa yhteyden uudelleen. Sama
+    // periaate kuin requireAuthissa.
+    roleId: user.roleId,
+    eventAccess: user.eventAccess,
+    tuotteet: paaseeTuotteisiin(user),
+  };
+}
+
+// Kuka saa nähdä henkilöstön sijainnit. Oma sivukartta-solmunsa: kaikki tapahtuman
+// katselijat eivät saa nähdä missä työntekijät ovat, vaikka näkisivät kirjaukset.
+function saaNahdaSijainnit(istunto, eventId) {
+  if (!istunto) return false;
+  if (istunto.role === 'admin') return true;
+  if (!eventAllowed(istunto.eventAccess, eventId)) return false;
+  return canView(rolePermissions(istunto.roleId), eventId, 'locations');
+}
+
+// Sijaintiviesti kentältä. Palvelin päättää sekä aikaleiman että sen kenelle tieto
+// kerrotaan — selain ei kumpaakaan.
+function kasitteleKanavaViesti(istunto, viesti) {
+  if (viesti.tyyppi !== 'sijainti') return;
+  if (!seurantaKaytossa()) return;
+  const tietue = paivitaSijainti(istunto?.username, viesti.eventId, viesti);
+  if (!tietue) return;
+  lahetaViesti(
+    { tyyppi: 'sijainnit', eventId: tietue.eventId, sijainnit: [{ ...tietue, ikaMs: 0 }] },
+    { suodatin: (vastaanottaja) => saaNahdaSijainnit(vastaanottaja, tietue.eventId) }
+  );
+}
+
+const palvelin = app.listen(PORT, '127.0.0.1', () => {
   console.log(`turvajohto-os-server kuuntelee portissa ${PORT}`);
+  liitaKanava(palvelin, { tunnista: tunnistaKanava, onViesti: kasitteleKanavaViesti });
 
   // Webhook-jonon purku. 5 s on kompromissi: tarpeeksi tiheä että toimitustilat
   // näkyvät käyttöliittymässä käytännössä heti, mutta harvempi kuin kuittausten

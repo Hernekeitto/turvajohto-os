@@ -80,7 +80,9 @@ function hasAnyEdit(permissions, eventId, nodeIds) {
 
 // Tyhjä (tai puuttuva) eventAccess = ei rajoitusta, käyttäjä näkee kaikki tapahtumat —
 // sama oletus kuin db.js:n withDefaults. Admin ohitetaan aina erikseen kutsuvassa koodissa.
-function eventAllowed(eventAccess, eventId) {
+// Vietävä ulos, koska kanava (kanava.js) tarvitsee TÄSMÄLLEEN saman säännön päättäessään
+// kenelle muutos kerrotaan. Toinen toteutus erkanisi tästä.
+export function eventAllowed(eventAccess, eventId) {
   if (!Array.isArray(eventAccess) || eventAccess.length === 0) return true;
   return eventAccess.includes(eventId);
 }
