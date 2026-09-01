@@ -14,6 +14,7 @@ import { lomakeRaportille, lomakeTunnus } from './shared/lomakerekisteri';
 import { TilaMerkki, VakavuusMerkki, LukkoMerkki } from './shared/komponentit/TilaMerkki';
 import { useKanava, type Sijainti } from './shared/kanava';
 import { useSijainninLahetys, ikaTekstina } from './shared/sijainninLahetys';
+import { luoMuunnos, kuvanSisalla, vyohykePisteessa } from './shared/georeferointi';
 import { Kartta } from './shared/komponentit/Kartta';
 import { SijaintiValinta } from './shared/komponentit/SijaintiValinta';
 import {
@@ -748,6 +749,11 @@ export default function App() {
   const [piirrettava, setPiirrettava] = useState<Piste[]>([]);
   const [uusiVyohykeNimi, setUusiVyohykeNimi] = useState('');
   const [uusiVyohykeVari, setUusiVyohykeVari] = useState(VYOHYKEVARIT[0].id);
+  // Kartan kalibrointi: napsautettu kohta odottamassa koordinaatteja.
+  const [kalibrointiTila, setKalibrointiTila] = useState(false);
+  const [kalibrointiPiste, setKalibrointiPiste] = useState<Piste | null>(null);
+  const [kalibrointiLat, setKalibrointiLat] = useState('');
+  const [kalibrointiLon, setKalibrointiLon] = useState('');
   useEffect(() => {
     setRevealedFields({});
     setKorjausTeksti('');
@@ -3191,6 +3197,41 @@ export default function App() {
   // Vyöhykkeet ovat tapahtuman kenttä (päätös V5), joten ne tallentuvat samalla
   // events-kokoelman tallennuksella kuin muutkin tapahtuman tiedot.
   const nykyisenTapahtumanVyohykkeet = haeVyohykkeet(events.find((e) => e.id === selectedEvent));
+
+  // Kartan kalibrointi: kaksi tai kolme pistettä joiden oikeat koordinaatit tiedetään.
+  // Ilman näitä GPS-sijainnista ei voi päätellä kohtaa kuvalla (ks. shared/georeferointi.ts).
+  const nykyisenTapahtumanKalibrointi = (events.find((e) => e.id === selectedEvent) as any)?.mapRef || [];
+  const karttaMuunnos = luoMuunnos(nykyisenTapahtumanKalibrointi);
+
+  // Sijainnin kohta kuvalla. Käsin merkitty kuvakoordinaatti voittaa aina GPS:n: se on
+  // ihmisen kertoma eikä laskettu arvio. Kartan ulkopuolelle osuvaa pistettä ei
+  // palauteta — sitä ei saa piirtää kartan reunaan kuin se olisi siellä.
+  const sijainninKohta = (s: Sijainti) => {
+    if (s.img) return s.img;
+    if (s.gps && karttaMuunnos) {
+      const p = karttaMuunnos(s.gps);
+      return p && kuvanSisalla(p) ? p : null;
+    }
+    return null;
+  };
+
+  const tallennaKalibrointi = (pisteet: any[]) => {
+    setEvents(prev => prev.map(e => (e.id === selectedEvent ? { ...e, mapRef: pisteet } : e)));
+  };
+
+  const lisaaKalibrointipiste = () => {
+    if (!kalibrointiPiste) return;
+    const lat = Number(String(kalibrointiLat).replace(',', '.'));
+    const lon = Number(String(kalibrointiLon).replace(',', '.'));
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lon) || lon < -180 || lon > 180) {
+      alert('Tarkista koordinaatit. Leveysaste on välillä -90…90 ja pituusaste -180…180.');
+      return;
+    }
+    tallennaKalibrointi([...nykyisenTapahtumanKalibrointi, { img: kalibrointiPiste, gps: { lat, lon } }]);
+    setKalibrointiPiste(null);
+    setKalibrointiLat('');
+    setKalibrointiLon('');
+  };
   const nykyisenTapahtumanKartta =
     (events.find((e) => e.id === selectedEvent) as any)?.formData?.mapUploadId || null;
 
@@ -7160,22 +7201,128 @@ export default function App() {
                 // Henkilöstötaso. Vain ne joilla on kuvakoordinaatti: pohjakartta ei ole
                 // georeferoitu, joten pelkästä GPS-sijainnista ei voi päätellä kohtaa
                 // kuvalla. Ne näkyvät kartan alla listana.
-                henkilosto={vyohykeMuokkaus ? [] : sijainnit
-                  .filter(s => s.img)
-                  .map(s => ({
+                henkilosto={vyohykeMuokkaus || kalibrointiTila ? [] : sijainnit
+                  .map(s => ({ s, kohta: sijainninKohta(s) }))
+                  .filter(({ kohta }) => kohta)
+                  .map(({ s, kohta }) => ({
                     id: s.username,
-                    x: s.img!.x,
-                    y: s.img!.y,
+                    x: kohta!.x,
+                    y: kohta!.y,
                     otsikko: `${s.username} — ${ikaTekstina(s.ikaMs)}`,
                   }))}
-                piirrettava={vyohykeMuokkaus ? piirrettava : undefined}
-                onKarttaKlikkaus={vyohykeMuokkaus ? (p) => setPiirrettava(prev => [...prev, p]) : undefined}
+                // Kalibroinnissa piirretään jo annetut pisteet, jotta näkee mihin on
+                // osoittanut ja onko kolmas piste tarpeeksi kaukana kahdesta muusta.
+                piirrettava={
+                  vyohykeMuokkaus ? piirrettava
+                    : kalibrointiTila
+                      ? [...nykyisenTapahtumanKalibrointi.map((k: any) => k.img), ...(kalibrointiPiste ? [kalibrointiPiste] : [])]
+                      : undefined
+                }
+                onKarttaKlikkaus={
+                  vyohykeMuokkaus ? (p) => setPiirrettava(prev => [...prev, p])
+                    : kalibrointiTila ? (p) => setKalibrointiPiste(p)
+                      : undefined
+                }
                 tyhjaTeksti={
                   saaMuokataTapahtumaa
                     ? 'Pohjakarttaa ei ole ladattu. Lataa alueen kartta yllä olevalla painikkeella — vyöhykkeet piirretään sen päälle.'
                     : 'Pohjakarttaa ei ole ladattu. Pyydä pääkäyttäjää lataamaan alueen kartta tähän tapahtumaan.'
                 }
               />
+
+              {/* Kartan kalibrointi. Ilman tätä GPS-sijainnista ei voi päätellä kohtaa
+                  kuvalla: pohjakartta on valokuva tai piirros, eikä sovellus tiedä mitä
+                  maapallon kohtaa sen kulmat vastaavat. */}
+              {karttaId && saaMuokataTapahtumaa && (
+                <div className="mt-4 border-t border-slate-100 pt-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                    <h4 className="text-sm font-bold text-slate-700">
+                      Kartan kalibrointi
+                      <span className="ml-1.5 font-normal text-slate-400">
+                        {nykyisenTapahtumanKalibrointi.length === 0
+                          ? '(ei tehty)'
+                          : `(${nykyisenTapahtumanKalibrointi.length} pistettä${karttaMuunnos ? '' : ' — ei riitä'})`}
+                      </span>
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => { setKalibrointiTila(o => !o); setKalibrointiPiste(null); setVyohykeMuokkaus(false); }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                        kalibrointiTila
+                          ? 'bg-slate-800 text-white hover:bg-slate-700'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {kalibrointiTila ? 'Lopeta kalibrointi' : 'Kalibroi kartta'}
+                    </button>
+                  </div>
+
+                  {kalibrointiTila && (
+                    <div className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-4 space-y-3">
+                      <p className="text-xs text-slate-600">
+                        Napsauta kartalta kohta jonka koordinaatit tiedät (esim. pääportti tai lavan kulma)
+                        ja kirjoita ne alle. <strong>Kaksi pistettä riittää</strong> jos kartta on pohjoinen
+                        ylöspäin. <strong>Kolmas piste</strong> tarvitaan jos kartta on käännetty. Ota pisteet
+                        mahdollisimman kaukaa toisistaan — lähekkäiset pisteet kertovat pienen mittausvirheen
+                        moninkertaisena kartan toisessa laidassa.
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {kalibrointiPiste
+                          ? `Kohta valittu (${Math.round(kalibrointiPiste.x * 100)} % / ${Math.round(kalibrointiPiste.y * 100)} %). Anna sen koordinaatit.`
+                          : 'Napsauta ensin kohta kartalta.'}
+                      </p>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={kalibrointiLat}
+                          onChange={(e) => setKalibrointiLat(e.target.value)}
+                          placeholder="Leveysaste, esim. 61.4940"
+                          className="flex-1 min-w-[150px] rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={kalibrointiLon}
+                          onChange={(e) => setKalibrointiLon(e.target.value)}
+                          placeholder="Pituusaste, esim. 23.7650"
+                          className="flex-1 min-w-[150px] rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={lisaaKalibrointipiste}
+                          disabled={!kalibrointiPiste || !kalibrointiLat.trim() || !kalibrointiLon.trim()}
+                          className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold rounded-lg transition-colors"
+                        >
+                          Lisää piste
+                        </button>
+                      </div>
+                      {nykyisenTapahtumanKalibrointi.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          {nykyisenTapahtumanKalibrointi.map((k: any, i: number) => (
+                            <span key={i} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border border-slate-200 bg-white text-xs font-mono text-slate-600">
+                              {k.gps.lat.toFixed(4)}, {k.gps.lon.toFixed(4)}
+                            </span>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => { if (window.confirm('Poistetaanko kaikki kalibrointipisteet?')) tallennaKalibrointi([]); }}
+                            className="text-xs text-slate-400 hover:text-rose-600 underline"
+                          >
+                            Tyhjennä
+                          </button>
+                        </div>
+                      )}
+                      {nykyisenTapahtumanKalibrointi.length >= 2 && !karttaMuunnos && (
+                        <p className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-lg p-2">
+                          Pisteet eivät kelpaa muunnokseen: ne ovat samalla suoralla, samalla pituus- tai
+                          leveyspiirillä, tai liian lähellä toisiaan. Tyhjennä ja ota pisteet kauempaa toisistaan.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Henkilöstön sijainnit. Näytetään vain jos seuranta on kytketty päälle JA
                   käyttäjällä on siihen oikeus — palvelin päättää molemmat, tämä vain
@@ -7188,22 +7335,29 @@ export default function App() {
                     <span className="ml-1.5 font-normal text-slate-400">({sijainnit.length})</span>
                   </h4>
                   <div className="flex flex-wrap gap-2">
-                    {sijainnit.map(s => (
-                      <span
-                        key={s.username}
-                        className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs"
-                        title={s.gps ? `GPS ${s.gps.lat.toFixed(5)}, ${s.gps.lon.toFixed(5)}` : 'Ei GPS-sijaintia'}
-                      >
-                        <span className="w-2 h-2 rounded-sm bg-sky-500" />
-                        <span className="font-medium text-slate-700">{s.username}</span>
-                        <span className="text-slate-400">{ikaTekstina(s.ikaMs)}</span>
-                      </span>
-                    ))}
+                    {sijainnit.map(s => {
+                      const kohta = sijainninKohta(s);
+                      const vyohyke = kohta ? vyohykePisteessa(nykyisenTapahtumanVyohykkeet, kohta) : null;
+                      return (
+                        <span
+                          key={s.username}
+                          className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs"
+                          title={s.gps ? `GPS ${s.gps.lat.toFixed(5)}, ${s.gps.lon.toFixed(5)}` : 'Ei GPS-sijaintia'}
+                        >
+                          <span className="w-2 h-2 rounded-sm bg-sky-500" />
+                          <span className="font-medium text-slate-700">{s.username}</span>
+                          {vyohyke && <span className="text-slate-500">{vyohyke.nimi}</span>}
+                          <span className="text-slate-400">{ikaTekstina(s.ikaMs)}</span>
+                        </span>
+                      );
+                    })}
                   </div>
-                  <p className="text-xs text-slate-400 mt-2">
-                    Kartalle piirtyvät vain ne joilla on kohta pohjakartalla. Pohjakartta ei ole
-                    georeferoitu, joten GPS-sijainnista ei voi päätellä kohtaa kuvalla.
-                  </p>
+                  {!karttaMuunnos && (
+                    <p className="text-xs text-slate-400 mt-2">
+                      Karttaa ei ole kalibroitu, joten GPS-sijainnista ei voi päätellä kohtaa kuvalla —
+                      kartalle piirtyvät vain käsin merkityt sijainnit. Kalibroi kartta yllä.
+                    </p>
+                  )}
                 </div>
               )}
 

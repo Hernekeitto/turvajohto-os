@@ -22,5 +22,9 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Testit ajetaan Nodella (`npm test`) eivätkä kuulu selainbuildiin. Ilman tätä
+  // tyyppitarkistus vaatisi @types/node-määrittelyt koko sovellukselle vain siksi että
+  // testitiedosto tuo `node:test`-moduulin.
+  "exclude": ["src/**/*.test.ts"]
 }
