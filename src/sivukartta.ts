@@ -12,6 +12,12 @@ export const SITEMAP: SivukarttaSolmu[] = [
   // tapahtumien luonnin/muokkauksen, ks. server/permissions.js COLLECTIONS.events).
   { id: 'landing', label: 'Tapahtumavalinta' },
   { id: 'overview', label: 'Tilannekuva' },
+  // Henkilöstön sijainti kartalla. OMA solmunsa eikä osa tilannekuvaa: kaikki jotka
+  // saavat nähdä kirjaukset eivät saa nähdä missä työntekijät ovat. Sijainti on
+  // työntekijään kohdistuvaa valvontatietoa, ja sen katselupiirin on oltava erikseen
+  // päätettävissä (ks. juridinen työpaketti). Solmu näkyy oikeuseditorissa vaikka
+  // seuranta olisi kytketty pois — muuten oikeutta ei voisi valmistella etukäteen.
+  { id: 'locations', label: 'Henkilöstön sijainti kartalla' },
   { id: 'reporting', label: 'Raportointi', children: [
     { id: 'report_jv', label: 'Järjestyksenvalvojan tapahtumailmoitus' },
     { id: 'report_tike', label: 'TIKE:n raportointi', children: [

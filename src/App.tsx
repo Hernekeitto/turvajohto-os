@@ -12,6 +12,8 @@ import { DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab } from './shared/oike
 import { TILAT, VAKAVUUDET, tila as kirjauksenTila, onLukittu, onPoikkeama, uusiKorjausmerkinta } from './shared/kirjaukset';
 import { lomakeRaportille, lomakeTunnus } from './shared/lomakerekisteri';
 import { TilaMerkki, VakavuusMerkki, LukkoMerkki } from './shared/komponentit/TilaMerkki';
+import { useKanava, type Sijainti } from './shared/kanava';
+import { useSijainninLahetys, ikaTekstina } from './shared/sijainninLahetys';
 import { Kartta } from './shared/komponentit/Kartta';
 import { SijaintiValinta } from './shared/komponentit/SijaintiValinta';
 import {
@@ -1257,8 +1259,85 @@ export default function App() {
     }
   };
 
+  // Kanavan kertoma muutos: haetaan kokoelma uudelleen. Kanava ei tuo sisältöä, joten
+  // haku menee normaalin oikeustarkistetun reitin kautta (ks. shared/kanava.ts).
+  //
+  // ohitaSeuraavaTallennus on tässä VÄLTTÄMÄTÖN. Ilman sitä haettu data laukaisisi
+  // automaattitallennuksen, joka lähettäisi sen takaisin palvelimelle, joka kertoisi
+  // siitä muille selaimille, jotka hakisivat ja tallentaisivat — kaksi avointa välilehteä
+  // pomputtaisi samaa dataa toisilleen loputtomiin.
+  //
+  // Lataamatonta kokoelmaa ei päivitetä: sen oma alkulataus hakee tuoreen datan joka
+  // tapauksessa, ja lippu jäisi muuten roikkumaan ja nielaisisi seuraavan oikean
+  // tallennuksen.
+  const paivitaKokoelma = async (kokoelma: string) => {
+    const asettajat: Record<string, (data: any[]) => void> = {
+      reports: setReports,
+      checkins: setCheckedInEmployees,
+      events: setEvents,
+      employees: (d) => setEmployees(taydennaTunnisteet(d)),
+    };
+    const ladattu: Record<string, boolean> = {
+      reports: reportsLoaded,
+      checkins: checkinsLoaded,
+      events: eventsLoaded,
+      employees: employeesLoaded,
+    };
+    const aseta = asettajat[kokoelma];
+    if (!aseta || !ladattu[kokoelma]) return;
+    try {
+      const r = await fetch(`/api/data/${kokoelma}`, { credentials: 'include' });
+      const res = r.ok ? await r.json() : null;
+      if (!res || res.ok !== true || !Array.isArray(res.data)) return;
+      ohitaSeuraavaTallennus.current.add(kokoelma);
+      aseta(res.data);
+    } catch {
+      // Verkkovirhe: seuraava muutosviesti yrittää uudelleen, eikä tilaa muuteta.
+    }
+  };
+
+  // Henkilöstön sijainnit. Tyhjä lista ja kaytossa=false ovat eri asioita: jälkimmäinen
+  // tarkoittaa ettei seurantaa ole kytketty päälle lainkaan, jolloin karttaan ei piirretä
+  // henkilöstötasoa eikä paikannuslupaa kysytä.
+  const [sijainnit, setSijainnit] = useState<Sijainti[]>([]);
+  const [sijaintiKaytossa, setSijaintiKaytossa] = useState(false);
+
+  const { yhdistetty: kanavaYhdistetty, laheta: lahetaKanavalle } = useKanava({
+    onMuutos: (kokoelma) => { paivitaKokoelma(kokoelma); },
+    // Palvelin lähettää yhden sijainnin kerrallaan sitä mukaa kun niitä tulee. Lista
+    // päivitetään käyttäjäkohtaisesti: sama henkilö korvaa oman rivinsä eikä kerrytä
+    // karttaa jälkikuvilla.
+    onSijainnit: (uudet) => setSijainnit((edelliset) => {
+      const yhdistetty = new globalThis.Map(edelliset.map((s) => [s.username, s]));
+      for (const s of uudet) yhdistetty.set(s.username, s);
+      return [...yhdistetty.values()];
+    }),
+  });
+
+  // Lähtötilanne kanavan rinnalle: juuri avattu näkymä ei saa olla tyhjä siihen asti
+  // kunnes joku sattuu liikkumaan.
+  useEffect(() => {
+    if (!selectedEvent) return;
+    let peruttu = false;
+    fetch(`/api/sijainnit?eventId=${encodeURIComponent(selectedEvent)}`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (peruttu || !res || res.ok !== true) return;
+        setSijaintiKaytossa(res.kaytossa === true);
+        setSijainnit(Array.isArray(res.sijainnit) ? res.sijainnit : []);
+      })
+      .catch(() => {
+        // Ei oikeutta tai verkkovirhe: henkilöstötasoa ei näytetä. Tämä on sama asia
+        // kuin "ei sijainteja" käyttäjän kannalta.
+      });
+    return () => { peruttu = true; };
+  }, [selectedEvent]);
+
+  useSijainninLahetys({ kaytossa: sijaintiKaytossa, eventId: selectedEvent, laheta: lahetaKanavalle });
+
   useEffect(() => {
     if (!eventsLoaded) return;
+    if (ohitaSeuraavaTallennus.current.delete('events')) return;
     tallennaKokoelma('events', events);
   }, [events, eventsLoaded]);
 
@@ -1304,6 +1383,7 @@ export default function App() {
   // Tallennetaan muutokset palvelimelle (ei ensimmäisellä renderillä, ettei alkutila ylikirjoita jo tallennettua dataa)
   useEffect(() => {
     if (!checkinsLoaded) return;
+    if (ohitaSeuraavaTallennus.current.delete('checkins')) return;
     tallennaKokoelma('checkins', checkedInEmployees);
   }, [checkedInEmployees, checkinsLoaded]);
 
@@ -4501,6 +4581,76 @@ export default function App() {
               </div>
             </div>
 
+            {/* Toimintasyöte. Kokoaa yhteen sen mitä tapahtumassa juuri tapahtui: kirjaukset,
+                sisään- ja uloskirjautumiset. Syöte EI ole oma tietovarastonsa vaan johdetaan
+                jo ladatusta datasta — kanava päivittää kokoelmat, ja syöte seuraa mukana
+                ilman omaa hakuaan. */}
+            {(() => {
+              const aikaArvo = (r: any) => String(r?.createdAt || '').slice(11, 16) || String(r?.time || '');
+              const tapahtumat = [
+                ...currentEventReports.map((r) => ({
+                  id: `r-${r.id}`,
+                  aika: aikaArvo(r),
+                  otsikko: r.type,
+                  teksti: r.summary || '',
+                  vari: kirjauksenTila(r.status)?.merkki || '#64748b',
+                  avaa: () => { setOpenedReport(r); setOpenedReportSource('overview'); },
+                })),
+                ...currentEventCheckedIn.flatMap((e: any) => {
+                  const rivit = [];
+                  if (e.checkInTime) {
+                    rivit.push({
+                      id: `in-${e.id}`, aika: e.checkInTime, otsikko: 'Sisäänkirjaus',
+                      teksti: `${e.name} — ${e.role}`, vari: '#10b981', avaa: null,
+                    });
+                  }
+                  if (e.checkOutTime) {
+                    rivit.push({
+                      id: `out-${e.id}`, aika: e.checkOutTime, otsikko: 'Uloskirjaus',
+                      teksti: `${e.name} — ${e.role}`, vari: '#3b82f6', avaa: null,
+                    });
+                  }
+                  return rivit;
+                }),
+              ]
+                .filter((t) => t.aika)
+                .sort((a, b) => String(b.aika).localeCompare(String(a.aika)))
+                .slice(0, 12);
+
+              if (tapahtumat.length === 0) return null;
+              return (
+                <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+                  <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
+                    <Activity className="text-indigo-500" size={20} />
+                    Toimintasyöte
+                    <span className="text-xs font-normal text-slate-400">12 viimeisintä</span>
+                  </h2>
+                  <ol className="space-y-0">
+                    {tapahtumat.map((t) => (
+                      <li key={t.id} className="flex items-start gap-3 py-2 border-b border-slate-50 last:border-0">
+                        <span className="font-mono text-xs text-slate-400 pt-0.5 shrink-0 w-10">{t.aika}</span>
+                        <span className="w-2 h-2 rounded-full shrink-0 mt-1.5" style={{ backgroundColor: t.vari }} />
+                        <span className="min-w-0 flex-1">
+                          {t.avaa ? (
+                            <button
+                              type="button"
+                              onClick={t.avaa}
+                              className="text-left text-sm font-medium text-slate-800 hover:text-indigo-600 transition-colors"
+                            >
+                              {t.otsikko}
+                            </button>
+                          ) : (
+                            <span className="text-sm font-medium text-slate-800">{t.otsikko}</span>
+                          )}
+                          {t.teksti && <span className="block text-xs text-slate-500 truncate">{t.teksti}</span>}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              );
+            })()}
+
             {/* Status board. Työjono eikä arkisto: järjestys on kiireellisyyden mukaan
                 (eskaloitu ensin) eikä aikajärjestyksessä, ja suljetut ovat oletuksena
                 piilossa. Kirjaus jolta puuttuu tila kokonaan on migroimatta jäänyt vanha
@@ -4537,6 +4687,21 @@ export default function App() {
                     <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                       <Clipboard className="text-indigo-500" size={20} />
                       Kirjausten tila
+                      {/* Yhteyden tila on näytettävä. Jos kanava on poikki, lista ei
+                          päivity itsestään — ja tilannekuva joka näyttää vanhaa tietoa
+                          kertomatta siitä on pahempi kuin tilannekuva joka myöntää
+                          olevansa jäljessä. */}
+                      <span
+                        title={kanavaYhdistetty
+                          ? 'Päivittyy reaaliajassa'
+                          : 'Ei yhteyttä palvelimeen — lista ei päivity itsestään. Lataa sivu uudelleen.'}
+                        className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+                          kanavaYhdistetty ? 'text-emerald-600' : 'text-slate-400'
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full ${kanavaYhdistetty ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                        {kanavaYhdistetty ? 'Live' : 'Ei yhteyttä'}
+                      </span>
                     </h2>
                     <div className="flex flex-wrap items-center gap-1.5">
                       {suodattimet.map(s => (
@@ -6992,6 +7157,17 @@ export default function App() {
                     otsikko: `${r.time || ''} ${r.type}`.trim(),
                     onKlikkaus: () => { setOpenedReport(r); setOpenedReportSource('overview'); },
                   }))}
+                // Henkilöstötaso. Vain ne joilla on kuvakoordinaatti: pohjakartta ei ole
+                // georeferoitu, joten pelkästä GPS-sijainnista ei voi päätellä kohtaa
+                // kuvalla. Ne näkyvät kartan alla listana.
+                henkilosto={vyohykeMuokkaus ? [] : sijainnit
+                  .filter(s => s.img)
+                  .map(s => ({
+                    id: s.username,
+                    x: s.img!.x,
+                    y: s.img!.y,
+                    otsikko: `${s.username} — ${ikaTekstina(s.ikaMs)}`,
+                  }))}
                 piirrettava={vyohykeMuokkaus ? piirrettava : undefined}
                 onKarttaKlikkaus={vyohykeMuokkaus ? (p) => setPiirrettava(prev => [...prev, p]) : undefined}
                 tyhjaTeksti={
@@ -7000,6 +7176,36 @@ export default function App() {
                     : 'Pohjakarttaa ei ole ladattu. Pyydä pääkäyttäjää lataamaan alueen kartta tähän tapahtumaan.'
                 }
               />
+
+              {/* Henkilöstön sijainnit. Näytetään vain jos seuranta on kytketty päälle JA
+                  käyttäjällä on siihen oikeus — palvelin päättää molemmat, tämä vain
+                  seuraa sitä mitä se vastasi. IKÄ on yhtä tärkeä kuin paikka: pelkkä
+                  "Portti 3" antaisi ymmärtää että henkilö on siellä nyt. */}
+              {sijaintiKaytossa && sijainnit.length > 0 && (
+                <div className="mt-4 border-t border-slate-100 pt-4">
+                  <h4 className="text-sm font-bold text-slate-700 mb-2">
+                    Henkilöstön sijainti
+                    <span className="ml-1.5 font-normal text-slate-400">({sijainnit.length})</span>
+                  </h4>
+                  <div className="flex flex-wrap gap-2">
+                    {sijainnit.map(s => (
+                      <span
+                        key={s.username}
+                        className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs"
+                        title={s.gps ? `GPS ${s.gps.lat.toFixed(5)}, ${s.gps.lon.toFixed(5)}` : 'Ei GPS-sijaintia'}
+                      >
+                        <span className="w-2 h-2 rounded-sm bg-sky-500" />
+                        <span className="font-medium text-slate-700">{s.username}</span>
+                        <span className="text-slate-400">{ikaTekstina(s.ikaMs)}</span>
+                      </span>
+                    ))}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-2">
+                    Kartalle piirtyvät vain ne joilla on kohta pohjakartalla. Pohjakartta ei ole
+                    georeferoitu, joten GPS-sijainnista ei voi päätellä kohtaa kuvalla.
+                  </p>
+                </div>
+              )}
 
               {/* Vyöhykkeet. Piirtäminen vaatii saman oikeuden kuin tapahtuman muokkaus:
                   vyöhyke on tapahtuman kenttä, ja se ohjaa kirjausten luokittelua. */}
