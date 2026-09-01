@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { Plus, Trash2, ClipboardList, GraduationCap, Building2, CheckSquare, ListChecks, FolderOpen } from 'lucide-react';
+import { Plus, Trash2, ClipboardList, GraduationCap, Building2, CheckSquare, ListChecks, FolderOpen, MapPin } from 'lucide-react';
 import { Kentta } from './Kentta';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
+import { Kartta } from '../shared/komponentit/Kartta';
+import { VYOHYKEVARIT, VYOHYKKEEN_MIN_PISTEET, uusiVyohykeId, type Piste } from '../shared/vyohykkeet';
 import { paikallinenPaiva } from '../shared/ajat';
 import { muotoileTunniste } from '../shared/tunnisteet';
 import { KohteenTiedostot } from './KohteenTiedostot';
@@ -35,6 +37,9 @@ type Props = {
   tiedostot: KohteenTiedosto[];
   onLisaaTiedosto: (tiedosto: File) => Promise<void>;
   onPoistaTiedosto: (id: string) => Promise<void>;
+  // Pohjakartta kulkee kohteen kentässä eikä tiedostolistassa, joten sillä on oma
+  // lähetyksensä (ks. GuardApp: lataaKartta).
+  onLataaKartta: (tiedosto: File) => Promise<void>;
   saaMuokata: boolean;
 };
 
@@ -48,9 +53,47 @@ export const KohteenHallinta = ({
   tiedostot,
   onLisaaTiedosto,
   onPoistaTiedosto,
+  onLataaKartta,
   saaMuokata,
 }: Props) => {
   const [valilehti, setValilehti] = useState<Valilehti>('perustiedot');
+  const [karttaLataa, setKarttaLataa] = useState(false);
+  const [karttaVirhe, setKarttaVirhe] = useState<string | null>(null);
+  const [vyohykeMuokkaus, setVyohykeMuokkaus] = useState(false);
+  const [piirrettava, setPiirrettava] = useState<Piste[]>([]);
+  const [uusiNimi, setUusiNimi] = useState('');
+  const [uusiVari, setUusiVari] = useState(VYOHYKEVARIT[0].id);
+
+  const kohteenVyohykkeet = kohde.zones || [];
+
+  const lahetaKartta = async (tiedosto?: File) => {
+    if (!tiedosto) return;
+    setKarttaVirhe(null);
+    setKarttaLataa(true);
+    try {
+      await onLataaKartta(tiedosto);
+    } catch (e: any) {
+      setKarttaVirhe(e?.message || 'Kartan lähetys epäonnistui.');
+    } finally {
+      setKarttaLataa(false);
+    }
+  };
+
+  const lisaaVyohyke = () => {
+    if (piirrettava.length < VYOHYKKEEN_MIN_PISTEET) return;
+    const nimi = uusiNimi.trim();
+    if (!nimi) {
+      setKarttaVirhe('Anna vyöhykkeelle nimi.');
+      return;
+    }
+    setKarttaVirhe(null);
+    onChange({
+      ...kohde,
+      zones: [...kohteenVyohykkeet, { id: uusiVyohykeId(), nimi, vari: uusiVari, pisteet: piirrettava }],
+    });
+    setPiirrettava([]);
+    setUusiNimi('');
+  };
   const [uusiPerehdytys, setUusiPerehdytys] = useState({ nimi: '', employeeId: '', pvm: paikallinenPaiva(), perehdyttaja: '' });
   const [muokattavaTehtava, setMuokattavaTehtava] = useState<Tehtava | null>(null);
 
@@ -170,6 +213,117 @@ export const KohteenHallinta = ({
             placeholder="Kulkuohjeet, hälytysjärjestelmä, erityishuomiot"
             monirivinen
           />
+
+          {/* Pohjakartta ja vyöhykkeet. Sama malli kuin tapahtumapuolella: kartta on
+              kohteen kenttä, ja vyöhykkeet piirretään sen päälle osuuskoordinaatteina. */}
+          <div className="border-t border-line-soft pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <h3 className="text-sm font-bold text-ink-strong">Pohjakartta ja vyöhykkeet</h3>
+              {saaMuokata && (
+                <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-1.5 bg-surface border border-line-soft hover:bg-surface-muted rounded-lg text-xs font-medium text-ink-body transition-colors">
+                  <MapPin size={14} className="text-accent" />
+                  {karttaLataa ? 'Lähetetään…' : kohde.mapUploadId ? 'Vaihda kartta' : 'Lataa kartta'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => lahetaKartta(e.target.files?.[0])}
+                  />
+                </label>
+              )}
+            </div>
+
+            {karttaVirhe && <p className="text-xs text-danger mb-2">{karttaVirhe}</p>}
+
+            <Kartta
+              karttaId={kohde.mapUploadId}
+              vyohykkeet={kohteenVyohykkeet}
+              piirrettava={vyohykeMuokkaus ? piirrettava : undefined}
+              onKarttaKlikkaus={vyohykeMuokkaus ? (p) => setPiirrettava((edellinen) => [...edellinen, p]) : undefined}
+              tyhjaTeksti={
+                saaMuokata
+                  ? 'Pohjakarttaa ei ole ladattu. Lataa kohteen pohjapiirros, niin voit piirtää siihen vyöhykkeet.'
+                  : 'Pohjakarttaa ei ole ladattu.'
+              }
+            />
+
+            {kohde.mapUploadId && saaMuokata && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => { setVyohykeMuokkaus((o) => !o); setPiirrettava([]); }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                    vyohykeMuokkaus ? 'bg-ink-strong text-surface' : 'bg-surface border border-line-soft text-ink-body hover:bg-surface-muted'
+                  }`}
+                >
+                  {vyohykeMuokkaus ? 'Lopeta muokkaus' : 'Piirrä vyöhykkeitä'}
+                </button>
+
+                {vyohykeMuokkaus && (
+                  <div className="mt-3 flex flex-wrap gap-2 items-center">
+                    <span className="text-xs text-ink-muted">
+                      Napsauta karttaa kulmiin (vähintään {VYOHYKKEEN_MIN_PISTEET}). Napsautettu: {piirrettava.length}.
+                    </span>
+                    <input
+                      type="text"
+                      value={uusiNimi}
+                      onChange={(e) => setUusiNimi(e.target.value)}
+                      placeholder="Esim. Piha tai Kerros 2"
+                      className="flex-1 min-w-[160px] rounded-lg border border-line-soft p-2 text-sm"
+                    />
+                    <select
+                      value={uusiVari}
+                      onChange={(e) => setUusiVari(e.target.value)}
+                      aria-label="Vyöhykkeen väri"
+                      className="rounded-lg border border-line-soft p-2 text-sm"
+                    >
+                      {VYOHYKEVARIT.map((v) => <option key={v.id} value={v.id}>{v.nimi}</option>)}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={lisaaVyohyke}
+                      disabled={piirrettava.length < VYOHYKKEEN_MIN_PISTEET}
+                      className="px-3 py-2 bg-accent text-surface disabled:bg-line-soft disabled:text-ink-muted text-xs font-bold rounded-lg"
+                    >
+                      Tallenna vyöhyke
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPiirrettava((edellinen) => edellinen.slice(0, -1))}
+                      disabled={piirrettava.length === 0}
+                      className="px-3 py-2 bg-surface border border-line-soft text-ink-body disabled:text-ink-muted text-xs font-medium rounded-lg"
+                    >
+                      Kumoa piste
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {kohteenVyohykkeet.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {kohteenVyohykkeet.map((v) => (
+                  <span key={v.id} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border border-line-soft bg-surface text-xs font-medium text-ink-body">
+                    {v.nimi}
+                    {saaMuokata && (
+                      <button
+                        type="button"
+                        onClick={() => onChange({ ...kohde, zones: kohteenVyohykkeet.filter((z) => z.id !== v.id) })}
+                        title={`Poista vyöhyke ${v.nimi}`}
+                        className="text-ink-muted hover:text-danger"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <p className="text-xs text-ink-muted mt-2">
+              Kartta ja vyöhykkeet tallentuvat vasta kun tallennat kohteen.
+            </p>
+          </div>
         </div>
       )}
 

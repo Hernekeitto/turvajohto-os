@@ -4,6 +4,8 @@ import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { Kentta } from './Kentta';
 import { paikallinenPaiva } from '../shared/ajat';
 import { lomakeRaportille } from '../shared/lomakerekisteri';
+import { SijaintiValinta } from '../shared/komponentit/SijaintiValinta';
+import type { Piste } from '../shared/vyohykkeet';
 import { uusiId, type Kohde, type GuardRaportti, type RaporttiTyyppi } from './tyypit';
 
 // Vartijan raportit. Kaksi lomaketta, jotka vastaavat tapahtumapuolen omia:
@@ -63,6 +65,10 @@ export const Raportit = ({ kohde, tyyppi, vartija, onTallenna, onTakaisin }: Pro
   const { otsikko, kuvaus, Ikoni } = OTSIKOT[tyyppi];
   const [tallentaa, setTallentaa] = useState(false);
   const [virhe, setVirhe] = useState<string | null>(null);
+  // Sijainti on lomakkeen omaa tilaa eikä osa GuardRaportti-luonnosta, koska se
+  // kootaan tietueeseen vasta tallennettaessa (kuten yhteenvetokin).
+  const [vyohyke, setVyohyke] = useState('');
+  const [piste, setPiste] = useState<Piste | null>(null);
   const [lomake, setLomake] = useState<GuardRaportti>({
     id: '',
     siteId: kohde.id,
@@ -121,12 +127,12 @@ export const Raportit = ({ kohde, tyyppi, vartija, onTallenna, onTakaisin }: Pro
       luotu: new Date().toISOString(),
       status: 'open',
       severity: null,
-      zoneId: null,
+      zoneId: vyohyke || null,
       assignedTo: null,
       closedAt: null,
       closedBy: null,
       attachments: [],
-      location: { img: null, gps: null },
+      location: { img: piste, gps: null },
       formCode: lomakepohja?.koodi ?? null,
       formVersion: lomakepohja?.pohjaVersio ?? null,
       policeDeliveredAt: null,
@@ -262,6 +268,15 @@ export const Raportit = ({ kohde, tyyppi, vartija, onTallenna, onTakaisin }: Pro
               />
             </div>
           )}
+
+          <SijaintiValinta
+            karttaId={kohde.mapUploadId}
+            vyohykkeet={kohde.zones || []}
+            vyohyke={vyohyke}
+            onVyohyke={setVyohyke}
+            piste={piste}
+            onPiste={setPiste}
+          />
 
           <Kentta
             label="Tapahtuman kuvaus"

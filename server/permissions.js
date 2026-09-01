@@ -551,9 +551,22 @@ export function canUploadAttachment(role, permissions) {
 // yhdistäminen olisi tehnyt jo ennestään pitkästä funktiosta vaikeasti luettavan, eikä
 // tapahtumapuolen liitelogiikkaan ole tarpeen koskea.
 export function canReadGuardAttachment(
-  role, permissions, eventAccess, attachmentId, guardFilesArr = [], guardReportsArr = []
+  role, permissions, eventAccess, attachmentId, guardFilesArr = [], guardReportsArr = [],
+  guardSitesArr = []
 ) {
   if (role === 'admin') return true;
+
+  // Kohteen pohjakartta on GUARD-puolen vastine tapahtuman kartalle: se ei kuulu
+  // millekään raportille eikä tiedostolistaan vaan kohteen omiin tietoihin
+  // (mapUploadId), ja sen päälle piirretään vyöhykkeet. Lukuoikeus tulee siitä että
+  // saa nähdä kohteen.
+  const kartanKohde = (Array.isArray(guardSitesArr) ? guardSitesArr : []).find(
+    (k) => k?.mapUploadId === attachmentId
+  );
+  if (kartanKohde) {
+    if (!eventAllowed(eventAccess, kartanKohde.id)) return false;
+    return hasAnyView(permissions, kartanKohde.id, ['guard_sites', 'guard_site_info', 'guard_tasks']);
+  }
 
   const tiedosto = (Array.isArray(guardFilesArr) ? guardFilesArr : []).find(
     (f) => f?.uploadId === attachmentId

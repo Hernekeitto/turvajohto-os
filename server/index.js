@@ -367,6 +367,9 @@ const UPLOAD_VIITTAAJAT = {
   // poistaisi sen levyltä armonajan jälkeen.
   guardFiles: (arr) => (Array.isArray(arr) ? arr : []).map((f) => f?.uploadId).filter(Boolean),
   guardReports: raportinLiitteet,
+  // Kohteen pohjakartta. Ilman tätä riviä roskienkeruu pitäisi karttaa orpona ja
+  // poistaisi sen vuorokaudessa — sama ansa kuin tapahtuman kartalla (events).
+  guardSites: (arr) => (Array.isArray(arr) ? arr : []).map((k) => k?.mapUploadId).filter(Boolean),
 };
 
 // Tuoteportti: kokoelma joka kuuluu vain toiselle puolelle (esim. guardSites) on
@@ -1136,7 +1139,8 @@ app.get('/api/uploads/:id', requireAuth, (req, res) => {
     && (req.tuotteet || []).includes('guard')
     && canReadGuardAttachment(
       req.role, req.permissions, req.eventAccess, req.params.id,
-      readCollection('guardFiles') || [], readCollection('guardReports') || []
+      readCollection('guardFiles') || [], readCollection('guardReports') || [],
+      readCollection('guardSites') || []
     );
   if (!tapahtumaPuoli && !guardPuoli) {
     return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän liitteen lataamiseen.' });

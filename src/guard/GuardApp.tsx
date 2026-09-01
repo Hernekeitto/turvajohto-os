@@ -222,6 +222,23 @@ export default function GuardApp() {
     setTiedostot(uudet);
   };
 
+  // Pohjakartta EI mene guardFiles-kokoelmaan vaan kohteen omaan kenttään, samoin kuin
+  // tapahtuman kartta (App.tsx: tallennaPohjakartta). Se ei ole kohteen asiakirja vaan
+  // se pinta jonka päälle vyöhykkeet piirretään, eikä sen kuulu näkyä tiedostolistassa.
+  // Kartta tallentuu kohteen mukana vasta kun kohde tallennetaan.
+  const lataaKartta = async (tiedosto: File) => {
+    const lomakedata = new FormData();
+    lomakedata.append('file', tiedosto);
+    const lataus = await fetch('/api/uploads', { method: 'POST', credentials: 'include', body: lomakedata });
+    const latausRes = await lataus.json().catch(() => null);
+    if (!lataus.ok || !latausRes?.ok) {
+      throw new Error(latausRes?.error || 'Kartan lähetys epäonnistui.');
+    }
+    setLomake((edellinen) =>
+      edellinen ? { ...edellinen, mapUploadId: latausRes.id, mapUploadName: latausRes.name || tiedosto.name } : edellinen
+    );
+  };
+
   const poistaTiedosto = async (id: string) => {
     const jaljelle = tiedostot.filter((t) => t.id !== id);
     const r = await fetch(`/api/data/guardFiles${jaljelle.length === 0 ? '?allowEmpty=1' : ''}`, {
@@ -435,6 +452,7 @@ export default function GuardApp() {
               tiedostot={tiedostot.filter((t) => t.siteId === lomake.id)}
               onLisaaTiedosto={lisaaTiedosto}
               onPoistaTiedosto={poistaTiedosto}
+              onLataaKartta={lataaKartta}
               saaMuokata={saaMuokata}
             />
           ) : (

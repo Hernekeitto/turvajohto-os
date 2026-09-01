@@ -1,6 +1,8 @@
 // GUARD-puolen tietotyypit yhdessä paikassa, jotta näkymät voivat jakaa ne ilman
 // kehäriippuvuuksia.
 
+import type { Vyohyke } from '../shared/vyohykkeet';
+
 // Kohteelle merkitty perehdytys. Nimi tallennetaan tietueeseen sellaisenaan eikä pelkkänä
 // viittauksena työntekijäpankkiin: perehdytys on tapahtuma joka on kirjattu tiettynä
 // päivänä tietylle henkilölle, ja sen on säilyttävä luettavana vaikka työntekijä
@@ -36,6 +38,13 @@ export type Kohde = {
   archived?: boolean;
   perehdytykset?: Perehdytys[];
   tehtavat?: Tehtava[];
+  // Kohteen pohjakartta ja sen päälle piirretyt vyöhykkeet. Sama malli kuin
+  // tapahtumalla (päätös V5): vyöhyke on kohteen kenttä eikä omaa kokoelmaansa.
+  // HUOM: mapUploadId on rekisteröitävä palvelimella kahteen paikkaan —
+  // UPLOAD_VIITTAAJAT (roskienkeruu) ja canReadGuardAttachment (lukuoikeus).
+  mapUploadId?: string;
+  mapUploadName?: string;
+  zones?: Vyohyke[];
 };
 
 // Kohteen tiedosto (guardFiles). Oma kokoelmansa eikä kohteen kenttä, koska liitetiedosto
