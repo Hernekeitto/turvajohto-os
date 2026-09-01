@@ -10,11 +10,14 @@ export type Tila = 'open' | 'in_progress' | 'escalated' | 'closed';
 
 // Tilat siinä järjestyksessä kuin ne kulkevat. `luokka` on rivin ja merkin väri,
 // `reuna` status boardin vasemman reunan korostus.
-export const TILAT: { id: Tila; nimi: string; luokka: string; reuna: string }[] = [
-  { id: 'open', nimi: 'Avoin', luokka: 'bg-rose-100 text-rose-800 border-rose-200', reuna: 'border-l-rose-400' },
-  { id: 'in_progress', nimi: 'Käsittelyssä', luokka: 'bg-amber-100 text-amber-800 border-amber-200', reuna: 'border-l-amber-400' },
-  { id: 'escalated', nimi: 'Eskaloitu', luokka: 'bg-orange-100 text-orange-800 border-orange-200', reuna: 'border-l-orange-500' },
-  { id: 'closed', nimi: 'Suljettu', luokka: 'bg-emerald-100 text-emerald-800 border-emerald-200', reuna: 'border-l-emerald-400' },
+// `merkki` on sama väri heksana kartan pistemerkkiä varten: SVG:lle ja inline-tyylille
+// ei voi antaa Tailwind-luokkaa, ja kahden erillisen värilistan pitäminen synkassa
+// olisi juuri se virhe jota tämä tiedosto on olemassa estämään.
+export const TILAT: { id: Tila; nimi: string; luokka: string; reuna: string; merkki: string }[] = [
+  { id: 'open', nimi: 'Avoin', luokka: 'bg-rose-100 text-rose-800 border-rose-200', reuna: 'border-l-rose-400', merkki: '#e11d48' },
+  { id: 'in_progress', nimi: 'Käsittelyssä', luokka: 'bg-amber-100 text-amber-800 border-amber-200', reuna: 'border-l-amber-400', merkki: '#d97706' },
+  { id: 'escalated', nimi: 'Eskaloitu', luokka: 'bg-orange-100 text-orange-800 border-orange-200', reuna: 'border-l-orange-500', merkki: '#ea580c' },
+  { id: 'closed', nimi: 'Suljettu', luokka: 'bg-emerald-100 text-emerald-800 border-emerald-200', reuna: 'border-l-emerald-400', merkki: '#059669' },
 ];
 
 export const tila = (id: unknown) => TILAT.find((t) => t.id === id) || null;
