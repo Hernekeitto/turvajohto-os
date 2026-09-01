@@ -25,7 +25,14 @@
 
 // Varianttinumero tarkoittaa samaa asiaa kaikilla lomakkeilla. Numero on jakelutaso:
 // kuka lomakkeen saa ja mitä siinä näkyy — ei lomakkeen aihe.
-export type Variantti = '01' | '02' | '03' | '04' | '05' | '09';
+// Variantti 04 (toimeksiantajaversio, tunnisteet peitetty) POISTETTIIN 1.9.2026.
+// LYTP 8 § ja 33 § antavat toimeksiantajalle oikeuden saada JÄLJENNÖS
+// tapahtumailmoituksesta. Peitetty versio on vähemmän kuin jäljennös, joten sen
+// antaminen lakisääteisenä jäljennöksenä olisi ristiriidassa lain kanssa — eikä
+// tunnisteiden peittäminen ole lain vaatimus vaan olisi ollut yrityksen oma linjaus.
+// Toimeksiantaja saa siis täyden version 01. Jos toimeksiantajalle halutaan erikseen
+// tiivistelmä tai kausikoonti, se on eri asiakirja eikä tämän lomakkeen variantti.
+export type Variantti = '01' | '02' | '03' | '05' | '09';
 
 export const VARIANTIT: Record<Variantti, { nimi: string; kuvaus: string }> = {
   '01': {
@@ -39,10 +46,6 @@ export const VARIANTIT: Record<Variantti, { nimi: string; kuvaus: string }> = {
   '03': {
     nimi: 'Tyhjä pohja',
     kuvaus: 'Käsin täytettävä paperituloste.',
-  },
-  '04': {
-    nimi: 'Toimeksiantajaversio',
-    kuvaus: 'Suorat tunnisteet peitetty, sisältö tiivistetty.',
   },
   '05': {
     nimi: 'Viranomaisversio',
