@@ -37,6 +37,10 @@ export const SITEMAP: SivukarttaSolmu[] = [
       { id: 'tike_form_management', label: 'Johdon tilannekatsaus' },
     ] },
     { id: 'report_list', label: 'Tallennetut raportit (tapahtuma)' },
+    // Yleisöilmoitukset: QR-julisteiden hallinta ja saapuneiden ilmoitusten moderointi.
+    // Oma solmunsa, koska moderointi on eri työtä kuin kirjausten tekeminen — ja koska
+    // tämän takana näkyy tuntemattomien lähettämää moderoimatonta tekstiä.
+    { id: 'public_reports', label: 'Yleisöilmoitukset ja moderointi' },
   ] },
   { id: 'planning', label: 'Ennen tapahtumaa', children: [
     { id: 'planning_readiness', label: 'Avausvalmius' },

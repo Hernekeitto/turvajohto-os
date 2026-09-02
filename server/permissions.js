@@ -167,6 +167,26 @@ const COLLECTIONS = {
     touch: () => ['global_employee_bank'],
     eventScoped: false,
   },
+  // Julkinen ilmoittaminen: julisteiden hallinta ja saapuneiden ilmoitusten moderointi
+  // ovat saman oikeuden takana. Se joka päättää mistä ilmoituksia otetaan vastaan, myös
+  // käsittelee ne — ja päinvastoin: moderoijalla on oltava valta sulkea juliste josta
+  // tulee pelkkää roskaa.
+  //
+  // HUOM: yleisön lähettämä ilmoitus EI tule tätä kautta vaan palvelimen omalta
+  // julkiselta reitiltä (index.js). Tämä sääntö koskee vain kirjautuneen käyttäjän
+  // tekemiä muutoksia, eli moderointia.
+  publicForms: {
+    view: ['public_reports'],
+    touch: () => ['public_reports'],
+    eventScoped: true,
+    eventIdOf: legacyEventId,
+  },
+  publicReports: {
+    view: ['public_reports'],
+    touch: () => ['public_reports'],
+    eventScoped: true,
+    eventIdOf: legacyEventId,
+  },
   // Pikatoimintonapit: nappien SISÄLLÖN näkee jokainen jolla on oikeus itse valikkoon
   // (muuten valikko olisi tyhjä), mutta nappien MUOKKAUS on sovellusasetusten takana.
   // Tämä on tarkoituksellinen ero muihin kokoelmiin: nappi määrää kenelle hätäviesti
@@ -279,7 +299,7 @@ const COLLECTIONS = {
     // samaan kokoelmaan omalta sivultaan: ilman lukuoikeutta frontti ei saisi kokoelmaa
     // ladattua eikä siis myöskään tallennettua sitä takaisin, joten pelkän report_jv-
     // oikeuden saanut järjestyksenvalvoja ei voisi kirjata ilmoitusta lainkaan.
-    view: ['overview', 'report_list', 'report_tike', 'documents_pdf', 'global_reports', 'global_archived_events', 'report_jv', ...TIKE_FORM_NODES],
+    view: ['overview', 'report_list', 'report_tike', 'documents_pdf', 'global_reports', 'global_archived_events', 'report_jv', 'public_reports', ...TIKE_FORM_NODES],
     touch: (item, phase) => {
       const typeId = item?.typeId;
       // Järjestyksenvalvojan tapahtumailmoitus (typeId 'jvreport') on oma sivunsa
@@ -287,6 +307,15 @@ const COLLECTIONS = {
       // 'tike_form_jvreport' (jota ei ole olemassa sivukartassa).
       if (typeId === 'jvreport') {
         return phase === 'remove' ? ['report_jv', 'report_list', 'overview'] : ['report_jv'];
+      }
+      // Hyväksytystä yleisöilmoituksesta syntyvä kirjaus (typeId 'public'). Sama
+      // poikkeus kuin jvreportilla ja samasta syystä: sivukartassa ei ole solmua
+      // 'tike_form_public' eikä sellaista pidä tehdäkään — kirjaus syntyy
+      // moderointinäkymässä, joten sen oikeus on moderoinnin oikeus. Ilman tätä riviä
+      // moderoija tarvitsisi lisäksi jonkin TIKE-lomakkeen muokkausoikeuden, mikä
+      // antaisi hänelle enemmän kuin tehtävä vaatii.
+      if (typeId === 'public') {
+        return phase === 'remove' ? ['public_reports', 'report_list', 'overview'] : ['public_reports'];
       }
       const typeNodes = typeId ? [`tike_form_${typeId}`] : [];
       // "Avoin kirjaus" (typeId 'open') voidaan luoda myös työntekijän sisäänkirjauksen

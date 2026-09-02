@@ -224,6 +224,16 @@ export const LOMAKKEET: Record<string, Lomake> = {
     tuote: 'event', ryhma: 'tike',
     tabId: 'tike_form_jvaction', pohjaVersio: '1.0', variantit: ['01'], lakiviite: null,
   },
+  YI: {
+    // Yleisön QR-julisteella lähettämä havainto, jonka moderoija on hyväksynyt
+    // kirjaukseksi. OMA lomakkeensa eikä avoimen kirjauksen (AK) variantti: lähde on
+    // eri — tuntematon ohikulkija eikä oma työntekijä — ja se on tulosteessa
+    // nähtävä tieto. Ilmoitus jota ei ole hyväksytty ei ole kirjaus lainkaan, joten
+    // sillä ei ole lomaketunnusta.
+    nimi: 'Yleisöilmoitus',
+    tuote: 'event', ryhma: 'tike',
+    tabId: 'public_reports', pohjaVersio: '1.0', variantit: ['01'], lakiviite: null,
+  },
 
   // --- EVENT: lakisääteiset ilmoitukset --------------------------------------------
   TI: {
@@ -356,6 +366,9 @@ const TYYPPI_POIKKEUKSET: Record<string, string> = {
   jvreport: 'report_jv',
   guard_action: 'guard_report_action',
   guard_jvreport: 'guard_report_jv',
+  // Hyväksytty yleisöilmoitus syntyy moderointinäkymässä, ei TIKE-lomakkeella.
+  // Sama poikkeus on server/permissions.js:n reports-säännössä.
+  public: 'public_reports',
 };
 
 export const lomakeRaportille = (typeId?: string | null) => {

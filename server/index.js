@@ -47,6 +47,20 @@ import {
 } from './permissions.js';
 import { liitaKanava, laheta as lahetaKanavalle, lahetaViesti } from './kanava.js';
 import { seurantaKaytossa, paivita as paivitaSijainti, kaikki as sijainnit, unohda as unohdaSijainti } from './sijainti.js';
+import {
+  tarkistaIlmoitus,
+  lomakkeenTila,
+  // saaLahettaa on jo varattu hätäviestien oikeustarkistukselle tässä tiedostossa,
+  // joten julkisen ilmoituksen määrärajoitus tuodaan omalla nimellään.
+  saaLahettaa as saaLahettaaIlmoituksen,
+  TILAN_SELITE as JULKINEN_SELITE,
+  julkinenLomake,
+  luoIlmoitusToken,
+  // Kummallakin moduulilla on oma voimassaolosääntönsä eikä niitä saa sekoittaa:
+  // jakolinkin ratkaiseVoimassaolo tuntee salasanat ja pääkäyttäjän hyväksynnän,
+  // julisteen ei tunne kumpaakaan mutta sillä on kova 180 vrk:n katto.
+  ratkaiseVoimassaolo as ratkaiseJulisteenVoimassaolo,
+} from './julkinen.js';
 import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti, parsiJson } from './bulksms.js';
 import { kaytossaOlevatNapit, ratkaiseVastaanottajat, taytaPaikkamerkit } from './sms.js';
 import { lisaaJonoon, otaKasittelyyn, kuittaaKasitellyksi, jononPituus } from './smsqueue.js';
@@ -406,7 +420,14 @@ app.get('/api/data/:name', requireAuth, (req, res) => {
   // ilman kirjautumista. Sitä ei anneta listahaussa vaikka kutsujalla on lukuoikeus —
   // token haetaan erikseen /api/shares/:id/token -reitiltä vasta kun käyttäjä pyytää
   // linkin nähtäväkseen. Sama koskee salasanatiivistettä.
-  const data = name === 'fileShares' ? (result.data || []).map(julkinenJako) : result.data;
+  //
+  // Julisteen token peitetään samalla säännöllä, vaikka se ei olekaan salaisuus (se on
+  // aidassa kaikkien nähtävillä): syy on toinen, mutta lopputulos sama. Token on ainoa
+  // asia joka oikeuttaa kirjoittamaan järjestelmään ilman kirjautumista, eikä sen pidä
+  // kulkea jokaisessa listahaussa selaimen välimuistiin ja lokeihin.
+  let data = result.data;
+  if (name === 'fileShares') data = (result.data || []).map(julkinenJako);
+  if (name === 'publicForms') data = (result.data || []).map(julkinenLomake);
   res.json({ ok: true, data });
 });
 
@@ -451,6 +472,16 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
     return res.status(403).json({
       ok: false,
       error: 'Jakolinkkejä hallitaan vain omien reittiensä kautta (/api/shares).',
+    });
+  }
+  // Sama ansa kuin fileShares, ja tässä se olisi vielä pahempi: selain ei koskaan näe
+  // julisteiden tokeneita (ne peitetään GET:issä), joten koko kokoelman tallennus
+  // kirjoittaisi tokenit tyhjiksi ja jokainen aidassa oleva juliste lakkaisi toimimasta
+  // kerralla — eikä sitä voisi korjata muuten kuin painamalla uudet julisteet.
+  if (name === 'publicForms') {
+    return res.status(403).json({
+      ok: false,
+      error: 'Ilmoituslomakkeita hallitaan vain omien reittiensä kautta (/api/publicforms).',
     });
   }
   // Samasta syystä kuin fileShares, mutta eri lähteestä: näiden sisältö syntyy
@@ -832,6 +863,171 @@ const shareLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { ok: false, error: 'Liikaa yrityksiä. Odota hetki ja yritä uudelleen.' },
+});
+
+// --- Julkinen yleisöilmoitus (QR-juliste) -----------------------------------------
+//
+// Kaksi erillistä rajoitinta tarkoituksella. IP-kohtainen estää yhtä lähettäjää
+// hakkaamasta reittiä; lomakekohtainen (julkinen.js: saaLahettaa) estää sen että sata
+// eri IP-osoitetta täyttää yhden julisteen jonon. Kumpikaan yksin ei riitä.
+const julkinenLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Ilmoituksia on lähetetty liikaa lyhyessä ajassa. Yritä hetken kuluttua uudelleen.' },
+});
+
+function etsiIlmoituslomake(token) {
+  const lomakkeet = readCollection('publicForms') || [];
+  return lomakkeet.find((l) => tokenTasmaa(token, l.token)) || null;
+}
+
+// Julisteen tiedot ennen lomakkeen näyttämistä: onko linkki voimassa ja mihin
+// tapahtumaan se kuuluu. EI kerro mitään muuta tapahtumasta kuin nimen — tuntemattoman
+// ei pidä saada tätä kautta tietoa siitä mitä alueella on tapahtunut.
+app.get('/api/julkinen/:token', julkinenLimiter, (req, res) => {
+  const lomake = etsiIlmoituslomake(req.params.token);
+  const tila = lomakkeenTila(lomake);
+  if (!tila.ok) return res.status(404).json({ ok: false, error: JULKINEN_SELITE[tila.syy] || 'Linkki ei ole käytettävissä.' });
+  const tapahtuma = (readCollection('events') || []).find((e) => e.id === lomake.eventId);
+  res.json({ ok: true, tapahtuma: tapahtuma?.name || '', paikka: lomake.nimi || '' });
+});
+
+// Yleisön lähettämä ilmoitus. EI vaadi kirjautumista — tämä on ainoa kirjoittava reitti
+// joka ei sitä vaadi, ja siksi jokainen suoja on tässä eikä myöhemmin:
+// määrärajoitus, tokenin voimassaolo, kenttien pituusrajat ja moderointijono.
+app.post('/api/julkinen/:token', julkinenLimiter, express.json({ limit: '16kb' }), (req, res) => {
+  const lomake = etsiIlmoituslomake(req.params.token);
+  const tila = lomakkeenTila(lomake);
+  if (!tila.ok) return res.status(404).json({ ok: false, error: JULKINEN_SELITE[tila.syy] || 'Linkki ei ole käytettävissä.' });
+
+  if (!saaLahettaaIlmoituksen(lomake.id)) {
+    return res.status(429).json({ ok: false, error: JULKINEN_SELITE.rate_limited });
+  }
+
+  const tarkistus = tarkistaIlmoitus(req.body);
+  if (!tarkistus.ok) return res.status(400).json({ ok: false, error: tarkistus.error });
+
+  const ilmoitukset = readCollection('publicReports') || [];
+  const uusi = {
+    id: `yi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    eventId: lomake.eventId,
+    formId: lomake.id,
+    createdAt: new Date().toISOString(),
+    // Moderointijonon tila. Vasta hyväksyntä tekee tästä kirjauksen reports-kokoelmaan.
+    tila: 'moderoitavana',
+    ...tarkistus.ilmoitus,
+  };
+  writeCollection('publicReports', [uusi, ...ilmoitukset]);
+
+  // Kerrotaan moderointijonosta niille jotka saavat sen nähdä. Kanava kuljettaa vain
+  // id:n, joten moderoimaton teksti ei kulje sitä kautta kenellekään.
+  lahetaKanavalle('publicReports', [{ action: 'create', id: uusi.id, eventId: uusi.eventId }], {
+    saaNahda: (istunto, eventId) =>
+      istunto?.role === 'admin' ||
+      (eventAllowed(istunto?.eventAccess, eventId) && canView(rolePermissions(istunto?.roleId), eventId, 'public_reports')),
+  });
+
+  logAudit({ user: null, action: 'public_report_received', collection: 'publicReports', recordId: uusi.id, eventId: uusi.eventId });
+  res.json({ ok: true });
+});
+
+// Julisteen token QR-koodia varten. Sama periaate kuin jakolinkeillä: token ei kulje
+// listauksessa vaan haetaan erikseen, jotta se ei päädy jokaiseen välimuistiin ja lokiin
+// jossa listaus käy.
+app.get('/api/publicforms/:id/token', requireAuth, (req, res) => {
+  const lomake = (readCollection('publicForms') || []).find((l) => l.id === req.params.id);
+  if (!lomake) return res.status(404).json({ ok: false, error: 'Ilmoituslomaketta ei löytynyt.' });
+  if (req.role !== 'admin' && !canEdit(req.permissions, lomake.eventId, 'public_reports')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta tähän ilmoituslomakkeeseen.' });
+  }
+  res.json({ ok: true, token: lomake.token });
+});
+
+// Julisteen luonti. Oma reittinsä eikä /api/data/publicForms, koska token syntyy
+// palvelimella eikä selain saa sitä koskaan asettaa: jos selain voisi valita tokenin,
+// se voisi myös valita saman tokenin toiselle tapahtumalle ja ohjata ilmoitukset väärään
+// jonoon.
+app.post('/api/publicforms', requireAuth, (req, res) => {
+  const { eventId, nimi, vrk } = req.body || {};
+  if (typeof eventId !== 'string' || !eventId) {
+    return res.status(400).json({ ok: false, error: 'Tapahtuma puuttuu.' });
+  }
+  // Julisteen tekeminen on sama oikeus kuin ilmoitusten moderointi (ks. permissions.js):
+  // se joka päättää mistä ilmoituksia otetaan vastaan, myös käsittelee ne.
+  if (req.role !== 'admin' && !(eventAllowed(req.eventAccess, eventId) && canEdit(req.permissions, eventId, 'public_reports'))) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta luoda ilmoituslomaketta tähän tapahtumaan.' });
+  }
+  const tapahtuma = (readCollection('events') || []).find((e) => e.id === eventId);
+  if (!tapahtuma) return res.status(404).json({ ok: false, error: 'Tapahtumaa ei löytynyt.' });
+
+  // Julisteen nimi on sen fyysinen sijainti ("Portti 3, itäaita"). Se ei ole
+  // koristetta: se on ainoa tieto jolla väärinkäytetty juliste löydetään maastosta ja
+  // otetaan pois, joten se vaaditaan.
+  const paikka = String(nimi ?? '').trim().slice(0, 120);
+  if (paikka.length < 2) {
+    return res.status(400).json({ ok: false, error: 'Anna julisteelle sijainti, esimerkiksi "Portti 3".' });
+  }
+
+  const voimassaolo = ratkaiseJulisteenVoimassaolo({ vrk }, new Date());
+  if (voimassaolo.error) return res.status(400).json({ ok: false, error: voimassaolo.error });
+
+  const lomake = {
+    id: crypto.randomUUID(),
+    eventId,
+    nimi: paikka,
+    token: luoIlmoitusToken(),
+    expiresAt: voimassaolo.expiresAt,
+    createdBy: req.username,
+    createdAt: new Date().toISOString(),
+    revokedAt: null,
+  };
+  writeCollection('publicForms', [...(readCollection('publicForms') || []), lomake]);
+  logAudit({ user: req.username, action: 'public_form_create', collection: 'publicForms', recordId: lomake.id, eventId });
+
+  // Token palautetaan tässä, jotta QR-koodin voi näyttää heti luonnin jälkeen.
+  res.json({ ok: true, lomake: julkinenLomake(lomake), token: lomake.token });
+});
+
+// Peruutus. Kuten jakolinkeillä: tietuetta ei poisteta vaan se merkitään peruutetuksi,
+// koska jälkikäteen on tärkeämpää tietää mistä julisteesta ilmoitukset tulivat kuin
+// pitää kokoelma siistinä. Saapuneet ilmoitukset viittaavat tähän id:hen.
+app.delete('/api/publicforms/:id', requireAuth, (req, res) => {
+  const lomakkeet = readCollection('publicForms') || [];
+  const lomake = lomakkeet.find((l) => l.id === req.params.id);
+  if (!lomake) return res.status(404).json({ ok: false, error: 'Ilmoituslomaketta ei löytynyt.' });
+  if (req.role !== 'admin' && !canEdit(req.permissions, lomake.eventId, 'public_reports')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta poistaa tätä ilmoituslomaketta käytöstä.' });
+  }
+  writeCollection('publicForms', lomakkeet.map((l) => (l.id === lomake.id
+    ? { ...l, revokedAt: new Date().toISOString(), revokedBy: req.username }
+    : l)));
+  logAudit({ user: req.username, action: 'public_form_revoke', collection: 'publicForms', recordId: lomake.id, eventId: lomake.eventId });
+  res.json({ ok: true });
+});
+
+// QR-koodin muodostus. Yleiskäyttöinen tarkoituksella: erä 5:n tarkistuspisteet
+// tarvitsevat täsmälleen saman toiminnon, eikä sitä pidä kirjoittaa silloin toiseen
+// kertaan. Koodi muodostetaan palvelimella, koska qrcode-kirjasto on jo palvelimen
+// riippuvuutena (TOTP-koodit) — sen lisääminen myös selainnippuun kasvattaisi buildia
+// turhaan, ja CSP estää sen hakemisen ulkopuolelta.
+//
+// Sisältö tulee pyynnön rungosta eikä osoitteesta: julisteen osoite sisältää tokenin,
+// eikä sen kuulu päätyä nginxin access.logiin.
+app.post('/api/qr', requireAuth, async (req, res) => {
+  const teksti = String(req.body?.teksti ?? '');
+  if (!teksti || teksti.length > 1024) {
+    return res.status(400).json({ ok: false, error: 'QR-koodin sisältö puuttuu tai on liian pitkä.' });
+  }
+  try {
+    // Korkea virheenkorjaustaso: juliste on ulkona sateessa ja likaantuu, ja osittain
+    // vahingoittunut koodi luetaan silti.
+    const dataUri = await QRCode.toDataURL(teksti, { width: 512, margin: 1, errorCorrectionLevel: 'H' });
+    res.json({ ok: true, dataUri });
+  } catch {
+    res.status(500).json({ ok: false, error: 'QR-koodin muodostus epäonnistui.' });
+  }
 });
 
 // Etsii jakolinkin tokenilla. Vakioaikainen vertailu jokaista vastaan, jottei

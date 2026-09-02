@@ -33,6 +33,13 @@ const COLLECTIONS = {
   smsLog: 'smsLog.json',
   // Työntekijöiden vastaukset hätäviesteihin (Two-Way SMS). Sama: vain palvelin kirjoittaa.
   smsReplies: 'smsReplies.json',
+  // Julkiset ilmoituslomakkeet: QR-juliste aidassa. Tietue kertoo mihin tapahtumaan
+  // juliste kuuluu ja milloin se lakkaa toimimasta.
+  publicForms: 'publicForms.json',
+  // Yleisön lähettämät ilmoitukset. OMA KOKOELMANSA eikä reports: moderoimaton
+  // tuntemattoman väite ei kuulu lakisääteiseen kirjausaineistoon, jolla on säilytysaika,
+  // kenttäsalaus ja muuttumattomuuslukitus. TIKE luo hyväksyessään oikean kirjauksen.
+  publicReports: 'publicReports.json',
   // --- Turvajohto GUARD ---
   // Vartiointikohteet. Rakenteellisesti sama kuin events: pitkäkestoinen kokonaisuus jolla
   // on omat työntekijänsä, kirjauksensa ja oikeutensa. Siksi kohteen id toimii samana
@@ -122,6 +129,12 @@ const ENCRYPTED_FIELDS = {
     // ylikirjoittamalla vaan lisäämällä merkintä, ja se merkintä on vapaata tekstiä
     // samalla tavalla kuin description — eli se voi sisältää kohdehenkilön tietoja.
     'corrections[].text',
+    // Hyväksytystä yleisöilmoituksesta periytyvät kentät. Sama teksti on jo salattuna
+    // publicReports-kokoelmassa, ja se on suojattava myös siinä kopiossa joka
+    // moderoinnin jälkeen jää kirjaukseen — muuten hyväksyminen purkaisi salauksen.
+    // Yhteystieto on määritelmällisesti henkilötietoa aina kun se on täytetty.
+    'reporterPlace',
+    'reporterContact',
   ],
   // Vartijan raportit salataan TÄSMÄLLEEN samoin kuin tapahtumapuolen raportit: vartijan
   // tapahtumailmoitus sisältää samat LYTP:n nojalla kirjattavat kohdehenkilötiedot
@@ -147,10 +160,24 @@ const ENCRYPTED_FIELDS = {
     // ylikirjoittamalla vaan lisäämällä merkintä, ja se merkintä on vapaata tekstiä
     // samalla tavalla kuin description — eli se voi sisältää kohdehenkilön tietoja.
     'corrections[].text',
+    // Hyväksytystä yleisöilmoituksesta periytyvät kentät. Sama teksti on jo salattuna
+    // publicReports-kokoelmassa, ja se on suojattava myös siinä kopiossa joka
+    // moderoinnin jälkeen jää kirjaukseen — muuten hyväksyminen purkaisi salauksen.
+    // Yhteystieto on määritelmällisesti henkilötietoa aina kun se on täytetty.
+    'reporterPlace',
+    'reporterContact',
   ],
   // Tehtäväsuorituksen vapaa huomiokenttä: vartija kirjoittaa siihen mitä kierroksella
   // havaittiin, eikä kenttätasolla voi tietää mitä sinne on kirjoitettu.
   guardTaskRuns: ['huomiot'],
+  // Ilmoituslomakkeen token on jakolinkin tokeniin rinnastuva: se antaa oikeuden
+  // kirjoittaa järjestelmään ilman kirjautumista.
+  publicForms: ['token'],
+  // Yleisön kirjoittama teksti salataan samalla perusteella kuin reports.summary:
+  // kenttätasolla ei voi tietää mitä ilmoittaja on kirjoittanut, ja hän voi kirjoittaa
+  // sekä omansa että jonkun toisen henkilötietoja. Yhteystieto on määritelmällisesti
+  // henkilötietoa aina kun se on täytetty.
+  publicReports: ['kuvaus', 'paikka', 'yhteystieto'],
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });

@@ -6,7 +6,8 @@ import { TUNNISTE_ALKU, seuraavaTunnisteNumero, muotoileTunniste, taydennaTunnis
 import { kayttajatunnusNimesta, splitFullName, buildFullName } from './shared/nimet';
 import { paikallinenPaiva, yhdistaPaivaJaAika, muotoileLaskuri, muotoileKirjautumisaika } from './shared/ajat';
 import { muotoileEuro, laskeKokonaispalkka, isValidPasswordClient } from './shared/muotoilu';
-import { htmlTeksti, tulostusDokumentti, tulostaDokumentti } from './shared/tuloste';
+import { htmlTeksti, tulostusDokumentti, tulostaDokumentti, julisteDokumentti } from './shared/tuloste';
+import { QrKoodi, haeQrKoodi } from './shared/komponentit/QrKoodi';
 import { jaotteleSailytysajan, tapahtumanPoistoaikataulu } from './shared/sailytysaika';
 import { DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab } from './shared/oikeudet';
 import { TILAT, VAKAVUUDET, tila as kirjauksenTila, onLukittu, onPoikkeama, uusiKorjausmerkinta } from './shared/kirjaukset';
@@ -84,6 +85,8 @@ import {
   HardHat,
   KeyRound,
   QrCode,
+  Printer,
+  Megaphone,
   Smartphone,
   RefreshCw,
   History,
@@ -277,6 +280,15 @@ const REPORT_DETAIL_FIELDS = [
   { key: 'taskDoneAt', label: 'Tehtävä kuitattu tehdyksi', muotoile: (v: string) => new Date(v).toLocaleString('fi-FI') },
   { key: 'taskDoneBy', label: 'Kuittaaja' },
   { key: 'taskDoneComment', label: 'Kuittauksen kommentti' },
+  // Hyväksytystä yleisöilmoituksesta syntyvän kirjauksen kentät. Lähde on osa
+  // kirjauksen todistusarvoa: lukijan on nähtävä että havainto on tuntemattoman
+  // ohikulkijan kertoma eikä oman työntekijän tekemä.
+  { key: 'reporterPlace', label: 'Ilmoittajan kertoma paikka' },
+  { key: 'publicFormName', label: 'Ilmoituksen lähde (juliste)' },
+  { key: 'publicReceivedAt', label: 'Ilmoitus saapui', muotoile: (v: string) => new Date(v).toLocaleString('fi-FI') },
+  // masked samasta syystä kuin kohdehenkilön tunnisteet: yhteystieto on henkilötieto,
+  // eikä sen kuulu näkyä sivusilmällä kun kirjauksia selataan.
+  { key: 'reporterContact', label: 'Ilmoittajan yhteystieto', masked: true },
   { key: 'actions', label: 'Tehdyt toimenpiteet' },
   { key: 'resources', label: 'Käytetyt resurssit' },
   { key: 'employees', label: 'Paikalla olleet työntekijät' },
@@ -902,6 +914,25 @@ export default function App() {
   const [tiedostoUploading, setTiedostoUploading] = useState(false);
   const tiedostoInputRef = useRef<HTMLInputElement>(null);
 
+  // ---- Yleisöilmoitukset ----
+  // Kaksi kokoelmaa, kaksi eri omistajaa. Julisteet (publicForms) syntyvät ja
+  // peruutetaan palvelimen omilla reiteillä, koska token luodaan siellä — tämä tila on
+  // vain palvelimelta luettu näkymä, kuten jakolinkeillä. Ilmoitukset (publicReports)
+  // syntyvät julkiselta reitiltä mutta niiden MODEROINTI tehdään täällä, joten se
+  // kokoelma tallentuu normaalisti.
+  const [publicForms, setPublicForms] = useState<any[]>([]);
+  const [publicReports, setPublicReports] = useState<any[]>([]);
+  const [publicReportsLoaded, setPublicReportsLoaded] = useState(false);
+  // Julisteen luontilomake ja näytettävä QR-koodi.
+  const [julisteNimi, setJulisteNimi] = useState('');
+  const [julisteVrk, setJulisteVrk] = useState('30');
+  const [julisteVirhe, setJulisteVirhe] = useState('');
+  const [julisteLuodaan, setJulisteLuodaan] = useState(false);
+  const [avattuJuliste, setAvattuJuliste] = useState<{ lomake: any; url: string } | null>(null);
+  // Hylkäyksen perustelu kirjoitetaan riville ennen hylkäystä: ilman perustelua ei
+  // jälkikäteen tiedä, oliko ilmoitus asiaton vai vain jo tiedossa.
+  const [hylkaysSyyt, setHylkaysSyyt] = useState<Record<string, string>>({});
+
   // Jakodialogi: mitä jaetaan ja millä ehdoilla.
   const [shareTarget, setShareTarget] = useState(null);   // eventFiles-tietue
   const [shareMode, setShareMode] = useState('link');     // 'link' | 'password' | 'users'
@@ -1282,12 +1313,17 @@ export default function App() {
       checkins: setCheckedInEmployees,
       events: setEvents,
       employees: (d) => setEmployees(taydennaTunnisteet(d)),
+      // Yleisöilmoitus saapuu julkiselta reitiltä milloin tahansa, eikä moderoija avaa
+      // näkymää uudelleen vartin välein. Kanava kertoo saapumisesta; sisältö haetaan
+      // täältä normaalin oikeustarkistetun reitin kautta.
+      publicReports: setPublicReports,
     };
     const ladattu: Record<string, boolean> = {
       reports: reportsLoaded,
       checkins: checkinsLoaded,
       events: eventsLoaded,
       employees: employeesLoaded,
+      publicReports: publicReportsLoaded,
     };
     const aseta = asettajat[kokoelma];
     if (!aseta || !ladattu[kokoelma]) return;
@@ -1474,6 +1510,38 @@ export default function App() {
     // Hyväksymispyynnöt näkyvät ilmoituskellossa, joten kello päivittyy samalla.
     fetchNotifications();
   };
+
+  // Yleisöilmoitukset ja niiden julisteet. Julisteita ei tallenneta automaattisesti
+  // (sama syy kuin jakolinkeillä: token syntyy palvelimella eikä ole selaimen tiedossa
+  // lainkaan, joten koko kokoelman tallennus tyhjentäisi tokenit).
+  const paivitaJulisteet = () => {
+    fetch('/api/data/publicForms', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => { if (res && res.ok === true && Array.isArray(res.data)) setPublicForms(res.data); })
+      .catch(() => { /* virhe näkyy tyhjänä listana */ });
+  };
+
+  useEffect(() => {
+    paivitaJulisteet();
+
+    fetch('/api/data/publicReports', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        // loaded vain onnistuneella vastauksella — muuten moderoinnin automaattitallennus
+        // lähettäisi tyhjän listan ja pyyhkisi juuri saapuneet ilmoitukset.
+        if (res && res.ok === true) {
+          if (Array.isArray(res.data)) setPublicReports(res.data);
+          setPublicReportsLoaded(true);
+        }
+      })
+      .catch(() => { /* loaded ei asetu -> tallennus ei laukea tyhjällä */ });
+  }, []);
+
+  useEffect(() => {
+    if (!publicReportsLoaded) return;
+    if (ohitaSeuraavaTallennus.current.delete('publicReports')) return;
+    tallennaKokoelma('publicReports', publicReports);
+  }, [publicReports, publicReportsLoaded]);
 
   // Ladataan kirjaukset/raportit palvelimelta sivun avautuessa (jaettu kaikkien käyttäjien kesken)
   useEffect(() => {
@@ -2821,6 +2889,153 @@ export default function App() {
     } catch {
       alert('Linkin haku epäonnistui (yhteysvirhe).');
     }
+  };
+
+  // ---- Yleisöilmoitukset: julisteet ja moderointi --------------------------------
+
+  // Julisteen osoite. Sama muoto kuin jakolinkeillä: token on hash-osassa, joten se ei
+  // lähde palvelimelle eikä päädy access.logiin.
+  const julisteenOsoite = (token: string) =>
+    `${window.location.origin}${import.meta.env.BASE_URL}ilmoitus.html#${token}`;
+
+  const luoJuliste = async () => {
+    setJulisteVirhe('');
+    if (julisteNimi.trim().length < 2) {
+      setJulisteVirhe('Anna julisteelle sijainti, esimerkiksi "Portti 3".');
+      return;
+    }
+    setJulisteLuodaan(true);
+    try {
+      const res = await fetch('/api/publicforms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ eventId: selectedEvent, nimi: julisteNimi.trim(), vrk: Number(julisteVrk) }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data && data.ok) {
+        paivitaJulisteet();
+        setJulisteNimi('');
+        // QR avataan heti: juliste tehdään sitä varten että se tulostetaan, eikä
+        // käyttäjän pidä joutua etsimään juuri luomaansa riviä listasta.
+        setAvattuJuliste({ lomake: data.lomake, url: julisteenOsoite(data.token) });
+      } else {
+        setJulisteVirhe((data && data.error) || 'Julisteen luonti epäonnistui.');
+      }
+    } catch {
+      setJulisteVirhe('Yhteysvirhe. Yritä uudelleen.');
+    } finally {
+      setJulisteLuodaan(false);
+    }
+  };
+
+  const naytaJulisteQr = async (lomake: any) => {
+    try {
+      const res = await fetch(`/api/publicforms/${encodeURIComponent(lomake.id)}/token`, { credentials: 'include' });
+      const data = await res.json();
+      if (res.ok && data.ok && data.token) setAvattuJuliste({ lomake, url: julisteenOsoite(data.token) });
+      else alert(data.error || 'QR-koodin haku epäonnistui.');
+    } catch {
+      alert('QR-koodin haku epäonnistui (yhteysvirhe).');
+    }
+  };
+
+  const peruutaJuliste = async (lomake: any) => {
+    if (!window.confirm(`Poistetaanko juliste "${lomake.nimi}" käytöstä? Sen QR-koodi lakkaa toimimasta heti, ja aidassa oleva juliste on käytävä ottamassa pois.`)) return;
+    try {
+      const res = await fetch(`/api/publicforms/${encodeURIComponent(lomake.id)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        paivitaJulisteet();
+        if (avattuJuliste?.lomake?.id === lomake.id) setAvattuJuliste(null);
+      } else {
+        alert(data.error || 'Poisto käytöstä epäonnistui.');
+      }
+    } catch {
+      alert('Poisto käytöstä epäonnistui (yhteysvirhe).');
+    }
+  };
+
+  const tulostaJuliste = async (lomake: any, url: string) => {
+    const qr = await haeQrKoodi(url);
+    if (!qr) {
+      alert('QR-koodia ei saatu muodostettua, joten julistetta ei voi tulostaa.');
+      return;
+    }
+    tulostaDokumentti(julisteDokumentti({
+      tapahtuma: findEventName(selectedEvent, events),
+      paikka: lomake.nimi || '',
+      osoite: url,
+      qrDataUri: qr,
+    }));
+  };
+
+  // Hyväksyminen on se hetki jossa tuntemattoman väitteestä tulee kirjaus. Siksi
+  // ilmoitusta EI siirretä eikä muuteta kirjaukseksi: siitä luodaan kirjaus, ja
+  // alkuperäinen ilmoitus jää jonoon merkittynä hyväksytyksi. Jälkikäteen on voitava
+  // näyttää mitä ilmoittaja kirjoitti ja mitä siitä kirjattiin.
+  const hyvaksyIlmoitus = (ilmoitus: any) => {
+    const juliste = publicForms.find((l) => l.id === ilmoitus.formId);
+    const saapui = new Date(ilmoitus.createdAt || Date.now());
+    const kirjausId = getDynamicId();
+
+    setReports((prev) => [{
+      id: kirjausId,
+      createdAt: new Date().toISOString(),
+      eventId: ilmoitus.eventId || selectedEvent,
+      typeId: 'public',
+      ...uudenKirjauksenKentat('public'),
+      // Vyöhyke ja karttapiste tulevat uudenKirjauksenKentat():ssa TIKE-lomakkeen
+      // yhteisestä tilasta. Moderoinnissa sitä tilaa ei ole täytetty tätä ilmoitusta
+      // varten, joten se olisi edellisen lomakkeen jäänne — nollataan.
+      zoneId: null,
+      location: { img: null, gps: null },
+      type: 'Yleisöilmoitus',
+      // Laatija on moderoija eikä ilmoittaja: hän on se joka vastaa siitä että tämä
+      // kirjattiin. Ilmoittaja on tuntematon, ja se on kirjauksen olennainen tieto.
+      author: kirjaajanTunniste(),
+      date: saapui.toLocaleDateString('sv-SE'),
+      time: saapui.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' }),
+      summary: ilmoitus.kuvaus || '',
+      reporterPlace: ilmoitus.paikka || '',
+      reporterContact: ilmoitus.yhteystieto || '',
+      publicFormName: juliste?.nimi || '',
+      publicReceivedAt: ilmoitus.createdAt || null,
+      publicReportId: ilmoitus.id,
+      attachment: null,
+    }, ...prev]);
+    setRunningNumber((prev) => prev + 1);
+
+    setPublicReports((prev) => prev.map((i) => (i.id === ilmoitus.id
+      ? {
+        ...i,
+        tila: 'hyvaksytty',
+        kasiteltyAt: new Date().toISOString(),
+        kasittelija: kirjaajanTunniste(),
+        kirjausId,
+      }
+      : i)));
+  };
+
+  const hylkaaIlmoitus = (ilmoitus: any) => {
+    const syy = String(hylkaysSyyt[ilmoitus.id] || '').trim();
+    if (!syy) {
+      alert('Kirjoita lyhyt perustelu ennen hylkäystä.');
+      return;
+    }
+    setPublicReports((prev) => prev.map((i) => (i.id === ilmoitus.id
+      ? {
+        ...i,
+        tila: 'hylatty',
+        hylkaysSyy: syy,
+        kasiteltyAt: new Date().toISOString(),
+        kasittelija: kirjaajanTunniste(),
+      }
+      : i)));
+    setHylkaysSyyt((prev) => ({ ...prev, [ilmoitus.id]: '' }));
   };
 
   const handleTamaPvm = () => {
@@ -4897,9 +5112,359 @@ export default function App() {
                   <p className="text-sm text-slate-500 line-clamp-2">Selaa, hae ja tarkastele kaikkia järjestelmään luotuja raportteja.</p>
                 </button>
               )}
+
+              {/* Yleisöilmoitukset. Laskuri on kortissa eikä vain sivulla: moderointijono
+                  on ainoa näkymä johon tulee työtä ilman että kukaan käyttäjä sitä tekee,
+                  joten sen on näyttävä ennen kuin sivu avataan. */}
+              {(isAdminUser || canView(perms, selectedEvent, 'public_reports')) && (
+                <button
+                  onClick={() => setActiveTab('public_reports')}
+                  className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all text-left group"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg group-hover:bg-indigo-100 transition-colors">
+                      <Megaphone size={24} />
+                    </div>
+                    {(() => {
+                      const odottaa = publicReports.filter(
+                        (i) => (i.eventId || 'fesx') === selectedEvent && (i.tila || 'moderoitavana') === 'moderoitavana'
+                      ).length;
+                      return odottaa > 0 ? (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                          {odottaa} odottaa
+                        </span>
+                      ) : (
+                        <ChevronRight className="text-slate-400 group-hover:text-indigo-500 transition-colors" size={20} />
+                      );
+                    })()}
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-800 mb-1">Yleisöilmoitukset</h3>
+                  <p className="text-sm text-slate-500 line-clamp-2">Yleisön QR-julisteella lähettämät havainnot ja niiden moderointi kirjauksiksi.</p>
+                </button>
+              )}
             </div>
           </div>
         );
+      case 'public_reports': {
+        const saaModeroida = isAdminUser || canEdit(perms, selectedEvent, 'public_reports');
+        const omat = publicReports.filter((i) => (i.eventId || 'fesx') === selectedEvent);
+        const jonossa = omat.filter((i) => (i.tila || 'moderoitavana') === 'moderoitavana');
+        const kasitellyt = omat.filter((i) => i.tila === 'hyvaksytty' || i.tila === 'hylatty');
+        const julisteet = publicForms.filter((l) => (l.eventId || 'fesx') === selectedEvent);
+        const nyt = Date.now();
+        // Julisteen tila lasketaan samoista kentistä kuin palvelimen julkinen.js:n
+        // lomakkeenTila. Jos sääntö muuttuu, se on muutettava molempiin — muuten
+        // käyttöliittymä väittää voimassa olevaksi julistetta jonka palvelin torjuu.
+        const julisteenTila = (l: any) => {
+          if (l.revokedAt) return { teksti: 'Poistettu käytöstä', luokka: 'bg-slate-100 text-slate-600 border-slate-200' };
+          if (l.expiresAt && new Date(l.expiresAt).getTime() <= nyt) {
+            return { teksti: 'Vanhentunut', luokka: 'bg-amber-100 text-amber-800 border-amber-200' };
+          }
+          return { teksti: 'Voimassa', luokka: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
+        };
+
+        return (
+          <div className="space-y-6 max-w-5xl">
+            <div>
+              <TakaisinLinkki onClick={() => setActiveTab('reporting')}>
+                Takaisin raportointivalikkoon
+              </TakaisinLinkki>
+              <div className="mb-2 pb-4 border-b border-slate-200">
+                <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                  <Megaphone className="text-indigo-500" size={24} />
+                  Yleisöilmoitukset ja moderointi
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Yleisö ilmoittaa havainnoistaan aidassa olevan QR-julisteen kautta. Ilmoitus ei ole
+                  kirjaus ennen kuin se on hyväksytty täällä.
+                </p>
+              </div>
+            </div>
+
+            {/* --- Moderointijono --- */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-slate-800">Käsittelyä odottavat</h3>
+                {jonossa.length > 0 && (
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                    {jonossa.length} odottaa
+                  </span>
+                )}
+              </div>
+
+              {jonossa.length === 0 ? (
+                <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                  Ei käsittelyä odottavia ilmoituksia.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {jonossa.map((ilmoitus) => {
+                    const juliste = publicForms.find((l) => l.id === ilmoitus.formId);
+                    return (
+                      <div key={ilmoitus.id} className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mb-2">
+                          <span className="font-mono">
+                            {ilmoitus.createdAt ? new Date(ilmoitus.createdAt).toLocaleString('fi-FI') : '—'}
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-200 bg-white font-medium">
+                            <QrCode size={11} />
+                            {juliste?.nimi || 'Tuntematon juliste'}
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-800 whitespace-pre-wrap bg-white border border-slate-200 rounded-lg p-3">
+                          {ilmoitus.kuvaus}
+                        </p>
+                        {(ilmoitus.paikka || ilmoitus.yhteystieto) && (
+                          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 text-sm">
+                            {ilmoitus.paikka && (
+                              <div>
+                                <dt className="text-xs text-slate-400 uppercase tracking-wide">Ilmoittajan kertoma paikka</dt>
+                                <dd className="text-slate-700">{ilmoitus.paikka}</dd>
+                              </div>
+                            )}
+                            {ilmoitus.yhteystieto && (
+                              <div>
+                                <dt className="text-xs text-slate-400 uppercase tracking-wide">Yhteystieto</dt>
+                                <dd className="text-slate-700 break-all">{ilmoitus.yhteystieto}</dd>
+                              </div>
+                            )}
+                          </dl>
+                        )}
+
+                        {saaModeroida ? (
+                          <div className="mt-4 pt-3 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center gap-2">
+                            <button
+                              onClick={() => hyvaksyIlmoitus(ilmoitus)}
+                              className="inline-flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors shrink-0"
+                            >
+                              <CheckCircle size={16} />
+                              Hyväksy kirjaukseksi
+                            </button>
+                            <input
+                              type="text"
+                              value={hylkaysSyyt[ilmoitus.id] || ''}
+                              onChange={(e) => setHylkaysSyyt((prev) => ({ ...prev, [ilmoitus.id]: e.target.value }))}
+                              placeholder="Hylkäyksen perustelu"
+                              className="flex-1 min-w-0 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <button
+                              onClick={() => hylkaaIlmoitus(ilmoitus)}
+                              className="inline-flex items-center justify-center gap-1.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 text-sm font-bold px-4 py-2 rounded-lg transition-colors shrink-0"
+                            >
+                              <XCircle size={16} />
+                              Hylkää
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="mt-3 pt-3 border-t border-slate-200 text-xs text-slate-500">
+                            Sinulla on oikeus lukea ilmoitukset mutta ei käsitellä niitä.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* --- Käsitellyt --- */}
+            {kasitellyt.length > 0 && (
+              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+                <h3 className="text-lg font-bold text-slate-800 mb-4">Käsitellyt ilmoitukset</h3>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="p-3">Saapui</th>
+                        <th className="p-3">Tila</th>
+                        <th className="p-3">Ilmoitus</th>
+                        <th className="p-3">Käsittelijä</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {kasitellyt.map((ilmoitus) => (
+                        <tr key={ilmoitus.id}>
+                          <td className="p-3 font-mono text-xs text-slate-500 whitespace-nowrap">
+                            {ilmoitus.createdAt ? new Date(ilmoitus.createdAt).toLocaleString('fi-FI') : '—'}
+                          </td>
+                          <td className="p-3">
+                            <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-bold border ${
+                              ilmoitus.tila === 'hyvaksytty'
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                                : 'bg-slate-100 text-slate-600 border-slate-200'
+                            }`}>
+                              {ilmoitus.tila === 'hyvaksytty' ? 'Hyväksytty' : 'Hylätty'}
+                            </span>
+                            {ilmoitus.tila === 'hyvaksytty' && ilmoitus.kirjausId && (
+                              <span className="block mt-1 font-mono text-[11px] text-slate-400">{ilmoitus.kirjausId}</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-slate-600">
+                            <span className="line-clamp-2">{ilmoitus.kuvaus}</span>
+                            {ilmoitus.hylkaysSyy && (
+                              <span className="block text-xs text-slate-400 mt-1">Perustelu: {ilmoitus.hylkaysSyy}</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-slate-600 whitespace-nowrap">{ilmoitus.kasittelija || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* --- Julisteet --- */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+              <h3 className="text-lg font-bold text-slate-800 mb-1">QR-julisteet</h3>
+              <p className="text-sm text-slate-500 mb-4">
+                Jokainen juliste on oma linkkinsä. Kun juliste poistetaan käytöstä, sen kautta ei voi
+                enää lähettää ilmoituksia — siksi kannattaa tehdä oma juliste jokaiseen paikkaan.
+              </p>
+
+              {saaModeroida && (
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                    <div className="flex-1 min-w-0">
+                      <label htmlFor="juliste-nimi" className="block text-xs text-slate-500 font-medium mb-1">
+                        Julisteen sijainti
+                      </label>
+                      <input
+                        id="juliste-nimi"
+                        type="text"
+                        value={julisteNimi}
+                        onChange={(e) => setJulisteNimi(e.target.value)}
+                        placeholder="Esimerkiksi: Portti 3, itäaita"
+                        className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="juliste-vrk" className="block text-xs text-slate-500 font-medium mb-1">
+                        Voimassa
+                      </label>
+                      <select
+                        id="juliste-vrk"
+                        value={julisteVrk}
+                        onChange={(e) => setJulisteVrk(e.target.value)}
+                        className="px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white"
+                      >
+                        <option value="7">7 vrk</option>
+                        <option value="30">30 vrk</option>
+                        <option value="90">90 vrk</option>
+                        <option value="180">180 vrk</option>
+                      </select>
+                    </div>
+                    <button
+                      onClick={luoJuliste}
+                      disabled={julisteLuodaan}
+                      className="inline-flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors shrink-0"
+                    >
+                      <Plus size={16} />
+                      {julisteLuodaan ? 'Luodaan…' : 'Luo juliste'}
+                    </button>
+                  </div>
+                  {julisteVirhe && <p className="text-sm text-rose-600 mt-2">{julisteVirhe}</p>}
+                </div>
+              )}
+
+              {julisteet.length === 0 ? (
+                <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                  Tapahtumalle ei ole vielä tehty yhtään ilmoitusjulistetta.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {julisteet.map((lomake) => {
+                    const tila = julisteenTila(lomake);
+                    return (
+                      <div key={lomake.id} className="flex flex-wrap items-center justify-between gap-3 border border-slate-200 rounded-lg p-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-800 truncate">{lomake.nimi}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {lomake.expiresAt
+                              ? `Voimassa ${new Date(lomake.expiresAt).toLocaleString('fi-FI')} asti`
+                              : 'Ei vanhentumisaikaa'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-bold border ${tila.luokka}`}>
+                            {tila.teksti}
+                          </span>
+                          {!lomake.revokedAt && saaModeroida && (
+                            <>
+                              <button
+                                onClick={() => naytaJulisteQr(lomake)}
+                                className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
+                              >
+                                <QrCode size={14} />
+                                Näytä QR
+                              </button>
+                              <button
+                                onClick={() => peruutaJuliste(lomake)}
+                                title="Poista juliste käytöstä"
+                                className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded-md transition-colors"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {avattuJuliste && (
+                <div className="mt-4 border-2 border-indigo-200 bg-indigo-50 rounded-xl p-4">
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <h4 className="font-bold text-slate-800">{avattuJuliste.lomake?.nimi}</h4>
+                    <button
+                      onClick={() => setAvattuJuliste(null)}
+                      className="text-slate-400 hover:text-slate-600 hover:bg-white p-1 rounded-lg transition-colors shrink-0"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    <div className="bg-white border border-indigo-200 rounded-lg p-3 shrink-0 self-start">
+                      <QrKoodi teksti={avattuJuliste.url} koko={180} alt={`Ilmoituslomakkeen QR-koodi: ${avattuJuliste.lomake?.nimi || ''}`} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-1">Julisteen osoite</p>
+                      <code className="block bg-white border border-indigo-200 rounded-lg px-3 py-2 text-xs font-mono break-all text-slate-900">
+                        {avattuJuliste.url}
+                      </code>
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        <button
+                          onClick={() => tulostaJuliste(avattuJuliste.lomake, avattuJuliste.url)}
+                          className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors"
+                        >
+                          <Printer size={16} />
+                          Tulosta juliste
+                        </button>
+                        <button
+                          onClick={() => navigator.clipboard?.writeText(avattuJuliste.url)}
+                          className="text-sm font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 px-4 py-2 rounded-lg transition-colors"
+                        >
+                          Kopioi osoite
+                        </button>
+                      </div>
+                      <div className="bg-white border border-amber-200 rounded-lg p-3 flex gap-2.5 mt-3">
+                        <Info size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                        <p className="text-xs text-slate-700 leading-relaxed">
+                          Kuka tahansa julisteen näkevä voi lähettää ilmoituksen. Se on tarkoitus —
+                          suoja on siinä, että ilmoitukset käydään läpi täällä eikä yksikään niistä
+                          ole kirjaus ennen hyväksyntää.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
       case 'report_list':
         return (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">

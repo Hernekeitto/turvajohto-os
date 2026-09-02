@@ -62,6 +62,10 @@ export const POIKKEAMATYYPIT = [
   'damage',
   'guard_action',
   'guard_jvreport',
+  // Hyväksytty yleisöilmoitus: havainto joka on otettu käsittelyyn, joten sillä on
+  // oltava tila jonka voi sulkea. Migraatioskriptin listassa tätä ei ole eikä tarvitse
+  // olla — se korjasi vanhat kirjaukset, ja 'public' on uusi tyyppi.
+  'public',
 ];
 
 export const onPoikkeama = (kirjaus: any) => POIKKEAMATYYPIT.includes(kirjaus?.typeId);

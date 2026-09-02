@@ -93,6 +93,65 @@ export const tulostusDokumentti = ({ otsikko, tunniste, meta, kentat, huomio, al
   ${alatunniste ? `<div class="alatunniste">${htmlTeksti(alatunniste)}</div>` : ''}
 </div></body></html>`;
 
+// ---------------------------------------------------------------------------
+// Yleisöilmoituksen juliste (A4)
+//
+// Eri dokumentti kuin raporttituloste eikä sen variantti: tämä ei ole asiakirja jota
+// arkistoidaan vaan kyltti joka luetaan kolmen metrin päästä. Siksi oma taittonsa —
+// iso QR-koodi, muutama sana ja hätänumero — eikä metatietoja, lakiviitteitä tai
+// lomaketunnusta.
+//
+// Juliste tulostetaan mustavalkoisena tarkoituksella: se päätyy toimiston
+// lasertulostimeen, ja värillinen tausta söisi väriainetta ja heikentäisi QR-koodin
+// kontrastia.
+// ---------------------------------------------------------------------------
+const JULISTE_TYYLIT = `
+  @page { size: A4 portrait; margin: 14mm; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #000; margin: 0; }
+  .arkki { display: flex; flex-direction: column; align-items: center; text-align: center;
+    min-height: 269mm; padding: 4mm 0; }
+  .yla { font-size: 12pt; letter-spacing: .18em; text-transform: uppercase; }
+  h1 { font-size: 40pt; line-height: 1.05; margin: 6mm 0 4mm; }
+  .ohje { font-size: 18pt; margin: 0 0 8mm; max-width: 150mm; }
+  .qr { border: 2px solid #000; padding: 5mm; }
+  .qr img { display: block; width: 95mm; height: 95mm; }
+  .osoite { font-family: ui-monospace, "Courier New", monospace; font-size: 11pt;
+    margin: 5mm 0 0; word-break: break-all; max-width: 150mm; }
+  .osoite span { display: block; font-family: inherit; font-size: 10pt; margin-bottom: 1mm; }
+  .hata { margin-top: auto; border: 3px solid #000; padding: 4mm 8mm; font-size: 20pt; font-weight: 700; }
+  .paikka { margin-top: 6mm; font-size: 10pt; }
+  @media screen {
+    body { background: #f1f5f9; padding: 20px; }
+    .arkki { background: #fff; width: 210mm; margin: 0 auto; padding: 14mm;
+      box-shadow: 0 2px 12px rgba(15, 23, 42, .12); }
+  }
+`;
+
+type JulisteOsat = {
+  tapahtuma: string;
+  // Julisteen fyysinen sijainti ("Portti 3, itäaita"). Painetaan pienellä alareunaan:
+  // se on ylläpitäjää varten, jotta oikea juliste löydetään maastosta kun se pitää
+  // vaihtaa tai poistaa.
+  paikka: string;
+  osoite: string;
+  qrDataUri: string;
+};
+
+export const julisteDokumentti = ({ tapahtuma, paikka, osoite, qrDataUri }: JulisteOsat) => `<!doctype html>
+<html lang="fi"><head><meta charset="utf-8"><title>${htmlTeksti(`Ilmoitusjuliste – ${paikka}`)}</title>
+<style>${JULISTE_TYYLIT}</style></head><body>
+<div class="arkki">
+  <div class="yla">${htmlTeksti(tapahtuma)}</div>
+  <h1>Huomasitko jotain?</h1>
+  <p class="ohje">Kerro siitä turvallisuushenkilöstölle. Skannaa koodi puhelimen kameralla.</p>
+  <div class="qr"><img src="${htmlTeksti(qrDataUri)}" alt=""></div>
+  <p class="osoite"><span>Tai kirjoita osoite selaimeen:</span>${htmlTeksti(osoite)}</p>
+  <div class="hata">Hätätilanteessa soita 112</div>
+  <p class="paikka">${htmlTeksti(paikka)}</p>
+</div></body></html>`;
+
 // Tulostaa dokumentin näkymättömän iframen kautta. Tässä EI käytetä
 // window.openia: sovelluksen sisäinen selain ja moni työpaikkaympäristö estää
 // ponnahdusikkunat oletuksena, jolloin koko toiminto katkeaisi. Iframe toimii
