@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import {
   MapPin, Phone, FileText, Download, GraduationCap, ClipboardList,
-  Check, X, Eye, EyeOff, ShieldAlert,
+  Check, X, Eye, EyeOff, ShieldAlert, Route,
 } from 'lucide-react';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { muotoileTunniste } from '../shared/tunnisteet';
 import { muotoileTavut } from '../shared/muotoilu';
-import type { GuardRaportti, Kohde, KohteenTiedosto, TehtavaSuoritus } from './tyypit';
+import type { GuardRaportti, Kohde, KohteenTiedosto, TehtavaSuoritus, Kierros } from './tyypit';
 
 // Kohteen tiedot: koottu näkymä siitä mitä kohteessa on ja mitä siellä on tapahtunut.
 // EI kohteen perustietojen muokkausnäkymä — se on KohteenHallinta, ja tämä on
@@ -46,10 +46,13 @@ type Props = {
   tiedostot: KohteenTiedosto[];
   suoritukset: TehtavaSuoritus[];
   raportit: GuardRaportti[];
+  // Kierrokset ovat koosteessa mukana, koska "mita kohteessa on tapahtunut" on juuri se
+  // kysymys johon kierroslokilla vastataan: kuka kavi, milloin ja kaytiinko kaikki pisteet.
+  kierrokset: Kierros[];
   onTakaisin: () => void;
 };
 
-export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, onTakaisin }: Props) => {
+export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, kierrokset, onTakaisin }: Props) => {
   const [avattu, setAvattu] = useState<string | null>(null);
 
   const omatSuoritukset = suoritukset
@@ -58,6 +61,9 @@ export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, onTakai
   const omatRaportit = raportit
     .filter((r) => r.siteId === kohde.id)
     .sort((a, b) => ((a.luotu || a.date) < (b.luotu || b.date) ? 1 : -1));
+  const omatKierrokset = kierrokset
+    .filter((k) => k.siteId === kohde.id)
+    .sort((a, b) => (a.alkoi < b.alkoi ? 1 : -1));
   const omatTiedostot = tiedostot.filter((t) => t.siteId === kohde.id);
   const perehdytykset = kohde.perehdytykset || [];
 
@@ -163,6 +169,47 @@ export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, onTakai
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-surface border border-line rounded-xl p-5 mb-6">
+        <h3 className="text-sm font-bold text-ink mb-3 flex items-center gap-2">
+          <Route size={16} className="text-accent" />
+          Kierrokset ({omatKierrokset.length})
+        </h3>
+        {omatKierrokset.length === 0 ? (
+          <p className="text-sm text-ink-muted">Kohteessa ei ole vielä kuljettu kierroksia.</p>
+        ) : (
+          <div className="divide-y divide-line-soft -mx-5">
+            {omatKierrokset.slice(0, 20).map((k) => {
+              const kuitatut = k.pisteet.filter((p) => p.kuitattu).length;
+              return (
+                <div key={k.id} className="px-5 py-3 flex items-start gap-2">
+                  {k.tila === 'valmis' ? (
+                    <Check size={15} className="text-success shrink-0 mt-0.5" />
+                  ) : (
+                    <X size={15} className={`shrink-0 mt-0.5 ${k.tila === 'kesken' ? 'text-warning' : 'text-danger'}`} />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-ink">{k.templateNimi}</p>
+                    <p className="text-xs text-ink-muted">
+                      {muotoileAika(k.alkoi)} · {k.vartija} · {kuitatut}/{k.pisteet.length} pistettä
+                      {k.tila === 'kesken' ? ' · kesken' : k.tila === 'keskeytetty' ? ' · keskeytetty' : ''}
+                    </p>
+                    {/* Keskeytyksen syy on koosteen olennaisin yksittäinen tieto: se
+                        kertoo miksi kierros jäi vajaaksi, eikä sitä pidä joutua etsimään
+                        toisesta näkymästä. */}
+                    {k.keskeytysSyy && (
+                      <p className="text-xs text-ink-body mt-1 leading-relaxed">Syy: {k.keskeytysSyy}</p>
+                    )}
+                    {k.huomiot && (
+                      <p className="text-xs text-ink-body mt-1 leading-relaxed">{k.huomiot}</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

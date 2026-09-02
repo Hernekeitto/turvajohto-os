@@ -25,6 +25,13 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   { id: 'guard_site_info', label: 'Kohteen tiedot (kooste)' },
   // Työvuoron tehtävät: vartija kuittaa kohteelle määritellyt tehtävät suoritetuiksi.
   { id: 'guard_tasks', label: 'Työvuoron tehtävät' },
+  // Kierrokset. KAKSI erillistä solmua tarkoituksella: pohjan laatiminen on esimiehen
+  // työtä (mitkä pisteet kierretään ja missä järjestyksessä), kierroksen kulkeminen
+  // vartijan. Sama henkilö ei useinkaan tee molempia, eikä vartijan pidä voida muokata
+  // sitä kierrosta jota häntä pyydetään kulkemaan — muuten "kierros tehty kokonaan"
+  // tarkoittaisi vain sitä, että vartija poisti pisteet joita ei ehtinyt käydä.
+  { id: 'guard_patrol_templates', label: 'Kierrospohjat ja tarkistuspisteet' },
+  { id: 'guard_patrols', label: 'Kierroksen kulkeminen' },
   // Raportointi. Omat solmunsa lomaketyypeittäin samaan tapaan kuin tapahtumapuolen
   // tike_form_*-solmut: vartijan toimenpide on päivittäistä kirjaamista, kun taas
   // tapahtumailmoitus sisältää LYTP:n nojalla kirjattavat kohdehenkilötiedot ja voi

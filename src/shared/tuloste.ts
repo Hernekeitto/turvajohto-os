@@ -152,6 +152,65 @@ export const julisteDokumentti = ({ tapahtuma, paikka, osoite, qrDataUri }: Juli
   <p class="paikka">${htmlTeksti(paikka)}</p>
 </div></body></html>`;
 
+// ---------------------------------------------------------------------------
+// Tarkistuspisteiden QR-tarrat (A4-arkki)
+//
+// Eri dokumentti kuin yleisöilmoituksen juliste: juliste on yksi iso kyltti aidassa,
+// tarra on pieni ja niitä on monta arkilla. Tarra teipataan oveen tai seinään ja se
+// luetaan puhelimella 20 sentin päästä, joten koodi saa olla pieni — mutta pisteen NIMI
+// on isolla, koska vartijan on nähtävä yhdellä silmäyksellä onko hän oikean tarran
+// äärellä.
+//
+// Leikkausviivat ovat katkoviivakehys jokaisen tarran ympärillä. Ne eivät ole koriste:
+// arkki leikataan saksilla, ja ilman viivaa leikkaus osuu koodin päälle.
+// ---------------------------------------------------------------------------
+const TARRA_TYYLIT = `
+  @page { size: A4 portrait; margin: 10mm; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #000; margin: 0; }
+  .arkki { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
+  .tarra { border: 1px dashed #999; padding: 5mm; text-align: center; page-break-inside: avoid;
+    display: flex; flex-direction: column; align-items: center; }
+  .tarra .kohde { font-size: 8pt; letter-spacing: .12em; text-transform: uppercase; color: #444; }
+  .tarra h2 { font-size: 17pt; margin: 2mm 0 3mm; line-height: 1.15; }
+  .tarra img { display: block; width: 45mm; height: 45mm; }
+  .tarra .pohja { font-size: 8pt; color: #444; margin-top: 3mm; }
+  .tarra .ohje { font-size: 8pt; color: #444; margin-top: 1mm; }
+  .otsikko { grid-column: 1 / -1; border-bottom: 2px solid #000; padding-bottom: 3mm; margin-bottom: 2mm; }
+  .otsikko h1 { font-size: 14pt; margin: 0; }
+  .otsikko p { font-size: 9pt; color: #444; margin: 1mm 0 0; }
+  @media screen {
+    body { background: #f1f5f9; padding: 20px; }
+    .arkki { background: #fff; width: 210mm; margin: 0 auto; padding: 10mm;
+      box-shadow: 0 2px 12px rgba(15, 23, 42, .12); }
+  }
+  @media print { .otsikko { border-bottom-color: #000; } }
+`;
+
+type TarraOsat = {
+  kohdeNimi: string;
+  pohjaNimi: string;
+  tarrat: { nimi: string; qrDataUri: string }[];
+};
+
+export const tarraDokumentti = ({ kohdeNimi, pohjaNimi, tarrat }: TarraOsat) => `<!doctype html>
+<html lang="fi"><head><meta charset="utf-8"><title>${htmlTeksti(`Tarkistuspisteet – ${pohjaNimi}`)}</title>
+<style>${TARRA_TYYLIT}</style></head><body>
+<div class="arkki">
+  <div class="otsikko">
+    <h1>${htmlTeksti(pohjaNimi)}</h1>
+    <p>${htmlTeksti(kohdeNimi)} · ${tarrat.length} tarkistuspistettä · leikkaa katkoviivoja pitkin</p>
+  </div>
+  ${tarrat.map((t) => `<div class="tarra">
+    <div class="kohde">${htmlTeksti(kohdeNimi)}</div>
+    <h2>${htmlTeksti(t.nimi)}</h2>
+    <img src="${htmlTeksti(t.qrDataUri)}" alt="">
+    <div class="pohja">${htmlTeksti(pohjaNimi)}</div>
+    <div class="ohje">Skannaa puhelimen kameralla</div>
+  </div>`).join('')}
+</div></body></html>`;
+
 // Tulostaa dokumentin näkymättömän iframen kautta. Tässä EI käytetä
 // window.openia: sovelluksen sisäinen selain ja moni työpaikkaympäristö estää
 // ponnahdusikkunat oletuksena, jolloin koko toiminto katkeaisi. Iframe toimii

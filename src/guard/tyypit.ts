@@ -125,5 +125,71 @@ export type GuardRaportti = {
   corrections?: { id: string; at: string; by: string; text: string }[];
 };
 
+// --- Kierrokset ja pohjamoottori (erä 5) -------------------------------------------
+
+// Kierrospohjan tarkistuspiste. `token` EI koskaan tule selaimeen listahaussa: se
+// haetaan erikseen tarrojen tulostusta varten (/api/pohjat/:id/tarrat), samoin kuin
+// jakolinkin ja ilmoitusjulisteen token.
+export type Tarkistuspiste = {
+  id: string;
+  nimi: string;
+  kuvaus?: string;
+  jarjestys: number;
+  // Pisteen tiedetty sijainti. Käytetään vain jos sijaintipakotus on päällä; muuten se
+  // on vertailuluku jolla skannauksen etäisyys lasketaan todisteeksi.
+  gps?: { lat: number; lon: number } | null;
+};
+
+// Pohja (templates-kokoelma). `kind` erottaa lajit — erä 8 tuo samaan kokoelmaan
+// skenaariopohjat, ohjepankin ja run sheetin.
+export type Kierrospohja = {
+  id: string;
+  kind: 'patrol';
+  // Omistaja on kohteen id ja samalla oikeusavain (server/permissions.js: eventScoped).
+  ownerId: string;
+  nimi: string;
+  kuvaus?: string;
+  // Kasvaa vain kun pisteet muuttuvat, ei kun nimeä korjataan.
+  versio: number;
+  pisteet: Tarkistuspiste[];
+  // Oletuksena pois (päätös V2 = a): sijainti tallennetaan todisteeksi mutta ei estä
+  // kuittausta, koska puhelimen paikannus on rakennuksen seinustalla epäluotettava.
+  sijaintiPakotus?: boolean;
+  sietorajaM?: number;
+  luotu?: string;
+  luoja?: string;
+  muokattu?: string;
+  arkistoitu?: string | null;
+};
+
+export type KierroksenPiste = {
+  pisteId: string;
+  nimi: string;
+  odotettuGps?: { lat: number; lon: number } | null;
+  kuitattu: string | null;
+  tapa: 'qr' | 'kasin' | null;
+  gps?: { lat: number; lon: number } | null;
+  etaisyysM?: number | null;
+  huomio?: string;
+};
+
+// Kierroksen suoritus (patrolRuns). PALVELIMEN ylläpitämä kokoelma: kaikki muutokset
+// menevät /api/kierros-reittien kautta, koska kierroksen säännöt (vajaata ei voi sulkea,
+// keskeytys vaatii syyn, kuittaus on peruuttamaton) ovat sen ainoa sisältö.
+export type Kierros = {
+  id: string;
+  siteId: string;
+  templateId: string;
+  templateNimi: string;
+  templateVersio: number;
+  vartija: string;
+  alkoi: string;
+  paattyi: string | null;
+  tila: 'kesken' | 'valmis' | 'keskeytetty';
+  keskeytysSyy?: string;
+  huomiot?: string;
+  pisteet: KierroksenPiste[];
+};
+
 export const uusiId = () =>
   (crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);

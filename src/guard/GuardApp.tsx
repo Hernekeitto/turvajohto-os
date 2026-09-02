@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
@@ -9,7 +9,12 @@ import { Tehtavat } from './Tehtavat';
 import { Raportit } from './Raportit';
 import { KohteenTiedot } from './KohteenTiedot';
 import { Asetukset } from './Asetukset';
-import { uusiId, type GuardRaportti, type Kohde, type KohteenTiedosto, type RaporttiTyyppi, type TehtavaSuoritus } from './tyypit';
+import { Kierrospohjat } from './Kierrospohjat';
+import { Kierros } from './Kierros';
+import {
+  uusiId, type GuardRaportti, type Kohde, type KohteenTiedosto, type RaporttiTyyppi,
+  type TehtavaSuoritus, type Kierrospohja, type Kierros as KierrosTietue,
+} from './tyypit';
 
 // Turvajohto GUARD -puolen juurikomponentti. Vastaa näkymien välisestä vaihdosta ja
 // kohdedatan lataamisesta; yksittäiset näkymät ovat omissa tiedostoissaan, jotta tänne
@@ -43,6 +48,13 @@ export default function GuardApp() {
   const saaNahdaTehtavat = isAdmin || canView(perms, null, 'guard_tasks');
   const saaKuitata = isAdmin || canEdit(perms, null, 'guard_tasks');
   const saaNahdaTiedot = isAdmin || canView(perms, null, 'guard_site_info');
+  // Kierroksilla on kaksi eri oikeutta tarkoituksella: pohjan laatiminen on esimiehen
+  // työtä, kierroksen kulkeminen vartijan. Jos vartija saisi muokata pohjaa, "kierros
+  // tehty kokonaan" tarkoittaisi vain sitä että hän poisti pisteet joita ei ehtinyt käydä.
+  const saaNahdaPohjat = isAdmin || canView(perms, null, 'guard_patrol_templates');
+  const saaMuokataPohjia = isAdmin || canEdit(perms, null, 'guard_patrol_templates');
+  const saaNahdaKierrokset = isAdmin || canView(perms, null, 'guard_patrols');
+  const saaKiertaa = isAdmin || canEdit(perms, null, 'guard_patrols');
   // Raportointi on jaettu lomaketyypeittäin: tapahtumailmoitus sisältää kohdehenkilötiedot
   // ja voi olla eri joukolla ihmisiä kuin päivittäinen toimenpidekirjaus.
   const saaKirjataToimenpiteen = isAdmin || canEdit(perms, null, 'guard_report_action');
@@ -78,6 +90,17 @@ export default function GuardApp() {
   const [raporttiKohde, setRaporttiKohde] = useState<{ kohde: Kohde; tyyppi: RaporttiTyyppi } | null>(null);
   const [tietoKohde, setTietoKohde] = useState<Kohde | null>(null);
   const [asetuksissa, setAsetuksissa] = useState(false);
+  // Kierrospohjat ja kierrokset. Kumpaakaan ei tallenneta täältä kokoelmareitin kautta:
+  // pohjilla token syntyy palvelimella, kierroksilla säännöt ovat palvelimella.
+  const [pohjat, setPohjat] = useState<Kierrospohja[]>([]);
+  const [kierrokset, setKierrokset] = useState<KierrosTietue[]>([]);
+  const [pohjaKohde, setPohjaKohde] = useState<Kohde | null>(null);
+  const [kierrosKohde, setKierrosKohde] = useState<Kohde | null>(null);
+  // Skannauksen tulos: puhelimen kamera avasi /guard?piste=<token>, ja palvelin kertoo
+  // mitä siitä seurasi. Näytetään bannerina, koska käyttäjä tuli sivulle kameran kautta
+  // eikä hän tiedä mitä sovelluksessa tapahtui.
+  const [skannaus, setSkannaus] = useState<{ tyyppi: 'ok' | 'virhe'; viesti: string } | null>(null);
+  const skannausTehty = useRef(false);
 
   useEffect(() => {
     if (!saaNahda) return;
@@ -139,6 +162,100 @@ export default function GuardApp() {
       })
       .catch(() => { /* virhe näkyy tyhjänä raporttilistana */ });
   }, [saaNahdaRaportit]);
+
+  // Kierrospohjat ja kierrokset haetaan erikseen, koska niiden oikeudet ovat eri solmuja
+  // kuin kohteiden. Molemmat luetaan normaalilta kokoelmareitiltä (kirjoitus ei kulje
+  // sitä kautta), joten palvelin suodattaa ne käyttäjän oikeuksien mukaan.
+  const haePohjat = () => {
+    fetch('/api/data/templates', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => { if (res && res.ok === true && Array.isArray(res.data)) setPohjat(res.data); })
+      .catch(() => { /* virhe näkyy tyhjänä pohjalistana */ });
+  };
+
+  const haeKierrokset = () => {
+    fetch('/api/data/patrolRuns', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => { if (res && res.ok === true && Array.isArray(res.data)) setKierrokset(res.data); })
+      .catch(() => { /* virhe näkyy tyhjänä kierroslistana */ });
+  };
+
+  useEffect(() => {
+    if (saaNahdaPohjat || saaNahdaKierrokset) haePohjat();
+    if (saaNahdaKierrokset) haeKierrokset();
+  }, [saaNahdaPohjat, saaNahdaKierrokset]);
+
+  // Palvelimelta palautuva kierros korvaa listassa olevan. Tila ei ole tässä
+  // "totuus" vaan näkymä palvelimen tilaan: jokainen muutos on jo tallennettu kun se
+  // saapuu tänne.
+  const paivitaKierros = (kierros: KierrosTietue) => {
+    setKierrokset((edelliset) => {
+      const tunnettu = edelliset.some((k) => k.id === kierros.id);
+      return tunnettu ? edelliset.map((k) => (k.id === kierros.id ? kierros : k)) : [kierros, ...edelliset];
+    });
+  };
+
+  // QR-tarran skannaus. Puhelimen oma kamera avaa /guard?piste=<token>, joten sovellus
+  // näkee tokenin osoiteriviltä. Palvelin selvittää mihin pohjaan piste kuuluu ja onko
+  // vartijalla siihen kesken oleva kierros — selain ei tiedä kummastakaan mitään.
+  //
+  // Token poistetaan osoiteriviltä heti: se ei ole salaisuus, mutta osoiterivillä
+  // roikkuva token johtaisi kaksoiskuittausyritykseen jokaisella sivun latauksella.
+  useEffect(() => {
+    // Odotetaan kohdelistaa: ilman sitä oikeaa kierrosnäkymää ei osata avata. Token
+    // luetaan vasta täällä, koska sen poistaminen osoiteriviltä liian aikaisin
+    // hukkaisi koko skannauksen. Ref varmistaa yhden ajon: kohdelista on riippuvuus
+    // (sitä luetaan alla), mutta skannaus saa tapahtua vain kerran.
+    if (!ladattu || skannausTehty.current) return;
+    const token = new URLSearchParams(window.location.search).get('piste');
+    if (!token) return;
+    skannausTehty.current = true;
+    window.history.replaceState(null, '', window.location.pathname);
+    if (!saaKiertaa) {
+      setSkannaus({ tyyppi: 'virhe', viesti: 'Sinulla ei ole oikeutta kuitata kierrospisteitä.' });
+      return;
+    }
+    // EI peruutuslippua eikä siivousfunktiota. Se olisi tavanomainen tapa suojata
+    // purettua komponenttia, mutta tässä se rikkoi koko toiminnon: StrictMode ajaa
+    // efektin kehityksessä kahdesti, jolloin ensimmäisen ajon siivous perui juuri sen
+    // ainoan kuittauksen — piste kuitattiin palvelimella mutta käyttöliittymä ei
+    // kertonut siitä mitään. Kertaluontoisuus tulee refistä, ja tämä komponentti on
+    // sovelluksen juuri joka ei purkaudu kesken kaiken.
+    const kuittaa = async () => {
+      const gps = await new Promise<{ lat: number; lon: number } | null>((valmis) => {
+        if (!navigator.geolocation) return valmis(null);
+        navigator.geolocation.getCurrentPosition(
+          (s) => valmis({ lat: s.coords.latitude, lon: s.coords.longitude }),
+          () => valmis(null),
+          { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+        );
+      });
+      try {
+        const res = await fetch('/api/kierros/skannaus', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ token, gps }),
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data?.ok) {
+          paivitaKierros(data.kierros);
+          setSkannaus({ tyyppi: 'ok', viesti: `Tarkistuspiste "${data.pisteNimi}" kuitattu.` });
+          const kohde = kohteet.find((k) => k.id === data.kierros.siteId);
+          if (kohde) setKierrosKohde(kohde);
+        } else {
+          setSkannaus({ tyyppi: 'virhe', viesti: data?.error || 'Kuittaus epäonnistui.' });
+          // Ehdotus tulee kun kierrosta ei ole vielä aloitettu: viedään käyttäjä sen
+          // kohteen kierrosnäkymään, jotta aloitus on yhden painalluksen päässä.
+          const kohde = data?.ehdotus && kohteet.find((k) => k.id === data.ehdotus.siteId);
+          if (kohde) setKierrosKohde(kohde);
+        }
+      } catch {
+        setSkannaus({ tyyppi: 'virhe', viesti: 'Kuittaus epäonnistui: ei yhteyttä palvelimeen.' });
+      }
+    };
+    kuittaa();
+  }, [ladattu, saaKiertaa, kohteet]);
 
   // Raportti lisätään uutena tietueena samalla periaatteella kuin tehtäväsuoritus:
   // kirjattua raporttia ei muokata jälkikäteen, vaan tarvittaessa kirjataan uusi.
@@ -362,7 +479,7 @@ export default function GuardApp() {
     <Ylapalkki
       tuoteNimi="Turvajohto GUARD"
       alaotsikko={alaotsikko}
-      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); }}
+      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); }}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}
@@ -396,6 +513,8 @@ export default function GuardApp() {
         asetuksissa ? 'Sovellusasetukset'
           : raporttiKohde ? 'Raportointi'
           : tietoKohde ? 'Kohteen tiedot'
+          : kierrosKohde ? 'Kierrokset'
+          : pohjaKohde ? 'Kierrospohjat'
           : tehtavaKohde ? 'Työvuoron tehtävät'
           : lomake ? (lomake.id ? 'Kohteen hallinta' : 'Uusi kohde')
           : 'Kohdevalinta'
@@ -407,6 +526,25 @@ export default function GuardApp() {
             <p className="mb-6 text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">
               {virhe}
             </p>
+          )}
+
+          {/* Skannauksen tulos. Oma bannerinsa eikä `virhe`: käyttäjä tuli sivulle
+              puhelimen kameralla eikä tiedä mitä sovelluksessa tapahtui, joten myös
+              onnistuminen on kerrottava. */}
+          {skannaus && (
+            <div
+              className={`mb-6 flex items-start gap-3 rounded-lg px-4 py-3 border ${skannaus.tyyppi === 'ok' ? 'bg-success-soft border-success/30 text-success-ink' : 'bg-danger-soft border-danger/30 text-danger-ink'}`}
+            >
+              <QrCode size={18} className="shrink-0 mt-0.5" />
+              <p className="text-sm flex-1">{skannaus.viesti}</p>
+              <button
+                type="button"
+                onClick={() => setSkannaus(null)}
+                className="text-xs font-medium underline shrink-0"
+              >
+                Sulje
+              </button>
+            </div>
           )}
 
           {asetuksissa ? (
@@ -430,7 +568,25 @@ export default function GuardApp() {
               tiedostot={tiedostot}
               suoritukset={suoritukset}
               raportit={raportit}
+              kierrokset={kierrokset}
               onTakaisin={() => setTietoKohde(null)}
+            />
+          ) : kierrosKohde ? (
+            <Kierros
+              kohde={kierrosKohde}
+              pohjat={pohjat}
+              kierrokset={kierrokset}
+              saaKiertaa={saaKiertaa}
+              onPaivita={paivitaKierros}
+              onTakaisin={() => setKierrosKohde(null)}
+            />
+          ) : pohjaKohde ? (
+            <Kierrospohjat
+              kohde={pohjaKohde}
+              pohjat={pohjat}
+              saaMuokata={saaMuokataPohjia}
+              onTallennettu={haePohjat}
+              onTakaisin={() => setPohjaKohde(null)}
             />
           ) : tehtavaKohde ? (
             <Tehtavat
@@ -557,6 +713,23 @@ export default function GuardApp() {
                             Tehtävät
                           </button>
                         )}
+                        {saaNahdaKierrokset && (
+                          <button
+                            type="button"
+                            onClick={() => setKierrosKohde(kohde)}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
+                          >
+                            <Route size={14} />
+                            Kierros
+                            {/* Kesken oleva kierros näkyy kortissa: unohtunut avoin kierros
+                                on yleisin tapa saada vuoro näyttämään tekemättömältä. */}
+                            {kierrokset.some((k) => k.siteId === kohde.id && k.tila === 'kesken') && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
+                                kesken
+                              </span>
+                            )}
+                          </button>
+                        )}
                         {saaKirjataToimenpiteen && (
                           <button
                             type="button"
@@ -589,28 +762,42 @@ export default function GuardApp() {
                         )}
                       </div>
 
-                      {saaMuokata && (
+                      {(saaMuokata || saaNahdaPohjat) && (
                         <div className="flex gap-2 pt-3 border-t border-line-soft">
-                          <button
-                            type="button"
-                            onClick={() => setLomake({
-                              ...kohde,
-                              perehdytykset: [...(kohde.perehdytykset || [])],
-                              tehtavat: (kohde.tehtavat || []).map((t) => ({ ...t, kohdat: [...t.kohdat] })),
-                            })}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-body hover:text-accent transition-colors"
-                          >
-                            <Pencil size={14} />
-                            Hallitse
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPoistettava(kohde)}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-muted hover:text-danger transition-colors ml-auto"
-                          >
-                            <Trash2 size={14} />
-                            Poista
-                          </button>
+                          {saaNahdaPohjat && (
+                            <button
+                              type="button"
+                              onClick={() => setPohjaKohde(kohde)}
+                              className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-body hover:text-accent transition-colors"
+                            >
+                              <QrCode size={14} />
+                              Kierrospohjat
+                            </button>
+                          )}
+                          {saaMuokata && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setLomake({
+                                  ...kohde,
+                                  perehdytykset: [...(kohde.perehdytykset || [])],
+                                  tehtavat: (kohde.tehtavat || []).map((t) => ({ ...t, kohdat: [...t.kohdat] })),
+                                })}
+                                className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-body hover:text-accent transition-colors"
+                              >
+                                <Pencil size={14} />
+                                Hallitse
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPoistettava(kohde)}
+                                className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-muted hover:text-danger transition-colors ml-auto"
+                              >
+                                <Trash2 size={14} />
+                                Poista
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>

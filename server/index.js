@@ -1219,6 +1219,58 @@ function kerroKierroksesta(kierros, action) {
 // Tarkistuspisteen kuittaus. Piste voidaan yksilöidä joko id:llä (lista näkymässä) tai
 // tokenilla (QR-tarra puhelimen kameralla) — jälkimmäinen on se tapa jolla tämä
 // oikeasti tehdään kentällä.
+// Tarran skannaus ilman että selain tietää mihin kierrokseen piste kuuluu.
+//
+// Näin tämä oikeasti tehdään kentällä: vartija skannaa tarran PUHELIMEN OMALLA
+// kameralla, joka avaa selaimen osoitteeseen /guard?piste=<token>. Sovellus ei tuolloin
+// tiedä pisteestä mitään — tokenit eivät kulje listahaussa — joten palvelin selvittää
+// itse mihin pohjaan piste kuuluu ja onko vartijalla siihen kesken oleva kierros.
+//
+// Selaimeen ei siis tarvita QR-lukijakirjastoa eikä kameralupaa. Sama ratkaisu toimii
+// myös vanhoilla puhelimilla, joissa selaimen BarcodeDetector puuttuu.
+app.post('/api/kierros/skannaus', requireAuth, guardPortti, (req, res) => {
+  const pohjat = readCollection('templates') || [];
+  const osuma = etsiPisteTokenilla(pohjat, req.body?.token);
+  if (!osuma) {
+    return res.status(404).json({ ok: false, error: 'Tuntematon QR-koodi. Tarra ei kuulu yhteenkään kierrospohjaan.' });
+  }
+  const { pohja, piste } = osuma;
+  if (!saaKiertaa(req, pohja.ownerId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta kiertää tässä kohteessa.' });
+  }
+
+  const kierrokset = readCollection('patrolRuns') || [];
+  const auki = kierrokset.find(
+    (k) => k.tila === 'kesken' && k.templateId === pohja.id && k.vartija === req.username
+  );
+  if (!auki) {
+    // Ei virhe vaan tilanne: vartija skannasi ensimmäisen pisteen ennen kuin aloitti
+    // kierroksen. Kerrotaan mistä pohjasta on kyse, jotta käyttöliittymä voi tarjota
+    // aloitusta yhdellä painalluksella sen sijaan että käskisi etsimään sen itse.
+    return res.status(409).json({
+      ok: false,
+      error: `Sinulla ei ole kesken olevaa kierrosta pohjalla "${pohja.nimi}".`,
+      ehdotus: { templateId: pohja.id, pohjaNimi: pohja.nimi, siteId: pohja.ownerId, pisteNimi: piste.nimi },
+    });
+  }
+
+  const tulos = kuittaaPiste({
+    kierros: auki,
+    pisteId: piste.id,
+    tapa: 'qr',
+    gps: tarkistaGps(req.body?.gps),
+    huomio: req.body?.huomio,
+    pakotaSijainti: pohja.sijaintiPakotus === true,
+    sietorajaM: pohja.sietorajaM ?? OLETUS_SIETORAJA_M,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('patrolRuns', kierrokset.map((k) => (k.id === auki.id ? tulos.kierros : k)));
+  logAudit({ user: req.username, action: 'patrol_checkpoint', collection: 'patrolRuns', recordId: auki.id, eventId: auki.siteId });
+  kerroKierroksesta(tulos.kierros, 'update');
+  res.json({ ok: true, kierros: tulos.kierros, pisteNimi: piste.nimi });
+});
+
 app.post('/api/kierros/:id/piste', requireAuth, guardPortti, (req, res) => {
   const kierrokset = readCollection('patrolRuns') || [];
   const kierros = kierrokset.find((k) => k.id === req.params.id);
