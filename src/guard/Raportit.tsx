@@ -5,6 +5,8 @@ import { Kentta } from './Kentta';
 import { paikallinenPaiva } from '../shared/ajat';
 import { lomakeRaportille } from '../shared/lomakerekisteri';
 import { SijaintiValinta } from '../shared/komponentit/SijaintiValinta';
+import { Liitteet } from '../shared/komponentit/Liitteet';
+import type { Liite } from '../shared/liitteet';
 import type { Piste } from '../shared/vyohykkeet';
 import { uusiId, type Kohde, type GuardRaportti, type RaporttiTyyppi } from './tyypit';
 
@@ -69,6 +71,11 @@ export const Raportit = ({ kohde, tyyppi, vartija, onTallenna, onTakaisin }: Pro
   // kootaan tietueeseen vasta tallennettaessa (kuten yhteenvetokin).
   const [vyohyke, setVyohyke] = useState('');
   const [piste, setPiste] = useState<Piste | null>(null);
+  // Liitteet samasta syystä kuin sijainti: ne kootaan tietueeseen vasta tallennettaessa.
+  // GUARD-puolella liitteitä ei ollut aiemmin lainkaan, vaikka kenttä oli tietueessa —
+  // vartijan tapahtumailmoitus on juuri se kirjaus jossa valokuvaa tarvitaan.
+  const [liitteet, setLiitteet] = useState<Liite[]>([]);
+  const [liitteetLataa, setLiitteetLataa] = useState(false);
   const [lomake, setLomake] = useState<GuardRaportti>({
     id: '',
     siteId: kohde.id,
@@ -114,6 +121,10 @@ export const Raportit = ({ kohde, tyyppi, vartija, onTallenna, onTakaisin }: Pro
       setVirhe('Kirjoita tapahtuman kuvaus ennen tallennusta.');
       return;
     }
+    if (liitteetLataa) {
+      setVirhe('Odota, että liitteiden lähetys valmistuu.');
+      return;
+    }
     setVirhe(null);
     setTallentaa(true);
     // Erän 1 kentät myös vartijan raportteihin: molemmat GUARD-tyypit ovat
@@ -131,7 +142,7 @@ export const Raportit = ({ kohde, tyyppi, vartija, onTallenna, onTakaisin }: Pro
       assignedTo: null,
       closedAt: null,
       closedBy: null,
-      attachments: [],
+      attachments: liitteet,
       location: { img: piste, gps: null },
       formCode: lomakepohja?.koodi ?? null,
       formVersion: lomakepohja?.pohjaVersio ?? null,
@@ -293,6 +304,15 @@ export const Raportit = ({ kohde, tyyppi, vartija, onTallenna, onTakaisin }: Pro
             placeholder="Jätä tyhjäksi, niin yhteenveto kootaan kirjatuista toimenpiteistä"
             vinkki="Näkyy kohteen tiedoissa ja raporttilistoissa."
           />
+
+          <div>
+            <p className="text-sm font-medium text-ink-strong mb-2">Liitteet</p>
+            <Liitteet
+              liitteet={liitteet}
+              onMuutos={setLiitteet}
+              onLatausTila={setLiitteetLataa}
+            />
+          </div>
         </div>
 
         <div className="flex justify-end gap-3 pt-6 mt-6 border-t border-line-soft">

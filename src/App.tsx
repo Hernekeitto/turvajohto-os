@@ -8,6 +8,8 @@ import { paikallinenPaiva, yhdistaPaivaJaAika, muotoileLaskuri, muotoileKirjautu
 import { muotoileEuro, laskeKokonaispalkka, isValidPasswordClient } from './shared/muotoilu';
 import { htmlTeksti, tulostusDokumentti, tulostaDokumentti, julisteDokumentti } from './shared/tuloste';
 import { QrKoodi, haeQrKoodi } from './shared/komponentit/QrKoodi';
+import { Liitteet } from './shared/komponentit/Liitteet';
+import type { Liite } from './shared/liitteet';
 import { jaotteleSailytysajan, tapahtumanPoistoaikataulu } from './shared/sailytysaika';
 import { DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab } from './shared/oikeudet';
 import { TILAT, VAKAVUUDET, tila as kirjauksenTila, onLukittu, onPoikkeama, uusiKorjausmerkinta } from './shared/kirjaukset';
@@ -68,9 +70,7 @@ import {
   UserCheck,
   Contact,
   Archive,
-  Camera,
   Paperclip,
-  FileCheck,
   Home,
   DoorOpen,
   CheckSquare,
@@ -730,7 +730,11 @@ export default function App() {
   }));
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showInfoModal, setShowInfoModal] = useState(false);
-  const [openedReport, setOpenedReport] = useState(null);
+  // any eikä paljas null: ilman tyyppiä tila on `never`, jolloin jokainen avatun
+  // kirjauksen kenttä on tyyppivirhe modaalissa. Kirjaus on polymorfinen (14 typeId:tä
+  // eri kentin), joten oikea tyyppi olisi oma urakkansa — tämä poistaa kolmisenkymmentä
+  // virhettä joilla ei ole mitään tekemistä varsinaisen ongelman kanssa.
+  const [openedReport, setOpenedReport] = useState<any>(null);
   // Mitkä peitetyt kentät on paljastettu juuri avatussa raportissa ({ kenttä: true }).
   // Nollataan aina kun avattu raportti vaihtuu tai modaali suljetaan, jottei paljastus
   // vahingossa periydy seuraavalle raportille.
@@ -825,6 +829,11 @@ export default function App() {
   // Tilannekeskuksen oma kommentti tapahtumailmoitukseen (TIKE:n muistilista -osio).
   // Kenttä oli aiemmin sidottamaton <textarea> ilman tilaa: teksti katosi tallennuksessa.
   const [jvrTikeComment, setJvrTikeComment] = useState('');
+  // Tapahtumailmoituksella ei ollut liitemahdollisuutta lainkaan, vaikka se on niistä
+  // kaikista se jossa todistekuvalla on eniten merkitystä: kiinniotto ja voimakeinojen
+  // käyttö ovat juuri ne tilanteet joista kysytään jälkikäteen.
+  const [jvrLiitteet, setJvrLiitteet] = useState<Liite[]>([]);
+  const [jvrLiitteetLataa, setJvrLiitteetLataa] = useState(false);
   const timeInputRef = useRef(null);
 
   // Tapahtumat (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
@@ -1022,6 +1031,8 @@ export default function App() {
 
   // JV:n / vartijan toimenpide -lomakkeen tila
   const [jvaRole, setJvaRole] = useState('Järjestyksenvalvoja');
+  const [jvaLiitteet, setJvaLiitteet] = useState<Liite[]>([]);
+  const [jvaLiitteetLataa, setJvaLiitteetLataa] = useState(false);
   const [jvaSearch, setJvaSearch] = useState('');
   const [jvaName, setJvaName] = useState('');
   const [jvaLocation, setJvaLocation] = useState('');
@@ -1063,9 +1074,11 @@ export default function App() {
   const [openKirjausTaskUrgency, setOpenKirjausTaskUrgency] = useState<TehtavaKiire>(TEHTAVA_KIIRE_OLETUS);
   const [openKirjausTime, setOpenKirjausTime] = useState('');
   const [openKirjausText, setOpenKirjausText] = useState('');
-  const [fileName, setFileName] = useState('');
-  const [fileUploadId, setFileUploadId] = useState('');
-  const [fileUploading, setFileUploading] = useState(false);
+  // Liitteet. Erässä 5 yhdestä liitteestä (attachment) siirryttiin listaan
+  // (attachments[]): kentällä tilanteesta otetaan sarja kuvia, ei yhtä. Vanha kenttä
+  // luetaan yhä tallennetuista kirjauksista, mutta uusi kirjaus ei enää kirjoita sitä.
+  const [openLiitteet, setOpenLiitteet] = useState<Liite[]>([]);
+  const [openLiitteetLataa, setOpenLiitteetLataa] = useState(false);
   const [runningNumber, setRunningNumber] = useState(100);
   const [riskRunningNumber, setRiskRunningNumber] = useState(1);
 
@@ -1076,9 +1089,8 @@ export default function App() {
   const [faActions, setFaActions] = useState('');
   const [faResources, setFaResources] = useState('');
   const [faEmployees, setFaEmployees] = useState('');
-  const [faFileName, setFaFileName] = useState('');
-  const [faFileUploadId, setFaFileUploadId] = useState('');
-  const [faFileUploading, setFaFileUploading] = useState(false);
+  const [faLiitteet, setFaLiitteet] = useState<Liite[]>([]);
+  const [faLiitteetLataa, setFaLiitteetLataa] = useState(false);
 
   // Generic TIKE Reports State
   const [genRepDate, setGenRepDate] = useState('');
@@ -1086,9 +1098,8 @@ export default function App() {
   const [genRepDesc, setGenRepDesc] = useState('');
   const [genRepActions, setGenRepActions] = useState('');
   const [genRepEmps, setGenRepEmps] = useState('');
-  const [genRepFile, setGenRepFile] = useState('');
-  const [genRepFileUploadId, setGenRepFileUploadId] = useState('');
-  const [genRepFileUploading, setGenRepFileUploading] = useState(false);
+  const [genRepLiitteet, setGenRepLiitteet] = useState<Liite[]>([]);
+  const [genRepLiitteetLataa, setGenRepLiitteetLataa] = useState(false);
   // Tapahtuman pohjakartan lähetys (Tapahtuman yleiskatsaus -sivu).
   const [karttaUploading, setKarttaUploading] = useState(false);
 
@@ -1905,12 +1916,31 @@ export default function App() {
     return eka.slice(0, 4);
   };
 
+  // Kirjaustunniste 26/FesX/0209/100. Juokseva numero johdetaan JO TALLENNETUISTA
+  // kirjauksista eikä pelkästä laskurista.
+  //
+  // Miksi: runningNumber alkaa aina sadasta eikä sitä lueta mistään sivun latauksessa,
+  // joten selaimen uudelleenlataus nollasi sen. Saman päivän toinen kirjaus sai silloin
+  // saman tunnisteen kuin ensimmäinen, ja palvelimen rakennevalidointi hylkäsi KOKO
+  // tallennuksen ("id esiintyy useammin kuin kerran") — eli juuri kirjoitettu
+  // tapahtumailmoitus jäi tallentumatta ja katosi Tyhjennä-vaiheessa. Vika löytyi
+  // erän 5 selaintestissä.
+  //
+  // Tämä ei suojaa kahdelta yhtä aikaa kirjaavalta selaimelta: molemmat laskevat saman
+  // vapaan numeron, ja palvelin hylkää jälkimmäisen. Lopullinen ratkaisu on tunnisteen
+  // antaminen palvelimella, mutta se on oma muutoksensa.
   const getDynamicId = () => {
     const now = new Date();
     const yy = String(now.getFullYear()).slice(-2);
     const dd = String(now.getDate()).padStart(2, '0');
     const mm = String(now.getMonth() + 1).padStart(2, '0');
-    return `${yy}/${getEventCode()}/${dd}${mm}/${runningNumber}`;
+    const etuliite = `${yy}/${getEventCode()}/${dd}${mm}/`;
+    // Roskakoriin siirretyt (deletedAt) ovat mukana tarkoituksella: niiden tunniste on
+    // yhä varattu, ja saman tunnisteen kierrättäminen sekoittaisi arkiston.
+    const varatut = new Set(reports.map((r) => String(r.id)));
+    let numero = Math.max(runningNumber, 100);
+    while (varatut.has(`${etuliite}${numero}`)) numero++;
+    return `${etuliite}${numero}`;
   };
 
   const getRiskId = () => {
@@ -3779,6 +3809,7 @@ export default function App() {
     setJvaFirstAid(false);
     setJvaDesc('');
     setJvaReporterFiled(false);
+    setJvaLiitteet([]);
   };
 
   const handleClearJvReport = () => {
@@ -3799,6 +3830,7 @@ export default function App() {
     setJvrObservations('');
     setJvrDesc('');
     setJvrTikeComment('');
+    setJvrLiitteet([]);
   };
 
   // Järjestyksenvalvojan tapahtumailmoitus tallentuu reports-kokoelmaan omalla
@@ -3809,6 +3841,14 @@ export default function App() {
   const handleSaveJvReport = () => {
     if (!jvrGuardName.trim()) {
       alert('Kirjaa järjestyksenvalvojan nimi.');
+      return;
+    }
+    if (jvrLiitteetLataa) {
+      alert('Odota, että liitteiden lähetys valmistuu.');
+      return;
+    }
+    if (jvrLiitteetLataa) {
+      alert('Odota, että liitteiden lähetys valmistuu.');
       return;
     }
     if (!jvrDetainedForce && !jvrTools && !jvrFirearm && !jvrFirstAid && !jvrDesc.trim()) {
@@ -3848,6 +3888,7 @@ export default function App() {
       tools: jvrTools,
       firearm: jvrFirearm,
       firstAid: jvrFirstAid,
+      attachments: jvrLiitteet,
     }, ...prev]);
 
     setRunningNumber(prev => prev + 1);
@@ -3858,6 +3899,14 @@ export default function App() {
   const handleSaveJvaReport = () => {
     if (!jvaName.trim()) {
       alert('Kirjaa toimenpiteen suorittaneen henkilön nimi.');
+      return;
+    }
+    if (jvaLiitteetLataa) {
+      alert('Odota, että liitteiden lähetys valmistuu.');
+      return;
+    }
+    if (jvaLiitteetLataa) {
+      alert('Odota, että liitteiden lähetys valmistuu.');
       return;
     }
     if (!jvaDenied && !jvaRemoved && !jvaDetained && !jvaForce && !jvaTools && !jvaFirearm) {
@@ -3897,7 +3946,8 @@ export default function App() {
       force: jvaForce,
       tools: jvaTools,
       firearm: jvaFirearm,
-      firstAid: jvaFirstAid
+      firstAid: jvaFirstAid,
+      attachments: jvaLiitteet,
     }, ...prev]);
 
     setRunningNumber(prev => prev + 1);
@@ -3905,39 +3955,17 @@ export default function App() {
     setActiveTab('overview');
   };
 
-  // Lataa valitun tiedoston palvelimelle ja päivittää nimi-/id-/latausindikaattoritilat.
-  // setName: näytettävä tiedostonimi, setId: palvelimen antama viite (talletetaan raporttiin), setUploading: latauksen tilailmaisin.
-  const uploadAttachment = async (file, setName, setId, setUploading) => {
-    if (!file) return;
-    setName(file.name);
-    setId('');
-    setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await fetch('/api/uploads', { method: 'POST', credentials: 'include', body: formData });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        setId(data.id);
-      } else {
-        alert(data.error || 'Tiedoston lähetys epäonnistui.');
-        setName('');
-      }
-    } catch {
-      alert('Tiedoston lähetys epäonnistui (yhteysvirhe).');
-      setName('');
-    } finally {
-      setUploading(false);
-    }
-  };
+  // Yhden liitteen lähetysapuri poistui erässä 5: lähetys, EXIF-sijainnin luku ja
+  // lista-tilan ylläpito ovat nyt jaetussa Liitteet-komponentissa ja shared/liitteet.ts:ssä,
+  // koska sama kehikko tarvitaan myös GUARD-puolella.
 
   const handleSaveOpenKirjaus = () => {
     if (!openKirjausText.trim()) {
       alert('Kirjoita kuvaus tapahtuneesta ennen tallennusta.');
       return;
     }
-    if (fileUploading) {
-      alert('Odota, että liitetiedoston lähetys valmistuu.');
+    if (openLiitteetLataa) {
+      alert('Odota, että liitteiden lähetys valmistuu.');
       return;
     }
     // Otsikko on tehtävälistan ainoa näkyvä teksti, joten ilman sitä tehtävä olisi
@@ -3965,7 +3993,7 @@ export default function App() {
       // lisätä server/store.js:n ENCRYPTED_FIELDS-listaan kuten muu vapaa teksti.
       taskTitle: openKirjausTask ? openKirjausTaskTitle.trim() : '',
       taskUrgency: openKirjausTask ? openKirjausTaskUrgency : '',
-      attachment: fileUploadId ? { id: fileUploadId, name: fileName } : null
+      attachments: openLiitteet,
     }, ...prev]);
 
     setRunningNumber(prev => prev + 1);
@@ -3976,8 +4004,7 @@ export default function App() {
     setOpenKirjausTask(false);
     setOpenKirjausTaskTitle('');
     setOpenKirjausTaskUrgency(TEHTAVA_KIIRE_OLETUS);
-    setFileName('');
-    setFileUploadId('');
+    setOpenLiitteet([]);
   };
 
   const handleSaveFirstAid = () => {
@@ -3985,8 +4012,8 @@ export default function App() {
       alert('Kirjaa tapahtuman kuvaus ennen tallennusta.');
       return;
     }
-    if (faFileUploading) {
-      alert('Odota, että liitetiedoston lähetys valmistuu.');
+    if (faLiitteetLataa) {
+      alert('Odota, että liitteiden lähetys valmistuu.');
       return;
     }
     const now = new Date();
@@ -4006,13 +4033,13 @@ export default function App() {
       actions: faActions.trim(),
       resources: faResources.trim(),
       employees: faEmployees.trim(),
-      attachment: faFileUploadId ? { id: faFileUploadId, name: faFileName } : null
+      attachments: faLiitteet,
     }, ...prev]);
 
     setRunningNumber(prev => prev + 1);
     setActiveTab('report_tike');
     setFaDate(''); setFaTime(''); setFaDesc(''); setFaActions(''); setFaResources(''); setFaEmployees('');
-    setFaFileName(''); setFaFileUploadId('');
+    setFaLiitteet([]);
   };
 
   // Yhteinen tallennus uhkatilanne-, omaisuusvaurio-, löytötavara-, jono- ja sääraporteille
@@ -4021,8 +4048,8 @@ export default function App() {
       alert('Kirjaa tapahtuman kuvaus ennen tallennusta.');
       return;
     }
-    if (genRepFileUploading) {
-      alert('Odota, että liitetiedoston lähetys valmistuu.');
+    if (genRepLiitteetLataa) {
+      alert('Odota, että liitteiden lähetys valmistuu.');
       return;
     }
     const now = new Date();
@@ -4041,13 +4068,13 @@ export default function App() {
       summary: genRepDesc.trim(),
       actions: genRepActions.trim(),
       employees: genRepEmps.trim(),
-      attachment: genRepFileUploadId ? { id: genRepFileUploadId, name: genRepFile } : null
+      attachments: genRepLiitteet,
     }, ...prev]);
 
     setRunningNumber(prev => prev + 1);
     setActiveTab('report_tike');
     setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps('');
-    setGenRepFile(''); setGenRepFileUploadId('');
+    setGenRepLiitteet([]);
   };
 
   const handleFaNyt = () => {
@@ -5790,6 +5817,20 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Osa 5: Liitteet */}
+              <div className="space-y-4">
+                <h3 className="text-md font-semibold text-slate-700 border-b pb-2">5. Liitteet</h3>
+                <p className="text-xs text-slate-500">
+                  Valokuvat tapahtumapaikalta, vaurioista tai käytetyistä välineistä. Kuvan oma
+                  sijaintitieto tallentuu mukaan, jos se on kuvassa.
+                </p>
+                <Liitteet
+                  liitteet={jvrLiitteet}
+                  onMuutos={setJvrLiitteet}
+                  onLatausTila={setJvrLiitteetLataa}
+                />
+              </div>
+
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
                 <button
                   type="button"
@@ -6641,39 +6682,11 @@ export default function App() {
                 )}
               </div>
 
-              <div className="border border-dashed border-slate-300 rounded-xl p-6 bg-slate-50/50 flex flex-col items-center justify-center gap-3">
-                <div className="flex gap-4">
-                  {/* Mobiilikamera-painike (capture="environment") */}
-                  <label className="cursor-pointer flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 shadow-sm hover:bg-slate-50 hover:border-indigo-300 rounded-lg transition-all text-sm font-medium text-slate-700">
-                    <Camera size={18} className="text-indigo-500" />
-                    Ota kuva
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      capture="environment" 
-                      className="hidden" 
-                      onChange={(e) => uploadAttachment(e.target.files[0], setFileName, setFileUploadId, setFileUploading)}
-                    />
-                  </label>
-
-                  {/* Tiedoston valinta */}
-                  <label className="cursor-pointer flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 shadow-sm hover:bg-slate-50 hover:border-indigo-300 rounded-lg transition-all text-sm font-medium text-slate-700">
-                    <Paperclip size={18} className="text-indigo-500" />
-                    Liitä tiedosto
-                    <input 
-                      type="file" 
-                      className="hidden" 
-                      onChange={(e) => uploadAttachment(e.target.files[0], setFileName, setFileUploadId, setFileUploading)}
-                    />
-                  </label>
-                </div>
-                {fileName && (
-                  <div className={`flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border mt-2 ${fileUploading ? 'text-slate-500 bg-slate-50 border-slate-200' : 'text-emerald-600 bg-emerald-50 border-emerald-100'}`}>
-                    <FileCheck size={16} />
-                    {fileUploading ? `Lähetetään: ${fileName}…` : `Liitetty: ${fileName}`}
-                  </div>
-                )}
-              </div>
+              <Liitteet
+                liitteet={openLiitteet}
+                onMuutos={setOpenLiitteet}
+                onLatausTila={setOpenLiitteetLataa}
+              />
 
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
                 <button 
@@ -6681,8 +6694,7 @@ export default function App() {
                   onClick={() => {
                     setActiveTab('report_tike');
                     setOpenKirjausText('');
-                    setFileName('');
-                    setFileUploadId('');
+                    setOpenLiitteet([]);
                   }}
                   className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                 >
@@ -6813,39 +6825,11 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="border border-dashed border-slate-300 rounded-xl p-6 bg-slate-50/50 flex flex-col items-center justify-center gap-3">
-                <div className="flex gap-4">
-                  {/* Mobiilikamera-painike */}
-                  <label className="cursor-pointer flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 shadow-sm hover:bg-slate-50 hover:border-rose-300 rounded-lg transition-all text-sm font-medium text-slate-700">
-                    <Camera size={18} className="text-rose-500" />
-                    Ota kuva
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      capture="environment" 
-                      className="hidden" 
-                      onChange={(e) => uploadAttachment(e.target.files[0], setFaFileName, setFaFileUploadId, setFaFileUploading)}
-                    />
-                  </label>
-
-                  {/* Tiedoston valinta */}
-                  <label className="cursor-pointer flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 shadow-sm hover:bg-slate-50 hover:border-rose-300 rounded-lg transition-all text-sm font-medium text-slate-700">
-                    <Paperclip size={18} className="text-rose-500" />
-                    Liitä tiedosto
-                    <input 
-                      type="file" 
-                      className="hidden" 
-                      onChange={(e) => uploadAttachment(e.target.files[0], setFaFileName, setFaFileUploadId, setFaFileUploading)}
-                    />
-                  </label>
-                </div>
-                {faFileName && (
-                  <div className={`flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border mt-2 ${faFileUploading ? 'text-slate-500 bg-slate-50 border-slate-200' : 'text-emerald-600 bg-emerald-50 border-emerald-100'}`}>
-                    <FileCheck size={16} />
-                    {faFileUploading ? `Lähetetään: ${faFileName}…` : `Liitetty: ${faFileName}`}
-                  </div>
-                )}
-              </div>
+              <Liitteet
+                liitteet={faLiitteet}
+                onMuutos={setFaLiitteet}
+                onLatausTila={setFaLiitteetLataa}
+              />
 
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
                 <button 
@@ -6853,7 +6837,7 @@ export default function App() {
                   onClick={() => {
                     setActiveTab('report_tike');
                     setFaDesc(''); setFaActions(''); setFaResources(''); setFaEmployees('');
-                    setFaFileName(''); setFaFileUploadId('');
+                    setFaLiitteet([]);
                   }}
                   className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                 >
@@ -7267,6 +7251,15 @@ export default function App() {
                 )}
               </div>
 
+              <div>
+                <h3 className="text-sm font-semibold text-slate-700 mb-2">Liitteet</h3>
+                <Liitteet
+                  liitteet={jvaLiitteet}
+                  onMuutos={setJvaLiitteet}
+                  onLatausTila={setJvaLiitteetLataa}
+                />
+              </div>
+
               {/* Toiminnot */}
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
                 <button
@@ -7320,7 +7313,7 @@ export default function App() {
             <TakaisinLinkki onClick={() => {
                 setActiveTab('report_tike');
                 setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps('');
-                setGenRepFile(''); setGenRepFileUploadId('');
+                setGenRepLiitteet([]);
               }}>
               Takaisin TIKE-valikkoon
             </TakaisinLinkki>
@@ -7415,37 +7408,11 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="border border-dashed border-slate-300 rounded-xl p-6 bg-slate-50/50 flex flex-col items-center justify-center gap-3">
-                <div className="flex gap-4">
-                  <label className="cursor-pointer flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 shadow-sm hover:bg-slate-50 rounded-lg transition-all text-sm font-medium text-slate-700">
-                    <Camera size={18} className={config.iconColor} />
-                    Ota kuva
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      capture="environment" 
-                      className="hidden" 
-                      onChange={(e) => uploadAttachment(e.target.files[0], setGenRepFile, setGenRepFileUploadId, setGenRepFileUploading)}
-                    />
-                  </label>
-
-                  <label className="cursor-pointer flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 shadow-sm hover:bg-slate-50 rounded-lg transition-all text-sm font-medium text-slate-700">
-                    <Paperclip size={18} className={config.iconColor} />
-                    Liitä tiedosto
-                    <input 
-                      type="file" 
-                      className="hidden" 
-                      onChange={(e) => uploadAttachment(e.target.files[0], setGenRepFile, setGenRepFileUploadId, setGenRepFileUploading)}
-                    />
-                  </label>
-                </div>
-                {genRepFile && (
-                  <div className={`flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border mt-2 ${genRepFileUploading ? 'text-slate-500 bg-slate-50 border-slate-200' : 'text-emerald-600 bg-emerald-50 border-emerald-100'}`}>
-                    <FileCheck size={16} />
-                    {genRepFileUploading ? `Lähetetään: ${genRepFile}…` : `Liitetty: ${genRepFile}`}
-                  </div>
-                )}
-              </div>
+              <Liitteet
+                liitteet={genRepLiitteet}
+                onMuutos={setGenRepLiitteet}
+                onLatausTila={setGenRepLiitteetLataa}
+              />
 
               <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
                 <button 
@@ -7453,7 +7420,7 @@ export default function App() {
                   onClick={() => {
                     setActiveTab('report_tike');
                     setGenRepDate(''); setGenRepTime(''); setGenRepDesc(''); setGenRepActions(''); setGenRepEmps('');
-                    setGenRepFile(''); setGenRepFileUploadId('');
+                    setGenRepLiitteet([]);
                   }}
                   className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                 >
@@ -13903,26 +13870,41 @@ export default function App() {
                 </div>
               )}
 
-              {/* Erässä 1 lisätty monen liitteen tuki. Vanha yksittäinen attachment
-                  näytetään yhä yllä: sitä ei migroitu tänne, jottei samaan tiedostoon
-                  jäisi kahta viittausta. */}
-              {Array.isArray(openedReport.attachments) && openedReport.attachments.length > 0 && (
+              {/* Erässä 1 lisätty monen liitteen tuki, erässä 5 myös lisääminen
+                  jälkikäteen. Vanha yksittäinen attachment näytetään yhä yllä: sitä ei
+                  migroitu tänne, jottei samaan tiedostoon jäisi kahta viittausta.
+
+                  Liitteen lisääminen tallennettuun kirjaukseen on tarkoituksellista:
+                  todistekuva otetaan tilanteessa mutta siirretään usein vasta vuoron
+                  jälkeen. Palvelin sallii listaan LISÄÄMISEN myös lukittuun kirjaukseen
+                  (server/kirjaukset.js: LISATTAVAT_LISTAT) mutta ei poistamista, koska
+                  se olisi todisteen hävittämistä — sama sääntö näkyy tässä
+                  vainLisays-lippuna. */}
+              {(saaKasitellaKirjauksen || (Array.isArray(openedReport.attachments) && openedReport.attachments.length > 0)) && (
                 <div>
                   <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Liitteet</p>
-                  <div className="flex flex-wrap gap-2">
-                    {openedReport.attachments.map((liite) => (
-                      <a
-                        key={liite.id}
-                        href={`/api/uploads/${liite.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-indigo-600 hover:text-indigo-800 font-medium bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
-                      >
-                        <Paperclip size={14} />
-                        {liite.name || liite.id}
-                      </a>
-                    ))}
-                  </div>
+                  {saaKasitellaKirjauksen ? (
+                    <Liitteet
+                      liitteet={Array.isArray(openedReport.attachments) ? openedReport.attachments : []}
+                      onMuutos={(uudet) => paivitaKirjaus(openedReport, { attachments: uudet })}
+                      vainLisays={onLukittu(openedReport)}
+                    />
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {openedReport.attachments.map((liite) => (
+                        <a
+                          key={liite.id}
+                          href={`/api/uploads/${liite.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-indigo-600 hover:text-indigo-800 font-medium bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
+                        >
+                          <Paperclip size={14} />
+                          {liite.name || liite.id}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
