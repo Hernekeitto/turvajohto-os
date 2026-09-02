@@ -59,6 +59,17 @@ const COLLECTIONS = {
   // Tehtävien MÄÄRITTELY on kohteen sisällä (guardSites.tehtavat) — se on kohteen ominaisuus,
   // suoritus taas tapahtuma ajassa.
   guardTaskRuns: 'guardTaskRuns.json',
+  // Pohjat (perusta P6). YKSI kokoelma kaikille pohjalajeille, ja `kind` erottaa ne.
+  // Ensimmäinen laji on kierrospohja; erä 8 tuo skenaariopohjat, ohjepankin ja run
+  // sheetin samaan kokoelmaan. Neljä erillistä kokoelmaa tarkoittaisi neljä kertaa
+  // samat versiointi-, omistajuus- ja instansointisäännöt.
+  templates: 'templates.json',
+  // Kierroksen suoritukset. Sama suhde pohjaan kuin guardTaskRunsilla tehtävään:
+  // määrittely on pohjassa, suoritus on tapahtuma ajassa. Kierros on kuitenkin
+  // PALVELIMEN YLLÄPITÄMÄ (index.js: PALVELIMEN_YLLAPITAMAT), koska sen säännöt —
+  // vajaata ei voi sulkea, keskeytys vaatii syyn, kuittaus on peruuttamaton — menettäisivät
+  // merkityksensä jos selain voisi kirjoittaa kokoelman suoraan.
+  patrolRuns: 'patrolRuns.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
@@ -170,6 +181,18 @@ const ENCRYPTED_FIELDS = {
   // Tehtäväsuorituksen vapaa huomiokenttä: vartija kirjoittaa siihen mitä kierroksella
   // havaittiin, eikä kenttätasolla voi tietää mitä sinne on kirjoitettu.
   guardTaskRuns: ['huomiot'],
+  // Kierroksen vapaat tekstit samalla perusteella kuin guardTaskRuns.huomiot: vartija
+  // kirjoittaa niihin havaintonsa, ja keskeytyksen syy voi kertoa mitä kohteessa oli
+  // tapahtunut. Pistekohtaiset huomiot ovat listan sisällä (piste-taso).
+  patrolRuns: ['huomiot', 'keskeytysSyy', 'pisteet[].huomio'],
+  // Tarkistuspisteen token on tarrassa seinässä eikä salaisuus, mutta se on ainoa asia
+  // joka todistaa skannauksen kohdistuneen oikeaan pisteeseen — samalla perusteella
+  // salattu kuin ilmoitusjulisteen token.
+  //
+  // HUOM: polku on `pisteet[].token` eikä `sisalto.pisteet[].token`, koska
+  // jaaTaulukkopolku (alla) osaa vain YLÄTASON taulukon. Sisäkkäinen polku jäisi hiljaa
+  // salaamatta — juuri sen takia kierrospohjan pisteet ovat tietueen ylätasolla.
+  templates: ['pisteet[].token'],
   // Ilmoituslomakkeen token on jakolinkin tokeniin rinnastuva: se antaa oikeuden
   // kirjoittaa järjestelmään ilman kirjautumista.
   publicForms: ['token'],

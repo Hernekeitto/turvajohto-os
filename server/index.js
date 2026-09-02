@@ -61,6 +61,11 @@ import {
   // julisteen ei tunne kumpaakaan mutta sillä on kova 180 vrk:n katto.
   ratkaiseVoimassaolo as ratkaiseJulisteenVoimassaolo,
 } from './julkinen.js';
+import {
+  onTunnettuLaji, tarkistaNimi, puhdistaKuvaus, tarkistaPisteet, tarkistaGps,
+  sisaltoMuuttui, julkinenPohja, etsiPisteTokenilla,
+} from './pohjat.js';
+import { aloitaKierros, kuittaaPiste, paataKierros, OLETUS_SIETORAJA_M } from './kierros.js';
 import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti, parsiJson } from './bulksms.js';
 import { kaytossaOlevatNapit, ratkaiseVastaanottajat, taytaPaikkamerkit } from './sms.js';
 import { lisaaJonoon, otaKasittelyyn, kuittaaKasitellyksi, jononPituus } from './smsqueue.js';
@@ -366,7 +371,11 @@ function requireAdmin(req, res, next) {
 // tarkoittaa että kyseisen kokoelman tiedostot katoavat levyltä vuorokaudessa.
 // Kokoelmat jotka syntyvät ja päivittyvät vain palvelimella. Frontti saa lukea ne
 // (GET /api/data/:name suodattaa oikeuksien mukaan normaalisti), mutta PUT hylätään.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies']);
+// patrolRuns on tässä eri syystä kuin SMS-kokoelmat: sen sisältö EI tule ulkopuolelta
+// vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
+// keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
+// säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -428,6 +437,9 @@ app.get('/api/data/:name', requireAuth, (req, res) => {
   let data = result.data;
   if (name === 'fileShares') data = (result.data || []).map(julkinenJako);
   if (name === 'publicForms') data = (result.data || []).map(julkinenLomake);
+  // Tarkistuspisteiden tokenit peitetään samalla säännöllä: ne haetaan erikseen vasta
+  // kun käyttäjä tulostaa tarrat (/api/pohjat/:id/tarrat).
+  if (name === 'templates') data = (result.data || []).map(julkinenPohja);
   res.json({ ok: true, data });
 });
 
@@ -482,6 +494,15 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
     return res.status(403).json({
       ok: false,
       error: 'Ilmoituslomakkeita hallitaan vain omien reittiensä kautta (/api/publicforms).',
+    });
+  }
+  // Sama ansa kolmannen kerran: selain ei näe tarkistuspisteiden tokeneita, joten koko
+  // kokoelman tallennus tyhjentäisi ne ja jokainen seinässä oleva QR-tarra lakkaisi
+  // toimimasta.
+  if (name === 'templates') {
+    return res.status(403).json({
+      ok: false,
+      error: 'Pohjia hallitaan vain omien reittiensä kautta (/api/pohjat).',
     });
   }
   // Samasta syystä kuin fileShares, mutta eri lähteestä: näiden sisältö syntyy
@@ -1005,6 +1026,273 @@ app.delete('/api/publicforms/:id', requireAuth, (req, res) => {
     : l)));
   logAudit({ user: req.username, action: 'public_form_revoke', collection: 'publicForms', recordId: lomake.id, eventId: lomake.eventId });
   res.json({ ok: true });
+});
+
+// --- Kierrospohjat ja kierrokset (P6 + proof of presence) -------------------------
+//
+// Pohjia ja kierroksia hallitaan omilla reiteillään eikä geneerisen kokoelmareitin
+// kautta. Pohjilla syy on sama kuin julisteilla (token syntyy palvelimella), kierroksilla
+// eri ja tärkeämpi: kierroksen säännöt ovat sen ainoa sisältö. Kierros joka voidaan
+// merkitä valmiiksi vajaana ei todista mitään.
+
+// Kierrospohjan oikeus kohteeseen. Pohja ja sen kierrokset ovat eri solmuja: pohjan
+// muokkaus on esimiehen työtä, kierroksen kulkeminen vartijan.
+function saaPohjia(req, siteId) {
+  if (req.role === 'admin') return true;
+  return eventAllowed(req.eventAccess, siteId) && canEdit(req.permissions, siteId, 'guard_patrol_templates');
+}
+
+function saaKiertaa(req, siteId) {
+  if (req.role === 'admin') return true;
+  return eventAllowed(req.eventAccess, siteId) && canEdit(req.permissions, siteId, 'guard_patrols');
+}
+
+// Tuoteportti erikseen: GUARD-puolen reitit eivät saa aueta tunnukselle jolla ei ole
+// pääsyä sinne, vaikka sivukartta-oikeudet sattuisivat olemaan kunnossa.
+const guardPortti = (req, res, next) => {
+  if (!(req.tuotteet || []).includes('guard')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia vartiointipuolen tietoihin.' });
+  }
+  next();
+};
+
+app.post('/api/pohjat', requireAuth, guardPortti, (req, res) => {
+  const { kind, ownerId, nimi, kuvaus, pisteet, sijaintiPakotus, sietorajaM } = req.body || {};
+  if (!onTunnettuLaji(kind)) {
+    return res.status(400).json({ ok: false, error: 'Tuntematon pohjalaji.' });
+  }
+  if (typeof ownerId !== 'string' || !ownerId) {
+    return res.status(400).json({ ok: false, error: 'Kohde puuttuu.' });
+  }
+  if (!saaPohjia(req, ownerId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta muokata tämän kohteen kierrospohjia.' });
+  }
+  const kohde = (readCollection('guardSites') || []).find((k) => k.id === ownerId);
+  if (!kohde) return res.status(404).json({ ok: false, error: 'Kohdetta ei löytynyt.' });
+
+  const nimiTulos = tarkistaNimi(nimi);
+  if (!nimiTulos.ok) return res.status(400).json({ ok: false, error: nimiTulos.error });
+  const pisteTulos = tarkistaPisteet(pisteet, []);
+  if (!pisteTulos.ok) return res.status(400).json({ ok: false, error: pisteTulos.error });
+
+  const pohja = {
+    id: crypto.randomUUID(),
+    kind,
+    ownerId,
+    nimi: nimiTulos.nimi,
+    kuvaus: puhdistaKuvaus(kuvaus),
+    versio: 1,
+    pisteet: pisteTulos.pisteet,
+    // Sijaintipakotus on pohjakohtainen asetus joka on OLETUKSENA POIS (päätös V2 = a):
+    // puhelimen paikannus on rakennuksen seinustalla epäluotettava, eikä kierros saa
+    // katketa siihen. Sijainti tallennetaan silti aina todisteeksi.
+    sijaintiPakotus: sijaintiPakotus === true,
+    sietorajaM: Number.isFinite(Number(sietorajaM)) && Number(sietorajaM) > 0
+      ? Math.round(Number(sietorajaM))
+      : OLETUS_SIETORAJA_M,
+    luotu: new Date().toISOString(),
+    luoja: req.username,
+    arkistoitu: null,
+  };
+  writeCollection('templates', [...(readCollection('templates') || []), pohja]);
+  logAudit({ user: req.username, action: 'template_create', collection: 'templates', recordId: pohja.id, eventId: ownerId });
+  res.json({ ok: true, pohja: julkinenPohja(pohja) });
+});
+
+app.put('/api/pohjat/:id', requireAuth, guardPortti, (req, res) => {
+  const pohjat = readCollection('templates') || [];
+  const vanha = pohjat.find((p) => p.id === req.params.id);
+  if (!vanha) return res.status(404).json({ ok: false, error: 'Pohjaa ei löytynyt.' });
+  if (!saaPohjia(req, vanha.ownerId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta muokata tätä pohjaa.' });
+  }
+
+  const nimiTulos = tarkistaNimi(req.body?.nimi ?? vanha.nimi);
+  if (!nimiTulos.ok) return res.status(400).json({ ok: false, error: nimiTulos.error });
+  const pisteTulos = tarkistaPisteet(req.body?.pisteet ?? vanha.pisteet, vanha.pisteet);
+  if (!pisteTulos.ok) return res.status(400).json({ ok: false, error: pisteTulos.error });
+
+  const paivitetty = {
+    ...vanha,
+    nimi: nimiTulos.nimi,
+    kuvaus: puhdistaKuvaus(req.body?.kuvaus ?? vanha.kuvaus),
+    pisteet: pisteTulos.pisteet,
+    sijaintiPakotus: req.body?.sijaintiPakotus === undefined
+      ? vanha.sijaintiPakotus === true
+      : req.body.sijaintiPakotus === true,
+    sietorajaM: Number.isFinite(Number(req.body?.sietorajaM)) && Number(req.body.sietorajaM) > 0
+      ? Math.round(Number(req.body.sietorajaM))
+      : (vanha.sietorajaM ?? OLETUS_SIETORAJA_M),
+    muokattu: new Date().toISOString(),
+    muokkaaja: req.username,
+  };
+  // Versio kasvaa vain jos pisteet muuttuivat: nimen korjaaminen ei tee kierroksesta
+  // toista kierrosta, mutta pisteen lisääminen tekee.
+  if (sisaltoMuuttui(vanha, paivitetty)) paivitetty.versio = (vanha.versio ?? 1) + 1;
+
+  writeCollection('templates', pohjat.map((p) => (p.id === vanha.id ? paivitetty : p)));
+  logAudit({ user: req.username, action: 'template_update', collection: 'templates', recordId: vanha.id, eventId: vanha.ownerId });
+  res.json({ ok: true, pohja: julkinenPohja(paivitetty) });
+});
+
+// Arkistointi eikä poisto: jo tehdyt kierrokset viittaavat pohjaan, ja pohjan katoaminen
+// tekisi niiden historiasta lukukelvotonta.
+app.delete('/api/pohjat/:id', requireAuth, guardPortti, (req, res) => {
+  const pohjat = readCollection('templates') || [];
+  const pohja = pohjat.find((p) => p.id === req.params.id);
+  if (!pohja) return res.status(404).json({ ok: false, error: 'Pohjaa ei löytynyt.' });
+  if (!saaPohjia(req, pohja.ownerId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta poistaa tätä pohjaa käytöstä.' });
+  }
+  writeCollection('templates', pohjat.map((p) => (p.id === pohja.id
+    ? { ...p, arkistoitu: new Date().toISOString(), arkistoija: req.username }
+    : p)));
+  logAudit({ user: req.username, action: 'template_archive', collection: 'templates', recordId: pohja.id, eventId: pohja.ownerId });
+  res.json({ ok: true });
+});
+
+// Tarkistuspisteiden tokenit QR-tarroja varten. Erillinen reitti samasta syystä kuin
+// jakolinkeillä ja julisteilla: token ei kulje jokaisessa listahaussa.
+app.get('/api/pohjat/:id/tarrat', requireAuth, guardPortti, (req, res) => {
+  const pohja = (readCollection('templates') || []).find((p) => p.id === req.params.id);
+  if (!pohja) return res.status(404).json({ ok: false, error: 'Pohjaa ei löytynyt.' });
+  if (!saaPohjia(req, pohja.ownerId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta tämän pohjan tarroihin.' });
+  }
+  res.json({
+    ok: true,
+    nimi: pohja.nimi,
+    pisteet: (pohja.pisteet || []).map((p) => ({ id: p.id, nimi: p.nimi, token: p.token })),
+  });
+});
+
+// Kierroksen aloitus. Pisteet kopioidaan pohjasta (ks. kierros.js).
+app.post('/api/kierros', requireAuth, guardPortti, (req, res) => {
+  const { templateId } = req.body || {};
+  const pohja = (readCollection('templates') || []).find((p) => p.id === templateId);
+  if (!pohja || pohja.kind !== 'patrol') {
+    return res.status(404).json({ ok: false, error: 'Kierrospohjaa ei löytynyt.' });
+  }
+  if (!saaKiertaa(req, pohja.ownerId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta kiertää tässä kohteessa.' });
+  }
+
+  const kierrokset = readCollection('patrolRuns') || [];
+  // Yksi kesken oleva kierros kerrallaan samalle vartijalle samassa kohteessa. Kaksi
+  // yhtä aikaa avointa kierrosta tarkoittaisi, ettei skannauksesta tiedä kumpaan se
+  // kuuluu — ja unohtuneet avoimet kierrokset täyttäisivät listan.
+  const auki = kierrokset.find(
+    (k) => k.tila === 'kesken' && k.siteId === pohja.ownerId && k.vartija === req.username
+  );
+  if (auki) {
+    return res.status(409).json({
+      ok: false,
+      error: 'Sinulla on jo kesken oleva kierros tässä kohteessa. Päätä se ensin.',
+      kierrosId: auki.id,
+    });
+  }
+
+  const tulos = aloitaKierros({
+    pohja,
+    siteId: pohja.ownerId,
+    vartija: req.username,
+    id: crypto.randomUUID(),
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('patrolRuns', [tulos.kierros, ...kierrokset]);
+  logAudit({ user: req.username, action: 'patrol_start', collection: 'patrolRuns', recordId: tulos.kierros.id, eventId: pohja.ownerId });
+  kerroKierroksesta(tulos.kierros, 'create');
+  res.json({ ok: true, kierros: tulos.kierros });
+});
+
+// Kanavaviesti kierroksen muutoksesta. Sama periaate kuin yleisöilmoituksilla: viesti
+// kuljettaa vain id:n, ja sisältö haetaan oikeustarkistetulta reitiltä.
+function kerroKierroksesta(kierros, action) {
+  lahetaKanavalle('patrolRuns', [{ action, id: kierros.id, eventId: kierros.siteId }], {
+    saaNahda: (istunto, siteId) =>
+      istunto?.role === 'admin' ||
+      (eventAllowed(istunto?.eventAccess, siteId) && canView(rolePermissions(istunto?.roleId), siteId, 'guard_patrols')),
+  });
+}
+
+// Tarkistuspisteen kuittaus. Piste voidaan yksilöidä joko id:llä (lista näkymässä) tai
+// tokenilla (QR-tarra puhelimen kameralla) — jälkimmäinen on se tapa jolla tämä
+// oikeasti tehdään kentällä.
+app.post('/api/kierros/:id/piste', requireAuth, guardPortti, (req, res) => {
+  const kierrokset = readCollection('patrolRuns') || [];
+  const kierros = kierrokset.find((k) => k.id === req.params.id);
+  if (!kierros) return res.status(404).json({ ok: false, error: 'Kierrosta ei löytynyt.' });
+  if (!saaKiertaa(req, kierros.siteId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta tähän kierrokseen.' });
+  }
+  // Kierros on henkilökohtainen: toisen vartijan kierrokseen ei kuitata pisteitä, koska
+  // kuittaus on todiste siitä että JOKU oli paikalla — ja se joku on kierroksen tekijä.
+  if (req.role !== 'admin' && kierros.vartija !== req.username) {
+    return res.status(403).json({ ok: false, error: 'Kierros on toisen vartijan.' });
+  }
+
+  const pohja = (readCollection('templates') || []).find((p) => p.id === kierros.templateId);
+  let pisteId = typeof req.body?.pisteId === 'string' ? req.body.pisteId : null;
+  let tapa = 'kasin';
+  if (!pisteId && typeof req.body?.token === 'string') {
+    const osuma = etsiPisteTokenilla(pohja ? [pohja] : [], req.body.token);
+    if (!osuma) {
+      return res.status(404).json({ ok: false, error: 'QR-koodi ei kuulu tähän kierrokseen.' });
+    }
+    pisteId = osuma.piste.id;
+    tapa = 'qr';
+  }
+  if (!pisteId) return res.status(400).json({ ok: false, error: 'Tarkistuspiste puuttuu.' });
+
+  const tulos = kuittaaPiste({
+    kierros,
+    pisteId,
+    tapa,
+    gps: tarkistaGps(req.body?.gps),
+    huomio: req.body?.huomio,
+    pakotaSijainti: pohja?.sijaintiPakotus === true,
+    sietorajaM: pohja?.sietorajaM ?? OLETUS_SIETORAJA_M,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('patrolRuns', kierrokset.map((k) => (k.id === kierros.id ? tulos.kierros : k)));
+  logAudit({ user: req.username, action: 'patrol_checkpoint', collection: 'patrolRuns', recordId: kierros.id, eventId: kierros.siteId });
+  kerroKierroksesta(tulos.kierros, 'update');
+  res.json({ ok: true, kierros: tulos.kierros });
+});
+
+// Kierroksen päättäminen. Tässä on erän tärkein sääntö: valmis vaatii jokaisen pisteen,
+// keskeytys vaatii syyn (ks. kierros.js).
+app.post('/api/kierros/:id/paata', requireAuth, guardPortti, (req, res) => {
+  const kierrokset = readCollection('patrolRuns') || [];
+  const kierros = kierrokset.find((k) => k.id === req.params.id);
+  if (!kierros) return res.status(404).json({ ok: false, error: 'Kierrosta ei löytynyt.' });
+  if (!saaKiertaa(req, kierros.siteId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta tähän kierrokseen.' });
+  }
+  if (req.role !== 'admin' && kierros.vartija !== req.username) {
+    return res.status(403).json({ ok: false, error: 'Kierros on toisen vartijan.' });
+  }
+
+  const tulos = paataKierros({
+    kierros,
+    tila: req.body?.tila,
+    syy: req.body?.syy,
+    huomiot: req.body?.huomiot,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('patrolRuns', kierrokset.map((k) => (k.id === kierros.id ? tulos.kierros : k)));
+  logAudit({
+    user: req.username,
+    action: tulos.kierros.tila === 'valmis' ? 'patrol_complete' : 'patrol_abort',
+    collection: 'patrolRuns',
+    recordId: kierros.id,
+    eventId: kierros.siteId,
+  });
+  kerroKierroksesta(tulos.kierros, 'update');
+  res.json({ ok: true, kierros: tulos.kierros });
 });
 
 // QR-koodin muodostus. Yleiskäyttöinen tarkoituksella: erä 5:n tarkistuspisteet

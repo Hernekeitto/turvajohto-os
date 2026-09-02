@@ -270,6 +270,37 @@ const COLLECTIONS = {
     eventIdOf: (item) => item?.siteId,
     tuote: 'guard',
   },
+  // Pohjat (P6). Polymorfinen kokoelma kuten reports: `view` on kaikkien lajien solmujen
+  // UNIONI, ja `touch` valitsee solmun lajin mukaan. Kun erä 8 tuo skenaariopohjat ja
+  // ohjepankin, tähän lisätään lajin solmu eikä uutta kokoelmaa.
+  //
+  // Kierrospohjan lukeminen on sallittu myös kierrosnäkymästä: vartija ei voi aloittaa
+  // kierrosta pohjasta jota hän ei saa lukea, mutta pohjan MUOKKAUS on erikseen
+  // esimiehen oikeus.
+  templates: {
+    view: ['guard_patrol_templates', 'guard_patrols', 'guard_site_info'],
+    touch: (item) => {
+      if (item?.kind === 'patrol') return ['guard_patrol_templates'];
+      // Tuntematon laji ei saa pudota läpi tyhjällä listalla: tyhjä vaatimuslista
+      // tarkoittaisi "kuka tahansa saa kirjoittaa". Palautetaan solmu jota ei ole
+      // olemassa, jolloin vain admin läpäisee.
+      return ['__tuntematon_pohjalaji__'];
+    },
+    eventScoped: true,
+    eventIdOf: (item) => item?.ownerId,
+    tuote: 'guard',
+  },
+  // Kierroksen suoritukset. Kirjoitus tapahtuu VAIN palvelimen omilla reiteillä
+  // (index.js: PALVELIMEN_YLLAPITAMAT), joten `touch` koskee käytännössä vain adminin
+  // teoreettista suoraa kirjoitusta — säännöt vajaasta sulkemisesta ja keskeytyksen
+  // syystä ovat kierros.js:ssä eivätkä täällä.
+  patrolRuns: {
+    view: ['guard_patrols', 'guard_site_info'],
+    touch: () => ['guard_patrols'],
+    eventScoped: true,
+    eventIdOf: (item) => item?.siteId,
+    tuote: 'guard',
+  },
   checkins: {
     view: ['overview', 'tike_form_in', 'tike_form_out', 'tike_form_jvaction', 'planning_employees', 'global_archived_events'],
     // Ei tietuekohtaista erottelua mahdollista (ei typeId-kenttää) — samat kolme solmua
