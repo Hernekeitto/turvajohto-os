@@ -77,6 +77,11 @@ import {
 import {
   luoPoikkeama, kasittele as kasittelePoikkeama, eskaloituu, halytyksenKuvaus,
 } from './varusteet.js';
+import { teeIkkuna, kooste as laskeKooste } from './analytiikka.js';
+import {
+  luoJalkiraportti, paivita as paivitaJalkiraportti, merkitseValmiiksi, avaaUudelleen,
+  onLukittu as jalkiraporttiLukittu,
+} from './jalkiraportti.js';
 import {
   luoAjastin, luoHalytys, jatka as jatkaHalytysta, laukaise as laukaiseHalytys,
   peru as peruHalytys, kuittaa as kuittaaHalytys, eraantyneet, eskaloitavat,
@@ -397,7 +402,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -2375,6 +2380,192 @@ app.post('/api/varuste/:id/kasittele', requireAuth, (req, res) => {
   res.json({ ok: true, poikkeama: tulos.poikkeama });
 });
 
+
+// --- Analytiikka ja jälkiraportit (erä 9, perusta P8) -----------------------------
+//
+// Laskusäännöt ovat analytiikka.js:ssä ja jalkiraportti.js:ssä. Täällä on se osa jota ei
+// voi testata ilman palvelinta: mistä luvut lasketaan ja KENELLE.
+//
+// AGGREGAATTI EI SAA KERTOA ENEMPÄÄ KUIN RIVI. Jokainen lähdekokoelma ajetaan
+// readableDatan läpi ennen laskentaa, aivan kuten se ajettaisiin listahaussa. Ilman tätä
+// mittaristo olisi tapa lukea sitä dataa jota rivikohtainen oikeus estää: "vyöhykkeellä
+// kolme ensiaputehtävää" on kertomus eikä pelkkä luku.
+
+const analytiikanSolmu = (onKohde) => (onKohde ? 'guard_analytics' : 'analytics');
+const jalkiraportinSolmu = (onKohde) => (onKohde ? 'guard_debrief' : 'debrief');
+
+// Kokoelman käyttäjälle näkyvät rivit, rajattuna yhteen omistajaan. Suodatus tehdään
+// nimenomaan samalla funktiolla jota GET /api/data käyttää — kaksi eri suodatinta samalle
+// aineistolle olisi kaksi eri käsitystä siitä kuka saa nähdä mitä.
+function nakyvatRivit(req, kokoelma, ownerId, ownerIdOf) {
+  const tulos = readableData(req.role, req.permissions, req.eventAccess, kokoelma, readCollection(kokoelma));
+  if (!tulos.ok) return [];
+  return (tulos.data || []).filter((rivi) => ownerIdOf(rivi) === ownerId);
+}
+
+// Lähdeaineisto koosteelle. Kirjaukset tulevat eri kokoelmasta puolen mukaan, ja
+// kierrokset ovat vain GUARD-puolella — tapahtumapuolen kierrosraportti on kirjaus
+// (typeId 'patrol') eikä kierrossuoritus.
+function koosteenLahteet(req, ownerId, onKohde) {
+  const kirjaukset = onKohde
+    ? nakyvatRivit(req, 'guardReports', ownerId, (r) => r.siteId)
+    : nakyvatRivit(req, 'reports', ownerId, (r) => r.eventId || 'fesx');
+  const kierrokset = onKohde ? nakyvatRivit(req, 'patrolRuns', ownerId, (r) => r.siteId) : [];
+  const halytykset = nakyvatRivit(req, 'alerts', ownerId, (r) => r.eventId);
+  const omistaja = onKohde
+    ? (readCollection('guardSites') || []).find((k) => k.id === ownerId)
+    : (readCollection('events') || []).find((e) => e.id === ownerId);
+  return { kirjaukset, kierrokset, halytykset, vyohykkeet: omistaja?.zones || [] };
+}
+
+// Yhteinen alkutarkistus: omistaja on olemassa, puoli on käytössä ja solmuun on oikeus.
+// Palauttaa joko { virhe } tai { omistaja }.
+function analytiikanPortti(req, ownerId, solmuFn, edellytaMuokkaus = false) {
+  const omistaja = omistajanTiedot(ownerId);
+  if (!omistaja) return { virhe: { tila: 404, teksti: 'Kohdetta tai tapahtumaa ei löytynyt.' } };
+  if (req.role !== 'admin') {
+    if (!tuoteOk(req, omistaja.onKohde)) return { virhe: { tila: 403, teksti: 'Ei oikeutta tähän puoleen.' } };
+    if (!eventAllowed(req.eventAccess, ownerId)) return { virhe: { tila: 403, teksti: 'Ei oikeutta tähän kohteeseen.' } };
+    const solmu = solmuFn(omistaja.onKohde);
+    const ok = edellytaMuokkaus
+      ? canEdit(req.permissions, ownerId, solmu)
+      : canView(req.permissions, ownerId, solmu);
+    if (!ok) return { virhe: { tila: 403, teksti: 'Ei oikeutta.' } };
+  }
+  return { omistaja };
+}
+
+app.get('/api/analytiikka', requireAuth, (req, res) => {
+  const ownerId = typeof req.query.ownerId === 'string' ? req.query.ownerId : '';
+  const portti = analytiikanPortti(req, ownerId, analytiikanSolmu);
+  if (portti.virhe) return res.status(portti.virhe.tila).json({ ok: false, error: portti.virhe.teksti });
+
+  // Ikkunaton haku on sallittu (koko historia), mutta nurinkurinen ei: alku loppua
+  // myöhemmin tuottaisi tyhjän koosteen joka näyttäisi rauhalliselta jaksolta.
+  const ikkuna = req.query.alku || req.query.loppu
+    ? teeIkkuna({ alku: req.query.alku, loppu: req.query.loppu })
+    : null;
+  if ((req.query.alku || req.query.loppu) && !ikkuna) {
+    return res.status(400).json({ ok: false, error: 'Aikaväli on virheellinen.' });
+  }
+
+  const lahteet = koosteenLahteet(req, ownerId, portti.omistaja.onKohde);
+  res.json({
+    ok: true,
+    nimi: portti.omistaja.nimi,
+    onKohde: portti.omistaja.onKohde,
+    kooste: laskeKooste({ ...lahteet, ikkuna }),
+  });
+});
+
+function kerroJalkiraportista(raportti, action) {
+  lahetaKanavalle('debriefs', [{ action, id: raportti.id, eventId: raportti.ownerId }], {
+    saaNahda: (istunto, ownerId) => {
+      if (istunto?.role === 'admin') return true;
+      if (!eventAllowed(istunto?.eventAccess, ownerId)) return false;
+      return canView(rolePermissions(istunto?.roleId), ownerId, jalkiraportinSolmu(raportti.omistaja === 'kohde'));
+    },
+  });
+}
+
+// Jälkiraportin luonti laskee luvut ja JÄÄDYTTÄÄ ne tietueeseen. Tämä on toiminnon ydin:
+// jos raportti laskisi lukunsa joka avauksella, sama dokumentti näyttäisi ensi kuussa eri
+// luvut — kirjauksia suljetaan jälkikäteen ja säilytysajan päättyessä poistetaan.
+app.post('/api/jalkiraportti', requireAuth, (req, res) => {
+  const ownerId = typeof req.body?.ownerId === 'string' ? req.body.ownerId : '';
+  const portti = analytiikanPortti(req, ownerId, jalkiraportinSolmu, true);
+  if (portti.virhe) return res.status(portti.virhe.tila).json({ ok: false, error: portti.virhe.teksti });
+
+  const ikkuna = req.body?.alku || req.body?.loppu
+    ? teeIkkuna({ alku: req.body.alku, loppu: req.body.loppu })
+    : null;
+  if ((req.body?.alku || req.body?.loppu) && !ikkuna) {
+    return res.status(400).json({ ok: false, error: 'Aikaväli on virheellinen.' });
+  }
+
+  const lahteet = koosteenLahteet(req, ownerId, portti.omistaja.onKohde);
+  const tulos = luoJalkiraportti({
+    id: crypto.randomUUID(),
+    ownerId,
+    omistaja: portti.omistaja.onKohde ? 'kohde' : 'tapahtuma',
+    nimi: req.body?.nimi,
+    ikkuna: ikkuna || { alku: null, loppu: null },
+    kooste: laskeKooste({ ...lahteet, ikkuna }),
+    user: req.username,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('debriefs', [tulos.raportti, ...(readCollection('debriefs') || [])]);
+  logAudit({
+    user: req.username, action: 'debrief_create', collection: 'debriefs',
+    recordId: tulos.raportti.id, eventId: ownerId,
+  });
+  kerroJalkiraportista(tulos.raportti, 'create');
+  res.json({ ok: true, raportti: tulos.raportti });
+});
+
+// Jälkiraportin muutokset yhdellä reitillä: toiminto tulee polusta. Kaikki kolme ovat
+// sama haku, sama oikeustarkistus ja sama kirjoitus samaan tietueeseen.
+const JALKIRAPORTIN_TOIMINNOT = {
+  tallenna: {
+    action: 'debrief_update',
+    fn: ({ raportti, req }) => paivitaJalkiraportti({ raportti, muutokset: req.body, user: req.username }),
+  },
+  valmis: {
+    action: 'debrief_complete',
+    fn: ({ raportti, req }) => merkitseValmiiksi({ raportti, user: req.username }),
+  },
+  avaa: {
+    action: 'debrief_reopen',
+    fn: ({ raportti, req }) => avaaUudelleen({ raportti, user: req.username, syy: req.body?.syy }),
+  },
+};
+
+app.post('/api/jalkiraportti/:id/:toiminto', requireAuth, (req, res) => {
+  const toiminto = JALKIRAPORTIN_TOIMINNOT[req.params.toiminto];
+  if (!toiminto) return res.status(404).json({ ok: false, error: 'Tuntematon toiminto.' });
+
+  const raportit = readCollection('debriefs') || [];
+  const raportti = raportit.find((r) => r.id === req.params.id);
+  if (!raportti) return res.status(404).json({ ok: false, error: 'Jälkiraporttia ei löytynyt.' });
+
+  const portti = analytiikanPortti(req, raportti.ownerId, jalkiraportinSolmu, true);
+  if (portti.virhe) return res.status(portti.virhe.tila).json({ ok: false, error: portti.virhe.teksti });
+
+  const tulos = toiminto.fn({ raportti, req });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('debriefs', raportit.map((r) => (r.id === raportti.id ? tulos.raportti : r)));
+  logAudit({
+    user: req.username, action: toiminto.action, collection: 'debriefs',
+    recordId: raportti.id, eventId: raportti.ownerId,
+  });
+  kerroJalkiraportista(tulos.raportti, 'update');
+  res.json({ ok: true, raportti: tulos.raportti });
+});
+
+// Poisto koskee VAIN luonnosta. Valmis jälkiraportti on dokumentti jonka joku on
+// merkinnyt valmiiksi ja mahdollisesti jo jakanut; sen hävittäminen edellyttää että se
+// ensin avataan uudelleen syyn kanssa, jolloin avaamisesta jää merkintä.
+app.delete('/api/jalkiraportti/:id', requireAuth, (req, res) => {
+  const raportit = readCollection('debriefs') || [];
+  const raportti = raportit.find((r) => r.id === req.params.id);
+  if (!raportti) return res.status(404).json({ ok: false, error: 'Jälkiraporttia ei löytynyt.' });
+
+  const portti = analytiikanPortti(req, raportti.ownerId, jalkiraportinSolmu, true);
+  if (portti.virhe) return res.status(portti.virhe.tila).json({ ok: false, error: portti.virhe.teksti });
+  if (jalkiraporttiLukittu(raportti)) {
+    return res.status(400).json({ ok: false, error: 'Valmista jälkiraporttia ei voi poistaa. Avaa se ensin uudelleen.' });
+  }
+
+  writeCollection('debriefs', raportit.filter((r) => r.id !== raportti.id));
+  logAudit({
+    user: req.username, action: 'debrief_delete', collection: 'debriefs',
+    recordId: raportti.id, eventId: raportti.ownerId,
+  });
+  kerroJalkiraportista(raportti, 'delete');
+  res.json({ ok: true });
+});
 
 // QR-koodin muodostus. Yleiskäyttöinen tarkoituksella: erä 5:n tarkistuspisteet
 // tarvitsevat täsmälleen saman toiminnon, eikä sitä pidä kirjoittaa silloin toiseen

@@ -98,6 +98,14 @@ const COLLECTIONS = {
   // rikki kunnes se korjataan) eikä muuttumaton tapahtuma, ja kirjausten koko idea on
   // niiden muuttumattomuus.
   equipmentIssues: 'equipmentIssues.json',
+  // Jälkiraportit (erä 9). Palvelimen ylläpitämä, koska koko toiminnon arvo on siinä
+  // että luvut on jäädytetty ja valmis raportti lukittu — kumpaakaan ei voi luvata jos
+  // selain saa kirjoittaa kokoelman suoraan.
+  //
+  // Tapahtumapuoli ja GUARD samassa kokoelmassa samasta syystä kuin hälytyksissä:
+  // ownerId on tapahtuman TAI kohteen id, ja rakenne on identtinen. Tapahtuman purku ja
+  // vartiointikohteen jaksoraportti eroavat vain aikaikkunassa.
+  debriefs: 'debriefs.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
@@ -253,6 +261,18 @@ const ENCRYPTED_FIELDS = {
   // sekä omansa että jonkun toisen henkilötietoja. Yhteystieto on määritelmällisesti
   // henkilötietoa aina kun se on täytetty.
   publicReports: ['kuvaus', 'paikka', 'yhteystieto'],
+  // Jälkiraportin vapaat osiot ovat sitä tekstiä jossa kerrotaan mikä meni pieleen ja
+  // kenen kohdalla ("ensiapu viivästyi kun portin JV ei tavoittanut ..."). Samalla
+  // perusteella salattu kuin reports.summary: kenttätasolla ei voi tietää mitä
+  // purkupalaverissa on kirjoitettu. Toimenpiteen vastuu on ihmisen nimi.
+  //
+  // JÄÄDYTETTYJÄ LUKUJA (kooste) ei salata eikä voidakaan: se on sisäkkäinen olio, ja
+  // kenttäsalaus osaa vain ylätason kentän tai ylätason taulukon kentän. Se ei ole
+  // puute — kooste on lukumääriä eikä tekstiä, eikä yksikään sen luku yksilöi ketään.
+  debriefs: [
+    'yhteenveto', 'onnistui', 'kehitettavaa', 'oppi',
+    'toimenpiteet[].teksti', 'toimenpiteet[].vastuu', 'historia[].teksti',
+  ],
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });

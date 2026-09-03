@@ -324,6 +324,17 @@ const COLLECTIONS = {
     eventScoped: true,
     eventIdOf: (item) => item?.ownerId,
   },
+  // Jälkiraportit (erä 9). Sama malli kuin avaimilla ja tiedotteilla, ja samasta syystä
+  // palvelimen ylläpitämä: jäädytetyt luvut ja valmiin raportin lukitus ovat toiminnon
+  // koko sisältö. Selaimesta kirjoitettava jälkiraportti olisi dokumentti jonka luvut
+  // voisi vaihtaa jälkikäteen — eli juuri se mitä jäädytyksellä estetään.
+  debriefs: {
+    view: ['debrief', 'guard_debrief'],
+    viewOf: (item) => [item?.omistaja === 'kohde' ? 'guard_debrief' : 'debrief'],
+    touch: () => [],
+    eventScoped: true,
+    eventIdOf: (item) => item?.ownerId,
+  },
   // Tiedotteet. Kirjoitus tapahtuu VAIN palvelimen omilla reiteillä: kuittauslista on
   // koko toiminnon sisältö, ja selaimesta kirjoitettuna se ei todistaisi mitään.
   broadcasts: {
