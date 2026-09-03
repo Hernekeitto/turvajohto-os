@@ -41,6 +41,11 @@ export const SITEMAP: SivukarttaSolmu[] = [
   // sama jako koskee tekstiviestin lähettämistä: viestin lähettäminen kaikille on
   // toimivalta, sen lukeminen ei.
   { id: 'broadcast', label: 'Tiedotteet (muokkausoikeus = oikeus lähettää)' },
+  // Kalusto: avaimet ja varustepoikkeamat. Omat solmunsa, koska avainrekisteri kertoo
+  // kuka pääsee sisään ja se on eri luottamusasia kuin rikkinäisen taskulampun
+  // ilmoittaminen. Molemmissa lukuoikeus näyttää, muokkausoikeus oikeuttaa kirjaamaan.
+  { id: 'keys', label: 'Avainhallinta' },
+  { id: 'equipment', label: 'Varustepoikkeamat' },
   { id: 'reporting', label: 'Raportointi', children: [
     { id: 'report_jv', label: 'Järjestyksenvalvojan tapahtumailmoitus' },
     { id: 'report_tike', label: 'TIKE:n raportointi', children: [

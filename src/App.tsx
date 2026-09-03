@@ -29,6 +29,8 @@ import { Pohjanakyma } from './shared/komponentit/Pohjanakyma';
 import { haePohjat, haeSuoritukset, LAJIT as POHJALAJIT, type Pohja, type Suoritus } from './shared/pohjat';
 import { Tiedotteet, TiedoteKehote } from './shared/komponentit/Tiedotteet';
 import { haeTiedotteet, onKuitannut, onVoimassa, type Tiedote } from './shared/tiedotteet';
+import { Kalusto } from './shared/komponentit/Kalusto';
+import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from './shared/kalusto';
 import { SijaintiValinta } from './shared/komponentit/SijaintiValinta';
 import {
   VYOHYKEVARIT, VYOHYKKEEN_MIN_PISTEET, uusiVyohykeId, vyohykkeet as haeVyohykkeet,
@@ -1422,6 +1424,28 @@ export default function App() {
     paivitaTiedotteet();
   }, [saaNahdaTiedotteet, paivitaTiedotteet]);
 
+  // Kalusto: avaimet ja varustepoikkeamat (erä 8).
+  const [avaimet, setAvaimet] = useState<Avain[]>([]);
+  const [poikkeamat, setPoikkeamat] = useState<Poikkeama[]>([]);
+  const saaNahdaAvaimia = isAdminUser || canView(perms, selectedEvent, 'keys');
+  const saaMuokataAvaimia = isAdminUser || canEdit(perms, selectedEvent, 'keys');
+  const saaNahdaVarusteita = isAdminUser || canView(perms, selectedEvent, 'equipment');
+  const saaKasitellaPoikkeamia = isAdminUser || canEdit(perms, selectedEvent, 'equipment');
+  const saaNahdaKalustoa = saaNahdaAvaimia || saaNahdaVarusteita;
+
+  const paivitaAvaimet = useCallback(() => {
+    haeAvaimet().then((lista) => { if (lista) setAvaimet(lista); });
+  }, []);
+  const paivitaPoikkeamat = useCallback(() => {
+    haePoikkeamat().then((lista) => { if (lista) setPoikkeamat(lista); });
+  }, []);
+
+  useEffect(() => {
+    if (!saaNahdaKalustoa) return;
+    paivitaAvaimet();
+    paivitaPoikkeamat();
+  }, [saaNahdaKalustoa, paivitaAvaimet, paivitaPoikkeamat]);
+
   const paivitaTiedote = (tiedote: Tiedote) => {
     setTiedotteet((edelliset) => {
       const tunnettu = edelliset.some((t) => t.id === tiedote.id);
@@ -1499,6 +1523,8 @@ export default function App() {
       if (kokoelma === 'templates') { paivitaPohjat(); return; }
       if (kokoelma === 'templateRuns') { paivitaPohjaSuoritukset(); return; }
       if (kokoelma === 'broadcasts') { paivitaTiedotteet(); return; }
+      if (kokoelma === 'keys') { paivitaAvaimet(); return; }
+      if (kokoelma === 'equipmentIssues') { paivitaPoikkeamat(); return; }
       paivitaKokoelma(kokoelma);
     },
     // Palvelin lähettää yhden sijainnin kerrallaan sitä mukaa kun niitä tulee. Lista
@@ -5552,6 +5578,20 @@ export default function App() {
       // Ohjepankki, skenaariot ja run sheet (erä 8). Kolme sivukartta-solmua mutta yksi
       // näkymä välilehdillä: ne ovat samaa koneistoa eri sisällöllä, ja erilliset
       // sivuvalikon rivit veisivät tilaa kolmelta harvoin käytetyltä sivulta.
+      case 'kalusto':
+        return (
+          <Kalusto
+            ownerId={selectedEvent || ''}
+            ownerNimi={findEventName(selectedEvent, events)}
+            avaimet={avaimet}
+            poikkeamat={poikkeamat}
+            saaMuokataAvaimia={saaMuokataAvaimia}
+            saaKasitellaPoikkeamia={saaKasitellaPoikkeamia}
+            onAvaimetMuuttui={paivitaAvaimet}
+            onPoikkeamatMuuttui={paivitaPoikkeamat}
+            aloitusValilehti="varusteet"
+          />
+        );
       case 'broadcast':
         return (
           <Tiedotteet
@@ -13996,6 +14036,21 @@ export default function App() {
                   </button>
                 );
               })()}
+              {saaNahdaKalustoa && (
+                <button
+                  onClick={() => setActiveTab('kalusto')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'kalusto' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <KeyRound size={18} />
+                  Kalusto
+                  {(avaimet.some((a) => a.ownerId === selectedEvent && a.tila === 'kadonnut')
+                    || poikkeamat.some((p) => p.ownerId === selectedEvent && p.tila === 'avoin')) && (
+                    <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                      huomioitavaa
+                    </span>
+                  )}
+                </button>
+              )}
               {saaNahdaTiedotteet && (
                 <button
                   onClick={() => setActiveTab('broadcast')}

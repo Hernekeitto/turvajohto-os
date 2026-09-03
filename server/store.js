@@ -90,6 +90,14 @@ const COLLECTIONS = {
   // Palvelimen ylläpitämä, koska kuittauslista on koko toiminnon sisältö — selaimesta
   // kirjoitettava kuittauslista ei todistaisi mitään.
   broadcasts: 'broadcasts.json',
+  // Avainrekisteri (erä 8): kenellä on mikäkin avain juuri nyt. Palvelimen ylläpitämä,
+  // koska rekisteri jonka rivejä selain voi kirjoittaa ei kelpaa todisteeksi siitä kuka
+  // pääsi sisään.
+  keys: 'keys.json',
+  // Varustepoikkeamat (erä 8). Oma kokoelmansa eikä kirjaus: poikkeama on TILA (radio on
+  // rikki kunnes se korjataan) eikä muuttumaton tapahtuma, ja kirjausten koko idea on
+  // niiden muuttumattomuus.
+  equipmentIssues: 'equipmentIssues.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
@@ -222,6 +230,13 @@ const ENCRYPTED_FIELDS = {
   // mainitaan usein ihmisiä nimeltä ("Virtanen jää portille 2"). Otsikko jää
   // selväkieliseksi: se on listan rivi eikä sisältö.
   broadcasts: ['viesti'],
+  // Avaimen haltija on ihmisen nimi — usein sellaisen ihmisen, jolla ei ole tunnusta
+  // järjestelmään (siivooja, huoltomies). Historian tekstit ovat vapaata tekstiä samasta
+  // tapahtumasta. Avaimen tunnus ("A-12 pääovi") jää selväkieliseksi: se on esineen nimi.
+  keys: ['haltija', 'historia[].haltija', 'historia[].teksti'],
+  // Poikkeaman kuvaus ja käsittelyn huomio ovat vapaata tekstiä, jossa mainitaan usein
+  // ihmisiä ("Virtasen radio kastui"). Varusteen nimi jää selväkieliseksi.
+  equipmentIssues: ['kuvaus', 'kasittelyHuomio'],
   // Tarkistuspisteen token on tarrassa seinässä eikä salaisuus, mutta se on ainoa asia
   // joka todistaa skannauksen kohdistuneen oikeaan pisteeseen — samalla perusteella
   // salattu kuin ilmoitusjulisteen token.

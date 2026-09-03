@@ -72,6 +72,12 @@ import { aloitaKierros, kuittaaPiste, paataKierros, etaisyysMetreina, OLETUS_SIE
 import { aloitaSuoritus, kuittaaKohta, paataSuoritus } from './suoritus.js';
 import { luoTiedote, kuittaa as kuittaaTiedote, peru as peruTiedote, onVoimassa, kuittaamatta } from './broadcast.js';
 import {
+  luoAvain, luovuta, palauta, merkitseKadonneeksi, merkitseLoytyneeksi, poistaKaytosta,
+} from './avaimet.js';
+import {
+  luoPoikkeama, kasittele as kasittelePoikkeama, eskaloituu, halytyksenKuvaus,
+} from './varusteet.js';
+import {
   luoAjastin, luoHalytys, jatka as jatkaHalytysta, laukaise as laukaiseHalytys,
   peru as peruHalytys, kuittaa as kuittaaHalytys, eraantyneet, eskaloitavat,
   merkitseEskaloitu, viestiTeksti, TYYPIT as HALYTYSTYYPIT,
@@ -391,7 +397,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -2182,6 +2188,191 @@ app.get('/api/tiedote/:id/kuittaamatta', requireAuth, (req, res) => {
     vastaanottajia: vastaanottajat.length,
     kuittaamatta: kuittaamatta(tiedote, vastaanottajat),
   });
+});
+
+
+// --- Avainhallinta ja varustepoikkeamat (erä 8) ------------------------------------
+//
+// Molemmat ovat rekistereitä eivätkä pohjia: avaimella ja varusteella on TILA jota
+// muutetaan, kun taas pohjasta tehdään suorituksia. Säännöt ovat avaimet.js:ssä ja
+// varusteet.js:ssä.
+
+const kalustonSolmu = (tietue, laji) => {
+  const kohde = tietue?.omistaja === 'kohde';
+  if (laji === 'avain') return kohde ? 'guard_keys' : 'keys';
+  return kohde ? 'guard_equipment' : 'equipment';
+};
+
+// Avainrekisterin muutokset vaativat muokkausoikeuden — myös luovutus ja palautus.
+// Luovutusmerkintä on se mikä kertoo kuka pääsee sisään, eikä sitä pidä voida kirjata
+// pelkällä katseluoikeudella.
+function saaMuokataKalustoa(req, ownerId, onKohde, laji) {
+  if (req.role === 'admin') return true;
+  if (!tuoteOk(req, onKohde)) return false;
+  return eventAllowed(req.eventAccess, ownerId)
+    && canEdit(req.permissions, ownerId, kalustonSolmu({ omistaja: onKohde ? 'kohde' : 'tapahtuma' }, laji));
+}
+
+function saaNahdaKalustoa(req, ownerId, onKohde, laji) {
+  if (req.role === 'admin') return true;
+  if (!tuoteOk(req, onKohde)) return false;
+  return eventAllowed(req.eventAccess, ownerId)
+    && canView(req.permissions, ownerId, kalustonSolmu({ omistaja: onKohde ? 'kohde' : 'tapahtuma' }, laji));
+}
+
+function kerroKalustosta(kokoelma, tietue, laji, action) {
+  lahetaKanavalle(kokoelma, [{ action, id: tietue.id, eventId: tietue.ownerId }], {
+    saaNahda: (istunto, ownerId) => {
+      if (istunto?.role === 'admin') return true;
+      if (!eventAllowed(istunto?.eventAccess, ownerId)) return false;
+      return canView(rolePermissions(istunto?.roleId), ownerId, kalustonSolmu(tietue, laji));
+    },
+  });
+}
+
+app.post('/api/avain', requireAuth, (req, res) => {
+  const ownerId = typeof req.body?.ownerId === 'string' ? req.body.ownerId : '';
+  const omistaja = omistajanTiedot(ownerId);
+  if (!omistaja) return res.status(404).json({ ok: false, error: 'Kohdetta tai tapahtumaa ei löytynyt.' });
+  if (!saaMuokataKalustoa(req, ownerId, omistaja.onKohde, 'avain')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta avainrekisteriin.' });
+  }
+
+  const tulos = luoAvain({
+    id: crypto.randomUUID(),
+    ownerId,
+    omistaja: omistaja.onKohde ? 'kohde' : 'tapahtuma',
+    tunnus: req.body?.tunnus,
+    kuvaus: req.body?.kuvaus,
+    user: req.username,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('keys', [tulos.avain, ...(readCollection('keys') || [])]);
+  logAudit({ user: req.username, action: 'key_create', collection: 'keys', recordId: tulos.avain.id, eventId: ownerId });
+  kerroKalustosta('keys', tulos.avain, 'avain', 'create');
+  res.json({ ok: true, avain: tulos.avain });
+});
+
+// Avaimen tilamuutokset yhdellä reitillä: toiminto tulee polusta, ja jokainen niistä on
+// sama kirjoitus samaan tietueeseen. Erilliset reitit toistaisivat saman haun,
+// oikeustarkistuksen ja kirjoituksen viisi kertaa.
+const AVAIMEN_TOIMINNOT = {
+  luovuta: { fn: luovuta, action: 'key_handover' },
+  palauta: { fn: palauta, action: 'key_return' },
+  kadonnut: { fn: merkitseKadonneeksi, action: 'key_lost' },
+  loytyi: { fn: merkitseLoytyneeksi, action: 'key_found' },
+  poista: { fn: poistaKaytosta, action: 'key_retire' },
+};
+
+app.post('/api/avain/:id/:toiminto', requireAuth, (req, res) => {
+  const toiminto = AVAIMEN_TOIMINNOT[req.params.toiminto];
+  if (!toiminto) return res.status(404).json({ ok: false, error: 'Tuntematon toiminto.' });
+
+  const avaimet = readCollection('keys') || [];
+  const avain = avaimet.find((a) => a.id === req.params.id);
+  if (!avain) return res.status(404).json({ ok: false, error: 'Avainta ei löytynyt.' });
+  if (!saaMuokataKalustoa(req, avain.ownerId, avain.omistaja === 'kohde', 'avain')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta avainrekisteriin.' });
+  }
+
+  const tulos = toiminto.fn({
+    avain,
+    user: req.username,
+    haltija: req.body?.haltija,
+    huomio: req.body?.huomio,
+    syy: req.body?.syy,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('keys', avaimet.map((a) => (a.id === avain.id ? tulos.avain : a)));
+  logAudit({
+    user: req.username, action: toiminto.action, collection: 'keys',
+    recordId: avain.id, eventId: avain.ownerId,
+  });
+  kerroKalustosta('keys', tulos.avain, 'avain', 'update');
+  res.json({ ok: true, avain: tulos.avain });
+});
+
+// Varustepoikkeaman ILMOITTAMINEN riittää lukuoikeudella: sen huomaa se joka käyttää
+// varustetta, ja jos ilmoittaminen vaatisi muokkausoikeuden, rikkinäisestä radiosta
+// kerrottaisiin radiolla. Poikkeaman SULKEMINEN vaatii muokkausoikeuden — se on väite
+// siitä että asia on kunnossa.
+app.post('/api/varuste', requireAuth, (req, res) => {
+  const ownerId = typeof req.body?.ownerId === 'string' ? req.body.ownerId : '';
+  const omistaja = omistajanTiedot(ownerId);
+  if (!omistaja) return res.status(404).json({ ok: false, error: 'Kohdetta tai tapahtumaa ei löytynyt.' });
+  if (!saaNahdaKalustoa(req, ownerId, omistaja.onKohde, 'varuste')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta varustepoikkeamiin.' });
+  }
+
+  const tulos = luoPoikkeama({
+    id: crypto.randomUUID(),
+    ownerId,
+    omistaja: omistaja.onKohde ? 'kohde' : 'tapahtuma',
+    varuste: req.body?.varuste,
+    kuvaus: req.body?.kuvaus,
+    vakavuus: req.body?.vakavuus,
+    ilmoittaja: req.username,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  let poikkeama = tulos.poikkeama;
+
+  // Kriittinen poikkeama eskaloituu erän 7 hälytysketjua pitkin: valvomoon heti,
+  // tekstiviestinä viiveen jälkeen. Toinen rinnakkainen ilmoituskanava tarkoittaisi kahta
+  // paikkaa joita pitää seurata.
+  if (eskaloituu(poikkeama)) {
+    const halytys = luoHalytys({
+      id: crypto.randomUUID(),
+      tyyppi: 'varuste',
+      vartija: req.username,
+      eventId: ownerId,
+      kuvaus: `${halytyksenKuvaus(poikkeama)} - ${poikkeama.kuvaus}`,
+    });
+    if (halytys.ok) {
+      poikkeama = { ...poikkeama, halytysId: halytys.halytys.id };
+      writeCollection('alerts', [halytys.halytys, ...(readCollection('alerts') || [])]);
+      logAudit({
+        user: req.username, action: 'alarm_raised', collection: 'alerts',
+        recordId: halytys.halytys.id, eventId: ownerId, alarmType: 'varuste',
+      });
+      kerroHalytyksesta(halytys.halytys, 'create');
+    }
+  }
+
+  writeCollection('equipmentIssues', [poikkeama, ...(readCollection('equipmentIssues') || [])]);
+  logAudit({
+    user: req.username, action: 'equipment_issue', collection: 'equipmentIssues',
+    recordId: poikkeama.id, eventId: ownerId, severity: poikkeama.vakavuus,
+  });
+  kerroKalustosta('equipmentIssues', poikkeama, 'varuste', 'create');
+  res.json({ ok: true, poikkeama });
+});
+
+app.post('/api/varuste/:id/kasittele', requireAuth, (req, res) => {
+  const poikkeamat = readCollection('equipmentIssues') || [];
+  const poikkeama = poikkeamat.find((p) => p.id === req.params.id);
+  if (!poikkeama) return res.status(404).json({ ok: false, error: 'Poikkeamaa ei löytynyt.' });
+  if (!saaMuokataKalustoa(req, poikkeama.ownerId, poikkeama.omistaja === 'kohde', 'varuste')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta käsitellä varustepoikkeamia.' });
+  }
+
+  const tulos = kasittelePoikkeama({
+    poikkeama,
+    tila: req.body?.tila,
+    user: req.username,
+    huomio: req.body?.huomio,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('equipmentIssues', poikkeamat.map((p) => (p.id === poikkeama.id ? tulos.poikkeama : p)));
+  logAudit({
+    user: req.username, action: 'equipment_resolved', collection: 'equipmentIssues',
+    recordId: poikkeama.id, eventId: poikkeama.ownerId,
+  });
+  kerroKalustosta('equipmentIssues', tulos.poikkeama, 'varuste', 'update');
+  res.json({ ok: true, poikkeama: tulos.poikkeama });
 });
 
 

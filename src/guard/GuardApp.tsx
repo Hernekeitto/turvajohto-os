@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff, Siren, BookOpen, ListChecks, Megaphone } from 'lucide-react';
+import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff, Siren, BookOpen, ListChecks, Megaphone, KeyRound } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
@@ -26,6 +26,8 @@ import { Pohjanakyma } from '../shared/komponentit/Pohjanakyma';
 import { haeSuoritukset, type Pohja, type Suoritus } from '../shared/pohjat';
 import { Tiedotteet, TiedoteKehote } from '../shared/komponentit/Tiedotteet';
 import { haeTiedotteet, onKuitannut, onVoimassa, type Tiedote } from '../shared/tiedotteet';
+import { Kalusto } from '../shared/komponentit/Kalusto';
+import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from '../shared/kalusto';
 import {
   uusiId, type GuardRaportti, type Kohde, type KohteenTiedosto, type RaporttiTyyppi,
   type TehtavaSuoritus, type Kierrospohja, type Kierros as KierrosTietue,
@@ -86,6 +88,12 @@ export default function GuardApp() {
   // Tiedotteet: lukuoikeus näyttää ja oikeuttaa kuittaamaan, muokkausoikeus lähettämään.
   const saaNahdaTiedotteet = isAdmin || canView(perms, null, 'guard_broadcast');
   const saaLahettaaTiedotteita = isAdmin || canEdit(perms, null, 'guard_broadcast');
+  // Kalusto: avaimet ja varustepoikkeamat. Avainrekisterin muutokset vaativat
+  // muokkausoikeuden, koska luovutusmerkintä kertoo kuka pääsee sisään. Poikkeaman
+  // ILMOITTAMINEN riittää lukuoikeudella — sen huomaa se joka käyttää varustetta.
+  const saaNahdaKalustoa = isAdmin || canView(perms, null, 'guard_keys') || canView(perms, null, 'guard_equipment');
+  const saaMuokataAvaimia = isAdmin || canEdit(perms, null, 'guard_keys');
+  const saaKasitellaPoikkeamia = isAdmin || canEdit(perms, null, 'guard_equipment');
   // Raportointi on jaettu lomaketyypeittäin: tapahtumailmoitus sisältää kohdehenkilötiedot
   // ja voi olla eri joukolla ihmisiä kuin päivittäinen toimenpidekirjaus.
   const saaKirjataToimenpiteen = isAdmin || canEdit(perms, null, 'guard_report_action');
@@ -138,6 +146,9 @@ export default function GuardApp() {
   const [pohjaSuoritukset, setPohjaSuoritukset] = useState<Suoritus[]>([]);
   const [tiedotteet, setTiedotteet] = useState<Tiedote[]>([]);
   const [tiedoteKohde, setTiedoteKohde] = useState<Kohde | null>(null);
+  const [avaimet, setAvaimet] = useState<Avain[]>([]);
+  const [poikkeamat, setPoikkeamat] = useState<Poikkeama[]>([]);
+  const [kalustoKohde, setKalustoKohde] = useState<Kohde | null>(null);
   // Man-down päällä/pois säilyy laitteella: vartija kytkee sen kerran vuoron alussa,
   // eikä asetus saa nollautua sivun latauksesta kesken vuoron.
   const [mandown, setMandown] = useState(false);
@@ -270,6 +281,17 @@ export default function GuardApp() {
 
   useEffect(() => { paivitaTiedotteet(); }, [paivitaTiedotteet]);
 
+  const paivitaAvaimet = useCallback(() => {
+    if (!saaNahdaKalustoa) return;
+    haeAvaimet().then((lista) => { if (lista) setAvaimet(lista); });
+  }, [saaNahdaKalustoa]);
+  const paivitaPoikkeamat = useCallback(() => {
+    if (!saaNahdaKalustoa) return;
+    haePoikkeamat().then((lista) => { if (lista) setPoikkeamat(lista); });
+  }, [saaNahdaKalustoa]);
+
+  useEffect(() => { paivitaAvaimet(); paivitaPoikkeamat(); }, [paivitaAvaimet, paivitaPoikkeamat]);
+
   const paivitaTiedote = (tiedote: Tiedote) => {
     setTiedotteet((edelliset) => {
       const tunnettu = edelliset.some((t) => t.id === tiedote.id);
@@ -313,6 +335,8 @@ export default function GuardApp() {
       if (kokoelma === 'templates') haePohjat();
       if (kokoelma === 'templateRuns') paivitaPohjaSuoritukset();
       if (kokoelma === 'broadcasts') paivitaTiedotteet();
+      if (kokoelma === 'keys') paivitaAvaimet();
+      if (kokoelma === 'equipmentIssues') paivitaPoikkeamat();
     },
   });
 
@@ -656,7 +680,7 @@ export default function GuardApp() {
     <Ylapalkki
       tuoteNimi="Turvajohto GUARD"
       alaotsikko={alaotsikko}
-      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); setHalytysKohde(null); setPohjaNakyma(null); setTiedoteKohde(null); }}
+      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); setHalytysKohde(null); setPohjaNakyma(null); setTiedoteKohde(null); setKalustoKohde(null); }}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}
@@ -693,6 +717,7 @@ export default function GuardApp() {
           : halytysKohde ? 'Hälytykset'
           : pohjaNakyma ? (pohjaNakyma.laji === 'guide' ? 'Ohjepankki' : 'Skenaariot')
           : tiedoteKohde ? 'Tiedotteet'
+          : kalustoKohde ? 'Kalusto'
           : kierrosKohde ? 'Kierrokset'
           : pohjaKohde ? 'Kierrospohjat'
           : tehtavaKohde ? 'Työvuoron tehtävät'
@@ -788,6 +813,21 @@ export default function GuardApp() {
               kierrokset={kierrokset}
               onTakaisin={() => setTietoKohde(null)}
             />
+          ) : kalustoKohde ? (
+            <div className="max-w-3xl">
+              <TakaisinLinkki onClick={() => setKalustoKohde(null)}>Takaisin kohdelistaan</TakaisinLinkki>
+              <Kalusto
+                ownerId={kalustoKohde.id}
+                ownerNimi={kalustoKohde.name}
+                avaimet={avaimet}
+                poikkeamat={poikkeamat}
+                saaMuokataAvaimia={saaMuokataAvaimia}
+                saaKasitellaPoikkeamia={saaKasitellaPoikkeamia}
+                onAvaimetMuuttui={paivitaAvaimet}
+                onPoikkeamatMuuttui={paivitaPoikkeamat}
+                aloitusValilehti="avaimet"
+              />
+            </div>
           ) : tiedoteKohde ? (
             <div className="max-w-3xl">
               <TakaisinLinkki onClick={() => setTiedoteKohde(null)}>Takaisin kohdelistaan</TakaisinLinkki>
@@ -981,6 +1021,26 @@ export default function GuardApp() {
                             {kierrokset.some((k) => k.siteId === kohde.id && k.tila === 'kesken') && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
                                 kesken
+                              </span>
+                            )}
+                          </button>
+                        )}
+                        {saaNahdaKalustoa && (
+                          <button
+                            type="button"
+                            onClick={() => setKalustoKohde(kohde)}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
+                          >
+                            <KeyRound size={14} />
+                            Kalusto
+                            {avaimet.some((a) => a.ownerId === kohde.id && a.tila === 'kadonnut') && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-danger-soft text-danger-ink border border-danger/30">
+                                avain kadonnut
+                              </span>
+                            )}
+                            {poikkeamat.some((p) => p.ownerId === kohde.id && p.tila === 'avoin') && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
+                                poikkeama
                               </span>
                             )}
                           </button>

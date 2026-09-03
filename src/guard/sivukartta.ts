@@ -47,6 +47,10 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // Tiedotteet. Sama sääntö kuin EVENT-puolella: lukuoikeus näyttää ja oikeuttaa
   // kuittaamaan, muokkausoikeus oikeuttaa lähettämään.
   { id: 'guard_broadcast', label: 'Tiedotteet (muokkausoikeus = oikeus lähettää)' },
+  // Kalusto. Vartiointikohteessa avainhallinta on tavallisempi kuin tapahtumassa: kohteen
+  // avaimet ovat pitkäkestoisia ja niiden luovutusketju on osa toimeksiantoa.
+  { id: 'guard_keys', label: 'Avainhallinta' },
+  { id: 'guard_equipment', label: 'Varustepoikkeamat' },
   // Raportointi. Omat solmunsa lomaketyypeittäin samaan tapaan kuin tapahtumapuolen
   // tike_form_*-solmut: vartijan toimenpide on päivittäistä kirjaamista, kun taas
   // tapahtumailmoitus sisältää LYTP:n nojalla kirjattavat kohdehenkilötiedot ja voi

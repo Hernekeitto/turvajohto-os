@@ -60,6 +60,14 @@ export const TYYPIT = {
     eskalointiViiveMs: 0,
     eskaloi: false,
   },
+  // Kriittinen varustepoikkeama (erä 8). Eskaloituu, koska kriittinen tarkoittaa juuri
+  // sitä että puute estää turvallisen työskentelyn nyt — mutta viive on pitkä: kyse ei
+  // ole ihmisen hädästä vaan siitä että joku on saatava tuomaan toimiva varuste.
+  varuste: {
+    label: 'Varustepoikkeama',
+    eskalointiViiveMs: 5 * 60 * 1000,
+    eskaloi: true,
+  },
 };
 
 export const TYYPPI_IDT = Object.keys(TYYPIT);

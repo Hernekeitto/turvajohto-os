@@ -307,6 +307,23 @@ const COLLECTIONS = {
   // Pohjien suoritukset (skenaarion läpivienti, run sheetin ajo). Kirjoitus tapahtuu VAIN
   // palvelimen omilla reiteillä (index.js: PALVELIMEN_YLLAPITAMAT) — säännöt kriittisistä
   // kohdista ja keskeytyksen syystä ovat suoritus.js:ssä eivätkä täällä.
+  // Avainrekisteri. Palvelimen ylläpitämä: avaimen tila ja historia ovat koko rekisterin
+  // sisältö, ja selaimesta kirjoitettuina ne eivät todistaisi mitään.
+  keys: {
+    view: ['keys', 'guard_keys'],
+    viewOf: (item) => [item?.omistaja === 'kohde' ? 'guard_keys' : 'keys'],
+    touch: () => [],
+    eventScoped: true,
+    eventIdOf: (item) => item?.ownerId,
+  },
+  // Varustepoikkeamat. Sama malli.
+  equipmentIssues: {
+    view: ['equipment', 'guard_equipment'],
+    viewOf: (item) => [item?.omistaja === 'kohde' ? 'guard_equipment' : 'equipment'],
+    touch: () => [],
+    eventScoped: true,
+    eventIdOf: (item) => item?.ownerId,
+  },
   // Tiedotteet. Kirjoitus tapahtuu VAIN palvelimen omilla reiteillä: kuittauslista on
   // koko toiminnon sisältö, ja selaimesta kirjoitettuna se ei todistaisi mitään.
   broadcasts: {
