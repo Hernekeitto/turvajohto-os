@@ -45,6 +45,14 @@ export type Kohde = {
   mapUploadId?: string;
   mapUploadName?: string;
   zones?: Vyohyke[];
+  // Kartan kalibrointipisteet: kohtia kuvalla joiden oikeat koordinaatit tiedetään.
+  // Ilman näitä GPS-sijainnista ei voi päätellä kohtaa pohjakuvalla, jolloin vyöhykkeiden
+  // hälytyssäännöt (erä 7) eivät voi laueta eikä kukaan näy kartalla.
+  mapRef?: { img: { x: number; y: number }; gps: { lat: number; lon: number } }[];
+  // Kohteen hälytysnumerot. Näihin lähtee tekstiviesti kun hälytys eskaloituu. EI sama
+  // kuin contactPhone: man-down-hälytyksessä soitetaan oman vartiointiliikkeen
+  // päivystäjälle, ei toimeksiantajalle kello kolme yöllä.
+  halytysNumerot?: { nimi?: string; numero: string }[];
 };
 
 // Kohteen tiedosto (guardFiles). Oma kokoelmansa eikä kohteen kenttä, koska liitetiedosto

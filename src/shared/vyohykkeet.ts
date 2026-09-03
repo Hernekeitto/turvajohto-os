@@ -12,12 +12,35 @@
 
 export type Piste = { x: number; y: number };
 
+export type VyohykeSaanto = 'ei' | 'saapuminen' | 'poistuminen';
+
 export type Vyohyke = {
   id: string;
   nimi: string;
   vari: string;
   pisteet: Piste[];
+  // Hälytyssääntö (erä 7). Vyöhykkeen kenttä eikä oma rakenteensa samasta syystä kuin
+  // vyöhyke itse on tapahtuman kenttä: sääntö on merkityksetön ilman sitä aluetta jolle
+  // se on piirretty.
+  halytys?: VyohykeSaanto;
 };
+
+// Vyöhykehälytyksen säännöt. HUOM: sama lista on palvelimella (server/geofence.js:
+// VYOHYKESAANNOT), joka on se joka oikeasti päättää hälytyksistä. Jos lisäät säännön,
+// lisää se molempiin — muuten valikossa näkyy sääntö jota mikään ei valvo.
+export const VYOHYKESAANNOT: { id: VyohykeSaanto; nimi: string; selite: string }[] = [
+  { id: 'ei', nimi: 'Ei hälytystä', selite: 'Vyöhyke on vain kartalla ja suodattimissa.' },
+  {
+    id: 'saapuminen',
+    nimi: 'Hälytä saapumisesta',
+    selite: 'Kielletty tai vaarallinen alue: hälytys syntyy kun joku ylittää rajan sisäänpäin.',
+  },
+  {
+    id: 'poistuminen',
+    nimi: 'Hälytä poistumisesta',
+    selite: 'Alue jolta ei pitäisi poistua kesken vuoron: hälytys syntyy rajan ylityksestä ulospäin.',
+  },
+];
 
 // Värit ovat kiinteä valikoima eikä vapaa värivalitsin: kartalta pitää erottaa
 // vyöhykkeet toisistaan yhdellä silmäyksellä, ja se onnistuu vain jos värejä on vähän ja

@@ -3,7 +3,10 @@ import { Plus, Trash2, ClipboardList, GraduationCap, Building2, CheckSquare, Lis
 import { Kentta } from './Kentta';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { Kartta } from '../shared/komponentit/Kartta';
-import { VYOHYKEVARIT, VYOHYKKEEN_MIN_PISTEET, uusiVyohykeId, type Piste } from '../shared/vyohykkeet';
+import {
+  VYOHYKEVARIT, VYOHYKKEEN_MIN_PISTEET, VYOHYKESAANNOT, uusiVyohykeId, type Piste,
+} from '../shared/vyohykkeet';
+import { luoMuunnos } from '../shared/georeferointi';
 import { paikallinenPaiva } from '../shared/ajat';
 import { muotoileTunniste } from '../shared/tunnisteet';
 import { KohteenTiedostot } from './KohteenTiedostot';
@@ -63,8 +66,32 @@ export const KohteenHallinta = ({
   const [piirrettava, setPiirrettava] = useState<Piste[]>([]);
   const [uusiNimi, setUusiNimi] = useState('');
   const [uusiVari, setUusiVari] = useState(VYOHYKEVARIT[0].id);
+  // Kartan kalibrointi (erä 7): kohtia kuvalla joiden oikeat koordinaatit tiedetään.
+  // Ilman kalibrointia vyöhykkeiden hälytyssäännöt eivät voi laueta, koska GPS-sijainnista
+  // ei voi päätellä millä vyöhykkeellä henkilö on.
+  const [kalibrointiTila, setKalibrointiTila] = useState(false);
+  const [kalibrointiPiste, setKalibrointiPiste] = useState<Piste | null>(null);
+  const [kalibrointiLat, setKalibrointiLat] = useState('');
+  const [kalibrointiLon, setKalibrointiLon] = useState('');
 
   const kohteenVyohykkeet = kohde.zones || [];
+  const kalibrointi = kohde.mapRef || [];
+  const muunnos = luoMuunnos(kalibrointi);
+
+  const lisaaKalibrointipiste = () => {
+    if (!kalibrointiPiste) return;
+    const lat = Number(String(kalibrointiLat).replace(',', '.'));
+    const lon = Number(String(kalibrointiLon).replace(',', '.'));
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      setKarttaVirhe('Tarkista koordinaatit. Esimerkki: 61.4941 ja 23.7651.');
+      return;
+    }
+    setKarttaVirhe(null);
+    onChange({ ...kohde, mapRef: [...kalibrointi, { img: kalibrointiPiste, gps: { lat, lon } }] });
+    setKalibrointiPiste(null);
+    setKalibrointiLat('');
+    setKalibrointiLon('');
+  };
 
   const lahetaKartta = async (tiedosto?: File) => {
     if (!tiedosto) return;
@@ -214,6 +241,85 @@ export const KohteenHallinta = ({
             monirivinen
           />
 
+          {/* Hälytysnumerot (erä 7). ERI ASIA KUIN YHTEYSHENKILÖ: man-down- tai
+              hätäpainikehälytyksessä soitetaan oman vartiointiliikkeen päivystäjälle, ei
+              toimeksiantajalle kello kolme yöllä. Ilman numeroita hälytys jää sovelluksen
+              sisälle — sitä ei arvata mistään muualta. */}
+          <div className="border-t border-line-soft pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+              <h3 className="text-sm font-bold text-ink-strong">Hälytysnumerot</h3>
+              {saaMuokata && (
+                <button
+                  type="button"
+                  onClick={() => onChange({
+                    ...kohde,
+                    halytysNumerot: [...(kohde.halytysNumerot || []), { nimi: '', numero: '' }],
+                  })}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-line-soft hover:bg-surface-muted rounded-lg text-xs font-medium text-ink-body transition-colors"
+                >
+                  <Plus size={13} />
+                  Lisää numero
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-ink-muted mb-3">
+              Näihin lähtee tekstiviesti kun hälytys eskaloituu: ajastin jää kuittaamatta,
+              man-down laukeaa tai vartija painaa hätäpainiketta.
+            </p>
+            {(kohde.halytysNumerot || []).length === 0 ? (
+              <p className="text-xs text-warning-ink bg-warning-soft border border-warning/30 rounded-lg p-2">
+                Numeroita ei ole määritetty. Lauennut hälytys näkyy vain sovelluksessa eikä
+                tavoita ketään puhelimitse.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {(kohde.halytysNumerot || []).map((rivi, i) => (
+                  <li key={i} className="flex flex-wrap gap-2 items-center">
+                    <input
+                      type="text"
+                      value={rivi.nimi || ''}
+                      onChange={(e) => onChange({
+                        ...kohde,
+                        halytysNumerot: (kohde.halytysNumerot || []).map((r, j) => (
+                          j === i ? { ...r, nimi: e.target.value } : r
+                        )),
+                      })}
+                      disabled={!saaMuokata}
+                      placeholder="Kenen numero (esim. Päivystäjä)"
+                      className="flex-1 min-w-[150px] rounded-lg border border-line-soft p-2 text-sm"
+                    />
+                    <input
+                      type="tel"
+                      value={rivi.numero || ''}
+                      onChange={(e) => onChange({
+                        ...kohde,
+                        halytysNumerot: (kohde.halytysNumerot || []).map((r, j) => (
+                          j === i ? { ...r, numero: e.target.value } : r
+                        )),
+                      })}
+                      disabled={!saaMuokata}
+                      placeholder="+358 40 123 4567"
+                      className="flex-1 min-w-[150px] rounded-lg border border-line-soft p-2 text-sm"
+                    />
+                    {saaMuokata && (
+                      <button
+                        type="button"
+                        onClick={() => onChange({
+                          ...kohde,
+                          halytysNumerot: (kohde.halytysNumerot || []).filter((_, j) => j !== i),
+                        })}
+                        title="Poista numero"
+                        className="p-2 text-ink-muted hover:text-danger"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           {/* Pohjakartta ja vyöhykkeet. Sama malli kuin tapahtumapuolella: kartta on
               kohteen kenttä, ja vyöhykkeet piirretään sen päälle osuuskoordinaatteina. */}
           <div className="border-t border-line-soft pt-4">
@@ -238,8 +344,17 @@ export const KohteenHallinta = ({
             <Kartta
               karttaId={kohde.mapUploadId}
               vyohykkeet={kohteenVyohykkeet}
-              piirrettava={vyohykeMuokkaus ? piirrettava : undefined}
-              onKarttaKlikkaus={vyohykeMuokkaus ? (p) => setPiirrettava((edellinen) => [...edellinen, p]) : undefined}
+              piirrettava={
+                vyohykeMuokkaus ? piirrettava
+                  : kalibrointiTila
+                    ? [...kalibrointi.map((k) => k.img), ...(kalibrointiPiste ? [kalibrointiPiste] : [])]
+                    : undefined
+              }
+              onKarttaKlikkaus={
+                vyohykeMuokkaus ? (p) => setPiirrettava((edellinen) => [...edellinen, p])
+                  : kalibrointiTila ? (p) => setKalibrointiPiste(p)
+                    : undefined
+              }
               tyhjaTeksti={
                 saaMuokata
                   ? 'Pohjakarttaa ei ole ladattu. Lataa kohteen pohjapiirros, niin voit piirtää siihen vyöhykkeet.'
@@ -251,13 +366,90 @@ export const KohteenHallinta = ({
               <div className="mt-3">
                 <button
                   type="button"
-                  onClick={() => { setVyohykeMuokkaus((o) => !o); setPiirrettava([]); }}
+                  onClick={() => { setVyohykeMuokkaus((o) => !o); setPiirrettava([]); setKalibrointiTila(false); }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
                     vyohykeMuokkaus ? 'bg-ink-strong text-surface' : 'bg-surface border border-line-soft text-ink-body hover:bg-surface-muted'
                   }`}
                 >
                   {vyohykeMuokkaus ? 'Lopeta muokkaus' : 'Piirrä vyöhykkeitä'}
                 </button>
+                {/* Kalibrointi on vyöhykkeiden vieressä, koska se on niiden ehto: ilman
+                    sitä vyöhyke on vain kuva eikä siihen voi sitoa hälytystä. */}
+                <button
+                  type="button"
+                  onClick={() => { setKalibrointiTila((o) => !o); setKalibrointiPiste(null); setVyohykeMuokkaus(false); }}
+                  className={`ml-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                    kalibrointiTila ? 'bg-ink-strong text-surface' : 'bg-surface border border-line-soft text-ink-body hover:bg-surface-muted'
+                  }`}
+                >
+                  {kalibrointiTila ? 'Lopeta kalibrointi' : 'Kalibroi kartta'}
+                  {kalibrointi.length > 0 && !kalibrointiTila && (
+                    <span className="ml-1.5 font-normal text-ink-muted">
+                      ({kalibrointi.length}{muunnos ? '' : ' — ei riitä'})
+                    </span>
+                  )}
+                </button>
+
+                {kalibrointiTila && (
+                  <div className="mt-3 bg-sunken border border-line-soft rounded-xl p-4 space-y-3">
+                    <p className="text-xs text-ink-muted">
+                      Napsauta kartalta kohta jonka koordinaatit tiedät (esim. portti tai rakennuksen
+                      kulma) ja kirjoita sen leveys- ja pituusaste. Vähintään kaksi pistettä, kolme on
+                      tarkempi. Ilman kalibrointia vyöhykkeiden hälytyssäännöt eivät voi laueta.
+                    </p>
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <span className="text-xs text-ink-muted">
+                        {kalibrointiPiste ? 'Kohta valittu.' : 'Napsauta karttaa.'}
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={kalibrointiLat}
+                        onChange={(e) => setKalibrointiLat(e.target.value)}
+                        placeholder="Leveysaste, esim. 61.4941"
+                        className="flex-1 min-w-[140px] rounded-lg border border-line-soft p-2 text-sm"
+                      />
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={kalibrointiLon}
+                        onChange={(e) => setKalibrointiLon(e.target.value)}
+                        placeholder="Pituusaste, esim. 23.7651"
+                        className="flex-1 min-w-[140px] rounded-lg border border-line-soft p-2 text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={lisaaKalibrointipiste}
+                        disabled={!kalibrointiPiste}
+                        className="px-3 py-2 bg-accent text-surface disabled:bg-line-soft disabled:text-ink-muted text-xs font-bold rounded-lg"
+                      >
+                        Lisää piste
+                      </button>
+                    </div>
+                    {kalibrointi.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+                        {kalibrointi.map((k, i) => (
+                          <span key={i} className="px-2 py-1 rounded-lg border border-line-soft bg-surface">
+                            {k.gps.lat.toFixed(5)}, {k.gps.lon.toFixed(5)}
+                          </span>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => onChange({ ...kohde, mapRef: [] })}
+                          className="text-danger hover:underline"
+                        >
+                          Tyhjennä
+                        </button>
+                      </div>
+                    )}
+                    {kalibrointi.length >= 2 && !muunnos && (
+                      <p className="text-xs text-danger-ink bg-danger-soft border border-danger/30 rounded-lg p-2">
+                        Pisteet eivät kelpaa muunnokseen: ne ovat samalla suoralla tai liian lähellä
+                        toisiaan. Tyhjennä ja ota pisteet kauempaa toisistaan.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {vyohykeMuokkaus && (
                   <div className="mt-3 flex flex-wrap gap-2 items-center">
@@ -301,23 +493,55 @@ export const KohteenHallinta = ({
             )}
 
             {kohteenVyohykkeet.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {kohteenVyohykkeet.map((v) => (
-                  <span key={v.id} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border border-line-soft bg-surface text-xs font-medium text-ink-body">
-                    {v.nimi}
-                    {saaMuokata && (
-                      <button
-                        type="button"
-                        onClick={() => onChange({ ...kohde, zones: kohteenVyohykkeet.filter((z) => z.id !== v.id) })}
-                        title={`Poista vyöhyke ${v.nimi}`}
-                        className="text-ink-muted hover:text-danger"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </span>
-                ))}
-              </div>
+              <>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {kohteenVyohykkeet.map((v) => (
+                    <span key={v.id} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border border-line-soft bg-surface text-xs font-medium text-ink-body">
+                      {v.nimi}
+                      {/* Hälytyssääntö vyöhykkeen vieressä: sääntö on merkityksetön ilman
+                          sitä aluetta jolle se on piirretty, ja tässä näkee kerralla
+                          mitkä alueet hälyttävät. */}
+                      {saaMuokata ? (
+                        <select
+                          value={v.halytys || 'ei'}
+                          onChange={(e) => onChange({
+                            ...kohde,
+                            zones: kohteenVyohykkeet.map((z) => (
+                              z.id === v.id ? { ...z, halytys: e.target.value as typeof z.halytys } : z
+                            )),
+                          })}
+                          aria-label={`Vyöhykkeen ${v.nimi} hälytyssääntö`}
+                          title={VYOHYKESAANNOT.find((s) => s.id === (v.halytys || 'ei'))?.selite}
+                          className="text-[11px] rounded border border-line-soft bg-surface text-ink-muted py-0.5 pl-1 pr-4"
+                        >
+                          {VYOHYKESAANNOT.map((s) => <option key={s.id} value={s.id}>{s.nimi}</option>)}
+                        </select>
+                      ) : v.halytys && v.halytys !== 'ei' ? (
+                        <span className="text-[11px] text-ink-muted font-normal">
+                          {v.halytys === 'saapuminen' ? 'hälyttää saapumisesta' : 'hälyttää poistumisesta'}
+                        </span>
+                      ) : null}
+                      {saaMuokata && (
+                        <button
+                          type="button"
+                          onClick={() => onChange({ ...kohde, zones: kohteenVyohykkeet.filter((z) => z.id !== v.id) })}
+                          title={`Poista vyöhyke ${v.nimi}`}
+                          className="text-ink-muted hover:text-danger"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+                {kohteenVyohykkeet.some((v) => v.halytys && v.halytys !== 'ei') && !muunnos && (
+                  <p className="text-xs text-warning-ink bg-warning-soft border border-warning/30 rounded-lg p-2 mt-2">
+                    Vyöhykehälytykset on määritetty, mutta karttaa ei ole kalibroitu. Ilman
+                    kalibrointia GPS-sijainnista ei voi päätellä millä vyöhykkeellä henkilö on,
+                    eikä sääntö voi laueta.
+                  </p>
+                )}
+              </>
             )}
 
             <p className="text-xs text-ink-muted mt-2">

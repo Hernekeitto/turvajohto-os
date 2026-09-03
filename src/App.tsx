@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from './SessionContext';
 // Jaetut apurit (ks. src/shared/). Nämä olivat aiemmin tässä tiedostossa, mutta ne eivät
 // koske App-komponentin tilaan ja GUARD-puoli tarvitsee ne samoina.
@@ -19,6 +19,12 @@ import { useKanava, type Sijainti } from './shared/kanava';
 import { useSijainninLahetys, ikaTekstina } from './shared/sijainninLahetys';
 import { luoMuunnos, kuvanSisalla, vyohykePisteessa } from './shared/georeferointi';
 import { Kartta } from './shared/komponentit/Kartta';
+import { Halytysvahti } from './shared/komponentit/Halytysvahti';
+import {
+  haeHalytykset, kuittaaHalytys, jaljella, ajastinTeksti, kellonaika,
+  TYYPPI_LABEL, TILA_LABEL, type Halytys,
+} from './shared/halytykset';
+import { VYOHYKESAANNOT } from './shared/vyohykkeet';
 import { SijaintiValinta } from './shared/komponentit/SijaintiValinta';
 import {
   VYOHYKEVARIT, VYOHYKKEEN_MIN_PISTEET, uusiVyohykeId, vyohykkeet as haeVyohykkeet,
@@ -93,6 +99,9 @@ import {
   Eye,
   EyeOff,
   PlusCircle,
+  Siren,
+  Timer,
+  MapPin,
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -1355,8 +1364,84 @@ export default function App() {
   const [sijainnit, setSijainnit] = useState<Sijainti[]>([]);
   const [sijaintiKaytossa, setSijaintiKaytossa] = useState(false);
 
+  // Hälytykset (erä 7). Palvelimen ylläpitämä kokoelma, joten sitä EI lisätä
+  // paivitaKokoelma-koneistoon: se on rakennettu kokoelmille jotka frontti myös
+  // tallentaa takaisin, ja hälytysten kohdalla se tallennus on nimenomaan estetty.
+  const [halytykset, setHalytykset] = useState<Halytys[]>([]);
+  const saaNahdaHalytykset = isAdminUser || canView(perms, selectedEvent, 'alarms');
+  const saaKuitataHalytyksia = isAdminUser || canEdit(perms, selectedEvent, 'alarms');
+
+  const paivitaHalytykset = useCallback(() => {
+    haeHalytykset().then((lista) => { if (lista) setHalytykset(lista); });
+  }, []);
+
+  useEffect(() => {
+    if (!saaNahdaHalytykset) return;
+    paivitaHalytykset();
+  }, [saaNahdaHalytykset, paivitaHalytykset]);
+
+  const paivitaHalytys = (halytys: Halytys) => {
+    setHalytykset((edelliset) => {
+      const tunnettu = edelliset.some((h) => h.id === halytys.id);
+      return tunnettu ? edelliset.map((h) => (h.id === halytys.id ? halytys : h)) : [halytys, ...edelliset];
+    });
+  };
+
+  // Valvomonäkymän oma tila: kuittausperustelut, lähimpien haun tulokset ja virheet.
+  const [kuittausHuomiot, setKuittausHuomiot] = useState<Record<string, string>>({});
+  const [lahimmat, setLahimmat] = useState<Record<string, { username: string; etaisyysM: number; ikaMs: number }[] | 'ei'>>({});
+  const [halytysVirhe, setHalytysVirhe] = useState<string | null>(null);
+  const [halytysKello, setHalytysKello] = useState(Date.now());
+
+  // Sekunnin kello vain kun ajastimia on näkyvissä. Ilman ehtoa koko sovellus
+  // renderöityisi kerran sekunnissa koko vuoron ajan.
+  const nakyviaAjastimia = activeTab === 'alarms'
+    && halytykset.some((h) => h.eventId === selectedEvent && h.tila === 'kaynnissa');
+  useEffect(() => {
+    if (!nakyviaAjastimia) return;
+    setHalytysKello(Date.now());
+    const id = window.setInterval(() => setHalytysKello(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [nakyviaAjastimia]);
+
+  const kuittaaHalytysNyt = async (h: Halytys) => {
+    setHalytysVirhe(null);
+    const tulos = await kuittaaHalytys(h.id, kuittausHuomiot[h.id] || '');
+    if (tulos.ok && tulos.halytys) {
+      paivitaHalytys(tulos.halytys);
+      setKuittausHuomiot((edelliset) => ({ ...edelliset, [h.id]: '' }));
+    } else {
+      setHalytysVirhe(tulos.error || 'Kuittaus ei onnistunut.');
+    }
+  };
+
+  // Kuka on lähinnä hälytystä. Tämä on se kysymys joka esitetään ensimmäisenä kun joku
+  // painaa hätäpainiketta, ja siksi se on hälytyksen vieressä eikä erillisessä näkymässä.
+  const haeLahimmat = async (h: Halytys) => {
+    if (!h.gps) return;
+    setHalytysVirhe(null);
+    try {
+      const osoite = `/api/lahin?eventId=${encodeURIComponent(h.eventId || '')}&lat=${h.gps.lat}&lon=${h.gps.lon}`;
+      const vastaus = await fetch(osoite, { credentials: 'include' });
+      const data = await vastaus.json().catch(() => null);
+      if (!vastaus.ok || data?.ok !== true) {
+        setHalytysVirhe(data?.error || 'Lähimpien hakua ei voitu tehdä.');
+        return;
+      }
+      setLahimmat((edelliset) => ({
+        ...edelliset,
+        [h.id]: data.kaytossa === false ? 'ei' : (data.vartijat || []),
+      }));
+    } catch {
+      setHalytysVirhe('Ei yhteyttä palvelimeen.');
+    }
+  };
+
   const { yhdistetty: kanavaYhdistetty, laheta: lahetaKanavalle } = useKanava({
-    onMuutos: (kokoelma) => { paivitaKokoelma(kokoelma); },
+    onMuutos: (kokoelma) => {
+      if (kokoelma === 'alerts') { paivitaHalytykset(); return; }
+      paivitaKokoelma(kokoelma);
+    },
     // Palvelin lähettää yhden sijainnin kerrallaan sitä mukaa kun niitä tulee. Lista
     // päivitetään käyttäjäkohtaisesti: sama henkilö korvaa oman rivinsä eikä kerrytä
     // karttaa jälkikuvilla.
@@ -5182,6 +5267,229 @@ export default function App() {
             </div>
           </div>
         );
+      // Hälytysten valvomonäkymä (erä 7). Kaikki toiminnot menevät palvelimen
+      // /api/halytys-reiteille — tämä näkymä ei kirjoita alerts-kokoelmaa suoraan eikä
+      // pysty siihen (palvelin torjuu PUT:in).
+      case 'alarms': {
+        const omat = halytykset.filter((h) => h.eventId === selectedEvent);
+        const lauenneet = omat.filter((h) => h.tila === 'lauennut');
+        const kaynnissa = omat.filter((h) => h.tila === 'kaynnissa');
+        const paattyneet = omat
+          .filter((h) => h.tila === 'kuitattu' || h.tila === 'peruttu')
+          .sort((a, b) => String(b.alkoi).localeCompare(String(a.alkoi)))
+          .slice(0, 20);
+
+        return (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-2xl font-bold text-slate-800 mb-1">Hälytykset</h2>
+              <p className="text-sm text-slate-500">
+                Ajastin, man-down, hätäpainike ja vyöhykepoikkeamat. Hälytys päättyy vasta kun se
+                kuitataan — tekstiviestin lähtö ei päätä sitä.
+              </p>
+            </div>
+
+            {halytysVirhe && (
+              <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-4 py-3">
+                {halytysVirhe}
+              </p>
+            )}
+
+            {/* --- Lauenneet --- */}
+            <div>
+              <h3 className="text-lg font-bold text-slate-800 mb-3">
+                Lauenneet
+                {lauenneet.length > 0 && <span className="ml-1.5 font-normal text-rose-600">({lauenneet.length})</span>}
+              </h3>
+              {lauenneet.length === 0 ? (
+                <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                  Ei lauenneita hälytyksiä.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {lauenneet.map((h) => (
+                    <div key={h.id} className="bg-white border-2 border-rose-300 rounded-xl p-5 shadow-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-rose-800 flex items-center gap-2">
+                            <Siren size={18} />
+                            {TYYPPI_LABEL[h.tyyppi]} · {h.vartija}
+                          </h4>
+                          <p className="text-sm text-slate-600 mt-0.5">
+                            Laukesi {kellonaika(h.laukesi)}
+                            {h.kuvaus ? ` · ${h.kuvaus}` : ''}
+                            {h.vyohyke ? ` · ${h.vyohyke.nimi}` : ''}
+                          </p>
+                        </div>
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-rose-100 text-rose-800 border border-rose-200 shrink-0">
+                          {TILA_LABEL[h.tila]}
+                        </span>
+                      </div>
+
+                      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm mb-3">
+                        <div>
+                          <dt className="text-xs text-slate-400 uppercase tracking-wide">Sijainti</dt>
+                          <dd className="text-slate-700">
+                            {h.gps
+                              ? `${h.gps.lat.toFixed(5)}, ${h.gps.lon.toFixed(5)}${h.gps.tarkkuus ? ` (±${Math.round(h.gps.tarkkuus)} m)` : ''}`
+                              : 'Ei sijaintitietoa'}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-xs text-slate-400 uppercase tracking-wide">Tekstiviesti</dt>
+                          <dd className={h.eskalointi?.tila === 'epaonnistui' ? 'text-rose-700' : 'text-slate-700'}>
+                            {!h.eskalointi
+                              ? 'Ei vielä lähetetty'
+                              : h.eskalointi.tila === 'epaonnistui'
+                                ? `EI lähtenyt: ${h.eskalointi.virhe}`
+                                : `${h.eskalointi.vastaanottajia} numeroon${h.eskalointi.tila === 'kuivaharjoittelu' ? ' (kuivaharjoittelu)' : ''}`}
+                          </dd>
+                        </div>
+                      </dl>
+
+                      {/* Lähimmät. Sijainti on ehto: ilman sitä etäisyyttä ei voi laskea,
+                          eikä arvausta pidä esittää vastauksena. */}
+                      {h.gps && (
+                        <div className="mb-3">
+                          <button
+                            onClick={() => haeLahimmat(h)}
+                            className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
+                          >
+                            <MapPin size={13} />
+                            Kuka on lähinnä?
+                          </button>
+                          {lahimmat[h.id] === 'ei' && (
+                            <p className="text-xs text-slate-500 mt-2">
+                              Sijaintiseuranta ei ole käytössä, joten kenenkään sijaintia ei tiedetä.
+                            </p>
+                          )}
+                          {Array.isArray(lahimmat[h.id]) && (
+                            (lahimmat[h.id] as { username: string; etaisyysM: number; ikaMs: number }[]).length === 0 ? (
+                              <p className="text-xs text-slate-500 mt-2">Kenenkään sijaintia ei ole tiedossa.</p>
+                            ) : (
+                              <ul className="mt-2 space-y-1">
+                                {(lahimmat[h.id] as { username: string; etaisyysM: number; ikaMs: number }[]).map((v) => (
+                                  <li key={v.username} className="text-xs text-slate-700 flex flex-wrap gap-x-2">
+                                    <span className="font-medium">{v.username}</span>
+                                    <span>{v.etaisyysM} m</span>
+                                    <span className="text-slate-400">{ikaTekstina(v.ikaMs)}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )
+                          )}
+                        </div>
+                      )}
+
+                      {saaKuitataHalytyksia ? (
+                        <div className="flex flex-col sm:flex-row gap-2 pt-3 border-t border-slate-100">
+                          <input
+                            type="text"
+                            value={kuittausHuomiot[h.id] || ''}
+                            onChange={(e) => setKuittausHuomiot((edelliset) => ({ ...edelliset, [h.id]: e.target.value }))}
+                            placeholder="Mitä hälytyksestä seurasi? (valinnainen)"
+                            className="flex-1 min-w-0 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                          />
+                          <button
+                            onClick={() => kuittaaHalytysNyt(h)}
+                            className="inline-flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold px-4 py-2 rounded-lg transition-colors shrink-0"
+                          >
+                            <CheckCircle size={16} />
+                            Kuittaa hoidetuksi
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 pt-3 border-t border-slate-100">
+                          Käyttäjätasollasi ei ole oikeutta kuitata toisen hälytystä.
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* --- Käynnissä olevat ajastimet --- */}
+            <div>
+              <h3 className="text-lg font-bold text-slate-800 mb-3">
+                Käynnissä olevat ajastimet
+                {kaynnissa.length > 0 && <span className="ml-1.5 font-normal text-slate-400">({kaynnissa.length})</span>}
+              </h3>
+              {kaynnissa.length === 0 ? (
+                <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                  Kukaan ei ole käynnistänyt ajastinta. Yksin työskentelevä käynnistää sen omalta
+                  laitteeltaan.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {kaynnissa.map((h) => {
+                    const aikaa = jaljella(h, halytysKello);
+                    const kohta = aikaa !== null && aikaa <= 120000;
+                    return (
+                      <li
+                        key={h.id}
+                        className={`flex flex-wrap items-center gap-3 rounded-lg border p-4 ${kohta ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-200'}`}
+                      >
+                        <Timer size={18} className="text-slate-400 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-slate-800">{h.vartija}</p>
+                          {h.kuvaus && <p className="text-xs text-slate-500 mt-0.5">{h.kuvaus}</p>}
+                        </div>
+                        <span className="font-bold tabular-nums text-slate-800 shrink-0">
+                          {aikaa !== null && aikaa > 0 ? ajastinTeksti(aikaa) : 'Määräaika umpeutui'}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            {/* --- Historia --- */}
+            <div>
+              <h3 className="text-lg font-bold text-slate-800 mb-3">Päättyneet hälytykset</h3>
+              {paattyneet.length === 0 ? (
+                <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                  Ei päättyneitä hälytyksiä.
+                </p>
+              ) : (
+                <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 border-b border-slate-200">
+                      <tr className="text-left text-xs text-slate-500 uppercase tracking-wide">
+                        <th className="px-4 py-3 font-semibold">Tyyppi</th>
+                        <th className="px-4 py-3 font-semibold">Kuka</th>
+                        <th className="px-4 py-3 font-semibold">Alkoi</th>
+                        <th className="px-4 py-3 font-semibold">Tila</th>
+                        <th className="px-4 py-3 font-semibold">Kuittaaja</th>
+                        <th className="px-4 py-3 font-semibold">Huomio</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {paattyneet.map((h) => (
+                        <tr key={h.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{TYYPPI_LABEL[h.tyyppi]}</td>
+                          <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{h.vartija}</td>
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
+                            {h.alkoi ? new Date(h.alkoi).toLocaleString('fi-FI') : ''}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold border ${h.tila === 'kuitattu' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                              {TILA_LABEL[h.tila]}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{h.kuittaaja || '—'}</td>
+                          <td className="px-4 py-3 text-slate-600">{h.kuittausHuomio || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
       case 'public_reports': {
         const saaModeroida = isAdminUser || canEdit(perms, selectedEvent, 'public_reports');
         const omat = publicReports.filter((i) => (i.eventId || 'fesx') === selectedEvent);
@@ -7976,9 +8284,11 @@ export default function App() {
                       Vyöhykkeitä ei ole piirretty. Ilman niitä kirjauksia ei voi kohdistaa alueelle.
                     </p>
                   ) : (
-                    <div className="flex flex-wrap gap-2">
+                    <>
+                      <div className="flex flex-wrap gap-2">
                       {nykyisenTapahtumanVyohykkeet.map(v => {
                         const varit = VYOHYKEVARIT.find(x => x.id === v.vari) || VYOHYKEVARIT[0];
+                        const saanto = v.halytys && v.halytys !== 'ei' ? v.halytys : null;
                         return (
                           <span
                             key={v.id}
@@ -7986,6 +8296,30 @@ export default function App() {
                             style={{ borderColor: varit.reuna, color: varit.reuna }}
                           >
                             {v.nimi}
+                            {/* Hälytyssääntö (erä 7). Valinta on vyöhykkeen vieressä eikä
+                                omassa näkymässään: sääntö on merkityksetön ilman sitä
+                                aluetta jolle se on piirretty, ja tässä näkee kerralla
+                                mitkä alueet hälyttävät. */}
+                            {saaMuokataTapahtumaa ? (
+                              <select
+                                value={v.halytys || 'ei'}
+                                onChange={(e) => tallennaVyohykkeet(
+                                  nykyisenTapahtumanVyohykkeet.map((z) =>
+                                    z.id === v.id ? { ...z, halytys: e.target.value } : z)
+                                )}
+                                aria-label={`Vyöhykkeen ${v.nimi} hälytyssääntö`}
+                                title={VYOHYKESAANNOT.find((s) => s.id === (v.halytys || 'ei'))?.selite}
+                                className="text-[11px] rounded border border-slate-200 bg-white text-slate-600 py-0.5 pl-1 pr-4"
+                              >
+                                {VYOHYKESAANNOT.map((s) => (
+                                  <option key={s.id} value={s.id}>{s.nimi}</option>
+                                ))}
+                              </select>
+                            ) : saanto ? (
+                              <span className="text-[11px] text-slate-500 font-normal">
+                                {saanto === 'saapuminen' ? 'hälyttää saapumisesta' : 'hälyttää poistumisesta'}
+                              </span>
+                            ) : null}
                             {saaMuokataTapahtumaa && (
                               <button
                                 type="button"
@@ -7999,7 +8333,18 @@ export default function App() {
                           </span>
                         );
                       })}
-                    </div>
+                      </div>
+                      {/* Sääntö toimii vain jos sijainti on tiedossa kuvakoordinaatteina:
+                          vyöhykkeet on piirretty kuvalle, ei karttakoordinaatteihin. */}
+                      {nykyisenTapahtumanVyohykkeet.some((v) => v.halytys && v.halytys !== 'ei')
+                        && (!sijaintiKaytossa || !karttaMuunnos) && (
+                        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 mt-2">
+                          {!sijaintiKaytossa
+                            ? 'Vyöhykehälytykset on määritetty, mutta sijaintiseuranta ei ole käytössä — sääntöjä ei valvo mikään.'
+                            : 'Vyöhykehälytykset on määritetty, mutta karttaa ei ole kalibroitu. Ilman kalibrointia GPS-sijainnista ei voi päätellä millä vyöhykkeellä henkilö on.'}
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -13504,6 +13849,28 @@ export default function App() {
                   Tilannekuva
                 </button>
               )}
+              {saaNahdaHalytykset && (() => {
+                // Lauenneiden määrä on navigaatiossa eikä vain sivulla: hälytys on ainoa
+                // näkymä johon tulee sisältöä ilman että kukaan käyttäjä sitä tekee, ja
+                // sen on näyttävä ennen kuin sivu avataan.
+                const auki = halytykset.filter(
+                  (h) => h.eventId === selectedEvent && h.tila === 'lauennut'
+                ).length;
+                return (
+                  <button
+                    onClick={() => setActiveTab('alarms')}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'alarms' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    <Siren size={18} className={auki > 0 ? 'text-rose-600' : ''} />
+                    Hälytykset
+                    {auki > 0 && (
+                      <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                        {auki}
+                      </span>
+                    )}
+                  </button>
+                );
+              })()}
               {(isAdminUser || canView(perms, selectedEvent, 'reporting')) && (
                 <button
                   onClick={() => setActiveTab('reporting')}
@@ -13564,6 +13931,19 @@ export default function App() {
 
         {/* Main Content Area */}
         <main className="flex-1 p-6 md:p-8 overflow-y-auto">
+          {/* Hälytysvahti kaikkien näkymien yllä: oma lauennut hälytys ja käynnissä oleva
+              ajastin eivät saa olla yhden välilehden takana. Vahti näyttää VAIN oman
+              hälytyksen — muiden hälytykset ovat valvomonäkymässä, jossa ne kuitataan. */}
+          {saaNahdaHalytykset && (
+            <Halytysvahti
+              eventId={selectedEvent}
+              kayttaja={session?.username || ''}
+              halytykset={halytykset}
+              onMuutos={paivitaHalytys}
+              onVirkista={paivitaHalytykset}
+              mandown={false}
+            />
+          )}
           {renderContent()}
         </main>
       </div>
