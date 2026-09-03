@@ -605,6 +605,80 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// --- Tietuekohtainen kirjoitus (offline-jonon perusta, P7) -------------------------
+//
+// Koko kokoelman PUT ei kelpaa offline-jonolle. Kentältä palaava puhelin, joka on ollut
+// verkotta kolme tuntia, lähettäisi oman vanhentuneen käsityksensä koko kokoelmasta ja
+// pyyhkisi kaiken mitä muut ovat sillä välin kirjanneet. Se on juuri se vahinko jota
+// vastaan romahdussuoja rakennettiin, mutta hienovaraisempana: data ei katoa kokonaan
+// vaan osittain, eikä kukaan huomaa.
+//
+// Siksi jonosta lähtevä kirjaus menee tänne: YKSI tietue, joka LISÄTÄÄN. Muiden
+// samanaikaiset kirjaukset eivät voi kadota, koska niitä ei kosketa.
+//
+// IDEMPOTENSSI tulee tietueen id:stä, jonka SELAIN antaa jo offline-tilassa. Jos vastaus
+// hukkuu matkalla ja jono yrittää uudelleen, sama id saapuu toisen kerran — silloin
+// palvelin toteaa tietueen jo olevan olemassa eikä luo kaksoiskappaletta. Ilman tätä
+// katkeileva verkko tuottaisi kaksi identtistä kirjausta samasta tapahtumasta, mikä on
+// lakisääteisessä aineistossa oma ongelmansa.
+//
+// Vain kentällä tehtävät kirjaukset: nämä ovat ne joita tehdään verkon ollessa poikki.
+// Muut kokoelmat (kohteet, pohjat, käyttäjät) muokataan valvomossa, eikä niiden
+// muokkaamiselle offline-tilassa ole tarvetta — eikä lisäys yksinään edes riittäisi,
+// koska niissä muokataan olemassa olevia tietueita.
+const KENTTAKOKOELMAT = new Set(['reports', 'guardReports', 'guardTaskRuns', 'checkins']);
+
+app.post('/api/kirjaa/:name', requireAuth, (req, res) => {
+  const { name } = req.params;
+  if (!KENTTAKOKOELMAT.has(name)) {
+    return res.status(404).json({ ok: false, error: 'Kokoelmaan ei voi kirjata yksittäistä tietuetta.' });
+  }
+  if (tuoteEstaa(req, name)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän tiedon muokkaamiseen.' });
+  }
+  const tietue = req.body;
+  if (!tietue || typeof tietue !== 'object' || Array.isArray(tietue)) {
+    return res.status(400).json({ ok: false, error: 'Odotettiin yhtä tietuetta.' });
+  }
+  const rakenne = validateRecords([tietue]);
+  if (!rakenne.ok) return res.status(400).json(rakenne);
+
+  const current = readCollection(name) || [];
+  const id = String(tietue.id);
+  if (current.some((t) => String(t?.id) === id)) {
+    // Jono yritti uudelleen. Ei virhe: kirjaus on jo perillä, ja jonon kuuluu poistaa
+    // se listaltaan onnistuneena. Virhe tässä kohdassa jättäisi kirjauksen jonoon
+    // ikuisesti yrittämään uudelleen.
+    return res.json({ ok: true, id, duplikaatti: true });
+  }
+
+  // Oikeustarkistus tehdään SAMALLA funktiolla kuin koko kokoelman kirjoituksessa, jotta
+  // lisäysreitti ei voi olla eri mieltä oikeuksista kuin tavallinen tallennus.
+  const verdict = authorizeWrite(req.role, req.permissions, req.eventAccess, name, current, [...current, tietue]);
+  if (!verdict.ok) return res.status(403).json(verdict);
+
+  writeCollection(name, verdict.data);
+  lahetaKanavalle(name, verdict.changes, {
+    lahettaja: req.username,
+    saaNahda: (istunto, eventId) =>
+      istunto?.role === 'admin' || eventAllowed(istunto?.eventAccess, eventId),
+  });
+  for (const change of verdict.changes || []) {
+    logAudit({
+      user: req.username,
+      role: req.role,
+      action: change.action,
+      collection: name,
+      recordId: change.id,
+      eventId: change.eventId,
+      // Jonosta tullut kirjaus merkitään lokiin: jälkikäteen on olennaista tietää, että
+      // kirjaus syntyi kentällä eri aikaan kuin se saapui palvelimelle.
+      ...(req.body?.jonossaAlkaen ? { jonossaAlkaen: req.body.jonossaAlkaen } : {}),
+    });
+  }
+  res.json({ ok: true, id });
+});
+
 // Käyttäjähallinta (vain admin) ja oman salasanan itsepalveluvaihto (kuka tahansa kirjautunut).
 app.get('/api/users', requireAuth, requireAdmin, (req, res) => {
   res.json({ ok: true, users: listUsers() });
@@ -1262,8 +1336,14 @@ app.post('/api/kierros/skannaus', requireAuth, guardPortti, (req, res) => {
     huomio: req.body?.huomio,
     pakotaSijainti: pohja.sijaintiPakotus === true,
     sietorajaM: pohja.sietorajaM ?? OLETUS_SIETORAJA_M,
+    toisto: req.body?.toisto === true,
   });
   if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  // Toisto jonosta: mikään ei muuttunut, joten levylle ei kirjoiteta eikä kanavalle
+  // kerrota. Vastaus on silti ok, jotta jono poistaa kirjauksen listaltaan.
+  if (tulos.duplikaatti) {
+    return res.json({ ok: true, kierros: tulos.kierros, pisteNimi: piste.nimi, duplikaatti: true });
+  }
 
   writeCollection('patrolRuns', kierrokset.map((k) => (k.id === auki.id ? tulos.kierros : k)));
   logAudit({ user: req.username, action: 'patrol_checkpoint', collection: 'patrolRuns', recordId: auki.id, eventId: auki.siteId });
@@ -1305,8 +1385,10 @@ app.post('/api/kierros/:id/piste', requireAuth, guardPortti, (req, res) => {
     huomio: req.body?.huomio,
     pakotaSijainti: pohja?.sijaintiPakotus === true,
     sietorajaM: pohja?.sietorajaM ?? OLETUS_SIETORAJA_M,
+    toisto: req.body?.toisto === true,
   });
   if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  if (tulos.duplikaatti) return res.json({ ok: true, kierros: tulos.kierros, duplikaatti: true });
 
   writeCollection('patrolRuns', kierrokset.map((k) => (k.id === kierros.id ? tulos.kierros : k)));
   logAudit({ user: req.username, action: 'patrol_checkpoint', collection: 'patrolRuns', recordId: kierros.id, eventId: kierros.siteId });
@@ -1332,8 +1414,10 @@ app.post('/api/kierros/:id/paata', requireAuth, guardPortti, (req, res) => {
     tila: req.body?.tila,
     syy: req.body?.syy,
     huomiot: req.body?.huomiot,
+    toisto: req.body?.toisto === true,
   });
   if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  if (tulos.duplikaatti) return res.json({ ok: true, kierros: tulos.kierros, duplikaatti: true });
 
   writeCollection('patrolRuns', kierrokset.map((k) => (k.id === kierros.id ? tulos.kierros : k)));
   logAudit({

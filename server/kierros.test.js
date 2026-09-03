@@ -196,3 +196,63 @@ test('etäisyys tunnetulla välimatkalla on oikeaa suuruusluokkaa', () => {
   assert.ok(m > 150000 && m < 185000, `sai ${m}`);
   assert.equal(etaisyysMetreina(null, { lat: 1, lon: 1 }), null);
 });
+
+// --- Offline-jonon toistot (erä 6) ------------------------------------------------
+//
+// Katkeileva verkko tuottaa tilanteen jossa pyyntö menee perille mutta vastaus hukkuu.
+// Jono yrittää silloin uudelleen, ja palvelimen on tunnistettava toisto — muuten
+// kirjaus jää jonoon ikuisesti näyttäen käyttäjälle virhettä asiasta joka onnistui.
+
+test('toistettu kuittaus samaan pisteeseen on onnistuminen eikä virhe', () => {
+  const eka = kuittaaPiste({ kierros: aloita(), pisteId: 'p1' });
+  const toisto = kuittaaPiste({ kierros: eka.kierros, pisteId: 'p1', toisto: true });
+  assert.equal(toisto.ok, true);
+  assert.equal(toisto.duplikaatti, true);
+  // Aikaleima ei saa siirtyä: kuittaus tapahtui silloin kun se tapahtui.
+  const alkuperainen = eka.kierros.pisteet.find((p) => p.pisteId === 'p1').kuitattu;
+  assert.equal(toisto.kierros.pisteet.find((p) => p.pisteId === 'p1').kuitattu, alkuperainen);
+});
+
+test('toisto ei kuittaa kuittaamatonta pistettä ohi sääntöjen', () => {
+  // Toisto koskee VAIN jo kuitattua pistettä. Kuittaamaton piste kuitataan normaalisti,
+  // eli lippu ei ole ohituskeino vaan tunnistus.
+  const tulos = kuittaaPiste({ kierros: aloita(), pisteId: 'p2', toisto: true });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.duplikaatti, undefined);
+  assert.ok(tulos.kierros.pisteet.find((p) => p.pisteId === 'p2').kuitattu);
+});
+
+test('toistettu kuittaus päättyneeseen kierrokseen onnistuu jos piste oli jo kuitattu', () => {
+  let k = aloita();
+  for (const id of ['p1', 'p2', 'p3']) k = kuittaaPiste({ kierros: k, pisteId: id }).kierros;
+  k = paataKierros({ kierros: k, tila: 'valmis' }).kierros;
+  const toisto = kuittaaPiste({ kierros: k, pisteId: 'p1', toisto: true });
+  assert.equal(toisto.ok, true);
+  assert.equal(toisto.duplikaatti, true);
+});
+
+test('toistokaan ei kuittaa kuittaamatonta pistettä päättyneeseen kierrokseen', () => {
+  const keskeytetty = paataKierros({
+    kierros: aloita(), tila: 'keskeytetty', syy: 'Halytys.',
+  }).kierros;
+  const tulos = kuittaaPiste({ kierros: keskeytetty, pisteId: 'p1', toisto: true });
+  assert.equal(tulos.ok, false);
+});
+
+test('toistettu päättäminen samaan tilaan on onnistuminen', () => {
+  const keskeytetty = paataKierros({
+    kierros: aloita(), tila: 'keskeytetty', syy: 'Halytys tuli kesken.',
+  }).kierros;
+  const toisto = paataKierros({ kierros: keskeytetty, tila: 'keskeytetty', syy: 'Halytys tuli kesken.', toisto: true });
+  assert.equal(toisto.ok, true);
+  assert.equal(toisto.duplikaatti, true);
+  assert.equal(toisto.kierros.paattyi, keskeytetty.paattyi);
+});
+
+test('toisto EI avaa päättynyttä kierrosta toiseen tilaan', () => {
+  const keskeytetty = paataKierros({
+    kierros: aloita(), tila: 'keskeytetty', syy: 'Halytys tuli kesken.',
+  }).kierros;
+  const tulos = paataKierros({ kierros: keskeytetty, tila: 'valmis', toisto: true });
+  assert.equal(tulos.ok, false);
+});

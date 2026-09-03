@@ -98,13 +98,26 @@ export function aloitaKierros({ pohja, siteId, vartija, id, nyt = new Date() }) 
 // annettua oliota, jotta kutsuja voi kirjoittaa tuloksen levylle yhtenä operaationa.
 export function kuittaaPiste({
   kierros, pisteId, tapa = 'kasin', gps = null, huomio = '', pakotaSijainti = false,
-  sietorajaM = OLETUS_SIETORAJA_M, nyt = new Date(),
+  sietorajaM = OLETUS_SIETORAJA_M, nyt = new Date(), toisto = false,
 }) {
   if (!kierros) return { ok: false, error: 'Kierrosta ei löytynyt.' };
+  const kohta = (kierros.pisteet || []).find((p) => p.pisteId === pisteId);
+
+  // Offline-jonon uudelleenyritys. `toisto` kertoo, ettei kuittausta tehdä nyt vaan
+  // toistetaan aiemmin tehtyä: silloin "on jo kuitattu" ja "kierros on jo päättynyt"
+  // ovat oikeita lopputuloksia eivätkä virheitä. Ilman tätä katkeileva verkko jättäisi
+  // jonoon kirjauksia jotka menivät perille mutta joiden vastaus hukkui — ja jono
+  // yrittäisi niitä ikuisesti uudelleen näyttäen käyttäjälle virhettä.
+  //
+  // Interaktiivisella polulla toisto on false, ja silloin uudelleenkuittaus on
+  // virhe: vartijan on nähtävä, ettei sama piste kuittaudu kahdesti.
+  if (toisto && kohta?.kuitattu) {
+    return { ok: true, kierros, duplikaatti: true };
+  }
+
   if (onPaattynyt(kierros)) {
     return { ok: false, error: 'Kierros on jo päättynyt, eikä siihen voi enää kuitata pisteitä.' };
   }
-  const kohta = (kierros.pisteet || []).find((p) => p.pisteId === pisteId);
   if (!kohta) return { ok: false, error: 'Tarkistuspiste ei kuulu tähän kierrokseen.' };
   if (kohta.kuitattu) {
     return { ok: false, error: `Tarkistuspiste "${kohta.nimi}" on jo kuitattu.` };
@@ -139,8 +152,14 @@ export function kuittaaPiste({
 export const kuittaamattomat = (kierros) => (kierros?.pisteet || []).filter((p) => !p.kuitattu);
 
 // Päättää kierroksen. Tässä on erän tärkein sääntö: 'valmis' vaatii jokaisen pisteen.
-export function paataKierros({ kierros, tila, syy = '', huomiot = '', nyt = new Date() }) {
+export function paataKierros({ kierros, tila, syy = '', huomiot = '', nyt = new Date(), toisto = false }) {
   if (!kierros) return { ok: false, error: 'Kierrosta ei löytynyt.' };
+  // Jonon uudelleenyritys: jos kierros on jo päättynyt SAMAAN tilaan johon sitä nyt
+  // pyydetään, pyyntö on toisto ja lopputulos on jo olemassa. Eri tilaan päättäminen on
+  // sen sijaan virhe myös toistona — päättynyttä kierrosta ei avata uudelleen.
+  if (toisto && kierros.tila === tila) {
+    return { ok: true, kierros, duplikaatti: true };
+  }
   if (onPaattynyt(kierros)) {
     return { ok: false, error: 'Kierros on jo päättynyt.' };
   }
