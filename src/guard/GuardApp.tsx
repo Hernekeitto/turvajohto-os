@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff, Siren } from 'lucide-react';
+import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff, Siren, BookOpen, ListChecks } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
@@ -17,10 +17,13 @@ import { Kierrospohjat } from './Kierrospohjat';
 import { Kierros } from './Kierros';
 import { Halytykset } from './Halytykset';
 import { Halytysvahti } from '../shared/komponentit/Halytysvahti';
+import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { haeHalytykset, type Halytys } from '../shared/halytykset';
 import { useKanava } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
+import { Pohjanakyma } from '../shared/komponentit/Pohjanakyma';
+import { haeSuoritukset, type Pohja, type Suoritus } from '../shared/pohjat';
 import {
   uusiId, type GuardRaportti, type Kohde, type KohteenTiedosto, type RaporttiTyyppi,
   type TehtavaSuoritus, type Kierrospohja, type Kierros as KierrosTietue,
@@ -71,6 +74,13 @@ export default function GuardApp() {
   // hälytyksensä saa kuitata aina.
   const saaNahdaHalytykset = isAdmin || canView(perms, null, 'guard_alarms');
   const saaKuitataHalytyksia = isAdmin || canEdit(perms, null, 'guard_alarms');
+  // Ohjepankki ja skenaariot (erä 8). Näkeminen riittää käyttöön: ohjekortin lukeminen ja
+  // skenaarion käynnistäminen ovat saman tietueen lukemista. Muokkausoikeus ratkaisee kuka
+  // laatii pohjat — se on esimiehen työtä samalla tavalla kuin kierrospohjat.
+  const saaNahdaOhjeet = isAdmin || canView(perms, null, 'guard_guides');
+  const saaMuokataOhjeita = isAdmin || canEdit(perms, null, 'guard_guides');
+  const saaNahdaSkenaariot = isAdmin || canView(perms, null, 'guard_plays');
+  const saaMuokataSkenaarioita = isAdmin || canEdit(perms, null, 'guard_plays');
   // Raportointi on jaettu lomaketyypeittäin: tapahtumailmoitus sisältää kohdehenkilötiedot
   // ja voi olla eri joukolla ihmisiä kuin päivittäinen toimenpidekirjaus.
   const saaKirjataToimenpiteen = isAdmin || canEdit(perms, null, 'guard_report_action');
@@ -116,6 +126,11 @@ export default function GuardApp() {
   // ja jokainen muutos tehdään /api/halytys-reiteillä.
   const [halytykset, setHalytykset] = useState<Halytys[]>([]);
   const [halytysKohde, setHalytysKohde] = useState<Kohde | null>(null);
+  // Pohjanäkymä (erä 8): sama näkymä kahdelle lajille, joten tilassa on myös laji.
+  const [pohjaNakyma, setPohjaNakyma] = useState<{ kohde: Kohde; laji: 'guide' | 'play' } | null>(null);
+  // Pohjien suoritukset. Nimi on eri kuin tehtäväsuorituksilla (`suoritukset`), koska ne
+  // ovat eri kokoelma ja eri asia: tehtävä on kohteen vakiotyö, skenaario on tilanne.
+  const [pohjaSuoritukset, setPohjaSuoritukset] = useState<Suoritus[]>([]);
   // Man-down päällä/pois säilyy laitteella: vartija kytkee sen kerran vuoron alussa,
   // eikä asetus saa nollautua sivun latauksesta kesken vuoron.
   const [mandown, setMandown] = useState(false);
@@ -236,10 +251,25 @@ export default function GuardApp() {
       .catch(() => { /* virhe näkyy tyhjänä kierroslistana */ });
   };
 
+  const paivitaPohjaSuoritukset = useCallback(() => {
+    if (!saaNahdaSkenaariot) return;
+    haeSuoritukset().then((lista) => { if (lista) setPohjaSuoritukset(lista); });
+  }, [saaNahdaSkenaariot]);
+
   useEffect(() => {
-    if (saaNahdaPohjat || saaNahdaKierrokset) haePohjat();
+    // Pohjat tarvitaan myös ohjepankkiin ja skenaarioihin: ne ovat samassa kokoelmassa
+    // kuin kierrospohjat (perusta P6), ja palvelin suodattaa lajikohtaisesti.
+    if (saaNahdaPohjat || saaNahdaKierrokset || saaNahdaOhjeet || saaNahdaSkenaariot) haePohjat();
     if (saaNahdaKierrokset) haeKierrokset();
-  }, [saaNahdaPohjat, saaNahdaKierrokset]);
+    paivitaPohjaSuoritukset();
+  }, [saaNahdaPohjat, saaNahdaKierrokset, saaNahdaOhjeet, saaNahdaSkenaariot, paivitaPohjaSuoritukset]);
+
+  const paivitaPohjaSuoritus = (suoritus: Suoritus) => {
+    setPohjaSuoritukset((edelliset) => {
+      const tunnettu = edelliset.some((s) => s.id === suoritus.id);
+      return tunnettu ? edelliset.map((s) => (s.id === suoritus.id ? suoritus : s)) : [suoritus, ...edelliset];
+    });
+  };
 
   // Hälytykset luetaan samalta kokoelmareitiltä kuin muutkin, mutta niitä EI koskaan
   // kirjoiteta takaisin: kokoelma on palvelimen ylläpitämä.
@@ -259,6 +289,8 @@ export default function GuardApp() {
     onMuutos: (kokoelma) => {
       if (kokoelma === 'alerts') paivitaHalytykset();
       if (kokoelma === 'patrolRuns') haeKierrokset();
+      if (kokoelma === 'templates') haePohjat();
+      if (kokoelma === 'templateRuns') paivitaPohjaSuoritukset();
     },
   });
 
@@ -602,7 +634,7 @@ export default function GuardApp() {
     <Ylapalkki
       tuoteNimi="Turvajohto GUARD"
       alaotsikko={alaotsikko}
-      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); setHalytysKohde(null); }}
+      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); setHalytysKohde(null); setPohjaNakyma(null); }}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}
@@ -637,6 +669,7 @@ export default function GuardApp() {
           : raporttiKohde ? 'Raportointi'
           : tietoKohde ? 'Kohteen tiedot'
           : halytysKohde ? 'Hälytykset'
+          : pohjaNakyma ? (pohjaNakyma.laji === 'guide' ? 'Ohjepankki' : 'Skenaariot')
           : kierrosKohde ? 'Kierrokset'
           : pohjaKohde ? 'Kierrospohjat'
           : tehtavaKohde ? 'Työvuoron tehtävät'
@@ -721,6 +754,21 @@ export default function GuardApp() {
               kierrokset={kierrokset}
               onTakaisin={() => setTietoKohde(null)}
             />
+          ) : pohjaNakyma ? (
+            <div className="max-w-3xl">
+              <TakaisinLinkki onClick={() => setPohjaNakyma(null)}>Takaisin kohdelistaan</TakaisinLinkki>
+              <p className="text-sm text-ink-muted mb-4">{pohjaNakyma.kohde.name}</p>
+              <Pohjanakyma
+                laji={pohjaNakyma.laji}
+                ownerId={pohjaNakyma.kohde.id}
+                ownerNimi={pohjaNakyma.kohde.name}
+                pohjat={pohjat as unknown as Pohja[]}
+                suoritukset={pohjaSuoritukset}
+                saaMuokata={pohjaNakyma.laji === 'guide' ? saaMuokataOhjeita : saaMuokataSkenaarioita}
+                onPohjatMuuttui={haePohjat}
+                onSuoritusMuuttui={paivitaPohjaSuoritus}
+              />
+            </div>
           ) : halytysKohde ? (
             <Halytykset
               kohde={halytysKohde}
@@ -885,6 +933,31 @@ export default function GuardApp() {
                             {/* Kesken oleva kierros näkyy kortissa: unohtunut avoin kierros
                                 on yleisin tapa saada vuoro näyttämään tekemättömältä. */}
                             {kierrokset.some((k) => k.siteId === kohde.id && k.tila === 'kesken') && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
+                                kesken
+                              </span>
+                            )}
+                          </button>
+                        )}
+                        {saaNahdaOhjeet && (
+                          <button
+                            type="button"
+                            onClick={() => setPohjaNakyma({ kohde, laji: 'guide' })}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
+                          >
+                            <BookOpen size={14} />
+                            Ohjeet
+                          </button>
+                        )}
+                        {saaNahdaSkenaariot && (
+                          <button
+                            type="button"
+                            onClick={() => setPohjaNakyma({ kohde, laji: 'play' })}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
+                          >
+                            <ListChecks size={14} />
+                            Skenaariot
+                            {pohjaSuoritukset.some((s) => s.ownerId === kohde.id && s.tila === 'kesken') && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
                                 kesken
                               </span>

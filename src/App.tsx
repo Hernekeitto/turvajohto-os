@@ -25,6 +25,8 @@ import {
   TYYPPI_LABEL, TILA_LABEL, type Halytys,
 } from './shared/halytykset';
 import { VYOHYKESAANNOT } from './shared/vyohykkeet';
+import { Pohjanakyma } from './shared/komponentit/Pohjanakyma';
+import { haePohjat, haeSuoritukset, LAJIT as POHJALAJIT, type Pohja, type Suoritus } from './shared/pohjat';
 import { SijaintiValinta } from './shared/komponentit/SijaintiValinta';
 import {
   VYOHYKEVARIT, VYOHYKKEEN_MIN_PISTEET, uusiVyohykeId, vyohykkeet as haeVyohykkeet,
@@ -102,6 +104,7 @@ import {
   Siren,
   Timer,
   MapPin,
+  BookOpen,
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -1380,6 +1383,36 @@ export default function App() {
     paivitaHalytykset();
   }, [saaNahdaHalytykset, paivitaHalytykset]);
 
+  // Pohjat ja niiden suoritukset (erä 8). Kumpaakaan EI kirjoiteta kokoelmareitin kautta:
+  // pohjilla on omat reittinsä (versiointi, tokenit) ja suoritukset ovat palvelimen
+  // ylläpitämiä. Siksi ne eivät ole paivitaKokoelma-koneistossa.
+  const [pohjat, setPohjat] = useState<Pohja[]>([]);
+  const [pohjaSuoritukset, setPohjaSuoritukset] = useState<Suoritus[]>([]);
+  const saaNahdaOhjeet = isAdminUser || canView(perms, selectedEvent, 'guides');
+  const saaNahdaSkenaariot = isAdminUser || canView(perms, selectedEvent, 'plays');
+  const saaNahdaRunsheet = isAdminUser || canView(perms, selectedEvent, 'runsheet');
+  const saaNahdaPohjia = saaNahdaOhjeet || saaNahdaSkenaariot || saaNahdaRunsheet;
+
+  const paivitaPohjat = useCallback(() => {
+    haePohjat().then((lista) => { if (lista) setPohjat(lista); });
+  }, []);
+  const paivitaPohjaSuoritukset = useCallback(() => {
+    haeSuoritukset().then((lista) => { if (lista) setPohjaSuoritukset(lista); });
+  }, []);
+
+  useEffect(() => {
+    if (!saaNahdaPohjia) return;
+    paivitaPohjat();
+    paivitaPohjaSuoritukset();
+  }, [saaNahdaPohjia, paivitaPohjat, paivitaPohjaSuoritukset]);
+
+  const paivitaPohjaSuoritus = (suoritus: Suoritus) => {
+    setPohjaSuoritukset((edelliset) => {
+      const tunnettu = edelliset.some((s) => s.id === suoritus.id);
+      return tunnettu ? edelliset.map((s) => (s.id === suoritus.id ? suoritus : s)) : [suoritus, ...edelliset];
+    });
+  };
+
   const paivitaHalytys = (halytys: Halytys) => {
     setHalytykset((edelliset) => {
       const tunnettu = edelliset.some((h) => h.id === halytys.id);
@@ -1440,6 +1473,8 @@ export default function App() {
   const { yhdistetty: kanavaYhdistetty, laheta: lahetaKanavalle } = useKanava({
     onMuutos: (kokoelma) => {
       if (kokoelma === 'alerts') { paivitaHalytykset(); return; }
+      if (kokoelma === 'templates') { paivitaPohjat(); return; }
+      if (kokoelma === 'templateRuns') { paivitaPohjaSuoritukset(); return; }
       paivitaKokoelma(kokoelma);
     },
     // Palvelin lähettää yhden sijainnin kerrallaan sitä mukaa kun niitä tulee. Lista
@@ -5487,6 +5522,61 @@ export default function App() {
                 </div>
               )}
             </div>
+          </div>
+        );
+      }
+      // Ohjepankki, skenaariot ja run sheet (erä 8). Kolme sivukartta-solmua mutta yksi
+      // näkymä välilehdillä: ne ovat samaa koneistoa eri sisällöllä, ja erilliset
+      // sivuvalikon rivit veisivät tilaa kolmelta harvoin käytetyltä sivulta.
+      case 'guides':
+      case 'plays':
+      case 'runsheet': {
+        const valilehdet = ([
+          ['plays', saaNahdaSkenaariot],
+          ['guides', saaNahdaOhjeet],
+          ['runsheet', saaNahdaRunsheet],
+        ] as const).filter(([, saa]) => saa).map(([id]) => id);
+        // Käyttäjä voi päätyä tänne välilehdelle jota hän ei saa nähdä (esimerkiksi
+        // suoralla linkillä), joten näytettävä välilehti valitaan sallituista.
+        const nakyva = valilehdet.includes(activeTab as typeof valilehdet[number])
+          ? (activeTab as 'guides' | 'plays' | 'runsheet')
+          : valilehdet[0];
+        if (!nakyva) {
+          return (
+            <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-4">
+              Käyttäjätasollasi ei ole oikeutta ohjepankkiin, skenaarioihin eikä run sheetiin.
+            </p>
+          );
+        }
+        const saaMuokataLajia = isAdminUser || canEdit(perms, selectedEvent, nakyva);
+        // Sivukartan solmu ja pohjan laji ovat eri asia: solmu on monikossa (`guides`),
+        // laji yksikössä (`guide`). Sekaannus näkyisi tyhjänä listana, koska suodatus
+        // tehdään lajilla.
+        const solmunLaji = { guides: 'guide', plays: 'play', runsheet: 'runsheet' } as const;
+        const laji = solmunLaji[nakyva];
+        return (
+          <div>
+            <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-3">
+              {valilehdet.map((id) => (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${nakyva === id ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                >
+                  {POHJALAJIT[solmunLaji[id]].monikko}
+                </button>
+              ))}
+            </div>
+            <Pohjanakyma
+              laji={laji}
+              ownerId={selectedEvent || ''}
+              ownerNimi={findEventName(selectedEvent, events)}
+              pohjat={pohjat}
+              suoritukset={pohjaSuoritukset}
+              saaMuokata={saaMuokataLajia}
+              onPohjatMuuttui={paivitaPohjat}
+              onSuoritusMuuttui={paivitaPohjaSuoritus}
+            />
           </div>
         );
       }
@@ -13871,6 +13961,20 @@ export default function App() {
                   </button>
                 );
               })()}
+              {saaNahdaPohjia && (
+                <button
+                  onClick={() => setActiveTab(saaNahdaSkenaariot ? 'plays' : saaNahdaOhjeet ? 'guides' : 'runsheet')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${['plays', 'guides', 'runsheet'].includes(activeTab) ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <BookOpen size={18} />
+                  Ohjeet ja skenaariot
+                  {pohjaSuoritukset.some((s) => s.ownerId === selectedEvent && s.tila === 'kesken') && (
+                    <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                      kesken
+                    </span>
+                  )}
+                </button>
+              )}
               {(isAdminUser || canView(perms, selectedEvent, 'reporting')) && (
                 <button
                   onClick={() => setActiveTab('reporting')}
