@@ -30,6 +30,7 @@ import { haePohjat, haeSuoritukset, LAJIT as POHJALAJIT, type Pohja, type Suorit
 import { Tiedotteet, TiedoteKehote } from './shared/komponentit/Tiedotteet';
 import { haeTiedotteet, onKuitannut, onVoimassa, type Tiedote } from './shared/tiedotteet';
 import { Kalusto } from './shared/komponentit/Kalusto';
+import { Vyohykekirjaukset, type AlueKirjaus } from './shared/komponentit/Vyohykekirjaukset';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from './shared/kalusto';
 import { Mittaristo } from './shared/komponentit/Mittaristo';
 import { Jalkiraportit } from './shared/komponentit/Jalkiraportit';
@@ -675,7 +676,10 @@ export default function App() {
   const perms = session?.permissions;
   const [activeTab, setActiveTab] = useState('overview');
   // 'overview' | 'report_list' — mistä avoin raportti-modaali avattiin, muokkausoikeuden tarkistusta varten
-  const [openedReportSource, setOpenedReportSource] = useState(null);
+  // Mistä näkymästä kirjaus avattiin — ratkaisee minkä sivukartta-solmun mukaan
+  // muokkausoikeus tarkistetaan. Tyyppi on merkitty, koska ilman sitä useState päättelee
+  // tilan tyypiksi pelkän nullin ja jokainen asetuskutsu on tyyppivirhe.
+  const [openedReportSource, setOpenedReportSource] = useState<string | null>(null);
 
   // Tapahtumavalinta: null = valintasivu, 'fesx' = tuotantotapahtuma,
   // 'new' = uuden tapahtuman lomake. Muut arvot ovat tavallisia tapahtuma-id:itä;
@@ -768,6 +772,11 @@ export default function App() {
   const [boardTila, setBoardTila] = useState('avoimet');
   const [boardVakavuus, setBoardVakavuus] = useState('');
   const [boardVyohyke, setBoardVyohyke] = useState('');
+  // Kartalta valittu vyöhyke (erä 2). ERI TILA kuin status boardin boardVyohyke: ne ovat
+  // eri sivuilla ja vastaavat eri kysymykseen. Kartalla kysytään "mitä tällä alueella on
+  // tapahtunut", status boardilla "mitä on kesken" — ja jos yksi valinta ohjaisi
+  // molempia, toisen sivun suodatin muuttuisi näkymättömissä.
+  const [karttaVyohyke, setKarttaVyohyke] = useState<string | null>(null);
   const [boardTyyppi, setBoardTyyppi] = useState('');
   // Kirjauksen sijainti: vyöhyke ja tarkka kohta kartalla. YHTEINEN kaikille
   // raporttilomakkeille, koska vain yksi lomake on kerrallaan auki ja sijainti kysytään
@@ -8205,6 +8214,19 @@ export default function App() {
           { rooli: 'Rakennusvaiheen vastaava', nimi: valittuTapahtumaLomake.buildPhaseResponsible },
         ].filter((v) => String(v.nimi || '').trim());
 
+        // Kartan alla oleva vyöhykelista. Mukana KAIKKI tapahtuman kirjaukset eikä vain
+        // ne joille on osoitettu kohta kartalta: vyöhyke on lomakkeella valittu tieto, ja
+        // kirjaus voi kuulua vyöhykkeeseen ilman että kukaan on osoittanut sille pistettä.
+        const kartanKirjaukset: AlueKirjaus[] = [...currentEventReports]
+          .sort((a, b) => String(b.time || '').localeCompare(String(a.time || '')))
+          .map((r) => ({
+            id: r.id,
+            otsikko: `${r.time || ''} ${r.type || 'Kirjaus'}`.trim(),
+            lisatieto: r.author || '',
+            vari: kirjauksenTila(r.status)?.merkki || '#64748b',
+            zoneId: r.zoneId || null,
+          }));
+
         const karttaId = valittuTapahtumaLomake.mapUploadId;
         const saaMuokataTapahtumaa = isAdminUser || canEdit(perms, selectedEvent, 'landing');
 
@@ -8289,7 +8311,29 @@ export default function App() {
                     ? 'Pohjakarttaa ei ole ladattu. Lataa alueen kartta yllä olevalla painikkeella — vyöhykkeet piirretään sen päälle.'
                     : 'Pohjakarttaa ei ole ladattu. Pyydä pääkäyttäjää lataamaan alueen kartta tähän tapahtumaan.'
                 }
+                // Vyöhykevalinta on pois päältä editoritiloissa. Vyöhykkeen klikkaus
+                // pysäyttää tapahtuman kartalle asti, joten päälle jätettynä se estäisi
+                // pisteen lisäämisen olemassa olevan vyöhykkeen päälle.
+                korostettu={vyohykeMuokkaus || kalibrointiTila ? null : karttaVyohyke}
+                onVyohykeKlikkaus={
+                  vyohykeMuokkaus || kalibrointiTila
+                    ? undefined
+                    : (id) => setKarttaVyohyke((edellinen) => (edellinen === id ? null : id))
+                }
               />
+
+              {!vyohykeMuokkaus && !kalibrointiTila && (
+                <Vyohykekirjaukset
+                  vyohykkeet={nykyisenTapahtumanVyohykkeet}
+                  kirjaukset={kartanKirjaukset}
+                  valittu={karttaVyohyke}
+                  onValitse={setKarttaVyohyke}
+                  onAvaa={(id) => {
+                    const kirjaus = currentEventReports.find((r) => r.id === id);
+                    if (kirjaus) { setOpenedReport(kirjaus); setOpenedReportSource('overview'); }
+                  }}
+                />
+              )}
 
               {/* Kartan kalibrointi. Ilman tätä GPS-sijainnista ei voi päätellä kohtaa
                   kuvalla: pohjakartta on valokuva tai piirros, eikä sovellus tiedä mitä

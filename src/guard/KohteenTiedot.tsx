@@ -4,6 +4,9 @@ import {
   Check, X, Eye, EyeOff, ShieldAlert, Route,
 } from 'lucide-react';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
+import { Kartta } from '../shared/komponentit/Kartta';
+import { Vyohykekirjaukset, type AlueKirjaus } from '../shared/komponentit/Vyohykekirjaukset';
+import { tila as kirjauksenTila } from '../shared/kirjaukset';
 import { muotoileTunniste } from '../shared/tunnisteet';
 import { muotoileTavut } from '../shared/muotoilu';
 import type { GuardRaportti, Kohde, KohteenTiedosto, TehtavaSuoritus, Kierros } from './tyypit';
@@ -54,6 +57,7 @@ type Props = {
 
 export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, kierrokset, onTakaisin }: Props) => {
   const [avattu, setAvattu] = useState<string | null>(null);
+  const [karttaVyohyke, setKarttaVyohyke] = useState<string | null>(null);
 
   const omatSuoritukset = suoritukset
     .filter((s) => s.siteId === kohde.id)
@@ -65,6 +69,49 @@ export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, kierrok
     .filter((k) => k.siteId === kohde.id)
     .sort((a, b) => (a.alkoi < b.alkoi ? 1 : -1));
   const omatTiedostot = tiedostot.filter((t) => t.siteId === kohde.id);
+
+  // Kartan kirjaustaso (erä 2). Merkkejä saavat vain ne kirjaukset joille on osoitettu
+  // kohta kartalta; vyöhykelistassa ovat kaikki, koska vyöhyke on lomakkeella valittu
+  // tieto eikä edellytä osoitettua pistettä.
+  const merkit = omatRaportit
+    .filter((r) => (r.location as { img?: { x: number; y: number } } | undefined)?.img)
+    .map((r) => {
+      const img = (r.location as { img: { x: number; y: number } }).img;
+      return {
+        id: r.id,
+        x: img.x,
+        y: img.y,
+        vari: kirjauksenTila(r.status)?.merkki || '#64748b',
+        otsikko: `${r.time || ''} ${r.type || ''}`.trim(),
+        onKlikkaus: () => avaaRaportti(r.id),
+      };
+    });
+
+  const kartanKirjaukset: AlueKirjaus[] = omatRaportit.map((r) => ({
+    id: r.id,
+    otsikko: `${r.time || ''} ${r.type || 'Kirjaus'}`.trim(),
+    lisatieto: r.author || '',
+    vari: kirjauksenTila(r.status)?.merkki || '#64748b',
+    zoneId: r.zoneId || null,
+  }));
+
+  // Kartalta valittu kirjaus avataan siinä listassa jossa se muutenkin luetaan, eikä
+  // omassa ikkunassaan: sama sisältö kahdessa esityksessä olisi kaksi paikkaa joita
+  // pitää muistaa päivittää. Rivi tuodaan näkyviin, koska kartan alta se jää helposti
+  // ruudun ulkopuolelle.
+  //
+  // Skrollaus tehdään heti eikä renderin jälkeen: rivin ankkuri on DOMissa riippumatta
+  // siitä onko raportti auki. requestAnimationFrameen kääritty skrollaus ei tapahtuisi
+  // lainkaan taustavälilehdellä, koska kehyksiä ei silloin piirretä.
+  //
+  // EI `behavior: 'smooth'`. Pehmeä vieritys jää joissakin selaintiloissa kokonaan
+  // tekemättä (todettu tämän projektin esikatseluselaimessa), jolloin kartalta napsautettu
+  // kirjaus avautuisi ruudun ulkopuolelle eikä käyttäjä näkisi mitään tapahtuvan.
+  // Animaatio on koriste, kohtaan siirtyminen on toiminto.
+  const avaaRaportti = (id: string) => {
+    setAvattu(id);
+    document.getElementById(`raportti-${id}`)?.scrollIntoView({ block: 'center' });
+  };
   const perehdytykset = kohde.perehdytykset || [];
 
   return (
@@ -87,6 +134,31 @@ export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, kierrok
         <div className="bg-surface border border-line rounded-xl p-5 mb-6">
           <h3 className="text-sm font-bold text-ink mb-2">Ohjeet vartijalle</h3>
           <p className="text-sm text-ink-body leading-relaxed whitespace-pre-line">{kohde.notes}</p>
+        </div>
+      )}
+
+      {/* Pohjakartta. Kohteen hallinnassa sama kartta on editorina; tässä se on
+          katsomista varten — vyöhykkeet, kirjausmerkit ja rajaus, ei piirtoa. */}
+      {kohde.mapUploadId && (
+        <div className="bg-surface border border-line rounded-xl p-5 mb-6">
+          <h3 className="text-sm font-bold text-ink mb-3 flex items-center gap-2">
+            <MapPin size={16} className="text-accent" />
+            Kohteen kartta
+          </h3>
+          <Kartta
+            karttaId={kohde.mapUploadId}
+            vyohykkeet={kohde.zones || []}
+            merkit={merkit}
+            korostettu={karttaVyohyke}
+            onVyohykeKlikkaus={(id) => setKarttaVyohyke((edellinen) => (edellinen === id ? null : id))}
+          />
+          <Vyohykekirjaukset
+            vyohykkeet={kohde.zones || []}
+            kirjaukset={kartanKirjaukset}
+            valittu={karttaVyohyke}
+            onValitse={setKarttaVyohyke}
+            onAvaa={avaaRaportti}
+          />
         </div>
       )}
 
@@ -226,7 +298,7 @@ export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, kierrok
             {omatRaportit.map((r) => {
               const auki = avattu === r.id;
               return (
-                <div key={r.id} className="px-5 py-3">
+                <div key={r.id} id={`raportti-${r.id}`} className="px-5 py-3">
                   <button
                     type="button"
                     onClick={() => setAvattu(auki ? null : r.id)}
