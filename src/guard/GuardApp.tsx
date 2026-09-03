@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff, Siren, BookOpen, ListChecks, Megaphone, KeyRound } from 'lucide-react';
+import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff, Siren, BookOpen, ListChecks, Megaphone, KeyRound, BarChart3 } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
@@ -28,6 +28,9 @@ import { Tiedotteet, TiedoteKehote } from '../shared/komponentit/Tiedotteet';
 import { haeTiedotteet, onKuitannut, onVoimassa, type Tiedote } from '../shared/tiedotteet';
 import { Kalusto } from '../shared/komponentit/Kalusto';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from '../shared/kalusto';
+import { Mittaristo } from '../shared/komponentit/Mittaristo';
+import { Jalkiraportit } from '../shared/komponentit/Jalkiraportit';
+import { haeJalkiraportit, type Jalkiraportti } from '../shared/jalkiraportit';
 import {
   uusiId, type GuardRaportti, type Kohde, type KohteenTiedosto, type RaporttiTyyppi,
   type TehtavaSuoritus, type Kierrospohja, type Kierros as KierrosTietue,
@@ -94,6 +97,13 @@ export default function GuardApp() {
   const saaNahdaKalustoa = isAdmin || canView(perms, null, 'guard_keys') || canView(perms, null, 'guard_equipment');
   const saaMuokataAvaimia = isAdmin || canEdit(perms, null, 'guard_keys');
   const saaKasitellaPoikkeamia = isAdmin || canEdit(perms, null, 'guard_equipment');
+  // Mittaristo ja jaksoraportit (erä 9). Erilliset oikeudet: mittaristo näyttää lukuja,
+  // jaksoraportti on dokumentti joka lähtee toimeksiantajalle. Palvelin laskee luvut vain
+  // niistä tietueista jotka käyttäjä saisi lukea rivinä, joten mittariston lukuoikeus ei
+  // ohita kirjausten omia oikeuksia.
+  const saaNahdaMittarit = isAdmin || canView(perms, null, 'guard_analytics');
+  const saaNahdaJaksoraportit = isAdmin || canView(perms, null, 'guard_debrief');
+  const saaLaatiaJaksoraportteja = isAdmin || canEdit(perms, null, 'guard_debrief');
   // Raportointi on jaettu lomaketyypeittäin: tapahtumailmoitus sisältää kohdehenkilötiedot
   // ja voi olla eri joukolla ihmisiä kuin päivittäinen toimenpidekirjaus.
   const saaKirjataToimenpiteen = isAdmin || canEdit(perms, null, 'guard_report_action');
@@ -149,6 +159,9 @@ export default function GuardApp() {
   const [avaimet, setAvaimet] = useState<Avain[]>([]);
   const [poikkeamat, setPoikkeamat] = useState<Poikkeama[]>([]);
   const [kalustoKohde, setKalustoKohde] = useState<Kohde | null>(null);
+  const [mittariKohde, setMittariKohde] = useState<Kohde | null>(null);
+  const [jaksoKohde, setJaksoKohde] = useState<Kohde | null>(null);
+  const [jalkiraportit, setJalkiraportit] = useState<Jalkiraportti[]>([]);
   // Man-down päällä/pois säilyy laitteella: vartija kytkee sen kerran vuoron alussa,
   // eikä asetus saa nollautua sivun latauksesta kesken vuoron.
   const [mandown, setMandown] = useState(false);
@@ -292,6 +305,15 @@ export default function GuardApp() {
 
   useEffect(() => { paivitaAvaimet(); paivitaPoikkeamat(); }, [paivitaAvaimet, paivitaPoikkeamat]);
 
+  // Jälkiraportit haetaan tavalliselta kokoelmareitiltä, mutta niitä ei koskaan
+  // kirjoiteta takaisin: kokoelma on palvelimen ylläpitämä (jäädytetyt luvut, lukitus).
+  const paivitaJalkiraportit = useCallback(() => {
+    if (!saaNahdaJaksoraportit) return;
+    haeJalkiraportit().then((lista) => { if (lista) setJalkiraportit(lista); });
+  }, [saaNahdaJaksoraportit]);
+
+  useEffect(() => { paivitaJalkiraportit(); }, [paivitaJalkiraportit]);
+
   const paivitaTiedote = (tiedote: Tiedote) => {
     setTiedotteet((edelliset) => {
       const tunnettu = edelliset.some((t) => t.id === tiedote.id);
@@ -337,6 +359,7 @@ export default function GuardApp() {
       if (kokoelma === 'broadcasts') paivitaTiedotteet();
       if (kokoelma === 'keys') paivitaAvaimet();
       if (kokoelma === 'equipmentIssues') paivitaPoikkeamat();
+      if (kokoelma === 'debriefs') paivitaJalkiraportit();
     },
   });
 
@@ -680,7 +703,7 @@ export default function GuardApp() {
     <Ylapalkki
       tuoteNimi="Turvajohto GUARD"
       alaotsikko={alaotsikko}
-      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); setHalytysKohde(null); setPohjaNakyma(null); setTiedoteKohde(null); setKalustoKohde(null); }}
+      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); setHalytysKohde(null); setPohjaNakyma(null); setTiedoteKohde(null); setKalustoKohde(null); setMittariKohde(null); setJaksoKohde(null); }}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}
@@ -718,6 +741,8 @@ export default function GuardApp() {
           : pohjaNakyma ? (pohjaNakyma.laji === 'guide' ? 'Ohjepankki' : 'Skenaariot')
           : tiedoteKohde ? 'Tiedotteet'
           : kalustoKohde ? 'Kalusto'
+          : mittariKohde ? 'Mittaristo'
+          : jaksoKohde ? 'Jaksoraportit'
           : kierrosKohde ? 'Kierrokset'
           : pohjaKohde ? 'Kierrospohjat'
           : tehtavaKohde ? 'Työvuoron tehtävät'
@@ -826,6 +851,23 @@ export default function GuardApp() {
                 onAvaimetMuuttui={paivitaAvaimet}
                 onPoikkeamatMuuttui={paivitaPoikkeamat}
                 aloitusValilehti="avaimet"
+              />
+            </div>
+          ) : mittariKohde ? (
+            <div className="max-w-5xl">
+              <TakaisinLinkki onClick={() => setMittariKohde(null)}>Takaisin kohdelistaan</TakaisinLinkki>
+              <Mittaristo ownerId={mittariKohde.id} ownerNimi={mittariKohde.name} onKohde />
+            </div>
+          ) : jaksoKohde ? (
+            <div className="max-w-5xl">
+              <TakaisinLinkki onClick={() => setJaksoKohde(null)}>Takaisin kohdelistaan</TakaisinLinkki>
+              <Jalkiraportit
+                ownerId={jaksoKohde.id}
+                ownerNimi={jaksoKohde.name}
+                onKohde
+                raportit={jalkiraportit}
+                saaMuokata={saaLaatiaJaksoraportteja}
+                onMuuttui={paivitaJalkiraportit}
               />
             </div>
           ) : tiedoteKohde ? (
@@ -1041,6 +1083,31 @@ export default function GuardApp() {
                             {poikkeamat.some((p) => p.ownerId === kohde.id && p.tila === 'avoin') && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
                                 poikkeama
+                              </span>
+                            )}
+                          </button>
+                        )}
+                        {saaNahdaMittarit && (
+                          <button
+                            type="button"
+                            onClick={() => setMittariKohde(kohde)}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
+                          >
+                            <BarChart3 size={14} />
+                            Mittaristo
+                          </button>
+                        )}
+                        {saaNahdaJaksoraportit && (
+                          <button
+                            type="button"
+                            onClick={() => setJaksoKohde(kohde)}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
+                          >
+                            <ClipboardList size={14} />
+                            Jaksoraportit
+                            {jalkiraportit.some((r) => r.ownerId === kohde.id && r.tila === 'luonnos') && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
+                                luonnos
                               </span>
                             )}
                           </button>

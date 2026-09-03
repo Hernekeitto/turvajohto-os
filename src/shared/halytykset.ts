@@ -11,7 +11,9 @@
 // ja lähtisi ehkä puolen tunnin päästä — pahempi kuin selvä virheilmoitus, koska se veisi
 // ihmiseltä sen tiedon että hänen on soitettava 112 itse.
 
-export type HalytysTyyppi = 'ajastin' | 'mandown' | 'panic' | 'geofence';
+// Sama lista kuin server/halytys.js: TYYPIT. 'varuste' on erän 8 kriittinen
+// varustepoikkeama, joka eskaloituu tätä samaa ketjua pitkin.
+export type HalytysTyyppi = 'ajastin' | 'mandown' | 'panic' | 'geofence' | 'varuste';
 export type HalytysTila = 'kaynnissa' | 'lauennut' | 'kuitattu' | 'peruttu';
 
 export type HalytysGps = { lat: number; lon: number; tarkkuus: number | null };
@@ -47,6 +49,7 @@ export const TYYPPI_LABEL: Record<HalytysTyyppi, string> = {
   mandown: 'Man-down',
   panic: 'Hätäpainike',
   geofence: 'Vyöhykepoikkeama',
+  varuste: 'Varustepuute',
 };
 
 export const TILA_LABEL: Record<HalytysTila, string> = {

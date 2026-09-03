@@ -46,6 +46,19 @@ export const SITEMAP: SivukarttaSolmu[] = [
   // ilmoittaminen. Molemmissa lukuoikeus näyttää, muokkausoikeus oikeuttaa kirjaamaan.
   { id: 'keys', label: 'Avainhallinta' },
   { id: 'equipment', label: 'Varustepoikkeamat' },
+  // Mittaristo ja jälkiraportti (erä 9). KAKSI SOLMUA eikä yksi: mittaristo näyttää
+  // lukuja, jälkiraportti on dokumentti joka jaetaan tilaajalle ja jossa sanotaan mikä
+  // meni pieleen. Ne eivät kuulu samalle joukolle ihmisiä.
+  //
+  // Mittariston lukuoikeus EI ohita rivikohtaisia oikeuksia: palvelin laskee luvut vain
+  // niistä tietueista jotka käyttäjä saisi lukea rivinä (server/index.js). Ilman tätä
+  // "vyöhykkeellä 3 kirjausta" kertoisi juuri sen mitä rivioikeus on tarkoitettu
+  // estämään.
+  //
+  // Jälkiraportissa lukuoikeus = raportin lukeminen, muokkausoikeus = laatiminen,
+  // valmiiksi merkitseminen ja uudelleen avaaminen.
+  { id: 'analytics', label: 'Mittaristo' },
+  { id: 'debrief', label: 'Jälkiraportit (purku ja opit)' },
   { id: 'reporting', label: 'Raportointi', children: [
     { id: 'report_jv', label: 'Järjestyksenvalvojan tapahtumailmoitus' },
     { id: 'report_tike', label: 'TIKE:n raportointi', children: [

@@ -31,6 +31,9 @@ import { Tiedotteet, TiedoteKehote } from './shared/komponentit/Tiedotteet';
 import { haeTiedotteet, onKuitannut, onVoimassa, type Tiedote } from './shared/tiedotteet';
 import { Kalusto } from './shared/komponentit/Kalusto';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from './shared/kalusto';
+import { Mittaristo } from './shared/komponentit/Mittaristo';
+import { Jalkiraportit } from './shared/komponentit/Jalkiraportit';
+import { haeJalkiraportit, type Jalkiraportti } from './shared/jalkiraportit';
 import { SijaintiValinta } from './shared/komponentit/SijaintiValinta';
 import {
   VYOHYKEVARIT, VYOHYKKEEN_MIN_PISTEET, uusiVyohykeId, vyohykkeet as haeVyohykkeet,
@@ -109,6 +112,8 @@ import {
   Timer,
   MapPin,
   BookOpen,
+  BarChart3,
+  ClipboardList,
 } from 'lucide-react';
 
 // --- MOCK DATA ---
@@ -1446,6 +1451,24 @@ export default function App() {
     paivitaPoikkeamat();
   }, [saaNahdaKalustoa, paivitaAvaimet, paivitaPoikkeamat]);
 
+  // Mittaristo ja jälkiraportit (erä 9). Kaksi eri oikeutta: mittaristo näyttää lukuja,
+  // jälkiraportti on dokumentti joka päätyy tilaajalle ja jossa sanotaan mikä meni
+  // pieleen. Mittariston lukuoikeus ei ohita kirjausten omia oikeuksia — palvelin laskee
+  // luvut vain niistä tietueista jotka käyttäjä saisi lukea rivinä.
+  const [jalkiraportit, setJalkiraportit] = useState<Jalkiraportti[]>([]);
+  const saaNahdaMittarit = isAdminUser || canView(perms, selectedEvent, 'analytics');
+  const saaNahdaJalkiraportteja = isAdminUser || canView(perms, selectedEvent, 'debrief');
+  const saaLaatiaJalkiraportteja = isAdminUser || canEdit(perms, selectedEvent, 'debrief');
+
+  const paivitaJalkiraportit = useCallback(() => {
+    haeJalkiraportit().then((lista) => { if (lista) setJalkiraportit(lista); });
+  }, []);
+
+  useEffect(() => {
+    if (!saaNahdaJalkiraportteja) return;
+    paivitaJalkiraportit();
+  }, [saaNahdaJalkiraportteja, paivitaJalkiraportit]);
+
   const paivitaTiedote = (tiedote: Tiedote) => {
     setTiedotteet((edelliset) => {
       const tunnettu = edelliset.some((t) => t.id === tiedote.id);
@@ -1525,6 +1548,7 @@ export default function App() {
       if (kokoelma === 'broadcasts') { paivitaTiedotteet(); return; }
       if (kokoelma === 'keys') { paivitaAvaimet(); return; }
       if (kokoelma === 'equipmentIssues') { paivitaPoikkeamat(); return; }
+      if (kokoelma === 'debriefs') { paivitaJalkiraportit(); return; }
       paivitaKokoelma(kokoelma);
     },
     // Palvelin lähettää yhden sijainnin kerrallaan sitä mukaa kun niitä tulee. Lista
@@ -5590,6 +5614,28 @@ export default function App() {
             onAvaimetMuuttui={paivitaAvaimet}
             onPoikkeamatMuuttui={paivitaPoikkeamat}
             aloitusValilehti="varusteet"
+          />
+        );
+      // Mittaristo ja jälkiraportit (erä 9). Mittaristo hakee lukunsa itse omalta
+      // reitiltään: se ei ole kokoelma jota selain pitäisi välimuistissa, vaan kysymys
+      // jonka vastaus riippuu valitusta aikavälistä.
+      case 'analytics':
+        return (
+          <Mittaristo
+            ownerId={selectedEvent || ''}
+            ownerNimi={findEventName(selectedEvent, events)}
+            onKohde={false}
+          />
+        );
+      case 'debrief':
+        return (
+          <Jalkiraportit
+            ownerId={selectedEvent || ''}
+            ownerNimi={findEventName(selectedEvent, events)}
+            onKohde={false}
+            raportit={jalkiraportit}
+            saaMuokata={saaLaatiaJalkiraportteja}
+            onMuuttui={paivitaJalkiraportit}
           />
         );
       case 'broadcast':
@@ -14047,6 +14093,29 @@ export default function App() {
                     || poikkeamat.some((p) => p.ownerId === selectedEvent && p.tila === 'avoin')) && (
                     <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
                       huomioitavaa
+                    </span>
+                  )}
+                </button>
+              )}
+              {saaNahdaMittarit && (
+                <button
+                  onClick={() => setActiveTab('analytics')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'analytics' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <BarChart3 size={18} />
+                  Mittaristo
+                </button>
+              )}
+              {saaNahdaJalkiraportteja && (
+                <button
+                  onClick={() => setActiveTab('debrief')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'debrief' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <ClipboardList size={18} />
+                  Jälkiraportit
+                  {jalkiraportit.some((r) => r.ownerId === selectedEvent && r.tila === 'luonnos') && (
+                    <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                      luonnos
                     </span>
                   )}
                 </button>
