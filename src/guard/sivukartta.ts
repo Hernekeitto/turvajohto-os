@@ -36,6 +36,14 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // hälyttämään, muokkaus tarvitaan vain toisen hälytyksen kuittaamiseen. Vartijalle tämä
   // on erän tärkein solmu — yksin työskentelevän ajastin ja hätäpainike ovat sen takana.
   { id: 'guard_alarms', label: 'Hälytykset (näkeminen oikeuttaa myös hälyttämään)' },
+  // Pohjamoottorin lajit (erä 8). Omat solmunsa EVENT-puolen vastaavista samasta syystä
+  // kuin muutkin GUARD-solmut: oikeudet tallennetaan yhteiseen olioon, joten sama nimi
+  // molemmilla puolilla jakaisi vahingossa saman oikeuden.
+  //
+  // Run sheet on tarkoituksella VAIN tapahtumapuolella: vartiointikohteen vuoro ei ole
+  // aikataulutettu esitys vaan toistuva kierros, ja se on jo kierrospohja.
+  { id: 'guard_guides', label: 'Ohjepankki (toimintakortit)' },
+  { id: 'guard_plays', label: 'Skenaariot ja niiden läpivienti' },
   // Raportointi. Omat solmunsa lomaketyypeittäin samaan tapaan kuin tapahtumapuolen
   // tike_form_*-solmut: vartijan toimenpide on päivittäistä kirjaamista, kun taas
   // tapahtumailmoitus sisältää LYTP:n nojalla kirjattavat kohdehenkilötiedot ja voi

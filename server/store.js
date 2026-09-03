@@ -80,6 +80,12 @@ const COLLECTIONS = {
   // aivan kuten oikeustarkistuksissa muutenkin. Vartijan hätäpainike ja tapahtuman
   // ajastinhälytys ovat sama asia, eikä valvomonäkymää kannata kirjoittaa kahdesti.
   alerts: 'alerts.json',
+  // Pohjien suoritukset (erä 8): skenaarion läpivienti ja run sheetin ajo. Sama suhde
+  // templates-kokoelmaan kuin patrolRunsilla kierrospohjaan — määrittely on pohjassa,
+  // suoritus on tapahtuma ajassa. Palvelimen ylläpitämä samasta syystä kuin kierrokset:
+  // säännöt (kriittistä kohtaa ei voi ohittaa, keskeytys vaatii syyn) menettäisivät
+  // merkityksensä jos selain voisi kirjoittaa kokoelman suoraan.
+  templateRuns: 'templateRuns.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
@@ -200,6 +206,14 @@ const ENCRYPTED_FIELDS = {
   // päätyvät molemmat tiivistettyinä. Sijaintia (gps) EI voi salata: se on numeroita, ja
   // kenttäsalaus toimii vain merkkijonoille — se on tietoinen rajaus, ei unohdus.
   alerts: ['kuvaus', 'kuittausHuomio', 'historia[].teksti'],
+  // Suorituksen vapaat tekstit. `kuvaus` on se yksittäinen tilanne jota hoidetaan
+  // ("poika 6 v, punainen takki, isä odottaa portilla") — se on määritelmällisesti
+  // henkilötietoa aina kun tilanne koskee ihmistä, ja skenaariot koskevat. Kohtien
+  // huomiot ovat samaa tekstiä kohta kerrallaan.
+  //
+  // Pohjan (templates) kohdat EIVÄT ole salattuja: ne ovat menettelyohjeita
+  // ("sulje portit"), eivät tietoa kenestäkään.
+  templateRuns: ['kuvaus', 'huomiot', 'keskeytysSyy', 'kohdat[].huomio'],
   // Tarkistuspisteen token on tarrassa seinässä eikä salaisuus, mutta se on ainoa asia
   // joka todistaa skannauksen kohdistuneen oikeaan pisteeseen — samalla perusteella
   // salattu kuin ilmoitusjulisteen token.

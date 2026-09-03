@@ -12,6 +12,9 @@
 // KNOWN_COLLECTIONS-listaan).
 
 import { lukitusEstaaMuokkauksen, lukitusEstaaPoiston, muutoksenLisatiedot } from './kirjaukset.js';
+// Pohjalajien solmut luetaan pohjamoottorista eikä kirjoiteta tänne uudelleen: lajin
+// lisääminen sinne ilman oikeussääntöä täällä tarkoittaisi pohjaa jota kukaan ei näe.
+import { lajinSolmu, KAIKKI_SOLMUT as POHJASOLMUT } from './pohjat.js';
 
 // Oikeudet tallennetaan kaksitasoisena: { __default__: {node:{view,edit}}, [eventId]:
 // {node:{view,edit}} }. __default__ on aina läsnä (ks. db.js: migratePermissions) ja
@@ -278,17 +281,43 @@ const COLLECTIONS = {
   // kierrosta pohjasta jota hän ei saa lukea, mutta pohjan MUOKKAUS on erikseen
   // esimiehen oikeus.
   templates: {
-    view: ['guard_patrol_templates', 'guard_patrols', 'guard_site_info'],
+    // Kaikkien lajien solmut. Tätä unionia käytetään vain kokoelmatason tarkistuksiin;
+    // yksittäisen pohjan näkyvyys ratkaistaan viewOf:lla lajin mukaan.
+    view: ['guard_patrol_templates', 'guard_patrols', 'guard_site_info', ...POHJASOLMUT],
+    viewOf: (item) => {
+      if (item?.kind === 'patrol') return ['guard_patrol_templates', 'guard_patrols', 'guard_site_info'];
+      // Käyttö ja hallinta ovat sama solmu: ohjekortin lukeminen ja skenaarion
+      // käynnistäminen eivät voi olla eri oikeuden takana kuin pohjan näkeminen, koska
+      // molemmissa luetaan sama tietue.
+      return [lajinSolmu(item?.kind, item?.omistaja === 'kohde')];
+    },
     touch: (item) => {
       if (item?.kind === 'patrol') return ['guard_patrol_templates'];
       // Tuntematon laji ei saa pudota läpi tyhjällä listalla: tyhjä vaatimuslista
-      // tarkoittaisi "kuka tahansa saa kirjoittaa". Palautetaan solmu jota ei ole
-      // olemassa, jolloin vain admin läpäisee.
-      return ['__tuntematon_pohjalaji__'];
+      // tarkoittaisi "kuka tahansa saa kirjoittaa". lajinSolmu palauttaa tuntemattomalle
+      // lajille solmun jota ei ole olemassa, jolloin vain admin läpäisee.
+      return [lajinSolmu(item?.kind, item?.omistaja === 'kohde')];
     },
     eventScoped: true,
     eventIdOf: (item) => item?.ownerId,
-    tuote: 'guard',
+    // EI tuoteporttia: kokoelma on molempien puolien yhteinen (kierrospohjat GUARDissa,
+    // skenaariot ja run sheet EVENTissä, ohjekortit molemmissa). Rajaus tehdään
+    // lajikohtaisilla solmuilla — tuoteportti estäisi tapahtumapuolen omat pohjat.
+  },
+  // Pohjien suoritukset (skenaarion läpivienti, run sheetin ajo). Kirjoitus tapahtuu VAIN
+  // palvelimen omilla reiteillä (index.js: PALVELIMEN_YLLAPITAMAT) — säännöt kriittisistä
+  // kohdista ja keskeytyksen syystä ovat suoritus.js:ssä eivätkä täällä.
+  templateRuns: {
+    view: [...POHJASOLMUT, 'overview', 'guard_site_info'],
+    viewOf: (item) => {
+      // Tilannekuva ja kohteen tiedot näyttävät käynnissä olevat suoritukset koosteena,
+      // joten niiltä sivuilta riittää oma lukuoikeus.
+      const kohteessa = item?.omistaja === 'kohde';
+      return [lajinSolmu(item?.kind, kohteessa), kohteessa ? 'guard_site_info' : 'overview'];
+    },
+    touch: () => [],
+    eventScoped: true,
+    eventIdOf: (item) => item?.ownerId,
   },
   // Kierroksen suoritukset. Kirjoitus tapahtuu VAIN palvelimen omilla reiteillä
   // (index.js: PALVELIMEN_YLLAPITAMAT), joten `touch` koskee käytännössä vain adminin
@@ -409,7 +438,12 @@ export function readableData(role, permissions, eventAccess, name, data) {
   const safeData = Array.isArray(data) ? data : [];
   const filtered = safeData.filter((item) => {
     const eventId = rule.eventIdOf(item);
-    return eventAllowed(eventAccess, eventId) && hasAnyView(permissions, eventId, rule.view);
+    // `viewOf` on polymorfisten kokoelmien takia: templates sisältää sekä GUARD-puolen
+    // kierrospohjia että tapahtumapuolen skenaarioita, eikä yhden lajin lukuoikeus saa
+    // näyttää toista. Ilman tätä `view` toimisi unionina — pelkän ohjepankkioikeuden
+    // saanut näkisi myös vartiointikohteiden tarkistuspisteet.
+    const solmut = rule.viewOf ? rule.viewOf(item) : rule.view;
+    return eventAllowed(eventAccess, eventId) && hasAnyView(permissions, eventId, solmut);
   });
   return { ok: true, data: filtered };
 }

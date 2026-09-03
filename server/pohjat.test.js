@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {
   tarkistaPisteet, tarkistaNimi, puhdistaKuvaus, tarkistaGps, sisaltoMuuttui,
   julkinenPohja, etsiPisteTokenilla, onTunnettuLaji, RAJAT,
+  tarkistaKohdat, tarkistaKellonaika, lajinSolmu, lajinSisalto, LAJIT, KAIKKI_SOLMUT,
 } from './pohjat.js';
 
 test('pisteet saavat id:n, tokenin ja järjestyksen', () => {
@@ -113,6 +114,101 @@ test('piste löytyy tokenilla, väärä token ei osu', () => {
 
 test('vain tunnetut pohjalajit kelpaavat', () => {
   assert.equal(onTunnettuLaji('patrol'), true);
-  assert.equal(onTunnettuLaji('runsheet'), false);
+  assert.equal(onTunnettuLaji('guide'), true);
+  assert.equal(onTunnettuLaji('tuntematon'), false);
   assert.equal(onTunnettuLaji('__proto__'), false);
+});
+
+// --- Lajit ja solmut (erä 8) ------------------------------------------------------
+
+test('molemmille puolille kuuluvalla lajilla on eri solmu kohteelle ja tapahtumalle', () => {
+  // Ilman erottelua GUARD-tunnuksen ohjeoikeus avaisi myös tapahtumapuolen ohjeet.
+  assert.equal(lajinSolmu('guide', false), 'guides');
+  assert.equal(lajinSolmu('guide', true), 'guard_guides');
+  // Yhden puolen lajilla on vain yksi solmu kummallakin kysymystavalla.
+  assert.equal(lajinSolmu('runsheet', false), 'runsheet');
+  assert.equal(lajinSolmu('runsheet', true), 'runsheet');
+  // Tuntematon laji ei saa pudota läpi tyhjällä: palautetaan solmu jota ei ole olemassa.
+  assert.equal(lajinSolmu('keksitty', false), '__tuntematon_pohjalaji__');
+});
+
+test('kaikkien lajien solmut ovat listassa jonka oikeustarkistus lukee', () => {
+  for (const laji of Object.values(LAJIT)) {
+    assert.ok(KAIKKI_SOLMUT.includes(laji.solmu), `${laji.solmu} puuttuu`);
+    if (laji.guardSolmu) assert.ok(KAIKKI_SOLMUT.includes(laji.guardSolmu), `${laji.guardSolmu} puuttuu`);
+  }
+});
+
+test('lajin sisältö luetaan oikeasta kentästä', () => {
+  assert.equal(lajinSisalto({ kind: 'patrol', pisteet: [1, 2] }).length, 2);
+  assert.equal(lajinSisalto({ kind: 'play', kohdat: [1] }).length, 1);
+  assert.deepEqual(lajinSisalto({ kind: 'play' }), []);
+  assert.deepEqual(lajinSisalto({ kind: 'keksitty', kohdat: [1] }), []);
+});
+
+// --- Kohdat (ohjepankki, skenaario, run sheet) ------------------------------------
+
+test('kohdat saavat id:n ja järjestyksen', () => {
+  const tulos = tarkistaKohdat([{ teksti: 'Sulje portit' }, { teksti: 'Kuuluta' }], 'play');
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.kohdat[0].jarjestys, 0);
+  assert.equal(tulos.kohdat[1].jarjestys, 1);
+  assert.ok(tulos.kohdat[0].id);
+  assert.notEqual(tulos.kohdat[0].id, tulos.kohdat[1].id);
+});
+
+test('tyhja lista ja tekstitön kohta torjutaan', () => {
+  assert.equal(tarkistaKohdat([], 'play').ok, false);
+  assert.equal(tarkistaKohdat(null, 'play').ok, false);
+  assert.equal(tarkistaKohdat([{ teksti: '   ' }], 'play').ok, false);
+});
+
+test('sama kohta kahdesti torjutaan', () => {
+  const tulos = tarkistaKohdat([{ id: 'a', teksti: 'Yksi' }, { id: 'a', teksti: 'Kaksi' }], 'play');
+  assert.equal(tulos.ok, false);
+});
+
+test('lajikohtaiset kentät tulevat mukaan vain omalle lajilleen', () => {
+  const play = tarkistaKohdat([{ teksti: 'Sulje portit', vastuu: 'Turva 1', kriittinen: true, aika: '14.00' }], 'play');
+  assert.equal(play.kohdat[0].vastuu, 'Turva 1');
+  assert.equal(play.kohdat[0].kriittinen, true);
+  // Skenaariossa ei ole kellonaikaa: se on run sheetin kenttä.
+  assert.equal(play.kohdat[0].aika, undefined);
+
+  const ohje = tarkistaKohdat([{ teksti: 'Soita 112', vastuu: 'X', kriittinen: true }], 'guide');
+  assert.equal(ohje.kohdat[0].vastuu, undefined);
+  assert.equal(ohje.kohdat[0].kriittinen, undefined);
+
+  const runsheet = tarkistaKohdat([{ teksti: 'Portit auki', aika: '14:00', vastuu: 'Portti 1' }], 'runsheet');
+  assert.equal(runsheet.kohdat[0].aika, '14.00');
+  assert.equal(runsheet.kohdat[0].vastuu, 'Portti 1');
+  assert.equal(runsheet.kohdat[0].kriittinen, undefined);
+});
+
+test('kierrospohjan kohtia ei tarkisteta tällä funktiolla', () => {
+  assert.equal(tarkistaKohdat([{ teksti: 'x' }], 'patrol').ok, false);
+});
+
+test('kellonaika normalisoidaan ja kelvoton torjutaan', () => {
+  assert.equal(tarkistaKellonaika('9:05').aika, '09.05');
+  assert.equal(tarkistaKellonaika('14.00').aika, '14.00');
+  assert.equal(tarkistaKellonaika('').aika, '');
+  assert.equal(tarkistaKellonaika('25.00').ok, false);
+  assert.equal(tarkistaKellonaika('12.75').ok, false);
+  assert.equal(tarkistaKellonaika('iltapäivällä').ok, false);
+});
+
+test('ohjauskoodit siivotaan myös kohdista', () => {
+  const tulos = tarkistaKohdat([{ teksti: `Soita${String.fromCharCode(0)} 112`, kuvaus: `rivi${String.fromCharCode(10)}toinen` }], 'guide');
+  assert.equal(tulos.kohdat[0].teksti, 'Soita 112');
+  assert.equal(tulos.kohdat[0].kuvaus, 'rivi toinen');
+});
+
+test('kohtien muuttuminen kasvattaa versiota, myös kuvauksen', () => {
+  const vanha = { kind: 'play', kohdat: tarkistaKohdat([{ teksti: 'Sulje portit', kuvaus: 'Kaikki' }], 'play').kohdat };
+  const sama = { kind: 'play', kohdat: vanha.kohdat.map((k) => ({ ...k })) };
+  assert.equal(sisaltoMuuttui(vanha, sama), false);
+
+  const muuttunut = { kind: 'play', kohdat: vanha.kohdat.map((k) => ({ ...k, kuvaus: 'Vain päävportti' })) };
+  assert.equal(sisaltoMuuttui(vanha, muuttunut), true);
 });

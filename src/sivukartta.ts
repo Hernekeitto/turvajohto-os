@@ -26,6 +26,16 @@ export const SITEMAP: SivukarttaSolmu[] = [
   // Muokkausoikeus ratkaisee vain sen, kuka saa kuitata TOISEN hälytyksen — oman saa
   // kuitata aina.
   { id: 'alarms', label: 'Hälytykset (näkeminen oikeuttaa myös hälyttämään)' },
+  // Pohjamoottorin lajit (erä 8). Kaikki kolme ovat samaa koneistoa eri sisällöllä, mutta
+  // omat solmunsa: ohjekortin lukeminen on eri asia kuin skenaarion käynnistäminen tai
+  // ajolistan muokkaaminen, eikä niitä pidä myöntää samalla ruksilla.
+  //
+  // Näkeminen ja käyttö ovat SAMA oikeus: skenaarion käynnistäminen ja ohjekortin
+  // lukeminen molemmat lukevat saman pohjan, joten erillinen "saa käyttää" -oikeus
+  // lupaisi rajausta jota ei ole olemassa. Muokkausoikeus ratkaisee kuka laatii pohjat.
+  { id: 'guides', label: 'Ohjepankki (toimintakortit)' },
+  { id: 'plays', label: 'Skenaariot ja niiden läpivienti' },
+  { id: 'runsheet', label: 'Run sheet (tapahtuman ajolista)' },
   { id: 'reporting', label: 'Raportointi', children: [
     { id: 'report_jv', label: 'Järjestyksenvalvojan tapahtumailmoitus' },
     { id: 'report_tike', label: 'TIKE:n raportointi', children: [

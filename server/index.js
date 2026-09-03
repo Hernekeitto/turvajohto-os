@@ -66,9 +66,10 @@ import {
 } from './julkinen.js';
 import {
   onTunnettuLaji, tarkistaNimi, puhdistaKuvaus, tarkistaPisteet, tarkistaGps,
-  sisaltoMuuttui, julkinenPohja, etsiPisteTokenilla,
+  sisaltoMuuttui, julkinenPohja, etsiPisteTokenilla, tarkistaKohdat, lajinSolmu, LAJIT,
 } from './pohjat.js';
 import { aloitaKierros, kuittaaPiste, paataKierros, etaisyysMetreina, OLETUS_SIETORAJA_M } from './kierros.js';
+import { aloitaSuoritus, kuittaaKohta, paataSuoritus } from './suoritus.js';
 import {
   luoAjastin, luoHalytys, jatka as jatkaHalytysta, laukaise as laukaiseHalytys,
   peru as peruHalytys, kuittaa as kuittaaHalytys, eraantyneet, eskaloitavat,
@@ -389,7 +390,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -1123,11 +1124,46 @@ app.delete('/api/publicforms/:id', requireAuth, (req, res) => {
 // eri ja tärkeämpi: kierroksen säännöt ovat sen ainoa sisältö. Kierros joka voidaan
 // merkitä valmiiksi vajaana ei todista mitään.
 
-// Kierrospohjan oikeus kohteeseen. Pohja ja sen kierrokset ovat eri solmuja: pohjan
-// muokkaus on esimiehen työtä, kierroksen kulkeminen vartijan.
-function saaPohjia(req, siteId) {
+// Pohjan omistaja: vartiointikohde tai tapahtuma. Sama id-avaruus kuin oikeuksissa
+// (ks. permissions.js: eventScoped), joten tunnistus tehdään katsomalla kummasta
+// kokoelmasta id löytyy. Erillistä tyyppikenttää EI oteta vastaan pyynnöstä: silloin
+// selain voisi väittää tapahtumapohjaa kohdepohjaksi ja ohittaa tuoteportin.
+function omistajanTiedot(ownerId) {
+  const kohde = (readCollection('guardSites') || []).find((k) => k.id === ownerId);
+  if (kohde) return { onKohde: true, nimi: kohde.name || '' };
+  const tapahtuma = (readCollection('events') || []).find((e) => e.id === ownerId);
+  if (tapahtuma) return { onKohde: false, nimi: tapahtuma.name || '' };
+  return null;
+}
+
+// Onko pohja tai suoritus kohteen (GUARD) vai tapahtuman (EVENT). Kierrospohja on aina
+// kohteen, vaikka vanhassa tietueessa ei olisi omistaja-kenttää lainkaan.
+const onKohteenPohja = (tietue) => tietue?.omistaja === 'kohde' || tietue?.kind === 'patrol';
+
+// Tuoteportti omistajan mukaan: kohteen pohjat ovat GUARD-puolen tietoa, tapahtuman
+// pohjat EVENT-puolen. Aiemmin koko templates-kokoelma oli guardPortin takana, mutta
+// erän 8 jälkeen siellä on molempien puolien pohjia.
+const tuoteOk = (req, onKohde) => (req.tuotteet || []).includes(onKohde ? 'guard' : 'event');
+
+// Saako käyttäjä MUOKATA tämän lajin pohjia tällä omistajalla. Pohjan laatiminen on
+// esimiehen työtä: kierrospohjalla se on eri solmu kuin kierroksen kulkeminen, ja muilla
+// lajeilla eri oikeus (edit) kuin käyttäminen (view).
+function saaPohjia(req, ownerId, kind, onKohde) {
   if (req.role === 'admin') return true;
-  return eventAllowed(req.eventAccess, siteId) && canEdit(req.permissions, siteId, 'guard_patrol_templates');
+  if (!tuoteOk(req, onKohde)) return false;
+  return eventAllowed(req.eventAccess, ownerId)
+    && canEdit(req.permissions, ownerId, lajinSolmu(kind, onKohde));
+}
+
+// Saako käyttäjä KÄYTTÄÄ pohjaa: lukea ohjekortin tai käynnistää skenaarion. Lukuoikeus
+// riittää tarkoituksella (ks. sivukartan perustelu): käyttö on saman tietueen lukemista,
+// eikä erillinen "saa käyttää" -oikeus rajaisi mitään sellaista mitä lukuoikeus ei jo
+// rajaa. Kierroksella on oma sääntönsä (saaKiertaa), koska kulkeminen on oma solmunsa.
+function saaKayttaaPohjaa(req, ownerId, kind, onKohde) {
+  if (req.role === 'admin') return true;
+  if (!tuoteOk(req, onKohde)) return false;
+  return eventAllowed(req.eventAccess, ownerId)
+    && canView(req.permissions, ownerId, lajinSolmu(kind, onKohde));
 }
 
 function saaKiertaa(req, siteId) {
@@ -1144,107 +1180,270 @@ const guardPortti = (req, res, next) => {
   next();
 };
 
-app.post('/api/pohjat', requireAuth, guardPortti, (req, res) => {
-  const { kind, ownerId, nimi, kuvaus, pisteet, sijaintiPakotus, sietorajaM } = req.body || {};
+// Kanavaviesti pohjan muutoksesta. Viesti kuljettaa vain id:n, ja sisältö haetaan
+// oikeustarkistetulta reitiltä. Skenaariopohjan muutos on tieto joka on saatava kentälle
+// heti: pohja voi muuttua kesken tapahtuman juuri sen takia mitä tilanteessa opittiin.
+function kerroPohjasta(pohja, action) {
+  lahetaKanavalle('templates', [{ action, id: pohja.id, eventId: pohja.ownerId }], {
+    saaNahda: (istunto, ownerId) => {
+      if (istunto?.role === 'admin') return true;
+      if (!eventAllowed(istunto?.eventAccess, ownerId)) return false;
+      return canView(rolePermissions(istunto?.roleId), ownerId, lajinSolmu(pohja.kind, onKohteenPohja(pohja)));
+    },
+  });
+}
+
+app.post('/api/pohjat', requireAuth, (req, res) => {
+  const { kind, ownerId, nimi, kuvaus, pisteet, kohdat, sijaintiPakotus, sietorajaM } = req.body || {};
   if (!onTunnettuLaji(kind)) {
     return res.status(400).json({ ok: false, error: 'Tuntematon pohjalaji.' });
   }
   if (typeof ownerId !== 'string' || !ownerId) {
-    return res.status(400).json({ ok: false, error: 'Kohde puuttuu.' });
+    return res.status(400).json({ ok: false, error: 'Omistaja puuttuu.' });
   }
-  if (!saaPohjia(req, ownerId)) {
-    return res.status(403).json({ ok: false, error: 'Ei oikeutta muokata tämän kohteen kierrospohjia.' });
+  const omistaja = omistajanTiedot(ownerId);
+  if (!omistaja) return res.status(404).json({ ok: false, error: 'Kohdetta tai tapahtumaa ei löytynyt.' });
+  // Laji voi olla sidottu toiseen puoleen: run sheet on tapahtuman ajolista, kierrospohja
+  // kohteen kierros. Väärälle omistajalle luotu pohja näkyisi listassa jota kukaan ei avaa.
+  const lajinTuote = LAJIT[kind].tuote;
+  if (lajinTuote === 'guard' && !omistaja.onKohde) {
+    return res.status(400).json({ ok: false, error: `${LAJIT[kind].nimi} kuuluu vartiointikohteelle.` });
   }
-  const kohde = (readCollection('guardSites') || []).find((k) => k.id === ownerId);
-  if (!kohde) return res.status(404).json({ ok: false, error: 'Kohdetta ei löytynyt.' });
+  if (lajinTuote === 'event' && omistaja.onKohde) {
+    return res.status(400).json({ ok: false, error: `${LAJIT[kind].nimi} kuuluu tapahtumalle.` });
+  }
+  if (!saaPohjia(req, ownerId, kind, omistaja.onKohde)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta muokata tämän omistajan pohjia.' });
+  }
 
   const nimiTulos = tarkistaNimi(nimi);
   if (!nimiTulos.ok) return res.status(400).json({ ok: false, error: nimiTulos.error });
-  const pisteTulos = tarkistaPisteet(pisteet, []);
-  if (!pisteTulos.ok) return res.status(400).json({ ok: false, error: pisteTulos.error });
 
   const pohja = {
     id: crypto.randomUUID(),
     kind,
     ownerId,
+    // Omistajan laji tallennetaan tietueeseen, koska oikeustarkistus (permissions.js) ei
+    // voi lukea kokoelmia: ilman tätä se ei tietäisi kumman puolen solmua vasten pohjaa
+    // verrataan.
+    omistaja: omistaja.onKohde ? 'kohde' : 'tapahtuma',
     nimi: nimiTulos.nimi,
     kuvaus: puhdistaKuvaus(kuvaus),
     versio: 1,
-    pisteet: pisteTulos.pisteet,
-    // Sijaintipakotus on pohjakohtainen asetus joka on OLETUKSENA POIS (päätös V2 = a):
-    // puhelimen paikannus on rakennuksen seinustalla epäluotettava, eikä kierros saa
-    // katketa siihen. Sijainti tallennetaan silti aina todisteeksi.
-    sijaintiPakotus: sijaintiPakotus === true,
-    sietorajaM: Number.isFinite(Number(sietorajaM)) && Number(sietorajaM) > 0
-      ? Math.round(Number(sietorajaM))
-      : OLETUS_SIETORAJA_M,
     luotu: new Date().toISOString(),
     luoja: req.username,
     arkistoitu: null,
   };
+
+  if (kind === 'patrol') {
+    const pisteTulos = tarkistaPisteet(pisteet, []);
+    if (!pisteTulos.ok) return res.status(400).json({ ok: false, error: pisteTulos.error });
+    pohja.pisteet = pisteTulos.pisteet;
+    // Sijaintipakotus on pohjakohtainen asetus joka on OLETUKSENA POIS (päätös V2 = a):
+    // puhelimen paikannus on rakennuksen seinustalla epäluotettava, eikä kierros saa
+    // katketa siihen. Sijainti tallennetaan silti aina todisteeksi.
+    pohja.sijaintiPakotus = sijaintiPakotus === true;
+    pohja.sietorajaM = Number.isFinite(Number(sietorajaM)) && Number(sietorajaM) > 0
+      ? Math.round(Number(sietorajaM))
+      : OLETUS_SIETORAJA_M;
+  } else {
+    const kohtaTulos = tarkistaKohdat(kohdat, kind);
+    if (!kohtaTulos.ok) return res.status(400).json({ ok: false, error: kohtaTulos.error });
+    pohja.kohdat = kohtaTulos.kohdat;
+  }
+
   writeCollection('templates', [...(readCollection('templates') || []), pohja]);
-  logAudit({ user: req.username, action: 'template_create', collection: 'templates', recordId: pohja.id, eventId: ownerId });
+  logAudit({ user: req.username, action: 'template_create', collection: 'templates', recordId: pohja.id, eventId: ownerId, kind });
+  kerroPohjasta(pohja, 'create');
   res.json({ ok: true, pohja: julkinenPohja(pohja) });
 });
 
-app.put('/api/pohjat/:id', requireAuth, guardPortti, (req, res) => {
+app.put('/api/pohjat/:id', requireAuth, (req, res) => {
   const pohjat = readCollection('templates') || [];
   const vanha = pohjat.find((p) => p.id === req.params.id);
   if (!vanha) return res.status(404).json({ ok: false, error: 'Pohjaa ei löytynyt.' });
-  if (!saaPohjia(req, vanha.ownerId)) {
+  if (!saaPohjia(req, vanha.ownerId, vanha.kind, onKohteenPohja(vanha))) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta muokata tätä pohjaa.' });
   }
 
   const nimiTulos = tarkistaNimi(req.body?.nimi ?? vanha.nimi);
   if (!nimiTulos.ok) return res.status(400).json({ ok: false, error: nimiTulos.error });
-  const pisteTulos = tarkistaPisteet(req.body?.pisteet ?? vanha.pisteet, vanha.pisteet);
-  if (!pisteTulos.ok) return res.status(400).json({ ok: false, error: pisteTulos.error });
 
   const paivitetty = {
     ...vanha,
     nimi: nimiTulos.nimi,
     kuvaus: puhdistaKuvaus(req.body?.kuvaus ?? vanha.kuvaus),
-    pisteet: pisteTulos.pisteet,
-    sijaintiPakotus: req.body?.sijaintiPakotus === undefined
-      ? vanha.sijaintiPakotus === true
-      : req.body.sijaintiPakotus === true,
-    sietorajaM: Number.isFinite(Number(req.body?.sietorajaM)) && Number(req.body.sietorajaM) > 0
-      ? Math.round(Number(req.body.sietorajaM))
-      : (vanha.sietorajaM ?? OLETUS_SIETORAJA_M),
     muokattu: new Date().toISOString(),
     muokkaaja: req.username,
   };
-  // Versio kasvaa vain jos pisteet muuttuivat: nimen korjaaminen ei tee kierroksesta
-  // toista kierrosta, mutta pisteen lisääminen tekee.
+
+  if (vanha.kind === 'patrol') {
+    const pisteTulos = tarkistaPisteet(req.body?.pisteet ?? vanha.pisteet, vanha.pisteet);
+    if (!pisteTulos.ok) return res.status(400).json({ ok: false, error: pisteTulos.error });
+    paivitetty.pisteet = pisteTulos.pisteet;
+    paivitetty.sijaintiPakotus = req.body?.sijaintiPakotus === undefined
+      ? vanha.sijaintiPakotus === true
+      : req.body.sijaintiPakotus === true;
+    paivitetty.sietorajaM = Number.isFinite(Number(req.body?.sietorajaM)) && Number(req.body.sietorajaM) > 0
+      ? Math.round(Number(req.body.sietorajaM))
+      : (vanha.sietorajaM ?? OLETUS_SIETORAJA_M);
+  } else {
+    const kohtaTulos = tarkistaKohdat(req.body?.kohdat ?? vanha.kohdat, vanha.kind);
+    if (!kohtaTulos.ok) return res.status(400).json({ ok: false, error: kohtaTulos.error });
+    paivitetty.kohdat = kohtaTulos.kohdat;
+  }
+
+  // Versio kasvaa vain jos sisältö muuttui: nimen korjaaminen ei tee pohjasta toista
+  // pohjaa, mutta kohdan lisääminen tekee.
   if (sisaltoMuuttui(vanha, paivitetty)) paivitetty.versio = (vanha.versio ?? 1) + 1;
 
   writeCollection('templates', pohjat.map((p) => (p.id === vanha.id ? paivitetty : p)));
-  logAudit({ user: req.username, action: 'template_update', collection: 'templates', recordId: vanha.id, eventId: vanha.ownerId });
+  logAudit({ user: req.username, action: 'template_update', collection: 'templates', recordId: vanha.id, eventId: vanha.ownerId, kind: vanha.kind });
+  kerroPohjasta(paivitetty, 'update');
   res.json({ ok: true, pohja: julkinenPohja(paivitetty) });
 });
 
-// Arkistointi eikä poisto: jo tehdyt kierrokset viittaavat pohjaan, ja pohjan katoaminen
+// Arkistointi eikä poisto: jo tehdyt suoritukset viittaavat pohjaan, ja pohjan katoaminen
 // tekisi niiden historiasta lukukelvotonta.
-app.delete('/api/pohjat/:id', requireAuth, guardPortti, (req, res) => {
+app.delete('/api/pohjat/:id', requireAuth, (req, res) => {
   const pohjat = readCollection('templates') || [];
   const pohja = pohjat.find((p) => p.id === req.params.id);
   if (!pohja) return res.status(404).json({ ok: false, error: 'Pohjaa ei löytynyt.' });
-  if (!saaPohjia(req, pohja.ownerId)) {
+  if (!saaPohjia(req, pohja.ownerId, pohja.kind, onKohteenPohja(pohja))) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta poistaa tätä pohjaa käytöstä.' });
   }
-  writeCollection('templates', pohjat.map((p) => (p.id === pohja.id
-    ? { ...p, arkistoitu: new Date().toISOString(), arkistoija: req.username }
-    : p)));
+  const paivitetty = { ...pohja, arkistoitu: new Date().toISOString(), arkistoija: req.username };
+  writeCollection('templates', pohjat.map((p) => (p.id === pohja.id ? paivitetty : p)));
   logAudit({ user: req.username, action: 'template_archive', collection: 'templates', recordId: pohja.id, eventId: pohja.ownerId });
+  kerroPohjasta(paivitetty, 'update');
   res.json({ ok: true });
 });
+
+// --- Pohjan suoritus: skenaario ja run sheet --------------------------------------
+//
+// Säännöt ovat suoritus.js:ssä; tässä on oikeustarkistus, levylle kirjoitus ja kanava.
+// Kierroksella on omat reittinsä (/api/kierros), koska sen säännöt ja QR-skannaus ovat eri
+// asia — yhteinen reitti olisi täynnä molempien erikoistapauksia.
+
+// Kanavaviesti suorituksen muutoksesta. Skenaarion kulku on se tieto jonka on näyttävä
+// kaikille yhtä aikaa: kaksi ihmistä ei saa tehdä samaa kohtaa siksi ettei kummallakaan ole
+// tietoa toisen kuittauksesta.
+function kerroSuorituksesta(suoritus, action) {
+  lahetaKanavalle('templateRuns', [{ action, id: suoritus.id, eventId: suoritus.ownerId }], {
+    saaNahda: (istunto, ownerId) => {
+      if (istunto?.role === 'admin') return true;
+      if (!eventAllowed(istunto?.eventAccess, ownerId)) return false;
+      const perms = rolePermissions(istunto?.roleId);
+      const onKohde = onKohteenPohja(suoritus);
+      return canView(perms, ownerId, lajinSolmu(suoritus.kind, onKohde))
+        || canView(perms, ownerId, onKohde ? 'guard_site_info' : 'overview');
+    },
+  });
+}
+
+app.post('/api/suoritus', requireAuth, (req, res) => {
+  const pohja = (readCollection('templates') || []).find((p) => p.id === req.body?.templateId);
+  if (!pohja) return res.status(404).json({ ok: false, error: 'Pohjaa ei löytynyt.' });
+  if (!LAJIT[pohja.kind]?.instansoituu || pohja.kind === 'patrol') {
+    return res.status(400).json({ ok: false, error: 'Tästä pohjalajista ei tehdä suorituksia.' });
+  }
+  if (!saaKayttaaPohjaa(req, pohja.ownerId, pohja.kind, onKohteenPohja(pohja))) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta käyttää tätä pohjaa.' });
+  }
+
+  const tulos = aloitaSuoritus({
+    pohja,
+    ownerId: pohja.ownerId,
+    tekija: req.username,
+    kuvaus: req.body?.kuvaus,
+    id: crypto.randomUUID(),
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  const suoritus = { ...tulos.suoritus, omistaja: pohja.omistaja || 'kohde' };
+  writeCollection('templateRuns', [suoritus, ...(readCollection('templateRuns') || [])]);
+  logAudit({
+    user: req.username, action: 'run_start', collection: 'templateRuns',
+    recordId: suoritus.id, eventId: pohja.ownerId, kind: pohja.kind,
+  });
+  kerroSuorituksesta(suoritus, 'create');
+  res.json({ ok: true, suoritus });
+});
+
+// Suorituksen haku oikeustarkistuksineen. Palauttaa nullin ja on jo vastannut, jos
+// suoritusta ei ole tai oikeus puuttuu.
+function haeSuoritus(req, res) {
+  const suoritukset = readCollection('templateRuns') || [];
+  const suoritus = suoritukset.find((s) => s.id === req.params.id);
+  if (!suoritus) {
+    res.status(404).json({ ok: false, error: 'Suoritusta ei löytynyt.' });
+    return null;
+  }
+  if (!saaKayttaaPohjaa(req, suoritus.ownerId, suoritus.kind, onKohteenPohja(suoritus))) {
+    res.status(403).json({ ok: false, error: 'Ei oikeutta tähän suoritukseen.' });
+    return null;
+  }
+  return { suoritukset, suoritus };
+}
+
+app.post('/api/suoritus/:id/kohta', requireAuth, (req, res) => {
+  const haku = haeSuoritus(req, res);
+  if (!haku) return;
+  const { suoritukset, suoritus } = haku;
+
+  const tulos = kuittaaKohta({
+    suoritus,
+    kohtaId: req.body?.kohtaId,
+    tekija: req.username,
+    huomio: req.body?.huomio,
+    toisto: req.body?.toisto === true,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  // Toisto jonosta: mikään ei muuttunut, joten levylle ei kirjoiteta eikä kanavalle
+  // kerrota. Vastaus on silti ok, jotta jono poistaa kirjauksen listaltaan.
+  if (tulos.duplikaatti) return res.json({ ok: true, suoritus: tulos.suoritus, duplikaatti: true });
+
+  writeCollection('templateRuns', suoritukset.map((s) => (s.id === suoritus.id ? tulos.suoritus : s)));
+  logAudit({
+    user: req.username, action: 'run_step', collection: 'templateRuns',
+    recordId: suoritus.id, eventId: suoritus.ownerId,
+  });
+  kerroSuorituksesta(tulos.suoritus, 'update');
+  res.json({ ok: true, suoritus: tulos.suoritus });
+});
+
+app.post('/api/suoritus/:id/paata', requireAuth, (req, res) => {
+  const haku = haeSuoritus(req, res);
+  if (!haku) return;
+  const { suoritukset, suoritus } = haku;
+
+  const tulos = paataSuoritus({
+    suoritus,
+    tila: req.body?.tila,
+    syy: req.body?.syy,
+    huomiot: req.body?.huomiot,
+    toisto: req.body?.toisto === true,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  if (tulos.duplikaatti) return res.json({ ok: true, suoritus: tulos.suoritus, duplikaatti: true });
+
+  writeCollection('templateRuns', suoritukset.map((s) => (s.id === suoritus.id ? tulos.suoritus : s)));
+  logAudit({
+    user: req.username,
+    action: tulos.suoritus.tila === 'valmis' ? 'run_complete' : 'run_abort',
+    collection: 'templateRuns', recordId: suoritus.id, eventId: suoritus.ownerId,
+  });
+  kerroSuorituksesta(tulos.suoritus, 'update');
+  res.json({ ok: true, suoritus: tulos.suoritus });
+});
+
 
 // Tarkistuspisteiden tokenit QR-tarroja varten. Erillinen reitti samasta syystä kuin
 // jakolinkeillä ja julisteilla: token ei kulje jokaisessa listahaussa.
 app.get('/api/pohjat/:id/tarrat', requireAuth, guardPortti, (req, res) => {
   const pohja = (readCollection('templates') || []).find((p) => p.id === req.params.id);
   if (!pohja) return res.status(404).json({ ok: false, error: 'Pohjaa ei löytynyt.' });
-  if (!saaPohjia(req, pohja.ownerId)) {
+  if (!saaPohjia(req, pohja.ownerId, pohja.kind, true)) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta tämän pohjan tarroihin.' });
   }
   res.json({
