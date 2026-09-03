@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode } from 'lucide-react';
+import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
@@ -11,6 +11,8 @@ import { KohteenTiedot } from './KohteenTiedot';
 import { Asetukset } from './Asetukset';
 import { JonoTila } from '../shared/komponentit/JonoTila';
 import { avaaJono, kaynnistaAutomatiikka, lisaaJonoon } from '../shared/jono';
+import { lueVuorodata, tallennaVuorodata, unohdaVuorodata } from '../shared/vuorodata';
+import { unohdaIstunto } from '../shared/istunto';
 import { Kierrospohjat } from './Kierrospohjat';
 import { Kierros } from './Kierros';
 import {
@@ -103,6 +105,9 @@ export default function GuardApp() {
   // eikä hän tiedä mitä sovelluksessa tapahtui.
   const [skannaus, setSkannaus] = useState<{ tyyppi: 'ok' | 'virhe'; viesti: string } | null>(null);
   const skannausTehty = useRef(false);
+  // Aikaleima siitä milloin näytettävät tiedot on tallennettu laitteelle. Ei-null
+  // tarkoittaa, että ollaan offline-tilassa ja katsotaan tallennetta.
+  const [offlineTiedot, setOfflineTiedot] = useState<string | null>(null);
 
   // Lähtevä jono avataan käyttäjäkohtaisena: jaetulla laitteella vuoron vaihtuessa
   // seuraava vartija ei saa nähdä eikä lähettää edellisen kirjauksia omissa nimissään.
@@ -113,6 +118,21 @@ export default function GuardApp() {
 
   useEffect(() => {
     if (!saaNahda) return;
+    // Paluu tallenteeseen tehdään MILLE TAHANSA epäonnistuneelle haulle eikä vain
+    // fetchin hylkäykselle. Kentällä katkos näkyy yhtä usein 502:na tai 504:na
+    // (nginx pystyssä, backend nurin) tai kirjautumissivuna (kytäköverkko) kuin
+    // puhtaana verkkovirheenä — ja vartijalle ne kaikki ovat sama tilanne.
+    const paluuTallenteeseen = () => {
+      const tallenne = lueVuorodata(session?.username || '');
+      if (tallenne) {
+        setKohteet(tallenne.kohteet);
+        setPohjat(tallenne.pohjat);
+        setKierrokset(tallenne.kierrokset);
+        setOfflineTiedot(tallenne.tallennettu);
+      } else {
+        setVirhe('Kohteita ei voitu hakea: ei yhteyttä palvelimeen.');
+      }
+    };
     fetch('/api/data/guardSites', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
       .then((res) => {
@@ -120,11 +140,19 @@ export default function GuardApp() {
           if (Array.isArray(res.data)) setKohteet(res.data);
           setLadattu(true);
         } else {
-          setVirhe('Kohteita ei voitu hakea palvelimelta.');
+          paluuTallenteeseen();
         }
       })
-      .catch(() => setVirhe('Kohteita ei voitu hakea: ei yhteyttä palvelimeen.'));
-  }, [saaNahda]);
+      .catch(() => {
+        // Sama paluu kuin epäonnistuneelle vastaukselle.
+        //
+        // HUOM: ladattu EI mene todeksi. Tallenne on riisuttu kopio (ei perehdytyksiä),
+        // eikä sillä saa kirjoittaa kohteita takaisin palvelimelle: se pyyhkisi
+        // perehdytyslistat. Kohteiden muokkaus on siis offline-tilassa estetty, ja se on
+        // oikein — kohteita hallitaan valvomossa.
+        paluuTallenteeseen();
+      });
+  }, [saaNahda, session?.username]);
 
   useEffect(() => {
     if (!saaNahda) return;
@@ -197,6 +225,14 @@ export default function GuardApp() {
   // Palvelimelta palautuva kierros korvaa listassa olevan. Tila ei ole tässä
   // "totuus" vaan näkymä palvelimen tilaan: jokainen muutos on jo tallennettu kun se
   // saapuu tänne.
+  // Tallennetaan kuluvan vuoron työtiedot laitteelle aina kun ne on haettu onnistuneesti.
+  // Tallenne on riisuttu: ei raportteja, ei työntekijöitä, ei perehdytyksiä
+  // (ks. shared/vuorodata.ts).
+  useEffect(() => {
+    if (!ladattu || !session?.username) return;
+    tallennaVuorodata(session.username, { kohteet, pohjat, kierrokset });
+  }, [ladattu, session?.username, kohteet, pohjat, kierrokset]);
+
   const paivitaKierros = (kierros: KierrosTietue) => {
     setKierrokset((edelliset) => {
       const tunnettu = edelliset.some((k) => k.id === kierros.id);
@@ -471,6 +507,10 @@ export default function GuardApp() {
   };
 
   const kirjauduUlos = async () => {
+    // Laitteelle ei jää työtietoja uloskirjautumisen jälkeen. Jonoa EI tyhjennetä:
+    // lähettämätön kirjaus on tehtyä työtä, ja se odottaa seuraavaa kirjautumista.
+    unohdaVuorodata();
+    unohdaIstunto();
     await fetch('/api/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
     window.location.reload();
   };
@@ -526,6 +566,18 @@ export default function GuardApp() {
             <p className="mb-6 text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">
               {virhe}
             </p>
+          )}
+
+          {offlineTiedot && (
+            <div className="mb-6 flex items-start gap-3 rounded-lg border border-warning/30 bg-warning-soft px-4 py-3">
+              <CloudOff size={18} className="text-warning-ink shrink-0 mt-0.5" />
+              <p className="text-sm text-warning-ink">
+                <span className="font-medium">Ei yhteyttä palvelimeen.</span>{' '}
+                Näytössä ovat laitteelle tallennetut työtiedot{' '}
+                {new Date(offlineTiedot).toLocaleString('fi-FI')}. Kierroksen voi tehdä
+                normaalisti — kuittaukset lähtevät kun yhteys palaa.
+              </p>
+            </div>
           )}
 
           {/* Skannauksen tulos. Oma bannerinsa eikä `virhe`: käyttäjä tuli sivulle

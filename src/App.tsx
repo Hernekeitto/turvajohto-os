@@ -5298,7 +5298,7 @@ export default function App() {
             {kasitellyt.length > 0 && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
                 <h3 className="text-lg font-bold text-slate-800 mb-4">Käsitellyt ilmoitukset</h3>
-                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
                       <tr>
@@ -5519,7 +5519,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
                   <tr>
@@ -6001,7 +6001,7 @@ export default function App() {
                   Ei työntekijöitä merkitty tapahtumaan. Lisää heitä kohdassa Tapahtuman työntekijät &rarr; Lisää tapahtumaan työntekijä.
                 </p>
               ) : (
-                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-x-auto max-h-56 overflow-y-auto">
                   <table className="w-full text-left text-sm">
                     <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200 sticky top-0">
                       <tr>
@@ -6351,7 +6351,7 @@ export default function App() {
                   Ei työntekijöitä merkitty tapahtumaan.
                 </p>
               ) : (
-                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-x-auto max-h-56 overflow-y-auto">
                   <table className="w-full text-left text-sm">
                     <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200 sticky top-0">
                       <tr>
@@ -8086,7 +8086,7 @@ export default function App() {
               )}
             </div>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
                   <tr>
@@ -8234,7 +8234,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
                       <tr>
@@ -9024,7 +9024,7 @@ export default function App() {
               <p className="text-sm text-slate-500 mt-1">Tallennetut kirjaukset PDF-muodossa. Tunniste vastaa alkuperäistä kirjausta.</p>
             </div>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
                   <tr>
@@ -9127,7 +9127,7 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
                     <tr>
@@ -11964,7 +11964,7 @@ export default function App() {
                         Arkistossa ei ole tapahtumia.
                       </p>
                     ) : (
-                      <div className="border border-slate-200 rounded-lg overflow-hidden mt-3">
+                      <div className="border border-slate-200 rounded-lg overflow-x-auto mt-3">
                         <table className="w-full text-sm">
                           <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                             <tr>

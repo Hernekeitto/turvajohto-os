@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { SessionContext, type SessionProfile, type Tuote } from './SessionContext';
+import { lueIstunto, tallennaIstunto, unohdaIstunto } from './shared/istunto';
 
 type SessionState = 'loading' | 'authed' | 'anon';
 
@@ -9,11 +10,25 @@ const TUOTTEEN_NIMI: Record<Tuote, string> = {
   guard: 'Turvajohto GUARD',
 };
 
+// Viimeisin onnistunut istunto laitteella. Tarvitaan offline-käynnistykseen: ilman
+// tätä koko offline-tuki jäisi saavuttamatta, koska istuntokyselyn epäonnistuminen
+// veisi kirjautumislomakkeelle vaikka vartija on kirjautunut ja työtiedot ovat
+// laitteella. Tämä löytyi vasta kun offline testattiin oikeasti backend alhaalla.
+//
+// TÄMÄ EI OLE PÄÄSYNHALLINTAA. Palvelin tarkistaa istunnon jokaisessa pyynnössä, ja
+// offline-tilassa mitään ei saada palvelimelta — kirjaukset menevät lähtevään jonoon,
+// jonka palvelin torjuu 401:llä jos istunto on oikeasti vanhentunut. Tallenne on siis
+// pelkkä käyttöliittymän lupa avautua, ei oikeus dataan.
 async function loadSessionProfile(): Promise<SessionProfile | null> {
   const res = await fetch('/api/session', { credentials: 'include' });
   const data = await res.json();
-  if (!data.authenticated) return null;
-  return {
+  if (!data.authenticated) {
+    // Palvelin vastasi ja kertoi ettei istuntoa ole: tallenne on vanhentunut eikä sitä
+    // saa käyttää. Vain YHTEYDEN puute oikeuttaa offline-käynnistykseen.
+    unohdaIstunto();
+    return null;
+  }
+  const profiili: SessionProfile = {
     username: data.username,
     nickname: data.nickname || data.username,
     role: data.role || 'user',
@@ -26,6 +41,8 @@ async function loadSessionProfile(): Promise<SessionProfile | null> {
     permissions: data.permissions || {},
     lastLoginAt: data.lastLoginAt || null,
   };
+  tallennaIstunto(profiili);
+  return profiili;
 }
 
 // Pakotettu salasanan vaihto. Näytetään kirjautumisen JÄLKEEN mutta ennen sovellusta,
@@ -174,7 +191,17 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
         setProfile(p);
         setSession(p ? 'authed' : 'anon');
       })
-      .catch(() => setSession('anon'));
+      .catch(() => {
+        // Istuntokyselyä ei saatu läpi. Jos laitteella on tuore onnistunut istunto,
+        // avataan sovellus sen tiedoilla — muuten kirjautumislomake.
+        const tallennettu = lueIstunto();
+        if (tallennettu) {
+          setProfile(tallennettu);
+          setSession('authed');
+        } else {
+          setSession('anon');
+        }
+      });
   }, []);
 
   useEffect(() => {
