@@ -44,6 +44,9 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // aikataulutettu esitys vaan toistuva kierros, ja se on jo kierrospohja.
   { id: 'guard_guides', label: 'Ohjepankki (toimintakortit)' },
   { id: 'guard_plays', label: 'Skenaariot ja niiden läpivienti' },
+  // Tiedotteet. Sama sääntö kuin EVENT-puolella: lukuoikeus näyttää ja oikeuttaa
+  // kuittaamaan, muokkausoikeus oikeuttaa lähettämään.
+  { id: 'guard_broadcast', label: 'Tiedotteet (muokkausoikeus = oikeus lähettää)' },
   // Raportointi. Omat solmunsa lomaketyypeittäin samaan tapaan kuin tapahtumapuolen
   // tike_form_*-solmut: vartijan toimenpide on päivittäistä kirjaamista, kun taas
   // tapahtumailmoitus sisältää LYTP:n nojalla kirjattavat kohdehenkilötiedot ja voi

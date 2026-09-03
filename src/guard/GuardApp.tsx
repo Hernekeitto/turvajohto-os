@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff, Siren, BookOpen, ListChecks } from 'lucide-react';
+import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff, Siren, BookOpen, ListChecks, Megaphone } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
@@ -24,6 +24,8 @@ import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
 import { Pohjanakyma } from '../shared/komponentit/Pohjanakyma';
 import { haeSuoritukset, type Pohja, type Suoritus } from '../shared/pohjat';
+import { Tiedotteet, TiedoteKehote } from '../shared/komponentit/Tiedotteet';
+import { haeTiedotteet, onKuitannut, onVoimassa, type Tiedote } from '../shared/tiedotteet';
 import {
   uusiId, type GuardRaportti, type Kohde, type KohteenTiedosto, type RaporttiTyyppi,
   type TehtavaSuoritus, type Kierrospohja, type Kierros as KierrosTietue,
@@ -81,6 +83,9 @@ export default function GuardApp() {
   const saaMuokataOhjeita = isAdmin || canEdit(perms, null, 'guard_guides');
   const saaNahdaSkenaariot = isAdmin || canView(perms, null, 'guard_plays');
   const saaMuokataSkenaarioita = isAdmin || canEdit(perms, null, 'guard_plays');
+  // Tiedotteet: lukuoikeus näyttää ja oikeuttaa kuittaamaan, muokkausoikeus lähettämään.
+  const saaNahdaTiedotteet = isAdmin || canView(perms, null, 'guard_broadcast');
+  const saaLahettaaTiedotteita = isAdmin || canEdit(perms, null, 'guard_broadcast');
   // Raportointi on jaettu lomaketyypeittäin: tapahtumailmoitus sisältää kohdehenkilötiedot
   // ja voi olla eri joukolla ihmisiä kuin päivittäinen toimenpidekirjaus.
   const saaKirjataToimenpiteen = isAdmin || canEdit(perms, null, 'guard_report_action');
@@ -131,6 +136,8 @@ export default function GuardApp() {
   // Pohjien suoritukset. Nimi on eri kuin tehtäväsuorituksilla (`suoritukset`), koska ne
   // ovat eri kokoelma ja eri asia: tehtävä on kohteen vakiotyö, skenaario on tilanne.
   const [pohjaSuoritukset, setPohjaSuoritukset] = useState<Suoritus[]>([]);
+  const [tiedotteet, setTiedotteet] = useState<Tiedote[]>([]);
+  const [tiedoteKohde, setTiedoteKohde] = useState<Kohde | null>(null);
   // Man-down päällä/pois säilyy laitteella: vartija kytkee sen kerran vuoron alussa,
   // eikä asetus saa nollautua sivun latauksesta kesken vuoron.
   const [mandown, setMandown] = useState(false);
@@ -256,6 +263,20 @@ export default function GuardApp() {
     haeSuoritukset().then((lista) => { if (lista) setPohjaSuoritukset(lista); });
   }, [saaNahdaSkenaariot]);
 
+  const paivitaTiedotteet = useCallback(() => {
+    if (!saaNahdaTiedotteet) return;
+    haeTiedotteet().then((lista) => { if (lista) setTiedotteet(lista); });
+  }, [saaNahdaTiedotteet]);
+
+  useEffect(() => { paivitaTiedotteet(); }, [paivitaTiedotteet]);
+
+  const paivitaTiedote = (tiedote: Tiedote) => {
+    setTiedotteet((edelliset) => {
+      const tunnettu = edelliset.some((t) => t.id === tiedote.id);
+      return tunnettu ? edelliset.map((t) => (t.id === tiedote.id ? tiedote : t)) : [tiedote, ...edelliset];
+    });
+  };
+
   useEffect(() => {
     // Pohjat tarvitaan myös ohjepankkiin ja skenaarioihin: ne ovat samassa kokoelmassa
     // kuin kierrospohjat (perusta P6), ja palvelin suodattaa lajikohtaisesti.
@@ -291,6 +312,7 @@ export default function GuardApp() {
       if (kokoelma === 'patrolRuns') haeKierrokset();
       if (kokoelma === 'templates') haePohjat();
       if (kokoelma === 'templateRuns') paivitaPohjaSuoritukset();
+      if (kokoelma === 'broadcasts') paivitaTiedotteet();
     },
   });
 
@@ -634,7 +656,7 @@ export default function GuardApp() {
     <Ylapalkki
       tuoteNimi="Turvajohto GUARD"
       alaotsikko={alaotsikko}
-      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); setHalytysKohde(null); setPohjaNakyma(null); }}
+      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); setHalytysKohde(null); setPohjaNakyma(null); setTiedoteKohde(null); }}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}
@@ -670,6 +692,7 @@ export default function GuardApp() {
           : tietoKohde ? 'Kohteen tiedot'
           : halytysKohde ? 'Hälytykset'
           : pohjaNakyma ? (pohjaNakyma.laji === 'guide' ? 'Ohjepankki' : 'Skenaariot')
+          : tiedoteKohde ? 'Tiedotteet'
           : kierrosKohde ? 'Kierrokset'
           : pohjaKohde ? 'Kierrospohjat'
           : tehtavaKohde ? 'Työvuoron tehtävät'
@@ -682,6 +705,17 @@ export default function GuardApp() {
           {/* Hälytysvahti on ENSIMMÄISENÄ ja kaikissa näkymissä. Ajastimen laskuri,
               man-down-kysely ja lauennut hälytys eivät saa olla yhden näkymän takana:
               vartija ei ole hälytysnäkymässä silloin kun hälytys laukeaa. */}
+          {/* Tiedotekehote hälytysvahdin vieressä ja samasta syystä: kuittaamaton tiedote
+              on nostettava käyttäjän eteen kesken työn, ei odotettava että hän avaa
+              tiedotesivun. Aktiivinen kohde ratkaisee minkä kohteen tiedotteet näytetään. */}
+          {saaNahdaTiedotteet && (
+            <TiedoteKehote
+              ownerId={aktiivinenKohde?.id || null}
+              kayttaja={session?.username || ''}
+              tiedotteet={tiedotteet}
+              onMuutos={paivitaTiedote}
+            />
+          )}
           {saaNahdaHalytykset && (
             <Halytysvahti
               eventId={aktiivinenKohde?.id || null}
@@ -754,6 +788,18 @@ export default function GuardApp() {
               kierrokset={kierrokset}
               onTakaisin={() => setTietoKohde(null)}
             />
+          ) : tiedoteKohde ? (
+            <div className="max-w-3xl">
+              <TakaisinLinkki onClick={() => setTiedoteKohde(null)}>Takaisin kohdelistaan</TakaisinLinkki>
+              <Tiedotteet
+                ownerId={tiedoteKohde.id}
+                ownerNimi={tiedoteKohde.name}
+                kayttaja={session?.username || ''}
+                tiedotteet={tiedotteet}
+                saaLahettaa={saaLahettaaTiedotteita}
+                onMuutos={paivitaTiedote}
+              />
+            </div>
           ) : pohjaNakyma ? (
             <div className="max-w-3xl">
               <TakaisinLinkki onClick={() => setPohjaNakyma(null)}>Takaisin kohdelistaan</TakaisinLinkki>
@@ -935,6 +981,21 @@ export default function GuardApp() {
                             {kierrokset.some((k) => k.siteId === kohde.id && k.tila === 'kesken') && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
                                 kesken
+                              </span>
+                            )}
+                          </button>
+                        )}
+                        {saaNahdaTiedotteet && (
+                          <button
+                            type="button"
+                            onClick={() => setTiedoteKohde(kohde)}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
+                          >
+                            <Megaphone size={14} />
+                            Tiedotteet
+                            {tiedotteet.some((t) => t.ownerId === kohde.id && onVoimassa(t) && !onKuitannut(t, session?.username || '')) && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
+                                kuittaamatta
                               </span>
                             )}
                           </button>

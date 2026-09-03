@@ -36,6 +36,11 @@ export const SITEMAP: SivukarttaSolmu[] = [
   { id: 'guides', label: 'Ohjepankki (toimintakortit)' },
   { id: 'plays', label: 'Skenaariot ja niiden läpivienti' },
   { id: 'runsheet', label: 'Run sheet (tapahtuman ajolista)' },
+  // Tiedotteet. LUKUOIKEUS = tiedote näkyy ja sen voi kuitata; MUOKKAUSOIKEUS = tiedotteen
+  // saa lähettää. Tämä on tarkoituksellinen ero pikatoimintoihin (hätäviestit), joissa
+  // sama jako koskee tekstiviestin lähettämistä: viestin lähettäminen kaikille on
+  // toimivalta, sen lukeminen ei.
+  { id: 'broadcast', label: 'Tiedotteet (muokkausoikeus = oikeus lähettää)' },
   { id: 'reporting', label: 'Raportointi', children: [
     { id: 'report_jv', label: 'Järjestyksenvalvojan tapahtumailmoitus' },
     { id: 'report_tike', label: 'TIKE:n raportointi', children: [

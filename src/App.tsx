@@ -27,6 +27,8 @@ import {
 import { VYOHYKESAANNOT } from './shared/vyohykkeet';
 import { Pohjanakyma } from './shared/komponentit/Pohjanakyma';
 import { haePohjat, haeSuoritukset, LAJIT as POHJALAJIT, type Pohja, type Suoritus } from './shared/pohjat';
+import { Tiedotteet, TiedoteKehote } from './shared/komponentit/Tiedotteet';
+import { haeTiedotteet, onKuitannut, onVoimassa, type Tiedote } from './shared/tiedotteet';
 import { SijaintiValinta } from './shared/komponentit/SijaintiValinta';
 import {
   VYOHYKEVARIT, VYOHYKKEEN_MIN_PISTEET, uusiVyohykeId, vyohykkeet as haeVyohykkeet,
@@ -1406,6 +1408,27 @@ export default function App() {
     paivitaPohjaSuoritukset();
   }, [saaNahdaPohjia, paivitaPohjat, paivitaPohjaSuoritukset]);
 
+  // Tiedotteet (erä 8). Palvelimen ylläpitämä kokoelma kuten hälytykset.
+  const [tiedotteet, setTiedotteet] = useState<Tiedote[]>([]);
+  const saaNahdaTiedotteet = isAdminUser || canView(perms, selectedEvent, 'broadcast');
+  const saaLahettaaTiedotteita = isAdminUser || canEdit(perms, selectedEvent, 'broadcast');
+
+  const paivitaTiedotteet = useCallback(() => {
+    haeTiedotteet().then((lista) => { if (lista) setTiedotteet(lista); });
+  }, []);
+
+  useEffect(() => {
+    if (!saaNahdaTiedotteet) return;
+    paivitaTiedotteet();
+  }, [saaNahdaTiedotteet, paivitaTiedotteet]);
+
+  const paivitaTiedote = (tiedote: Tiedote) => {
+    setTiedotteet((edelliset) => {
+      const tunnettu = edelliset.some((t) => t.id === tiedote.id);
+      return tunnettu ? edelliset.map((t) => (t.id === tiedote.id ? tiedote : t)) : [tiedote, ...edelliset];
+    });
+  };
+
   const paivitaPohjaSuoritus = (suoritus: Suoritus) => {
     setPohjaSuoritukset((edelliset) => {
       const tunnettu = edelliset.some((s) => s.id === suoritus.id);
@@ -1475,6 +1498,7 @@ export default function App() {
       if (kokoelma === 'alerts') { paivitaHalytykset(); return; }
       if (kokoelma === 'templates') { paivitaPohjat(); return; }
       if (kokoelma === 'templateRuns') { paivitaPohjaSuoritukset(); return; }
+      if (kokoelma === 'broadcasts') { paivitaTiedotteet(); return; }
       paivitaKokoelma(kokoelma);
     },
     // Palvelin lähettää yhden sijainnin kerrallaan sitä mukaa kun niitä tulee. Lista
@@ -5528,6 +5552,17 @@ export default function App() {
       // Ohjepankki, skenaariot ja run sheet (erä 8). Kolme sivukartta-solmua mutta yksi
       // näkymä välilehdillä: ne ovat samaa koneistoa eri sisällöllä, ja erilliset
       // sivuvalikon rivit veisivät tilaa kolmelta harvoin käytetyltä sivulta.
+      case 'broadcast':
+        return (
+          <Tiedotteet
+            ownerId={selectedEvent || ''}
+            ownerNimi={findEventName(selectedEvent, events)}
+            kayttaja={session?.username || ''}
+            tiedotteet={tiedotteet}
+            saaLahettaa={saaLahettaaTiedotteita}
+            onMuutos={paivitaTiedote}
+          />
+        );
       case 'guides':
       case 'plays':
       case 'runsheet': {
@@ -13961,6 +13996,20 @@ export default function App() {
                   </button>
                 );
               })()}
+              {saaNahdaTiedotteet && (
+                <button
+                  onClick={() => setActiveTab('broadcast')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${activeTab === 'broadcast' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <Megaphone size={18} />
+                  Tiedotteet
+                  {tiedotteet.some((t) => t.ownerId === selectedEvent && onVoimassa(t) && !onKuitannut(t, session?.username || '')) && (
+                    <span className="ml-auto inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                      kuittaamatta
+                    </span>
+                  )}
+                </button>
+              )}
               {saaNahdaPohjia && (
                 <button
                   onClick={() => setActiveTab(saaNahdaSkenaariot ? 'plays' : saaNahdaOhjeet ? 'guides' : 'runsheet')}
@@ -14038,6 +14087,16 @@ export default function App() {
           {/* Hälytysvahti kaikkien näkymien yllä: oma lauennut hälytys ja käynnissä oleva
               ajastin eivät saa olla yhden välilehden takana. Vahti näyttää VAIN oman
               hälytyksen — muiden hälytykset ovat valvomonäkymässä, jossa ne kuitataan. */}
+          {/* Tiedotekehote: kuittaamaton voimassa oleva tiedote nostetaan käyttäjän eteen
+              kesken työn, ei odoteta että hän avaa tiedotesivun. */}
+          {saaNahdaTiedotteet && (
+            <TiedoteKehote
+              ownerId={selectedEvent}
+              kayttaja={session?.username || ''}
+              tiedotteet={tiedotteet}
+              onMuutos={paivitaTiedote}
+            />
+          )}
           {saaNahdaHalytykset && (
             <Halytysvahti
               eventId={selectedEvent}

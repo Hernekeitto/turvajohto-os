@@ -307,6 +307,15 @@ const COLLECTIONS = {
   // Pohjien suoritukset (skenaarion läpivienti, run sheetin ajo). Kirjoitus tapahtuu VAIN
   // palvelimen omilla reiteillä (index.js: PALVELIMEN_YLLAPITAMAT) — säännöt kriittisistä
   // kohdista ja keskeytyksen syystä ovat suoritus.js:ssä eivätkä täällä.
+  // Tiedotteet. Kirjoitus tapahtuu VAIN palvelimen omilla reiteillä: kuittauslista on
+  // koko toiminnon sisältö, ja selaimesta kirjoitettuna se ei todistaisi mitään.
+  broadcasts: {
+    view: ['broadcast', 'guard_broadcast'],
+    viewOf: (item) => [item?.omistaja === 'kohde' ? 'guard_broadcast' : 'broadcast'],
+    touch: () => [],
+    eventScoped: true,
+    eventIdOf: (item) => item?.ownerId,
+  },
   templateRuns: {
     view: [...POHJASOLMUT, 'overview', 'guard_site_info'],
     viewOf: (item) => {

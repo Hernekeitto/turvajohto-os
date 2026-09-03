@@ -86,6 +86,10 @@ const COLLECTIONS = {
   // säännöt (kriittistä kohtaa ei voi ohittaa, keskeytys vaatii syyn) menettäisivät
   // merkityksensä jos selain voisi kirjoittaa kokoelman suoraan.
   templateRuns: 'templateRuns.json',
+  // Tiedotteet (erä 8): sovelluksen sisäinen viesti kentälle, jonka lukeminen kuitataan.
+  // Palvelimen ylläpitämä, koska kuittauslista on koko toiminnon sisältö — selaimesta
+  // kirjoitettava kuittauslista ei todistaisi mitään.
+  broadcasts: 'broadcasts.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
@@ -214,6 +218,10 @@ const ENCRYPTED_FIELDS = {
   // Pohjan (templates) kohdat EIVÄT ole salattuja: ne ovat menettelyohjeita
   // ("sulje portit"), eivät tietoa kenestäkään.
   templateRuns: ['kuvaus', 'huomiot', 'keskeytysSyy', 'kohdat[].huomio'],
+  // Tiedotteen runko on vapaata tekstiä jonka laatija kirjoittaa kentälle, ja siinä
+  // mainitaan usein ihmisiä nimeltä ("Virtanen jää portille 2"). Otsikko jää
+  // selväkieliseksi: se on listan rivi eikä sisältö.
+  broadcasts: ['viesti'],
   // Tarkistuspisteen token on tarrassa seinässä eikä salaisuus, mutta se on ainoa asia
   // joka todistaa skannauksen kohdistuneen oikeaan pisteeseen — samalla perusteella
   // salattu kuin ilmoitusjulisteen token.

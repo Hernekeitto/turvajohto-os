@@ -70,6 +70,7 @@ import {
 } from './pohjat.js';
 import { aloitaKierros, kuittaaPiste, paataKierros, etaisyysMetreina, OLETUS_SIETORAJA_M } from './kierros.js';
 import { aloitaSuoritus, kuittaaKohta, paataSuoritus } from './suoritus.js';
+import { luoTiedote, kuittaa as kuittaaTiedote, peru as peruTiedote, onVoimassa, kuittaamatta } from './broadcast.js';
 import {
   luoAjastin, luoHalytys, jatka as jatkaHalytysta, laukaise as laukaiseHalytys,
   peru as peruHalytys, kuittaa as kuittaaHalytys, eraantyneet, eskaloitavat,
@@ -390,7 +391,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -2051,6 +2052,139 @@ app.get('/api/lahin', requireAuth, (req, res) => {
 
   res.json({ ok: true, kaytossa: true, vartijat });
 });
+// --- Tiedotteet (erä 8) -----------------------------------------------------------
+//
+// Sovelluksen sisäinen viesti kentälle, jonka lukeminen kuitataan. Eri asia kuin
+// pikatoimintojen hätäviesti: tekstiviesti tavoittaa myös sammuneen sovelluksen mutta ei
+// kerro kuka sen luki, tiedote kertoo. Molempia tarvitaan, eikä kumpikaan korvaa toista.
+
+const tiedotteenSolmu = (tiedote) => (tiedote?.omistaja === 'kohde' ? 'guard_broadcast' : 'broadcast');
+
+function saaLahettaaTiedotteen(req, ownerId, onKohde) {
+  if (req.role === 'admin') return true;
+  if (!tuoteOk(req, onKohde)) return false;
+  return eventAllowed(req.eventAccess, ownerId)
+    && canEdit(req.permissions, ownerId, onKohde ? 'guard_broadcast' : 'broadcast');
+}
+
+function saaLukeaTiedotteen(req, tiedote) {
+  if (req.role === 'admin') return true;
+  if (!tuoteOk(req, tiedote?.omistaja === 'kohde')) return false;
+  return eventAllowed(req.eventAccess, tiedote?.ownerId)
+    && canView(req.permissions, tiedote?.ownerId, tiedotteenSolmu(tiedote));
+}
+
+// Ketkä tiedotteen pitäisi kuitata. Joukko lasketaan OIKEUKSISTA eikä erillisestä
+// jakelulistasta: lista vanhenisi heti, ja kaksi totuutta siitä kenelle viesti kuuluu
+// olisi pahempi kuin yksi.
+//
+// Pääkäyttäjät jätetään pois. He näkevät kaiken oikeuksiensa puolesta, mutta he eivät ole
+// se joukko jonka kuittausta tiedotteella odotetaan — mukana he näkyisivät ikuisesti
+// kuittaamattomina ja tekisivät listasta hyödyttömän.
+function tiedotteenVastaanottajat(tiedote) {
+  const onKohde = tiedote?.omistaja === 'kohde';
+  const solmu = tiedotteenSolmu(tiedote);
+  return listUsers()
+    .filter((u) => u.role !== 'admin')
+    .filter((u) => paaseeTuotteisiin(u).includes(onKohde ? 'guard' : 'event'))
+    .filter((u) => eventAllowed(u.eventAccess, tiedote.ownerId)
+      && canView(rolePermissions(u.roleId), tiedote.ownerId, solmu))
+    .map((u) => ({ username: u.username, nimi: u.nickname || u.username }));
+}
+
+function kerroTiedotteesta(tiedote, action) {
+  lahetaKanavalle('broadcasts', [{ action, id: tiedote.id, eventId: tiedote.ownerId }], {
+    saaNahda: (istunto, ownerId) => {
+      if (istunto?.role === 'admin') return true;
+      if (!eventAllowed(istunto?.eventAccess, ownerId)) return false;
+      return canView(rolePermissions(istunto?.roleId), ownerId, tiedotteenSolmu(tiedote));
+    },
+  });
+}
+
+app.post('/api/tiedote', requireAuth, (req, res) => {
+  const ownerId = typeof req.body?.ownerId === 'string' ? req.body.ownerId : '';
+  const omistaja = omistajanTiedot(ownerId);
+  if (!omistaja) return res.status(404).json({ ok: false, error: 'Kohdetta tai tapahtumaa ei löytynyt.' });
+  if (!saaLahettaaTiedotteen(req, ownerId, omistaja.onKohde)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta lähettää tiedotteita.' });
+  }
+
+  const tulos = luoTiedote({
+    id: crypto.randomUUID(),
+    ownerId,
+    omistaja: omistaja.onKohde ? 'kohde' : 'tapahtuma',
+    otsikko: req.body?.otsikko,
+    viesti: req.body?.viesti,
+    laatija: req.username,
+    voimassaTuntia: req.body?.voimassaTuntia,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('broadcasts', [tulos.tiedote, ...(readCollection('broadcasts') || [])]);
+  logAudit({
+    user: req.username, action: 'broadcast_send', collection: 'broadcasts',
+    recordId: tulos.tiedote.id, eventId: ownerId,
+    recipients: tiedotteenVastaanottajat(tulos.tiedote).length,
+  });
+  kerroTiedotteesta(tulos.tiedote, 'create');
+  res.json({ ok: true, tiedote: tulos.tiedote, vastaanottajia: tiedotteenVastaanottajat(tulos.tiedote).length });
+});
+
+app.post('/api/tiedote/:id/kuittaa', requireAuth, (req, res) => {
+  const tiedotteet = readCollection('broadcasts') || [];
+  const tiedote = tiedotteet.find((t) => t.id === req.params.id);
+  if (!tiedote) return res.status(404).json({ ok: false, error: 'Tiedotetta ei löytynyt.' });
+  if (!saaLukeaTiedotteen(req, tiedote)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta tähän tiedotteeseen.' });
+  }
+
+  const tulos = kuittaaTiedote({ tiedote, username: req.username });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  // Toinen kuittaus samalta käyttäjältä ei muuta mitään: levylle ei kirjoiteta eikä
+  // kanavalle kerrota, mutta vastaus on ok.
+  if (tulos.duplikaatti) return res.json({ ok: true, tiedote: tulos.tiedote, duplikaatti: true });
+
+  writeCollection('broadcasts', tiedotteet.map((t) => (t.id === tiedote.id ? tulos.tiedote : t)));
+  kerroTiedotteesta(tulos.tiedote, 'update');
+  res.json({ ok: true, tiedote: tulos.tiedote });
+});
+
+app.post('/api/tiedote/:id/peru', requireAuth, (req, res) => {
+  const tiedotteet = readCollection('broadcasts') || [];
+  const tiedote = tiedotteet.find((t) => t.id === req.params.id);
+  if (!tiedote) return res.status(404).json({ ok: false, error: 'Tiedotetta ei löytynyt.' });
+  if (!saaLahettaaTiedotteen(req, tiedote.ownerId, tiedote.omistaja === 'kohde')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta perua tätä tiedotetta.' });
+  }
+
+  const tulos = peruTiedote({ tiedote, username: req.username });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('broadcasts', tiedotteet.map((t) => (t.id === tiedote.id ? tulos.tiedote : t)));
+  logAudit({ user: req.username, action: 'broadcast_cancel', collection: 'broadcasts', recordId: tiedote.id, eventId: tiedote.ownerId });
+  kerroTiedotteesta(tulos.tiedote, 'update');
+  res.json({ ok: true, tiedote: tulos.tiedote });
+});
+
+// Ketkä eivät ole kuitanneet. Erillinen reitti eikä osa listahakua: joukko lasketaan
+// käyttäjärekisteristä, eikä sitä pidä laskea jokaiselle tiedotteelle jokaisessa haussa.
+app.get('/api/tiedote/:id/kuittaamatta', requireAuth, (req, res) => {
+  const tiedote = (readCollection('broadcasts') || []).find((t) => t.id === req.params.id);
+  if (!tiedote) return res.status(404).json({ ok: false, error: 'Tiedotetta ei löytynyt.' });
+  if (!saaLahettaaTiedotteen(req, tiedote.ownerId, tiedote.omistaja === 'kohde')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta tiedotteen kuittaustietoihin.' });
+  }
+  const vastaanottajat = tiedotteenVastaanottajat(tiedote);
+  res.json({
+    ok: true,
+    voimassa: onVoimassa(tiedote),
+    vastaanottajia: vastaanottajat.length,
+    kuittaamatta: kuittaamatta(tiedote, vastaanottajat),
+  });
+});
+
+
 // QR-koodin muodostus. Yleiskäyttöinen tarkoituksella: erä 5:n tarkistuspisteet
 // tarvitsevat täsmälleen saman toiminnon, eikä sitä pidä kirjoittaa silloin toiseen
 // kertaan. Koodi muodostetaan palvelimella, koska qrcode-kirjasto on jo palvelimen
