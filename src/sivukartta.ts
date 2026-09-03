@@ -18,6 +18,14 @@ export const SITEMAP: SivukarttaSolmu[] = [
   // päätettävissä (ks. juridinen työpaketti). Solmu näkyy oikeuseditorissa vaikka
   // seuranta olisi kytketty pois — muuten oikeutta ei voisi valmistella etukäteen.
   { id: 'locations', label: 'Henkilöstön sijainti kartalla' },
+  // Hälytykset: ajastin, man-down, hätäpainike ja vyöhykepoikkeamat.
+  //
+  // LUKUOIKEUS ON MYÖS OIKEUS HÄLYTTÄÄ. Tämä poikkeaa muusta sovelluksesta tarkoituksella:
+  // hätäpainikkeen on toimittava jokaiselle joka ylipäätään näkee hälytysnäkymän, koska
+  // muokkausoikeuden vaatiminen tarkoittaisi että osa kentällä olevista ei voisi hälyttää.
+  // Muokkausoikeus ratkaisee vain sen, kuka saa kuitata TOISEN hälytyksen — oman saa
+  // kuitata aina.
+  { id: 'alarms', label: 'Hälytykset (näkeminen oikeuttaa myös hälyttämään)' },
   { id: 'reporting', label: 'Raportointi', children: [
     { id: 'report_jv', label: 'Järjestyksenvalvojan tapahtumailmoitus' },
     { id: 'report_tike', label: 'TIKE:n raportointi', children: [

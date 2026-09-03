@@ -301,6 +301,21 @@ const COLLECTIONS = {
     eventIdOf: (item) => item?.siteId,
     tuote: 'guard',
   },
+  // Hälytykset (erä 7). Kokoelma on molempien puolien yhteinen, joten `tuote`-rajausta EI
+  // ole: sama tietue voi kuulua tapahtumaan tai vartiointikohteeseen, ja eventScoped +
+  // eventAccess hoitaa rajauksen kummassakin tapauksessa. Kaksi solmua lukuoikeudessa
+  // vastaa tätä: EVENT-puolen valvomo näkee tapahtumansa hälytykset, GUARD-puolen
+  // vartija kohteensa.
+  //
+  // Kirjoitus tapahtuu VAIN palvelimen omilla reiteillä (index.js: PALVELIMEN_YLLAPITAMAT).
+  // Tyhjä touch on tässä olennainen osa toimintoa eikä muotoseikka: hälytys jonka selain
+  // voisi kirjoittaa olisi hälytys jonka selain voisi myös hiljaa poistaa.
+  alerts: {
+    view: ['alarms', 'guard_alarms'],
+    touch: () => [],
+    eventScoped: true,
+    eventIdOf: (item) => item?.eventId,
+  },
   checkins: {
     view: ['overview', 'tike_form_in', 'tike_form_out', 'tike_form_jvaction', 'planning_employees', 'global_archived_events'],
     // Ei tietuekohtaista erottelua mahdollista (ei typeId-kenttää) — samat kolme solmua

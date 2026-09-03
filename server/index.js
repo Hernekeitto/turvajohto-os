@@ -46,7 +46,10 @@ import {
   eventAllowed,
 } from './permissions.js';
 import { liitaKanava, laheta as lahetaKanavalle, lahetaViesti } from './kanava.js';
-import { seurantaKaytossa, paivita as paivitaSijainti, kaikki as sijainnit, unohda as unohdaSijainti } from './sijainti.js';
+import {
+  seurantaKaytossa, paivita as paivitaSijainti, kaikki as sijainnit,
+  hae as haeSijainti, unohda as unohdaSijainti,
+} from './sijainti.js';
 import {
   tarkistaIlmoitus,
   lomakkeenTila,
@@ -65,9 +68,15 @@ import {
   onTunnettuLaji, tarkistaNimi, puhdistaKuvaus, tarkistaPisteet, tarkistaGps,
   sisaltoMuuttui, julkinenPohja, etsiPisteTokenilla,
 } from './pohjat.js';
-import { aloitaKierros, kuittaaPiste, paataKierros, OLETUS_SIETORAJA_M } from './kierros.js';
+import { aloitaKierros, kuittaaPiste, paataKierros, etaisyysMetreina, OLETUS_SIETORAJA_M } from './kierros.js';
+import {
+  luoAjastin, luoHalytys, jatka as jatkaHalytysta, laukaise as laukaiseHalytys,
+  peru as peruHalytys, kuittaa as kuittaaHalytys, eraantyneet, eskaloitavat,
+  merkitseEskaloitu, viestiTeksti, TYYPIT as HALYTYSTYYPIT,
+} from './halytys.js';
+import { arvioi as arvioiVyohykkeet } from './geofence.js';
 import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti, parsiJson } from './bulksms.js';
-import { kaytossaOlevatNapit, ratkaiseVastaanottajat, taytaPaikkamerkit } from './sms.js';
+import { kaytossaOlevatNapit, ratkaiseVastaanottajat, taytaPaikkamerkit, halytysVastaanottajat } from './sms.js';
 import { lisaaJonoon, otaKasittelyyn, kuittaaKasitellyksi, jononPituus } from './smsqueue.js';
 import { salaisuusTasmaa, tulkitseTapahtuma, soveltaTilaraportit, soveltaVastaukset } from './smswebhook.js';
 import { logAudit, readAuditLog } from './audit.js';
@@ -375,7 +384,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -1431,6 +1440,413 @@ app.post('/api/kierros/:id/paata', requireAuth, guardPortti, (req, res) => {
   res.json({ ok: true, kierros: tulos.kierros });
 });
 
+// --- Hälytykset (erä 7) -----------------------------------------------------------
+//
+// Säännöt ovat halytys.js:ssä, tässä on niiden kytkentä: oikeudet, levylle kirjoitus,
+// kanavaviesti ja tekstiviestieskalointi. Kaikki hälytysreitit ovat POST-reittejä eikä
+// kokoelman PUT:ia käytetä lainkaan (PALVELIMEN_YLLAPITAMAT) — hälytys jonka selain voisi
+// kirjoittaa olisi hälytys jonka selain voisi myös hiljaa poistaa.
+
+// Hälytysreiteillä on oma rajoittimensa, ja se on tiukempi kuin muilla kirjoitusreiteillä:
+// jokainen eskaloituva hälytys lähettää tekstiviestejä, eli kuluttaa saldoa. Rikkinäinen
+// selain silmukassa ei saa tyhjentää tiliä. Raja on silti selvästi yli sen mitä yksi
+// ihminen ehtii oikeasti painaa.
+const halytysLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Liian monta hälytystä lyhyessä ajassa. Jos kyseessä on hätätilanne, soita 112.' },
+});
+
+// Hälyttäminen vaatii LUKUoikeuden hälytyksiin — ei muokkausoikeutta. Ks. sivukartan
+// perustelu (src/sivukartta.ts): muokkausoikeuden vaatiminen tarkoittaisi että osa
+// kentällä olevista ei voisi hälyttää, ja se on juuri se joukko jonka takia toiminto on
+// olemassa.
+function saaHalyttaa(req, eventId) {
+  if (req.role === 'admin') return true;
+  if (!eventAllowed(req.eventAccess, eventId)) return false;
+  return canView(req.permissions, eventId, 'alarms') || canView(req.permissions, eventId, 'guard_alarms');
+}
+
+// Kuittaaminen: oman hälytyksen saa kuitata aina, toisen vain muokkausoikeudella.
+function saaKuitata(req, halytys) {
+  if (req.role === 'admin') return true;
+  if (halytys?.vartija === req.username) return true;
+  if (!eventAllowed(req.eventAccess, halytys?.eventId)) return false;
+  return canEdit(req.permissions, halytys?.eventId, 'alarms')
+    || canEdit(req.permissions, halytys?.eventId, 'guard_alarms');
+}
+
+// Hälytys kuuluu joko tapahtumaan tai vartiointikohteeseen. Nimi ja vyöhykkeet haetaan
+// samalla kysymyksellä molemmista, koska kutsuja ei tiedä kummasta on kyse — eikä sen
+// tarvitse tietää.
+function kohteenTiedot(eventId) {
+  const tapahtuma = (readCollection('events') || []).find((e) => e?.id === eventId);
+  if (tapahtuma) return { nimi: tapahtuma.name || '', vyohykkeet: Array.isArray(tapahtuma.zones) ? tapahtuma.zones : [] };
+  const kohde = (readCollection('guardSites') || []).find((s) => s?.id === eventId);
+  if (kohde) return { nimi: kohde.name || '', vyohykkeet: Array.isArray(kohde.zones) ? kohde.zones : [] };
+  return { nimi: '', vyohykkeet: [] };
+}
+
+// Kanavaviesti hälytyksestä. Sama periaate kuin muualla: viesti kuljettaa vain id:n, ja
+// sisältö haetaan oikeustarkistetulta reitiltä. `lahettaja`-ohitusta EI käytetä — myös
+// hälyttäjän oma laite tarvitsee tiedon siitä että hänen hälytyksensä laukesi tai
+// kuitattiin, koska sen jälkeen näkymän on muututtava.
+function kerroHalytyksesta(halytys, action) {
+  lahetaKanavalle('alerts', [{ action, id: halytys.id, eventId: halytys.eventId }], {
+    saaNahda: (istunto, eventId) => {
+      if (istunto?.role === 'admin') return true;
+      if (!eventAllowed(istunto?.eventAccess, eventId)) return false;
+      const perms = rolePermissions(istunto?.roleId);
+      return canView(perms, eventId, 'alarms') || canView(perms, eventId, 'guard_alarms');
+    },
+  });
+}
+
+// Hälytyksen lähetystietue lähetyshistoriaan. Sama muoto kuin pikatoimintojen lähetyksillä,
+// jotta BulkSMS:n webhook osaa liittää toimituskuittaukset oikeaan riviin (smswebhook.js) —
+// hätäviestin kohdalla juuri toimitustieto on se mikä ratkaisee: lähtikö apu liikkeelle.
+//
+// Vastaanottajat sidotaan numeroihin JÄRJESTYKSESSÄ. Pikatoimintojen reitti tekee tässä
+// tarkemman sovituksen, koska siellä numeroita voi olla tuhat; hälytyksen vastaanottajia on
+// muutama, ja rajapinta palauttaa tulokset kuorman järjestyksessä.
+function eskalointiLoki({ halytys, runko, vastaanottajat, uniikit, tulos }) {
+  const haltija = new Map();
+  for (const v of vastaanottajat) {
+    if (v.numero && !haltija.has(v.numero)) haltija.set(v.numero, v);
+  }
+  return {
+    id: `sms-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+    ts: new Date().toISOString(),
+    eventId: halytys.eventId,
+    buttonId: `halytys:${halytys.tyyppi}`,
+    label: `Hälytys: ${HALYTYSTYYPIT[halytys.tyyppi]?.label || halytys.tyyppi}`,
+    group: 'emergency_numbers',
+    user: halytys.vartija,
+    body: runko,
+    dryRun: tulos.dryRun,
+    // Hälytysviestiin ei vastata tekstiviestillä vaan soittamalla. Vastauskanavan
+    // avaaminen antaisi ymmärtää että vastausta luetaan jossain — sitä ei lueta.
+    repliable: false,
+    encoding: tulos.mitat?.encoding || null,
+    parts: tulos.mitat?.osia ?? null,
+    recipients: (tulos.tulokset || []).map((t, i) => {
+      const numero = uniikit[i] || t.numero || null;
+      const h = haltija.get(numero) || {};
+      return {
+        messageId: t.id === null || t.id === undefined ? null : String(t.id),
+        nimi: h.nimi || null,
+        rooli: h.rooli || null,
+        numero: numero ? `${numero.slice(0, 5)}…${numero.slice(-3)}` : null,
+        status: t.status,
+        statusId: null,
+        updatedAt: null,
+      };
+    }),
+    skipped: vastaanottajat.filter((v) => !v.numero).map((v) => ({ nimi: v.nimi, syy: v.syy })),
+  };
+}
+
+// Yhden hälytyksen eskalointi tekstiviestiksi. Palauttaa aina tuloksen eikä heitä:
+// kutsuja merkitsee myös epäonnistumisen hälytykseen, jotta samaa viestiä ei yritetä
+// lähettää uudelleen joka kierroksella.
+async function eskaloiHalytys(halytys) {
+  try {
+    const { kohteenNimi, vastaanottajat, lahde } = halytysVastaanottajat({
+      eventId: halytys.eventId,
+      events: readCollection('events') || [],
+      guardSites: readCollection('guardSites') || [],
+    });
+    const uniikit = [...new Set(vastaanottajat.map((v) => v.numero).filter(Boolean))];
+    if (uniikit.length === 0) {
+      return {
+        ok: false,
+        vastaanottajia: 0,
+        virhe: lahde
+          ? 'Yhtään kelvollista hälytysnumeroa ei löytynyt.'
+          : 'Hälytysnumeroita ei ole määritetty tälle kohteelle.',
+      };
+    }
+
+    const runko = viestiTeksti(halytys, { kohteenNimi });
+    const tulos = await lahetaViestit({
+      numerot: uniikit,
+      body: runko,
+      repliable: false,
+      // Deduplikointi hälytyksen id:llä: jos sama hälytys yritetään eskaloida kahdesti
+      // (palvelin käynnistyi uudelleen kesken lähetyksen), BulkSMS ei lähetä viestiä
+      // toiseen kertaan.
+      dedupId: Math.abs(hashDedup(`halytys|${halytys.id}`)),
+    });
+    if (!tulos.ok) return { ok: false, vastaanottajia: 0, virhe: tulos.virhe };
+
+    const tietue = eskalointiLoki({ halytys, runko, vastaanottajat, uniikit, tulos });
+    try {
+      writeCollection('smsLog', [tietue, ...(readCollection('smsLog') || [])]);
+    } catch (err) {
+      // Historian kirjoitus ei saa kaataa eskalointia: viestit ovat jo lähteneet.
+      console.error('Hälytyksen lähetyshistorian kirjoitus epäonnistui:', err.message);
+    }
+    return { ok: true, dryRun: tulos.dryRun, sendId: tietue.id, vastaanottajia: uniikit.length };
+  } catch (err) {
+    return { ok: false, vastaanottajia: 0, virhe: err.message };
+  }
+}
+
+// Palvelimen hälytyskierros: erääntyneet ajastimet laukeavat ja lauenneet eskaloituvat.
+//
+// TÄMÄ ON KOKO ERÄN YDIN. Ajastin ei ole selaimessa, koska tajuton vartija ei paina
+// mitään eikä sammunut puhelin aja ajastimia. Kymmenen sekunnin kierros on tarkkuus jolla
+// määräaika toteutuu: minuutin tarkkuus riittäisi ajastimeen mutta ei eskalointiviiveisiin.
+const HALYTYSKIERROS_MS = 10_000;
+let halytyskierrosKay = false;
+
+async function kasitteleHalytykset() {
+  // Päällekkäisiä kierroksia ei ajeta: eskalointi odottaa verkkokutsua, ja kaksi
+  // rinnakkaista kierrosta lähettäisi saman hälytyksen kahdesti.
+  if (halytyskierrosKay) return;
+  halytyskierrosKay = true;
+  try {
+    const nyt = Date.now();
+    let lista = readCollection('alerts') || [];
+
+    const kypsat = eraantyneet(lista, nyt);
+    if (kypsat.length > 0) {
+      const idt = new Set(kypsat.map((h) => h.id));
+      const lauenneet = [];
+      lista = lista.map((h) => {
+        if (!idt.has(h.id)) return h;
+        // Viimeksi tiedetty sijainti liitetään hälytykseen jos sellainen on. Se on
+        // tavallisesti ainoa vihje siitä mistä ihmistä lähdetään etsimään.
+        const tulos = laukaiseHalytys({ halytys: h, gps: haeSijainti(h.vartija)?.gps || null, nyt });
+        if (!tulos.ok) return h;
+        lauenneet.push(tulos.halytys);
+        return tulos.halytys;
+      });
+      writeCollection('alerts', lista);
+      for (const h of lauenneet) {
+        logAudit({
+          user: h.vartija, action: 'alarm_fired', collection: 'alerts',
+          recordId: h.id, eventId: h.eventId, alarmType: h.tyyppi,
+        });
+        kerroHalytyksesta(h, 'update');
+      }
+    }
+
+    for (const h of eskaloitavat(lista, nyt)) {
+      const tulos = await eskaloiHalytys(h);
+      // Kokoelma luetaan UUDELLEEN lähetyksen jälkeen: odotuksen aikana hälytys on voitu
+      // kuitata tai uusia on voinut syntyä, eikä vanhaan kopioon kirjoittaminen saa
+      // hukata niitä.
+      const tuore = readCollection('alerts') || [];
+      let paivitetty = null;
+      writeCollection('alerts', tuore.map((x) => {
+        if (x.id !== h.id) return x;
+        paivitetty = merkitseEskaloitu({ halytys: x, tulos, nyt: Date.now() });
+        return paivitetty;
+      }));
+      logAudit({
+        user: h.vartija,
+        action: tulos.ok ? 'alarm_escalated' : 'alarm_escalation_failed',
+        collection: 'alerts', recordId: h.id, eventId: h.eventId, alarmType: h.tyyppi,
+        recipients: tulos.vastaanottajia,
+        ...(tulos.ok ? {} : { reason: tulos.virhe }),
+      });
+      if (paivitetty) kerroHalytyksesta(paivitetty, 'update');
+    }
+  } catch (err) {
+    console.error('Hälytyskierros epäonnistui:', err.message);
+  } finally {
+    halytyskierrosKay = false;
+  }
+}
+
+// Ajastimen käynnistys (lone worker). Vartija kertoo mitä on tekemässä ja kuinka kauan se
+// saa kestää; jos kuittausta ei tule, hälytys laukeaa itsestään.
+app.post('/api/halytys/ajastin', requireAuth, halytysLimiter, (req, res) => {
+  const eventId = typeof req.body?.eventId === 'string' ? req.body.eventId : null;
+  if (!saaHalyttaa(req, eventId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta hälytyksiin tässä kohteessa.' });
+  }
+
+  const lista = readCollection('alerts') || [];
+  // Yksi käynnissä oleva ajastin kerrallaan. Kaksi rinnakkaista tarkoittaisi, ettei
+  // "olen kunnossa" -kuittauksesta tiedä kumpaa se koskee.
+  const auki = lista.find((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa' && h.vartija === req.username);
+  if (auki) {
+    return res.status(409).json({ ok: false, error: 'Sinulla on jo käynnissä oleva ajastin.', halytys: auki });
+  }
+
+  const tulos = luoAjastin({
+    id: crypto.randomUUID(),
+    vartija: req.username,
+    eventId,
+    minuutit: req.body?.minuutit,
+    kuvaus: req.body?.kuvaus,
+    gps: req.body?.gps,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('alerts', [tulos.halytys, ...lista]);
+  logAudit({
+    user: req.username, action: 'alarm_timer_start', collection: 'alerts',
+    recordId: tulos.halytys.id, eventId, minutes: tulos.halytys.kestoMin,
+  });
+  kerroHalytyksesta(tulos.halytys, 'create');
+
+  // Kerrotaan heti onko kohteelle määritetty hälytysnumeroita. Vartijan on tiedettävä
+  // ENNEN kuin hän luottaa ajastimeen, tavoittaako lauennut hälytys ketään.
+  const { vastaanottajat } = halytysVastaanottajat({
+    eventId,
+    events: readCollection('events') || [],
+    guardSites: readCollection('guardSites') || [],
+  });
+  res.json({
+    ok: true,
+    halytys: tulos.halytys,
+    eskalointiNumeroita: vastaanottajat.filter((v) => v.numero).length,
+  });
+});
+
+// Hätäpainike ja man-down. Molemmat syntyvät suoraan lauenneina, ja ero on vain siinä
+// kuka ne laukaisi: ihminen vai laite.
+app.post('/api/halytys', requireAuth, halytysLimiter, (req, res) => {
+  const tyyppi = req.body?.tyyppi;
+  if (tyyppi !== 'panic' && tyyppi !== 'mandown') {
+    return res.status(400).json({ ok: false, error: 'Tuntematon hälytystyyppi.' });
+  }
+  const eventId = typeof req.body?.eventId === 'string' ? req.body.eventId : null;
+  if (!saaHalyttaa(req, eventId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta hälytyksiin tässä kohteessa.' });
+  }
+
+  const lista = readCollection('alerts') || [];
+  // Saman hälytyksen toistopainallus (verkko takkusi, käyttäjä painoi uudestaan) ei saa
+  // synnyttää toista hälytystä eikä toista tekstiviestiä. Palautetaan jo olemassa oleva.
+  const auki = lista.find((h) => h.tyyppi === tyyppi && h.tila === 'lauennut' && h.vartija === req.username);
+  if (auki) return res.json({ ok: true, halytys: auki, jokoOlemassa: true });
+
+  const tulos = luoHalytys({
+    id: crypto.randomUUID(),
+    tyyppi,
+    vartija: req.username,
+    eventId,
+    kuvaus: req.body?.kuvaus,
+    gps: req.body?.gps,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('alerts', [tulos.halytys, ...lista]);
+  logAudit({
+    user: req.username, action: 'alarm_raised', collection: 'alerts',
+    recordId: tulos.halytys.id, eventId, alarmType: tyyppi,
+  });
+  kerroHalytyksesta(tulos.halytys, 'create');
+  // Eskalointi tehdään hälytyskierroksella eikä tässä: vastaus ei saa odottaa ulkoista
+  // HTTP-kutsua BulkSMS:ään. Hätäpainikkeen viive on nolla, joten viesti lähtee
+  // seuraavalla kierroksella eli enintään kymmenen sekunnin kuluttua.
+  res.json({ ok: true, halytys: tulos.halytys });
+});
+
+// "Olen kunnossa": ajastin alkaa alusta. Vain oma ajastin — toisen puolesta kuittaaminen
+// tarkoittaisi, että kuittaus ei enää todista kenenkään olevan kunnossa.
+app.post('/api/halytys/:id/jatka', requireAuth, (req, res) => {
+  const lista = readCollection('alerts') || [];
+  const halytys = lista.find((h) => h.id === req.params.id);
+  if (!halytys) return res.status(404).json({ ok: false, error: 'Hälytystä ei löytynyt.' });
+  if (halytys.vartija !== req.username) {
+    return res.status(403).json({ ok: false, error: 'Ajastin on toisen käyttäjän.' });
+  }
+
+  const tulos = jatkaHalytysta({ halytys, minuutit: req.body?.minuutit, user: req.username });
+  if (!tulos.ok) return res.status(409).json({ ok: false, error: tulos.error, halytys });
+
+  writeCollection('alerts', lista.map((h) => (h.id === halytys.id ? tulos.halytys : h)));
+  kerroHalytyksesta(tulos.halytys, 'update');
+  res.json({ ok: true, halytys: tulos.halytys });
+});
+
+// Ajastimen lopetus: vuoro päättyi eikä valvontaa enää tarvita.
+app.post('/api/halytys/:id/peru', requireAuth, (req, res) => {
+  const lista = readCollection('alerts') || [];
+  const halytys = lista.find((h) => h.id === req.params.id);
+  if (!halytys) return res.status(404).json({ ok: false, error: 'Hälytystä ei löytynyt.' });
+  if (halytys.vartija !== req.username && req.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Ajastin on toisen käyttäjän.' });
+  }
+
+  const tulos = peruHalytys({ halytys, user: req.username });
+  if (!tulos.ok) return res.status(409).json({ ok: false, error: tulos.error, halytys });
+
+  writeCollection('alerts', lista.map((h) => (h.id === halytys.id ? tulos.halytys : h)));
+  logAudit({
+    user: req.username, action: 'alarm_timer_cancel', collection: 'alerts',
+    recordId: halytys.id, eventId: halytys.eventId,
+  });
+  kerroHalytyksesta(tulos.halytys, 'update');
+  res.json({ ok: true, halytys: tulos.halytys });
+});
+
+// Lauenneen hälytyksen kuittaus. Tämä on se toimenpide joka päättää hälytyksen — ei
+// tekstiviestin lähtö eikä se että joku katsoi näkymää.
+app.post('/api/halytys/:id/kuittaa', requireAuth, (req, res) => {
+  const lista = readCollection('alerts') || [];
+  const halytys = lista.find((h) => h.id === req.params.id);
+  if (!halytys) return res.status(404).json({ ok: false, error: 'Hälytystä ei löytynyt.' });
+  if (!saaKuitata(req, halytys)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta kuitata tätä hälytystä.' });
+  }
+
+  const tulos = kuittaaHalytys({ halytys, user: req.username, huomio: req.body?.huomio });
+  if (!tulos.ok) return res.status(409).json({ ok: false, error: tulos.error, halytys });
+
+  writeCollection('alerts', lista.map((h) => (h.id === halytys.id ? tulos.halytys : h)));
+  logAudit({
+    user: req.username, action: 'alarm_acknowledged', collection: 'alerts',
+    recordId: halytys.id, eventId: halytys.eventId, alarmType: halytys.tyyppi,
+  });
+  kerroHalytyksesta(tulos.halytys, 'update');
+  res.json({ ok: true, halytys: tulos.halytys });
+});
+
+// Lähimmät kentällä olijat annettuun pisteeseen. Tämä oli alun perin tehtävien
+// ohjaamista varten ("kuka on lähinnä porttia 3"), ja hälytys on sen tärkein käyttötapaus:
+// kun joku painaa hätäpainiketta, ensimmäinen kysymys on kuka ehtii paikalle.
+//
+// Vaatii sijaintiseurannan. Ilman sitä palvelin ei tiedä kenenkään sijaintia, eikä
+// arvausta pidä esittää vastauksena — `kaytossa: false` kertoo käyttöliittymälle että
+// toimintoa ei ole, jolloin se ei lupaa sitä.
+app.get('/api/lahin', requireAuth, (req, res) => {
+  if (!seurantaKaytossa()) return res.json({ ok: true, kaytossa: false, vartijat: [] });
+  const eventId = typeof req.query.eventId === 'string' ? req.query.eventId : null;
+  const saa =
+    req.role === 'admin' ||
+    (eventAllowed(req.eventAccess, eventId) && canView(req.permissions, eventId, 'locations'));
+  if (!saa) return res.status(403).json({ ok: false, error: 'Ei oikeutta henkilöstön sijainteihin.' });
+
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(400).json({ ok: false, error: 'Anna lat ja lon.' });
+  }
+
+  const vartijat = sijainnit({ eventId })
+    .map((s) => ({
+      username: s.username,
+      ikaMs: s.ikaMs,
+      gps: s.gps,
+      etaisyysM: etaisyysMetreina({ lat, lon }, s.gps),
+    }))
+    // Ilman GPS:ää ei voi laskea etäisyyttä. Kuvakoordinaatti ei kelpaa: pohjakuvan
+    // mittakaava ei ole metrejä, eikä "0,3 kuvan leveydestä" ole vastaus kysymykseen
+    // kuka ehtii nopeimmin.
+    .filter((v) => v.etaisyysM !== null)
+    .sort((a, b) => a.etaisyysM - b.etaisyysM)
+    .slice(0, 10);
+
+  res.json({ ok: true, kaytossa: true, vartijat });
+});
 // QR-koodin muodostus. Yleiskäyttöinen tarkoituksella: erä 5:n tarkistuspisteet
 // tarvitsevat täsmälleen saman toiminnon, eikä sitä pidä kirjoittaa silloin toiseen
 // kertaan. Koodi muodostetaan palvelimella, koska qrcode-kirjasto on jo palvelimen
@@ -2276,15 +2692,69 @@ function saaNahdaSijainnit(istunto, eventId) {
 
 // Sijaintiviesti kentältä. Palvelin päättää sekä aikaleiman että sen kenelle tieto
 // kerrotaan — selain ei kumpaakaan.
+// Vyöhykepoikkeamien toistosuojan muisti: username -> { "vyohykeId:saanto": aikaleima }.
+// Muistissa eikä levyllä samasta syystä kuin sijainnit itse (sijainti.js): tämä on
+// hetkellistä tilaa, jonka menettäminen palvelimen käynnistyessä ei haittaa — pahin
+// seuraus on yksi ylimääräinen hälytys.
+const geofenceMuisti = new Map();
+
+// Vyöhykepoikkeamat sijaintipäivityksestä. Hälytys syntyy vain rajan ylityksestä, ja
+// säännöt suojineen ovat geofence.js:ssä. Tämä ei siis päätä mistään — se lukee
+// vyöhykkeet, kysyy arviota ja kirjaa tuloksen.
+function tarkistaVyohykkeet(istunto, edellinen, tietue) {
+  const { vyohykkeet } = kohteenTiedot(tietue.eventId);
+  if (vyohykkeet.length === 0) return;
+
+  const tulos = arvioiVyohykkeet({
+    vyohykkeet,
+    edellinen,
+    nykyinen: tietue,
+    viimeksi: geofenceMuisti.get(istunto.username) || {},
+  });
+  geofenceMuisti.set(istunto.username, tulos.viimeksi);
+  if (tulos.poikkeamat.length === 0) return;
+
+  const lista = readCollection('alerts') || [];
+  const uudet = [];
+  for (const poikkeama of tulos.poikkeamat) {
+    const luotu = luoHalytys({
+      id: crypto.randomUUID(),
+      tyyppi: 'geofence',
+      vartija: istunto.username,
+      eventId: tietue.eventId,
+      kuvaus: poikkeama.kuvaus,
+      gps: tietue.gps,
+      vyohyke: poikkeama.vyohyke,
+    });
+    if (luotu.ok) uudet.push(luotu.halytys);
+  }
+  if (uudet.length === 0) return;
+
+  writeCollection('alerts', [...uudet, ...lista]);
+  for (const h of uudet) {
+    logAudit({
+      user: h.vartija, action: 'alarm_geofence', collection: 'alerts',
+      recordId: h.id, eventId: h.eventId, zone: h.vyohyke?.id,
+    });
+    kerroHalytyksesta(h, 'create');
+  }
+}
+
+// Sijaintiviesti kentältä. Palvelin päättää sekä aikaleiman että sen kenelle tieto
+// kerrotaan — selain ei kumpaakaan.
 function kasitteleKanavaViesti(istunto, viesti) {
   if (viesti.tyyppi !== 'sijainti') return;
   if (!seurantaKaytossa()) return;
+  // Edellinen sijainti luetaan ENNEN päivitystä: vyöhykepoikkeama on rajan ylitys, ja
+  // ylityksen näkee vain vertaamalla uutta sijaintia edelliseen.
+  const edellinen = haeSijainti(istunto?.username);
   const tietue = paivitaSijainti(istunto?.username, viesti.eventId, viesti);
   if (!tietue) return;
   lahetaViesti(
     { tyyppi: 'sijainnit', eventId: tietue.eventId, sijainnit: [{ ...tietue, ikaMs: 0 }] },
     { suodatin: (vastaanottaja) => saaNahdaSijainnit(vastaanottaja, tietue.eventId) }
   );
+  tarkistaVyohykkeet(istunto, edellinen, tietue);
 }
 
 const palvelin = app.listen(PORT, '127.0.0.1', () => {
@@ -2299,6 +2769,12 @@ const palvelin = app.listen(PORT, '127.0.0.1', () => {
   // Käsitellään heti käynnistyksessä myös se mitä jonoon jäi edellisen ajon aikana
   // (deploy käynnistää palvelimen uudelleen kesken kuittausryöpyn).
   kasitteleWebhookJono();
+
+  // Hälytyskierros: erääntyneet ajastimet laukeavat ja lauenneet eskaloituvat. Tämä on
+  // se osa jonka takia ajastin ylipäätään toimii — selaimessa pyörivä ajastin ei laukeaisi
+  // silloin kun sitä eniten tarvitaan, eli kun puhelin on sammunut.
+  setInterval(kasitteleHalytykset, HALYTYSKIERROS_MS).unref();
+  kasitteleHalytykset();
 
   if (onkoKonfiguroitu()) {
     setInterval(() => { tarkistaSaldo().catch(() => {}); }, SALDO_TARKISTUSVALI_MS).unref();

@@ -73,6 +73,20 @@ export function paivita(username, eventId, syote, nyt = Date.now()) {
 // Vuoron päättyminen ja uloskirjautuminen poistavat sijainnin. Tämä on se tekninen
 // minimointi joka vastaa kysymykseen "seurataanko minua vapaa-ajalla": ei seurata,
 // koska tietoa ei ole olemassa.
+// Yhden henkilön viimeksi tiedetty sijainti. Tarvitaan vyöhykepoikkeamien arviointiin
+// (erä 7): hälytys syntyy vain kun raja ylitetään, ja sen näkee vain vertaamalla uutta
+// sijaintia edelliseen. Vanhentunutta ei palauteta — tunnin takainen sijainti ei kerro
+// mitään siitä ylitettiinkö raja juuri nyt.
+export function hae(username, nyt = Date.now()) {
+  const tietue = viimeisin.get(username);
+  if (!tietue) return null;
+  if (nyt - tietue.at > VANHENEE_MS) {
+    viimeisin.delete(username);
+    return null;
+  }
+  return tietue;
+}
+
 export function unohda(username) {
   return viimeisin.delete(username);
 }

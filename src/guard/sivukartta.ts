@@ -32,6 +32,10 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // tarkoittaisi vain sitä, että vartija poisti pisteet joita ei ehtinyt käydä.
   { id: 'guard_patrol_templates', label: 'Kierrospohjat ja tarkistuspisteet' },
   { id: 'guard_patrols', label: 'Kierroksen kulkeminen' },
+  // Hälytykset. Sama sääntö kuin EVENT-puolen 'alarms'-solmulla: näkeminen oikeuttaa myös
+  // hälyttämään, muokkaus tarvitaan vain toisen hälytyksen kuittaamiseen. Vartijalle tämä
+  // on erän tärkein solmu — yksin työskentelevän ajastin ja hätäpainike ovat sen takana.
+  { id: 'guard_alarms', label: 'Hälytykset (näkeminen oikeuttaa myös hälyttämään)' },
   // Raportointi. Omat solmunsa lomaketyypeittäin samaan tapaan kuin tapahtumapuolen
   // tike_form_*-solmut: vartijan toimenpide on päivittäistä kirjaamista, kun taas
   // tapahtumailmoitus sisältää LYTP:n nojalla kirjattavat kohdehenkilötiedot ja voi

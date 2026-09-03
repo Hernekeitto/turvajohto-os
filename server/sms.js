@@ -137,6 +137,56 @@ export function taytaPaikkamerkit(body, { tapahtumanNimi = '', nyt = new Date() 
     .trim();
 }
 
+// Hälytyksen eskalointinumerot (erä 7). Erillinen ratkaiseVastaanottajista, koska
+// hälytys voi kuulua joko tapahtumaan TAI vartiointikohteeseen, eikä niillä ole samaa
+// numerolähdettä:
+//
+//   Tapahtuma  osion 14 hätänumerot (Turva 1, Turva 2, TIKE, EA) — sama lähde kuin
+//              pikatoimintojen emergency_numbers-ryhmällä, joten se luetaan sieltä eikä
+//              kirjoiteta toiseen kertaan.
+//   Kohde      kohteen omat hälytysnumerot (guardSites.halytysNumerot). Kohteella EI ole
+//              osiota 14, eikä toimeksiantajan yhteyshenkilö kelpaa tähän: man-down
+//              -hälytyksessä soitetaan oman vartiointiliikkeen päivystäjälle, ei
+//              asiakkaalle kello kolme yöllä.
+//
+// EI VARAJÄRJESTELMÄÄ. Jos numeroita ei ole määritetty, palautetaan tyhjä lista ja
+// hälytys jää sovelluksen sisälle. Se on parempi kuin arvattu vastaanottaja: väärään
+// numeroon lähtenyt hätäviesti on sekä hyödytön että vahingollinen.
+export function halytysVastaanottajat({ eventId, events, guardSites }) {
+  const tapahtuma = (Array.isArray(events) ? events : []).find((e) => e?.id === eventId);
+  if (tapahtuma) {
+    return {
+      kohteenNimi: tapahtuma.name || '',
+      lahde: 'emergency_numbers',
+      vastaanottajat: ratkaiseVastaanottajat(
+        { id: '__halytys__', group: 'emergency_numbers' },
+        { eventId, checkins: [], employees: [], events }
+      ),
+    };
+  }
+
+  const kohde = (Array.isArray(guardSites) ? guardSites : []).find((s) => s?.id === eventId);
+  if (!kohde) return { kohteenNimi: '', lahde: null, vastaanottajat: [] };
+
+  const rivit = Array.isArray(kohde.halytysNumerot) ? kohde.halytysNumerot : [];
+  return {
+    kohteenNimi: kohde.name || '',
+    lahde: 'kohteen_halytysnumerot',
+    vastaanottajat: rivit
+      .filter((r) => r && (typeof r === 'string' || typeof r.numero === 'string'))
+      .map((r) => {
+        const raaka = typeof r === 'string' ? r : r.numero;
+        const numero = normalisoiNumero(raaka);
+        return {
+          nimi: (typeof r === 'object' && r.nimi) ? String(r.nimi) : 'Hälytysnumero',
+          rooli: 'Kohteen hälytysnumero',
+          numero,
+          ...(numero ? {} : { syy: `Numeroa "${raaka}" ei voi tulkita.` }),
+        };
+      }),
+  };
+}
+
 // Työntekijäpankin puhelinnumero rosteririville. Ensisijaisesti employeeId:llä (rosterirvi
 // sidotaan pankkiin sitä lisättäessä), toissijaisesti nimellä — vanhoilla riveillä ei ole
 // employeeId-kenttää lainkaan, eivätkä ne muuten löytäisi numeroaan.

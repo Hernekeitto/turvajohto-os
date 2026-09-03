@@ -70,6 +70,16 @@ const COLLECTIONS = {
   // vajaata ei voi sulkea, keskeytys vaatii syyn, kuittaus on peruuttamaton — menettäisivät
   // merkityksensä jos selain voisi kirjoittaa kokoelman suoraan.
   patrolRuns: 'patrolRuns.json',
+  // Hälytykset (erä 7): ajastin, man-down, hätäpainike ja vyöhykepoikkeama. YKSI kokoelma
+  // kaikille tyypeille samasta syystä kuin templates: tilamalli, kuittaus, eskalointi ja
+  // valvomonäkymä ovat samat riippumatta siitä mikä hälytyksen laukaisi. Palvelimen
+  // ylläpitämä (index.js: PALVELIMEN_YLLAPITAMAT) — hälytys jonka selain voisi kirjoittaa
+  // olisi hälytys jonka selain voisi myös poistaa.
+  //
+  // TAPAHTUMAPUOLI JA GUARD SAMASSA KOKOELMASSA: eventId on tapahtuman TAI kohteen id,
+  // aivan kuten oikeustarkistuksissa muutenkin. Vartijan hätäpainike ja tapahtuman
+  // ajastinhälytys ovat sama asia, eikä valvomonäkymää kannata kirjoittaa kahdesti.
+  alerts: 'alerts.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
@@ -185,6 +195,11 @@ const ENCRYPTED_FIELDS = {
   // kirjoittaa niihin havaintonsa, ja keskeytyksen syy voi kertoa mitä kohteessa oli
   // tapahtunut. Pistekohtaiset huomiot ovat listan sisällä (piste-taso).
   patrolRuns: ['huomiot', 'keskeytysSyy', 'pisteet[].huomio'],
+  // Hälytyksen vapaat tekstit. `kuvaus` kertoo mitä vartija oli tekemässä ("tarkastan
+  // kellarikäytävän"), `kuittausHuomio` mitä hälytyksestä seurasi, ja historian teksteihin
+  // päätyvät molemmat tiivistettyinä. Sijaintia (gps) EI voi salata: se on numeroita, ja
+  // kenttäsalaus toimii vain merkkijonoille — se on tietoinen rajaus, ei unohdus.
+  alerts: ['kuvaus', 'kuittausHuomio', 'historia[].teksti'],
   // Tarkistuspisteen token on tarrassa seinässä eikä salaisuus, mutta se on ainoa asia
   // joka todistaa skannauksen kohdistuneen oikeaan pisteeseen — samalla perusteella
   // salattu kuin ilmoitusjulisteen token.
