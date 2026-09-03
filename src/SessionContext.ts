@@ -30,6 +30,12 @@ export interface SessionProfile {
   // Tämän istunnon kirjautumishetki ISO-muodossa, tai null jos käyttäjä ei ole
   // kirjautunut kertaakaan sen jälkeen kun palvelin alkoi tallentaa sitä.
   lastLoginAt: string | null;
+  // Onko sijaintiseuranta kytketty palvelimella päälle (SIJAINTISEURANTA=1). Ei
+  // oikeustieto vaan tieto siitä onko toiminto olemassa: ilman tätä selain kysyisi
+  // paikannuslupaa toimintoon jota ei ole. Sijaintien NÄKEMINEN on oma solmunsa
+  // ('locations'). Valinnainen, koska laitteelle tallennettu istunto (shared/istunto.ts)
+  // voi olla vanhempi kuin tämä kenttä.
+  sijaintiseuranta?: boolean;
 }
 
 // Kirjautuneen käyttäjän koko profiili koko sovelluksen käyttöön: tunnus,

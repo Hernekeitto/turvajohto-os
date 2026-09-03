@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff, Siren } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
@@ -15,6 +15,12 @@ import { lueVuorodata, tallennaVuorodata, unohdaVuorodata } from '../shared/vuor
 import { unohdaIstunto } from '../shared/istunto';
 import { Kierrospohjat } from './Kierrospohjat';
 import { Kierros } from './Kierros';
+import { Halytykset } from './Halytykset';
+import { Halytysvahti } from '../shared/komponentit/Halytysvahti';
+import { haeHalytykset, type Halytys } from '../shared/halytykset';
+import { useKanava } from '../shared/kanava';
+import { useSijainninLahetys } from '../shared/sijainninLahetys';
+import { luoMuunnos } from '../shared/georeferointi';
 import {
   uusiId, type GuardRaportti, type Kohde, type KohteenTiedosto, type RaporttiTyyppi,
   type TehtavaSuoritus, type Kierrospohja, type Kierros as KierrosTietue,
@@ -59,6 +65,12 @@ export default function GuardApp() {
   const saaMuokataPohjia = isAdmin || canEdit(perms, null, 'guard_patrol_templates');
   const saaNahdaKierrokset = isAdmin || canView(perms, null, 'guard_patrols');
   const saaKiertaa = isAdmin || canEdit(perms, null, 'guard_patrols');
+  // Hälytykset. NÄKEMINEN OIKEUTTAA MYÖS HÄLYTTÄMÄÄN (ks. guard/sivukartta.ts):
+  // muokkausoikeuden vaatiminen tarkoittaisi että osa kentällä olevista ei voisi
+  // hälyttää. Muokkausoikeus tarvitaan vain toisen hälytyksen kuittaamiseen — oman
+  // hälytyksensä saa kuitata aina.
+  const saaNahdaHalytykset = isAdmin || canView(perms, null, 'guard_alarms');
+  const saaKuitataHalytyksia = isAdmin || canEdit(perms, null, 'guard_alarms');
   // Raportointi on jaettu lomaketyypeittäin: tapahtumailmoitus sisältää kohdehenkilötiedot
   // ja voi olla eri joukolla ihmisiä kuin päivittäinen toimenpidekirjaus.
   const saaKirjataToimenpiteen = isAdmin || canEdit(perms, null, 'guard_report_action');
@@ -100,6 +112,13 @@ export default function GuardApp() {
   const [kierrokset, setKierrokset] = useState<KierrosTietue[]>([]);
   const [pohjaKohde, setPohjaKohde] = useState<Kohde | null>(null);
   const [kierrosKohde, setKierrosKohde] = useState<Kohde | null>(null);
+  // Hälytykset (erä 7). Palvelimen ylläpitämä kokoelma: tänne tulee vain luettua tilaa,
+  // ja jokainen muutos tehdään /api/halytys-reiteillä.
+  const [halytykset, setHalytykset] = useState<Halytys[]>([]);
+  const [halytysKohde, setHalytysKohde] = useState<Kohde | null>(null);
+  // Man-down päällä/pois säilyy laitteella: vartija kytkee sen kerran vuoron alussa,
+  // eikä asetus saa nollautua sivun latauksesta kesken vuoron.
+  const [mandown, setMandown] = useState(false);
   // Skannauksen tulos: puhelimen kamera avasi /guard?piste=<token>, ja palvelin kertoo
   // mitä siitä seurasi. Näytetään bannerina, koska käyttäjä tuli sivulle kameran kautta
   // eikä hän tiedä mitä sovelluksessa tapahtui.
@@ -221,6 +240,70 @@ export default function GuardApp() {
     if (saaNahdaPohjat || saaNahdaKierrokset) haePohjat();
     if (saaNahdaKierrokset) haeKierrokset();
   }, [saaNahdaPohjat, saaNahdaKierrokset]);
+
+  // Hälytykset luetaan samalta kokoelmareitiltä kuin muutkin, mutta niitä EI koskaan
+  // kirjoiteta takaisin: kokoelma on palvelimen ylläpitämä.
+  const paivitaHalytykset = useCallback(() => {
+    if (!saaNahdaHalytykset) return;
+    haeHalytykset().then((lista) => { if (lista) setHalytykset(lista); });
+  }, [saaNahdaHalytykset]);
+
+  useEffect(() => { paivitaHalytykset(); }, [paivitaHalytykset]);
+
+  // Kanava. GUARD-puoli ei ole tähän asti tarvinnut sitä, mutta hälytys on juuri se
+  // tieto jota ei voi jäädä odottamaan seuraavaa sivunlatausta: lauennut ajastin on
+  // näytettävä vartijalle heti, ja valvomon kuittaus on näytettävä hänelle heti.
+  //
+  // Sama yhteys kuljettaa myös sijainnin kentältä palvelimelle (erä 3).
+  const { laheta: lahetaKanavalle } = useKanava({
+    onMuutos: (kokoelma) => {
+      if (kokoelma === 'alerts') paivitaHalytykset();
+      if (kokoelma === 'patrolRuns') haeKierrokset();
+    },
+  });
+
+  // Kohde jonka näkymässä ollaan. Sijainti liitetään siihen, koska vyöhykesäännöt ja
+  // hälytysnumerot ovat kohteen omia — yhden kohteen vuorossa (tavallisin tapaus) se on
+  // suoraan ainoa kohde.
+  const aktiivinenKohde = kierrosKohde || halytysKohde || tehtavaKohde || tietoKohde
+    || raporttiKohde?.kohde || (kohteet.length === 1 ? kohteet[0] : null);
+
+  // Sijainnin lähetys. Kytkin on palvelimella (SIJAINTISEURANTA), ja istunto kertoo sen
+  // tilan — ilman tätä selain kysyisi paikannuslupaa toimintoon jota ei ole olemassa.
+  //
+  // Kuvakoordinaatti lasketaan kohteen kalibroinnista jos sellainen on. Ilman
+  // kalibrointia sijainti lähtee pelkkänä GPS:nä: se riittää hälytyksen sijaintiin ja
+  // lähimmän hakuun, mutta vyöhykesäännöt tarvitsevat kohdan pohjakuvalla.
+  useSijainninLahetys({
+    kaytossa: session?.sijaintiseuranta === true && !!aktiivinenKohde,
+    eventId: aktiivinenKohde?.id || null,
+    laheta: lahetaKanavalle,
+    muunnos: luoMuunnos((aktiivinenKohde as { mapRef?: never[] } | null)?.mapRef),
+  });
+
+  const vaihdaMandown = (paalla: boolean) => {
+    setMandown(paalla);
+    try {
+      window.localStorage.setItem('turvajohto-mandown', paalla ? '1' : '0');
+    } catch {
+      // Yksityinen selaustila: asetus jää voimaan vain tämän sivunlatauksen ajaksi.
+    }
+  };
+
+  useEffect(() => {
+    try {
+      setMandown(window.localStorage.getItem('turvajohto-mandown') === '1');
+    } catch {
+      // Ei tallennettua asetusta.
+    }
+  }, []);
+
+  const paivitaHalytys = (halytys: Halytys) => {
+    setHalytykset((edelliset) => {
+      const tunnettu = edelliset.some((h) => h.id === halytys.id);
+      return tunnettu ? edelliset.map((h) => (h.id === halytys.id ? halytys : h)) : [halytys, ...edelliset];
+    });
+  };
 
   // Palvelimelta palautuva kierros korvaa listassa olevan. Tila ei ole tässä
   // "totuus" vaan näkymä palvelimen tilaan: jokainen muutos on jo tallennettu kun se
@@ -519,7 +602,7 @@ export default function GuardApp() {
     <Ylapalkki
       tuoteNimi="Turvajohto GUARD"
       alaotsikko={alaotsikko}
-      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); }}
+      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); setHalytysKohde(null); }}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}
@@ -553,6 +636,7 @@ export default function GuardApp() {
         asetuksissa ? 'Sovellusasetukset'
           : raporttiKohde ? 'Raportointi'
           : tietoKohde ? 'Kohteen tiedot'
+          : halytysKohde ? 'Hälytykset'
           : kierrosKohde ? 'Kierrokset'
           : pohjaKohde ? 'Kierrospohjat'
           : tehtavaKohde ? 'Työvuoron tehtävät'
@@ -562,6 +646,20 @@ export default function GuardApp() {
 
       <main className="flex-1 p-6 md:p-10">
         <div className="max-w-5xl mx-auto">
+          {/* Hälytysvahti on ENSIMMÄISENÄ ja kaikissa näkymissä. Ajastimen laskuri,
+              man-down-kysely ja lauennut hälytys eivät saa olla yhden näkymän takana:
+              vartija ei ole hälytysnäkymässä silloin kun hälytys laukeaa. */}
+          {saaNahdaHalytykset && (
+            <Halytysvahti
+              eventId={aktiivinenKohde?.id || null}
+              kayttaja={session?.username || ''}
+              halytykset={halytykset}
+              onMuutos={paivitaHalytys}
+              onVirkista={paivitaHalytykset}
+              mandown={mandown}
+            />
+          )}
+
           {virhe && (
             <p className="mb-6 text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">
               {virhe}
@@ -622,6 +720,17 @@ export default function GuardApp() {
               raportit={raportit}
               kierrokset={kierrokset}
               onTakaisin={() => setTietoKohde(null)}
+            />
+          ) : halytysKohde ? (
+            <Halytykset
+              kohde={halytysKohde}
+              halytykset={halytykset}
+              kayttaja={session?.username || ''}
+              saaKuitata={saaKuitataHalytyksia}
+              mandown={mandown}
+              onMandown={vaihdaMandown}
+              onMuutos={paivitaHalytys}
+              onTakaisin={() => setHalytysKohde(null)}
             />
           ) : kierrosKohde ? (
             <Kierros
@@ -778,6 +887,28 @@ export default function GuardApp() {
                             {kierrokset.some((k) => k.siteId === kohde.id && k.tila === 'kesken') && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
                                 kesken
+                              </span>
+                            )}
+                          </button>
+                        )}
+                        {saaNahdaHalytykset && (
+                          <button
+                            type="button"
+                            onClick={() => setHalytysKohde(kohde)}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
+                          >
+                            <Siren size={14} />
+                            Hälytykset
+                            {/* Lauennut hälytys näkyy kortissa: sitä ei saa joutua
+                                etsimään näkymän sisältä. */}
+                            {halytykset.some((h) => h.eventId === kohde.id && h.tila === 'lauennut') && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-danger-soft text-danger-ink border border-danger/30">
+                                lauennut
+                              </span>
+                            )}
+                            {halytykset.some((h) => h.eventId === kohde.id && h.tila === 'kaynnissa') && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
+                                ajastin
                               </span>
                             )}
                           </button>

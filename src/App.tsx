@@ -1386,7 +1386,22 @@ export default function App() {
     return () => { peruttu = true; };
   }, [selectedEvent]);
 
-  useSijainninLahetys({ kaytossa: sijaintiKaytossa, eventId: selectedEvent, laheta: lahetaKanavalle });
+  // Kartan kalibrointi: kaksi tai kolme pistettä joiden oikeat koordinaatit tiedetään.
+  // Ilman näitä GPS-sijainnista ei voi päätellä kohtaa kuvalla (ks. shared/georeferointi.ts).
+  // Määritelty tässä eikä karttanäkymän yhteydessä, koska sijainnin lähetys tarvitsee
+  // muunnoksen ja se tapahtuu jo ennen kartan piirtämistä.
+  const nykyisenTapahtumanKalibrointi = (events.find((e) => e.id === selectedEvent) as any)?.mapRef || [];
+  const karttaMuunnos = luoMuunnos(nykyisenTapahtumanKalibrointi);
+
+  // Muunnos annetaan mukaan, jotta sijaintiin liittyy myös kohta pohjakuvalla. Palvelin
+  // tarvitsee sen vyöhykesääntöihin (erä 7): vyöhykkeet on piirretty kuvakoordinaatteihin,
+  // eikä pohjakartta ole georeferoitu, joten GPS yksin ei kerro millä lohkolla ollaan.
+  useSijainninLahetys({
+    kaytossa: sijaintiKaytossa,
+    eventId: selectedEvent,
+    laheta: lahetaKanavalle,
+    muunnos: karttaMuunnos,
+  });
 
   useEffect(() => {
     if (!eventsLoaded) return;
@@ -3442,11 +3457,6 @@ export default function App() {
   // Vyöhykkeet ovat tapahtuman kenttä (päätös V5), joten ne tallentuvat samalla
   // events-kokoelman tallennuksella kuin muutkin tapahtuman tiedot.
   const nykyisenTapahtumanVyohykkeet = haeVyohykkeet(events.find((e) => e.id === selectedEvent));
-
-  // Kartan kalibrointi: kaksi tai kolme pistettä joiden oikeat koordinaatit tiedetään.
-  // Ilman näitä GPS-sijainnista ei voi päätellä kohtaa kuvalla (ks. shared/georeferointi.ts).
-  const nykyisenTapahtumanKalibrointi = (events.find((e) => e.id === selectedEvent) as any)?.mapRef || [];
-  const karttaMuunnos = luoMuunnos(nykyisenTapahtumanKalibrointi);
 
   // Sijainnin kohta kuvalla. Käsin merkitty kuvakoordinaatti voittaa aina GPS:n: se on
   // ihmisen kertoma eikä laskettu arvio. Kartan ulkopuolelle osuvaa pistettä ei

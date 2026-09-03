@@ -21,12 +21,26 @@ type Args = {
   kaytossa: boolean;
   eventId: string | null;
   laheta: (viesti: Record<string, unknown>) => boolean;
+  // Muunnos GPS-sijainnista kohdaksi pohjakuvalla (ks. georeferointi.ts). Valinnainen:
+  // ilman kalibrointia sijainti lähtee pelkkänä GPS:nä, jolloin se näkyy listoissa ja
+  // lähimmän haussa muttei kartalla eikä vyöhykesäännöissä.
+  //
+  // Kuvakoordinaatti lasketaan TÄÄLLÄ eikä palvelimella, koska sama muunnos tarvitaan
+  // joka tapauksessa kartan piirtämiseen. Kaksi toteutusta erkanisi toisistaan, ja
+  // silloin henkilö näkyisi kartalla eri paikassa kuin missä vyöhykehälytys väittää
+  // hänen olleen.
+  muunnos?: ((gps: { lat: number; lon: number }) => { x: number; y: number } | null) | null;
 };
 
-export function useSijainninLahetys({ kaytossa, eventId, laheta }: Args) {
+export function useSijainninLahetys({ kaytossa, eventId, laheta, muunnos = null }: Args) {
   // Viimeisin lähetys refissä, jotta toiminnon yhteydessä tehtävä päivitys ei ammu
   // paikannusta uudestaan sekunnin välein jos käyttäjä tallentaa monta kirjausta putkeen.
   const viimeksi = useRef(0);
+  // Muunnos refissä samasta syystä kuin kanavan käsittelijät: luoMuunnos palauttaa uuden
+  // funktion joka renderillä, ja riippuvuutena se käynnistäisi paikannuksen alusta joka
+  // kerta kun mikä tahansa komponentin tila muuttuu.
+  const muunnosRef = useRef(muunnos);
+  muunnosRef.current = muunnos;
 
   useEffect(() => {
     if (!kaytossa) return;
@@ -41,15 +55,13 @@ export function useSijainninLahetys({ kaytossa, eventId, laheta }: Args) {
       navigator.geolocation.getCurrentPosition(
         (sijainti) => {
           if (purettu) return;
-          laheta({
-            tyyppi: 'sijainti',
-            eventId,
-            gps: {
-              lat: sijainti.coords.latitude,
-              lon: sijainti.coords.longitude,
-              tarkkuus: sijainti.coords.accuracy,
-            },
-          });
+          const gps = {
+            lat: sijainti.coords.latitude,
+            lon: sijainti.coords.longitude,
+            tarkkuus: sijainti.coords.accuracy,
+          };
+          const img = muunnosRef.current ? muunnosRef.current(gps) : null;
+          laheta({ tyyppi: 'sijainti', eventId, gps, ...(img ? { img } : {}) });
         },
         () => {
           // Lupa evätty tai paikannus epäonnistui. Ei virheilmoitusta: sijainnin

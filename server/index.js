@@ -303,6 +303,11 @@ app.get('/api/session', (req, res) => {
     // ei-adminin istunto on liukuva: token uusitaan tässä samassa reitissä,
     // jolloin iat siirtyisi eteenpäin eikä kertoisi enää kirjautumisajasta.
     lastLoginAt: user.last_login_at || null,
+    // Onko sijaintiseuranta kytketty palvelimella päälle. Tarvitaan selaimessa siihen,
+    // ettei paikannuslupaa kysytä turhaan — ja siihen että vartija tietää lähettääkö
+    // laite sijaintia. EI oikeustieto: sijaintien NÄKEMINEN on oma sivukartta-solmunsa
+    // ('locations'), ja tämä kertoo vain onko koko toiminto olemassa.
+    sijaintiseuranta: seurantaKaytossa(),
   });
 });
 
