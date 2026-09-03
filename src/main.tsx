@@ -15,6 +15,8 @@ import '@fontsource/fira-sans/latin-700.css'
 import './index.css'
 import Landing from './Landing.tsx'
 import PasswordGate from './PasswordGate.tsx'
+import { PaivitysKehote } from './shared/komponentit/PaivitysKehote.tsx'
+import { rekisteroiPalvelutyontekija } from './shared/palvelutyontekija.ts'
 
 // Tuotekohtaiset osat ladataan vasta tarvittaessa: mainossivu on julkinen ja sen
 // pitää aueta heti, eikä sen kuulu vetää mukanaan koko sovellusnippua.
@@ -71,5 +73,13 @@ createRoot(document.getElementById('root')!).render(
         </PasswordGate>
       </Suspense>
     )}
+    {/* Päivityskehote on molempien puolien ulkopuolella, koska päivitys koskee koko
+        sovellusnippua. Mainossivulla se ei näy: sinne ei kirjauduta eikä siellä ole
+        mitään kesken. */}
+    {tuote !== 'landing' && <PaivitysKehote />}
   </StrictMode>,
 )
+
+// Rekisteröidään vasta renderöinnin jälkeen: palvelutyöntekijä on offline-tuki, ei
+// ehto sovelluksen käynnistymiselle.
+rekisteroiPalvelutyontekija()
