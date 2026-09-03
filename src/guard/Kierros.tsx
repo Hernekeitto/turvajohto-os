@@ -9,10 +9,11 @@
 // puuttuu. Se näyttää mitä puuttuu ja antaa palvelimen sanoa ei — samasta syystä kuin
 // tallennuspainikkeet muualla sovelluksessa: painikkeen katoaminen ei kerro käyttäjälle
 // mitään, virheteksti kertoo.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Play, Check, MapPin, CircleAlert, Flag, Ban, QrCode } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
+import { kuunteleJonoa, lisaaJonoon } from '../shared/jono';
 import type { Kohde, Kierros as KierrosTietue, Kierrospohja } from './tyypit';
 
 type Props = {
@@ -59,6 +60,9 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
   const [keskeytys, setKeskeytys] = useState(false);
   const [syy, setSyy] = useState('');
   const [huomiot, setHuomiot] = useState('');
+  const [jono, setJono] = useState<{ tunniste?: string }[]>([]);
+
+  useEffect(() => kuunteleJonoa(setJono), []);
 
   const omatPohjat = pohjat.filter((p) => p.ownerId === kohde.id && p.kind === 'patrol' && !p.arkistoitu);
   const omatKierrokset = kierrokset.filter((k) => k.siteId === kohde.id);
@@ -68,46 +72,91 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
     .sort((a, b) => String(b.paattyi).localeCompare(String(a.paattyi)))
     .slice(0, 10);
 
-  const kutsu = async (polku: string, runko: unknown) => {
+  // Kaikki kierroksen toiminnot kulkevat lähtevän jonon kautta. Verkon toimiessa jono
+  // lähettää heti ja palauttaa palvelimen vastauksen, joten käyttökokemus on sama kuin
+  // suoralla kutsulla. Verkon ollessa poikki toimenpide jää jonoon ja lähtee itsestään
+  // kun yhteys palaa.
+  //
+  // Säännöt (vajaata ei voi sulkea, keskeytys vaatii syyn) pysyvät palvelimella eikä
+  // niitä jäljitellä täällä: jonossa oleva toimenpide näytetään "odottaa lähetystä"
+  // -tilassa, ja lopullisen sanan sanoo palvelin kun pyyntö menee perille.
+  const kutsu = async (polku: string, runko: unknown, kuvaus: string, tunniste?: string) => {
     setVirhe(null);
     setTyoskentelee(true);
     try {
-      const res = await fetch(polku, {
+      const tulos = await lisaaJonoon({ polku, runko, kuvaus, tunniste });
+      if (tulos.joJonossa) {
+        setVirhe('Sama toimenpide odottaa jo lähetystä.');
+        return false;
+      }
+      if (tulos.lahetetty && tulos.vastaus?.kierros) {
+        onPaivita(tulos.vastaus.kierros);
+        return true;
+      }
+      // Jonoon jäänyt toimenpide ei ole virhe: JonoTila kertoo tilanteen, ja pisteen
+      // kohdalla näkyy "odottaa lähetystä".
+      return !tulos.lahetetty;
+    } finally {
+      setTyoskentelee(false);
+    }
+  };
+
+  // Kierroksen ALOITUS ei mene jonoon: se luo tietueen jonka id palvelin antaa, eikä
+  // sitä voi tehdä verkotta ilman että kaikki sitä seuraavat kuittaukset jäisivät
+  // viittaamaan kierrokseen jota ei ole olemassa. Vartija aloittaa kierroksen
+  // valvomossa tai portilla ennen kuin lähtee katvealueelle.
+  const aloita = async (pohja: Kierrospohja) => {
+    setVirhe(null);
+    setTyoskentelee(true);
+    try {
+      const res = await fetch('/api/kierros', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(runko),
+        body: JSON.stringify({ templateId: pohja.id }),
       });
       const data = await res.json().catch(() => null);
-      if (res.ok && data?.ok && data.kierros) {
-        onPaivita(data.kierros);
-        return true;
-      }
-      setVirhe(data?.error || 'Toiminto epäonnistui.');
+      if (res.ok && data?.ok && data.kierros) { onPaivita(data.kierros); return true; }
+      setVirhe(data?.error || 'Kierroksen aloitus epäonnistui.');
       return false;
     } catch {
-      setVirhe('Toiminto epäonnistui: ei yhteyttä palvelimeen.');
+      setVirhe('Kierroksen aloitus vaatii verkkoyhteyden. Aloita kierros ennen katvealueelle siirtymistä.');
       return false;
     } finally {
       setTyoskentelee(false);
     }
   };
 
-  const aloita = (pohja: Kierrospohja) => kutsu('/api/kierros', { templateId: pohja.id });
-
-  const kuittaa = async (pisteId: string) => {
+  const kuittaa = async (pisteId: string, nimi: string) => {
     const gps = await haeSijainti();
-    await kutsu(`/api/kierros/${encodeURIComponent(kesken!.id)}/piste`, { pisteId, gps });
+    await kutsu(
+      `/api/kierros/${encodeURIComponent(kesken!.id)}/piste`,
+      { pisteId, gps },
+      `Kuittaus: ${nimi}`,
+      `kierrospiste:${kesken!.id}:${pisteId}`
+    );
   };
 
   const paata = async (tila: 'valmis' | 'keskeytetty') => {
-    const onnistui = await kutsu(`/api/kierros/${encodeURIComponent(kesken!.id)}/paata`, {
-      tila, syy, huomiot,
-    });
+    const onnistui = await kutsu(
+      `/api/kierros/${encodeURIComponent(kesken!.id)}/paata`,
+      { tila, syy, huomiot },
+      tila === 'valmis' ? `Kierros valmis: ${kesken!.templateNimi}` : `Kierros keskeytetty: ${kesken!.templateNimi}`,
+      `kierrospaata:${kesken!.id}`
+    );
     if (onnistui) { setKeskeytys(false); setSyy(''); setHuomiot(''); }
   };
 
-  const kuittaamatta = kesken ? kesken.pisteet.filter((p) => !p.kuitattu).length : 0;
+  // Jonossa odottavat kuittaukset. Luetaan jonosta eikä komponentin tilasta, jotta
+  // tieto säilyy sivunlatauksen yli — kentällä puhelin voi sammua kesken kierroksen.
+  const odottavat = new Set(
+    jono.filter((k) => k.tunniste?.startsWith('kierrospiste:'))
+      .map((k) => String(k.tunniste).split(':').pop())
+  );
+
+  const kuittaamatta = kesken
+    ? kesken.pisteet.filter((p) => !p.kuitattu && !odottavat.has(p.pisteId)).length
+    : 0;
 
   return (
     <div className="max-w-3xl">
@@ -167,10 +216,12 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
                 </div>
                 {piste.kuitattu ? (
                   <Check size={18} className="text-success-ink shrink-0" />
+                ) : odottavat.has(piste.pisteId) ? (
+                  <span className="text-xs text-ink-muted shrink-0">odottaa lähetystä</span>
                 ) : saaKiertaa ? (
                   <button
                     type="button"
-                    onClick={() => kuittaa(piste.pisteId)}
+                    onClick={() => kuittaa(piste.pisteId, piste.nimi)}
                     disabled={tyoskentelee}
                     className="shrink-0 inline-flex items-center gap-1.5 bg-accent hover:bg-accent-hover disabled:opacity-60 text-white text-xs font-bold rounded-lg px-3 py-2 transition-colors"
                   >

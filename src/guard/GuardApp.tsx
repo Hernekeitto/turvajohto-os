@@ -9,6 +9,8 @@ import { Tehtavat } from './Tehtavat';
 import { Raportit } from './Raportit';
 import { KohteenTiedot } from './KohteenTiedot';
 import { Asetukset } from './Asetukset';
+import { JonoTila } from '../shared/komponentit/JonoTila';
+import { avaaJono, kaynnistaAutomatiikka, lisaaJonoon } from '../shared/jono';
 import { Kierrospohjat } from './Kierrospohjat';
 import { Kierros } from './Kierros';
 import {
@@ -101,6 +103,13 @@ export default function GuardApp() {
   // eikä hän tiedä mitä sovelluksessa tapahtui.
   const [skannaus, setSkannaus] = useState<{ tyyppi: 'ok' | 'virhe'; viesti: string } | null>(null);
   const skannausTehty = useRef(false);
+
+  // Lähtevä jono avataan käyttäjäkohtaisena: jaetulla laitteella vuoron vaihtuessa
+  // seuraava vartija ei saa nähdä eikä lähettää edellisen kirjauksia omissa nimissään.
+  useEffect(() => {
+    avaaJono(session?.username || '');
+    kaynnistaAutomatiikka();
+  }, [session?.username]);
 
   useEffect(() => {
     if (!saaNahda) return;
@@ -259,50 +268,41 @@ export default function GuardApp() {
 
   // Raportti lisätään uutena tietueena samalla periaatteella kuin tehtäväsuoritus:
   // kirjattua raporttia ei muokata jälkikäteen, vaan tarvittaessa kirjataan uusi.
+  // Raportti menee LÄHTEVÄN JONON kautta yhtenä tietueena eikä koko kokoelmana.
+  //
+  // Kaksi syytä. Kentällä verkko voi olla poikki, ja silloin kirjaus jää jonoon ja
+  // lähtee itsestään kun yhteys palaa — vartijan ei tarvitse muistaa mitään. Ja koko
+  // kokoelman tallennus vanhentuneesta selaimesta pyyhkisi kaiken mitä muut ovat
+  // sillä välin kirjanneet (ks. server/index.js: /api/kirjaa/:name).
   const tallennaRaportti = async (raportti: GuardRaportti) => {
-    const uudet = [...raportit, raportti];
-    try {
-      const r = await fetch('/api/data/guardReports', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(uudet),
-      });
-      const res = await r.json().catch(() => null);
-      if (r.ok && res?.ok) {
-        setRaportit(uudet);
-        return true;
-      }
-      setVirhe(res?.error || 'Raportin tallennus epäonnistui.');
-      return false;
-    } catch {
-      setVirhe('Raportin tallennus epäonnistui: ei yhteyttä palvelimeen.');
-      return false;
+    // Näytetään heti omassa listassa: kirjaus on tehty, vaikka se olisi vielä matkalla.
+    setRaportit((edelliset) => [...edelliset, raportti]);
+    const tulos = await lisaaJonoon({
+      polku: '/api/kirjaa/guardReports',
+      runko: raportti,
+      kuvaus: `${raportti.type}: ${raportti.place || ''}`.trim(),
+      tunniste: `guardReport:${raportti.id}`,
+    });
+    if (!tulos.lahetetty) {
+      // Ei virhe vaan tilanne: JonoTila kertoo että kirjaus odottaa lähetystä.
+      setVirhe(null);
     }
+    return true;
   };
 
   // Tehtäväsuoritus lisätään aina uutena tietueena eikä koskaan korvaa aiempaa: sama
   // kierros ajetaan joka vuorossa uudelleen, ja jokainen kerta on oma merkintänsä lokissa.
+  // Sama kuin raporteilla: yksi tietue jonon kautta. Tehtäväsuoritus on jo valmiiksi
+  // vain lisättävä eikä koskaan muutettava, joten lisäysreitti sopii sille sellaisenaan.
   const suoritaTehtava = async (suoritus: TehtavaSuoritus) => {
-    const uudet = [...suoritukset, suoritus];
-    try {
-      const r = await fetch('/api/data/guardTaskRuns', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(uudet),
-      });
-      const res = await r.json().catch(() => null);
-      if (r.ok && res?.ok) {
-        setSuoritukset(uudet);
-        return true;
-      }
-      setVirhe(res?.error || 'Suorituksen kirjaus epäonnistui.');
-      return false;
-    } catch {
-      setVirhe('Suorituksen kirjaus epäonnistui: ei yhteyttä palvelimeen.');
-      return false;
-    }
+    setSuoritukset((edelliset) => [...edelliset, suoritus]);
+    await lisaaJonoon({
+      polku: '/api/kirjaa/guardTaskRuns',
+      runko: suoritus,
+      kuvaus: `Tehtävä: ${suoritus.tehtavaNimi}`,
+      tunniste: `taskRun:${suoritus.id}`,
+    });
+    return true;
   };
 
   // Tiedoston lisäys on kaksivaiheinen: itse tiedosto menee uploads-hakemistoon ja siitä
@@ -808,6 +808,11 @@ export default function GuardApp() {
           )}
         </div>
       </main>
+
+      {/* Lähtevä jono. Renderöidään GUARD-puolella, koska tässä sitä käytetään:
+          EVENT-puolen kirjaukset kulkevat vielä koko kokoelman tallennuksena. Kun ne
+          siirtyvät jonoon, tämä nousee main.tsx:ään molempien puolien yhteiseksi. */}
+      <JonoTila />
 
       {poistettava && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
