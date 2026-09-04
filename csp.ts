@@ -78,14 +78,42 @@ export const CSP = Object.entries(DIREKTIIVIT)
   .map(([direktiivi, arvot]) => `${direktiivi} ${arvot.join(' ')}`)
   .join('; ');
 
+// KEHITYSPALVELIN TARVITSEE POIKKEUKSEN, ja syy on työkalussa eikä sovelluksessa.
+//
+// @vitejs/plugin-react injektoi dev-tilassa index.html:ään inline-skriptin (React
+// Refresh -preamble). `script-src 'self'` estää sen, jolloin plugin ei löydä preamblea
+// ja SOVELLUS EI RENDERÖIDY LAINKAAN — juuri (#root) jää tyhjäksi ilman että konsolissa
+// näkyy muuta kuin CSP-ilmoitus. Tämä löytyi vasta kun sivu jäi tyhjäksi kesken
+// kehitystyön; ensimmäisellä käyttöönotolla ehti latautua välimuistista toimiva versio.
+//
+// Poikkeus koskee VAIN script-srciä ja vain dev-palvelinta. Muut direktiivit pysyvät
+// tuotannon mukaisina, joten tyyli-, kuva-, yhteys- ja kehysrikkomukset näkyvät yhä
+// kehityksessä — ja juuri ne ovat niitä joita sovelluskoodi voi rikkoa. Sovellus itse
+// ei käytä yhtään inline-skriptiä, joten poikkeus ei peitä mitään sen omaa virhettä.
+//
+// `npm run preview` tarjoilee buildatun version ilman preamblea, ja se saa täsmälleen
+// tuotannon otsakkeen — siellä myös script-src on testattavissa.
+const CSP_DEV = CSP.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'");
+
 // Muut turvaotsakkeet, samat kuin tuotannon nginxissä. Nämä ovat kehityksessä mukana
 // samasta syystä kuin CSP: ero kehityksen ja tuotannon välillä on ero jota kukaan ei
 // huomaa ennen kuin se rikkoo jotain.
-export const TURVAOTSAKKEET = {
-  'Content-Security-Policy': CSP,
+const MUUT_OTSAKKEET = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'SAMEORIGIN',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
+};
+
+// Vite `preview`: buildattu sovellus, sama otsake kuin tuotannossa.
+export const TURVAOTSAKKEET = {
+  'Content-Security-Policy': CSP,
+  ...MUUT_OTSAKKEET,
+};
+
+// Vite `dev`: sama, paitsi script-src (ks. yllä).
+export const TURVAOTSAKKEET_DEV = {
+  'Content-Security-Policy': CSP_DEV,
+  ...MUUT_OTSAKKEET,
 };
 
 // --- Vastine nginxiin --------------------------------------------------------------

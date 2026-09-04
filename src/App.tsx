@@ -8,6 +8,8 @@ import {
   emptyEmpForm, employeeToFormState, onKortti, initialEmployees, initialCheckedInEmployees,
   type Checkin, type Tyontekija,
 } from './event/tyontekijat';
+import { Hatatilanneohjeet } from './event/nakymat/Hatatilanneohjeet';
+import { riskipisteet, riskitaso, RISKISAVYT, RISKITASOT } from './event/riskiarvio';
 import { paikallinenPaiva, yhdistaPaivaJaAika, muotoileLaskuri, muotoileKirjautumisaika } from './shared/ajat';
 import { muotoileEuro, laskeKokonaispalkka, isValidPasswordClient } from './shared/muotoilu';
 import { htmlTeksti, tulostusDokumentti, tulostaDokumentti, julisteDokumentti } from './shared/tuloste';
@@ -1973,33 +1975,6 @@ export default function App() {
   };
 
   // Riskin suuruus: todennäköisyys x seurausten vakavuus, tulos 1-5
-  const riskMatrix = [
-    [1, 2, 3],
-    [2, 3, 4],
-    [3, 4, 5]
-  ];
-
-  const getRiskScore = (prob: unknown, sev: unknown) => {
-    if (!prob || !sev) return 0;
-    return riskMatrix[prob - 1][sev - 1];
-  };
-
-  const riskLevels: Record<number, { label: string; tone: string; action: string }> = {
-    1: { label: 'Merkityksetön riski', tone: 'emerald', action: 'Toimenpiteitä ei tarvita. Tilannetta seurataan normaalisti.' },
-    2: { label: 'Vähäinen riski', tone: 'lime', action: 'Seurataan tilannetta. Harkitaan edullisia parannuksia, jos ne ovat helposti toteutettavissa.' },
-    3: { label: 'Kohtalainen riski', tone: 'amber', action: 'Toimenpiteet on suunniteltava ja toteutettava määräajassa. Riskiä pienennetään ennen tapahtuman alkua.' },
-    4: { label: 'Merkittävä riski', tone: 'orange', action: 'Toimenpiteet ovat välttämättömiä. Toimintaa ei aloiteta ennen kuin riskiä on pienennetty.' },
-    5: { label: 'Sietämätön riski', tone: 'rose', action: 'Toiminta keskeytetään tai sitä ei aloiteta. Riski on poistettava ennen jatkamista.' }
-  };
-
-  const riskTones: Record<string, { bg: string; border: string; text: string; solid: string }> = {
-    emerald: { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', solid: 'bg-emerald-600' },
-    lime: { bg: 'bg-lime-50', border: 'border-lime-200', text: 'text-lime-700', solid: 'bg-lime-600' },
-    amber: { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700', solid: 'bg-amber-500' },
-    orange: { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', solid: 'bg-orange-500' },
-    rose: { bg: 'bg-rose-50', border: 'border-rose-200', text: 'text-rose-700', solid: 'bg-rose-600' }
-  };
-
   const resetRiskForm = () => {
     setRaTarget(''); setRaHazard(''); setRaCategory(''); setRaControls('');
     setRaProb(0); setRaSev(0);
@@ -2074,12 +2049,12 @@ export default function App() {
       alert('Kirjaa vähintään kohde ja vaaran kuvaus.');
       return;
     }
-    const score = getRiskScore(raProb, raSev);
+    const score = riskipisteet(raProb, raSev);
     if (!score) {
       alert('Valitse todennäköisyys ja seurausten vakavuus.');
       return;
     }
-    const resScore = getRiskScore(raResProb, raResSev);
+    const resScore = riskipisteet(raResProb, raResSev);
 
     setRiskAssessments(prev => [{
       id: getRiskId(),
@@ -4372,7 +4347,7 @@ export default function App() {
     .map(ra => ({
       id: `risk-${ra.id}`,
       type: ra.score >= 4 ? 'critical' : 'warning',
-      message: `Riskiarvio (${riskLevels[ra.score].label}): ${ra.hazard}`,
+      message: `Riskiarvio (${RISKITASOT[ra.score].label}): ${ra.hazard}`,
       time: ra.date,
       location: ra.target
     }));
@@ -9001,8 +8976,8 @@ export default function App() {
             ) : (
               <div className="space-y-3">
                 {currentEventRiskAssessments.map((ra) => {
-                  const level = riskLevels[ra.score];
-                  const tone = riskTones[level.tone];
+                  const level = RISKITASOT[ra.score];
+                  const tone = RISKISAVYT[level.tone];
                   return (
                     <button
                       key={ra.id}
@@ -9050,13 +9025,13 @@ export default function App() {
           { value: 3, label: 'Vakavat', desc: 'Pysyvä vamma, kuolema tai toiminnan keskeytyminen' }
         ];
 
-        const score = getRiskScore(raProb, raSev);
-        const level = score ? riskLevels[score] : null;
-        const tone = level ? riskTones[level.tone] : null;
+        const score = riskipisteet(raProb, raSev);
+        const level = score ? RISKITASOT[score] : null;
+        const tone = level ? RISKISAVYT[level.tone] : null;
 
-        const resScore = getRiskScore(raResProb, raResSev);
-        const resLevel = resScore ? riskLevels[resScore] : null;
-        const resTone = resLevel ? riskTones[resLevel.tone] : null;
+        const resScore = riskipisteet(raResProb, raResSev);
+        const resLevel = resScore ? RISKITASOT[resScore] : null;
+        const resTone = resLevel ? RISKISAVYT[resLevel.tone] : null;
 
         const inputCls = "w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-amber-500";
         const labelCls = "block text-sm font-bold text-slate-700 mb-1.5";
@@ -9188,15 +9163,15 @@ export default function App() {
                           <tr key={p.value}>
                             <td className="p-2 text-xs text-slate-600 font-semibold text-left">{p.label}</td>
                             {sevLabels.map((v) => {
-                              const cellScore = riskMatrix[p.value - 1][v.value - 1];
-                              const cellTone = riskTones[riskLevels[cellScore].tone];
+                              const cellScore = riskipisteet(p.value, v.value);
+                              const cellTaso = riskitaso(cellScore);
                               const active = raProb === p.value && raSev === v.value;
                               return (
                                 <td key={v.value} className="p-1">
                                   <button
                                     type="button"
                                     onClick={() => { setRaProb(p.value); setRaSev(v.value); }}
-                                    className={`w-full py-3 rounded-lg font-bold text-white transition-all ${cellTone.solid} ${active ? 'ring-4 ring-slate-800 scale-105' : 'opacity-60 hover:opacity-100'}`}
+                                    className={`w-full py-3 rounded-lg font-bold text-white transition-all ${cellTaso?.savy.solid ?? 'bg-slate-400'} ${active ? 'ring-4 ring-slate-800 scale-105' : 'opacity-60 hover:opacity-100'}`}
                                   >
                                     {cellScore}
                                   </button>
@@ -9758,105 +9733,13 @@ export default function App() {
             </div>
           </div>
         );
-      case 'documents_emergency': {
-        const emergencyCards = [
-          { title: 'Kaikkien alueiden evakuointi', icon: DoorOpen, tone: 'rose', steps: ['Vahvista päätös turvallisuuspäälliköltä', 'Pysäytä esitys ja anna kuulutus', 'Avaa kaikki hätäpoistumistiet', 'Ohjaa yleisö kokoontumispaikoille', 'Kuittaa alueiden tyhjeneminen TIKE:lle'] },
-          { title: 'Tulipalo', icon: AlertTriangle, tone: 'amber', steps: ['Hätäilmoitus 112', 'Rajaa alue ja estä pääsy', 'Alkusammutus jos turvallista', 'Opasta pelastuslaitos paikalle', 'Kirjaa tapahtuma-aika ja toimenpiteet'] },
-          { title: 'Väkijoukon puristuminen', icon: Users, tone: 'rose', steps: ['Keskeytä esitys välittömästi', 'Avaa sivukäytävät ja purkureitit', 'Ohjaa yleisö taaksepäin kuulutuksella', 'Hälytä ensiapu etualueelle', 'Kirjaa tiheysarvio ja aika'] },
-          { title: 'Vakava väkivaltatilanne', icon: ShieldAlert, tone: 'rose', steps: ['Hätäilmoitus 112', 'Suojaa ja siirrä yleisö pois alueelta', 'Älä lähesty ilman poliisia', 'Varmista kohteen tiedot ja kulkusuunta', 'Säilytä tallenteet ja havainnot'] },
-          { title: 'Sähkökatko', icon: Wrench, tone: 'slate', steps: ['Varmista varavalaistus', 'Siirry radioyhteyteen', 'Estä pääsy pimeille alueille', 'Ota yhteys tekniseen vastaavaan', 'Arvioi tarve keskeyttää tapahtuma'] },
-          { title: 'Sään äkillinen muutos', icon: Cloud, tone: 'sky', steps: ['Seuraa varoituksia', 'Tarkista rakenteiden kiinnitykset', 'Valmistele suojautumisohjeet', 'Harkitse esityksen keskeytystä', 'Tiedota yleisölle ajoissa'] }
-        ];
-        const toneMap: Record<string, string> = {
-          rose: { bg: 'bg-rose-50', border: 'border-rose-200', text: 'text-rose-600', num: 'bg-rose-600' },
-          amber: { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', num: 'bg-amber-600' },
-          slate: { bg: 'bg-slate-100', border: 'border-slate-200', text: 'text-slate-600', num: 'bg-slate-600' },
-          sky: { bg: 'bg-sky-50', border: 'border-sky-200', text: 'text-sky-600', num: 'bg-sky-600' }
-        };
-
+      case 'documents_emergency':
         return (
-          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
-            <TakaisinLinkki onClick={() => setActiveTab('documents')}>
-              Takaisin asiakirjavalikkoon
-            </TakaisinLinkki>
-
-            <div className="mb-6 border-b border-slate-100 pb-4">
-              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                <ShieldAlert className="text-rose-500" size={24} />
-                Hätätilanneohjeet
-              </h2>
-              <p className="text-sm text-slate-500 mt-1">Toimintakortit. Nämä eivät korvaa tapahtuman pelastussuunnitelmaa.</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {emergencyCards.map((card, idx) => {
-                const Icon = card.icon;
-                const tone = toneMap[card.tone];
-                return (
-                  <div key={idx} className={`rounded-xl border p-5 ${tone.bg} ${tone.border}`}>
-                    <div className="flex items-center gap-2 mb-3">
-                      <Icon className={tone.text} size={20} />
-                      <h3 className="font-bold text-slate-800 text-sm">{card.title}</h3>
-                    </div>
-                    <ol className="space-y-2">
-                      {card.steps.map((step, sIdx) => (
-                        <li key={sIdx} className="flex gap-2 text-sm text-slate-700">
-                          <span className={`shrink-0 w-5 h-5 rounded-full ${tone.num} text-white text-xs font-bold flex items-center justify-center mt-0.5`}>
-                            {sIdx + 1}
-                          </span>
-                          <span>{step}</span>
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="mt-6 bg-slate-800 rounded-xl p-5 text-white">
-              <h3 className="font-bold text-sm mb-3 flex items-center gap-2">
-                <PhoneCall size={18} className="text-rose-400" />
-                Hätänumerot
-              </h3>
-              {/* Numerot tulevat tapahtuman perustiedoista (osio 14). Aiemmin korteissa
-                  luki pelkkä rooli ilman numeroa, eli hätänumerokortti ilman numeroa.
-                  112 on kiinteä, koska se on sama kaikkialla. */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                <a href="tel:112" className="bg-slate-700 hover:bg-slate-600 rounded-lg p-3 transition-colors block">
-                  <div className="text-2xl font-bold">112</div>
-                  <div className="text-xs text-slate-300 mt-0.5">Hätäkeskus</div>
-                </a>
-                {[
-                  { numero: valittuTapahtumaLomake.phoneTurva1, otsikko: 'Turva 1', selite: 'Turvallisuuspäällikkö' },
-                  { numero: valittuTapahtumaLomake.phoneTurva2, otsikko: 'Turva 2', selite: 'Turvajohto' },
-                  { numero: valittuTapahtumaLomake.phoneTike, otsikko: 'TIKE', selite: 'Tilannekeskus' },
-                  { numero: valittuTapahtumaLomake.phoneFirstAid, otsikko: 'EA-päivystys', selite: 'Ensiapu' },
-                ].map((kortti) => {
-                  const numero = String(kortti.numero || '').trim();
-                  return numero ? (
-                    <a
-                      key={kortti.otsikko}
-                      href={`tel:${numero}`}
-                      className="bg-slate-700 hover:bg-slate-600 rounded-lg p-3 transition-colors block"
-                    >
-                      <div className="font-bold">{numero}</div>
-                      <div className="text-xs text-slate-300 mt-0.5">{kortti.otsikko} — {kortti.selite}</div>
-                    </a>
-                  ) : (
-                    <div key={kortti.otsikko} className="bg-slate-700/50 rounded-lg p-3">
-                      <div className="font-bold text-slate-400">Ei numeroa</div>
-                      <div className="text-xs text-slate-400 mt-0.5">{kortti.otsikko} — {kortti.selite}</div>
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-slate-400 mt-3">
-                Numerot täytetään tapahtuman perustiedoissa (osio 14, Viestintä ja hätänumerot).
-              </p>
-            </div>
-          </div>
+          <Hatatilanneohjeet
+            lomake={valittuTapahtumaLomake}
+            onTakaisin={() => setActiveTab('documents')}
+          />
         );
-      }
       // 'settings' ei ole enää oma välilehtensä: sivuvalikon painike avaa saman
       // asetusnäkymän kuin profiilivalikko (viewingSettings). Aiemmin täällä oli
       // paikanpitäjäkortti, eli näkyvämpi kahdesta "Asetukset"-kohdasta ei tehnyt mitään.
@@ -14650,10 +14533,10 @@ export default function App() {
 
       {openedRiskAssessment && (() => {
         const ra = openedRiskAssessment;
-        const level = riskLevels[ra.score];
-        const tone = riskTones[level.tone];
-        const resLevel = ra.resScore ? riskLevels[ra.resScore] : null;
-        const resTone = resLevel ? riskTones[resLevel.tone] : null;
+        const level = RISKITASOT[ra.score];
+        const tone = RISKISAVYT[level.tone];
+        const resLevel = ra.resScore ? RISKITASOT[ra.resScore] : null;
+        const resTone = resLevel ? RISKISAVYT[resLevel.tone] : null;
         return (
           <div
             className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
