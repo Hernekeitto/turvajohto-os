@@ -1,0 +1,46 @@
+{
+  "//": "Generoitu tiedosto. Lähde ja perustelut: asennus/rakenna.mjs — älä muokkaa käsin.",
+  "id": "/guard",
+  "name": "Turvajohto GUARD",
+  "short_name": "GUARD",
+  "description": "Vartioinnin kohdekierrokset, vuorot ja poikkeamakirjaukset kentällä.",
+  "lang": "fi",
+  "dir": "ltr",
+  "start_url": "/guard",
+  "scope": "/guard",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#1e293b",
+  "background_color": "#f4f5f8",
+  "icons": [
+    {
+      "src": "/kuvakkeet/guard-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/kuvakkeet/guard-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/kuvakkeet/guard-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/kuvakkeet/guard-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": [
+    "business",
+    "productivity"
+  ],
+  "prefer_related_applications": false
+}

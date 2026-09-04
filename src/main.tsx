@@ -18,6 +18,7 @@ import PasswordGate from './PasswordGate.tsx'
 import { PaivitysKehote } from './shared/komponentit/PaivitysKehote.tsx'
 import { JonoTila } from './shared/komponentit/JonoTila.tsx'
 import { rekisteroiPalvelutyontekija } from './shared/palvelutyontekija.ts'
+import { asetaKuvakkeetJaManifesti } from './shared/kuvakkeet.ts'
 
 // Tuotekohtaiset osat ladataan vasta tarvittaessa: mainossivu on julkinen ja sen
 // pitää aueta heti, eikä sen kuulu vetää mukanaan koko sovellusnippua.
@@ -58,6 +59,12 @@ normalisoiPolku(tuote)
 // ohjeistonsa mukaiselta. Asetetaan ennen ensimmäistä renderöintiä, jottei sivu välähdä
 // väärän puolen väreissä. Mainossivu on oma teemansa: se on ainoa tumma näkymä.
 document.documentElement.dataset.tuote = tuote === 'landing' ? 'os' : tuote
+
+// Kuvake, otsikko, teemaväri ja manifesti ovat samalla tavalla tuotekohtaisia kuin
+// väritokenit, ja ne asetetaan tässä samasta syystä: index.html on yhteinen kaikille
+// kolmelle polulle, joten tuotteen tunnus ratkeaa vasta kun polku on tulkittu. Ilman
+// manifestia sovellusta ei voi asentaa laitteelle lainkaan (ks. asennus/LUEMINUT.md).
+asetaKuvakkeetJaManifesti(tuote)
 
 // Näytetään latauksen ajaksi tyhjä sivu eikä pyörivää indikaattoria: nippu tulee
 // samalta palvelimelta millisekunneissa, ja välähtävä spinneri näyttäisi virheeltä.

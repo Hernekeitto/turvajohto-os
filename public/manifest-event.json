@@ -1,0 +1,46 @@
+{
+  "//": "Generoitu tiedosto. Lähde ja perustelut: asennus/rakenna.mjs — älä muokkaa käsin.",
+  "id": "/event",
+  "name": "Turvajohto EVENT",
+  "short_name": "EVENT",
+  "description": "Tapahtumaturvallisuuden tilannekuva, TIKE-raportointi ja järjestyksenvalvojan tapahtumailmoitukset.",
+  "lang": "fi",
+  "dir": "ltr",
+  "start_url": "/event",
+  "scope": "/event",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#0f172a",
+  "background_color": "#f8fafc",
+  "icons": [
+    {
+      "src": "/kuvakkeet/event-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/kuvakkeet/event-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/kuvakkeet/event-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/kuvakkeet/event-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": [
+    "business",
+    "productivity"
+  ],
+  "prefer_related_applications": false
+}
