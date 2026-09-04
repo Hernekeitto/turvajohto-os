@@ -2,8 +2,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from './SessionContext';
 // Jaetut apurit (ks. src/shared/). Nämä olivat aiemmin tässä tiedostossa, mutta ne eivät
 // koske App-komponentin tilaan ja GUARD-puoli tarvitsee ne samoina.
-import { TUNNISTE_ALKU, seuraavaTunnisteNumero, muotoileTunniste, taydennaTunnisteet } from './shared/tunnisteet';
-import { kayttajatunnusNimesta, splitFullName, buildFullName } from './shared/nimet';
+import { seuraavaTunnisteNumero, muotoileTunniste, taydennaTunnisteet } from './shared/tunnisteet';
+import { kayttajatunnusNimesta, buildFullName } from './shared/nimet';
+import {
+  emptyEmpForm, employeeToFormState, onKortti, initialEmployees, initialCheckedInEmployees,
+  type Checkin, type Tyontekija,
+} from './event/tyontekijat';
 import { paikallinenPaiva, yhdistaPaivaJaAika, muotoileLaskuri, muotoileKirjautumisaika } from './shared/ajat';
 import { muotoileEuro, laskeKokonaispalkka, isValidPasswordClient } from './shared/muotoilu';
 import { htmlTeksti, tulostusDokumentti, tulostaDokumentti, julisteDokumentti } from './shared/tuloste';
@@ -32,6 +36,10 @@ import { haeTiedotteet, onKuitannut, onVoimassa, type Tiedote } from './shared/t
 import { Kalusto } from './shared/komponentit/Kalusto';
 import { Vyohykekirjaukset, type AlueKirjaus } from './shared/komponentit/Vyohykekirjaukset';
 import { avaaJono, kaynnistaAutomatiikka, kuunteleLahetyksia, lisaaJonoon } from './shared/jono';
+import type {
+  AuditMerkinta, Ilmoitus, JaettuKohde, Jakolinkki, KayttajaRivi,
+  TapahtumaPaasy, TapahtumanLomake, TapahtumanTiedosto,
+} from './event/tyypit';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from './shared/kalusto';
 import { Mittaristo } from './shared/komponentit/Mittaristo';
 import { Jalkiraportit } from './shared/komponentit/Jalkiraportit';
@@ -117,116 +125,6 @@ import {
   BarChart3,
   ClipboardList,
 } from 'lucide-react';
-
-// --- MOCK DATA ---
-const mockEmployees = [
-  "Korhonen Elli Marja Orvokki",
-  "Virtanen Matti Johannes Antero",
-  "Mäkinen Kalle Petteri Aleksi",
-  "Nieminen Anna Sofia Maria",
-  "Lahtinen Oskari Juhani Tapio"
-];
-
-// Työntekijäpankin alkuarvo ensimmäistä latausta varten — todellinen rekisteri
-// tulee palvelimelta (ks. `employees`-tila) samaan tapaan kuin tapahtumat/raportit.
-const emptyEmpForm = {
-  // Pysyvä tunnistenumero (#1000 →). Annetaan automaattisesti tallennettaessa eikä sitä
-  // muuteta jälkikäteen — ks. seuraavaTunnisteNumero.
-  displayId: null,
-  // 1. Henkilötiedot
-  firstName: '', lastName: '', personalId: '', birthDate: '', nationality: '',
-  // 2. Yhteystiedot
-  address: '', postalCode: '', postalCity: '', email: '', phone: '',
-  // 3. Pankkitiedot
-  iban: '', bic: '', bankName: '',
-  // Veronumero on rakennusalan veronumerorekisterin 12-numeroinen tunniste. Salataan
-  // levylle henkilötunnuksen tapaan (ks. server/store.js ENCRYPTED_FIELDS).
-  taxNumber: '',
-  // 4. Työsuhdetiedot. Työsopimuksen ehdot kerätään samaan lomakkeeseen, koska
-  // työntekijäpankki on ainoa paikka jossa työntekijän tiedot ovat kokonaisuutena.
-  employmentStart: '',
-  // 'permanent' = toistaiseksi voimassa oleva, 'fixed' = määräaikainen (jolloin
-  // employmentFixedFrom/To kertovat jakson).
-  employmentType: '',
-  employmentFixedFrom: '', employmentFixedTo: '',
-  workLocation: '',
-  // 'monthly' = kuukausipalkka 120 h / 3 vk, 'parttime' = osa-aikainen tuntipalkka
-  // (alle 112 h 30 min / 3 vk), 'oncall' = erikseen työhön kutsuttava (työvoimareservi).
-  workTimeType: '',
-  minHoursPer3Weeks: '',
-  // Palkkaus. Tasopalkan euromäärä syötetään käsin: TES:n palkkataulukko muuttuu
-  // sopimuskausittain eikä sitä ole sovelluksessa, joten taso ja paikkakuntaluokka
-  // kirjataan dokumentoinniksi ja euromäärä sen viereen.
-  payLevel: '', municipalityClass: '', basePay: '',
-  personalPayPart: '', personalPayBasis: '',
-  personalPay: '',
-  otherPay: '', otherPayBasis: '',
-  // Kuukausipalkan jakaja tuntipalkaksi. Oletus 173.33 = 120 h / 3 vk eli 40 h/vk
-  // kuukausikeskiarvona — muutettavissa, koska oikea jakaja riippuu sopimuksesta.
-  hourDivisor: '173.33',
-  otherTerms: '',
-  // Vartijan peruskurssin sitoutumisehto (ks. Koulutus-tekstiruutu lomakkeessa).
-  trainingCommitmentMonths: '', trainingCourseCost: '',
-  // 5. Ajokortti ja yleiset luvat
-  hasDrivingLicense: false,
-  drivingLicense: '',
-  adrPermit: false, alcoholPass: false, hygienePass: false,
-  craneCard: false, craneCardUntil: '',
-  electricalWorkCard: false, electricalWorkCardUntil: '',
-  firstAidEA1: false, firstAidEA1Until: '',
-  firstAidEA2: false, firstAidEA2Until: '',
-  firstAidEA3: false, firstAidEA3Until: '',
-  // 6. Turvallisuusalan kortit (kyllä/ei + numero + voimassa kuukausi/vuosi)
-  hasJvCard: false, jvCard: '', jvCardValidUntil: '',
-  hasGuardCard: false, guardCard: '', guardCardValidUntil: '',
-  hasGasPermit: false, gasPermit: '', gasPermitValidUntil: '',
-  // Voimankäyttövälineiden kertauskoulutus kuuluu turvallisuusalan pätevyyksiin, ei
-  // yleisiin työturvallisuuskortteihin — siirretty tänne osiosta 7.
-  trainingRefresher: false, trainingRefresherUntil: '',
-  // 7. Työturvallisuuskortit (kyllä/ei + voimassa pvm)
-  roadSafetyCard: false, roadSafetyCardUntil: '',
-  forkliftCard: false, forkliftCardUntil: '',
-  hotWorkCard: false, hotWorkCardUntil: '',
-  safetyCard: false, safetyCardUntil: '',
-  // 8. Erityiskoulutukset (kyllä/ei)
-  trainingForce: false, trainingGas: false, trainingBaton: false, firearmTraining: false,
-  // 9. Kielitaito ({ language, level } -lista, level 1-5)
-  languages: [],
-};
-
-// Muodostaa lomaketilan olemassa olevasta rekisterimerkinnästä (tai pelkästä nimestä),
-// ja täydentää etu-/sukunimen vanhasta datasta jos niitä ei ole vielä tallennettu erikseen.
-const employeeToFormState = (emp) => {
-  if (!emp) return emptyEmpForm;
-  const needsSplit = emp.firstName === undefined && emp.name;
-  const pohja = { ...emptyEmpForm, ...emp, ...(needsSplit ? splitFullName(emp.name) : {}) };
-  // Kyllä-valinnat (hasJvCard, hasDrivingLicense, ...) lisättiin vasta jälkikäteen: ennen
-  // niitä tallennetuilla työntekijöillä on pelkkä kortin numero tai ajo-oikeuden laatu.
-  // Ilman tätä johtamista vanhan työntekijän kortti näyttäisi lomakkeella rastittamattomalta
-  // ja sen kentät olisivat lukittuina — eli tiedot katoaisivat näkyvistä.
-  return {
-    ...pohja,
-    hasDrivingLicense: !!(emp.hasDrivingLicense || emp.drivingLicense),
-    hasJvCard: !!(emp.hasJvCard || emp.jvCard),
-    hasGuardCard: !!(emp.hasGuardCard || emp.guardCard),
-    hasGasPermit: !!(emp.hasGasPermit || emp.gasPermit),
-  };
-};
-
-// Onko työntekijällä kyseinen turvallisuusalan kortti? Kyllä-valinta riittää, mutta
-// pelkkä kortin numero kelpaa myös (ks. employeeToFormState: vanha data).
-const onKortti = (emp: any, boolKey: string, numKey: string) => !!(emp?.[boolKey] || emp?.[numKey]);
-
-
-const initialEmployees = mockEmployees.map((name, idx) => ({
-  ...emptyEmpForm,
-  ...splitFullName(name),
-  id: `emp-seed-${idx}`,
-  name,
-  // Tämän on oltava emptyEmpFormin JÄLKEEN: siinä displayId on null, joka muuten
-  // ylikirjoittaisi tässä annetun numeron.
-  displayId: TUNNISTE_ALKU + idx,
-}));
 
 // Tapahtumat — jaettu perustieto, käytetään sekä tapahtumavalinnassa että
 // tapahtumariippumattomassa raporttinäkymässä (nimen näyttämiseen).
@@ -409,12 +307,6 @@ const FORM_FIELD_GROUPS = [
     { key: 'otherOperators', label: 'Alueella toimivat muut osapuolet' },
     { key: 'buildPhaseResponsible', label: 'Päävastuu alueen kokonaisturvallisuudesta rakennusvaiheessa' },
   ]},
-];
-
-const initialCheckedInEmployees = [
-  { id: 1, eventId: 'fesx', name: "Korhonen Elli Marja Orvokki", role: "Järjestyksenvalvoja", vest: true, badge: "1234", headset: true, radio: "R-12", checkInDate: "", checkInTime: "10:15", checkOutDate: "", checkOutTime: "", comment: "", checkOutComment: "", status: 'checked_in' },
-  { id: 2, eventId: 'fesx', name: "Virtanen Matti Johannes Antero", role: "Vartija", vest: false, badge: "5521", headset: false, radio: "", checkInDate: "", checkInTime: "10:22", checkOutDate: "", checkOutTime: "", comment: "", checkOutComment: "", status: 'checked_in' },
-  { id: 3, eventId: 'fesx', name: "Mäkinen Kalle Petteri Aleksi", role: "Järjestyksenvalvoja", vest: true, badge: "9982", headset: true, radio: "R-05", checkInDate: "", checkInTime: "10:40", checkOutDate: "", checkOutTime: "", comment: "", checkOutComment: "", status: 'checked_in' }
 ];
 
 // Radiokanavien oletusjako. Tämä on uuden tapahtuman ESITÄYTTÖ, ei kiinteä lista:
@@ -686,7 +578,7 @@ export default function App() {
   // 'new' = uuden tapahtuman lomake. Muut arvot ovat tavallisia tapahtuma-id:itä;
   // erillistä 'feso'-mallinäkymää ei enää ole, koska tyhjät tiedot käsitellään nyt
   // kaikkialla kunnollisilla tyhjillä tiloilla.
-  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
 
   // Etusivu on kirjautumisen jälkeen ensimmäinen näkymä (selectedEvent === null JA
   // showEventPicker === false). Sieltä "Valitse tapahtuma" avaa tapahtumalistan.
@@ -712,7 +604,7 @@ export default function App() {
 
   // "Tallennetut tapahtumat" -näkymä: poistetut (arkistoidut) tapahtumat ja niiden data
   const [viewingArchivedEvents, setViewingArchivedEvents] = useState(false);
-  const [archivedEventDetailId, setArchivedEventDetailId] = useState(null);
+  const [archivedEventDetailId, setArchivedEventDetailId] = useState<string | null>(null);
 
   const emptyNewEvent = {
     clientName: '', businessId: '',
@@ -896,15 +788,15 @@ export default function App() {
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [changePasswordError, setChangePasswordError] = useState('');
   const [changePasswordSubmitting, setChangePasswordSubmitting] = useState(false);
-  const [viewingUserAdmin, setViewingUserAdmin] = useState(null); // null | 'list' | 'new' | 'permissions'
-  const [userAdminList, setUserAdminList] = useState([]);
+  const [viewingUserAdmin, setViewingUserAdmin] = useState<'list' | 'new' | 'permissions' | null>(null);
+  const [userAdminList, setUserAdminList] = useState<KayttajaRivi[]>([]);
   const [userAdminLoading, setUserAdminLoading] = useState(false);
   const [userAdminError, setUserAdminError] = useState('');
   // Audit-loki: kuka teki mitä milloin (data-kokoelmien luonti/muokkaus/poisto,
   // käyttäjähallinnan muutokset, kirjautumiset) — vain admin, ks. server/audit.js.
   const [viewingAuditLog, setViewingAuditLog] = useState(false);
   const [viewingSettings, setViewingSettings] = useState(false);
-  const [auditEntries, setAuditEntries] = useState([]);
+  const [auditEntries, setAuditEntries] = useState<AuditMerkinta[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState('');
   const [auditHasMore, setAuditHasMore] = useState(false);
@@ -925,16 +817,16 @@ export default function App() {
 
   // Ilmoituskello. Palvelin koostaa listan (/api/notifications), joten uusia
   // ilmoituslajeja voi lisätä ilman frontin muutoksia.
-  const [notifications, setNotifications] = useState([]);
+  const [notifications, setNotifications] = useState<Ilmoitus[]>([]);
   // "Minulle jaetut" -näkymä: käyttäjälle erikseen jaetut tiedostot ja kansiot.
   const [viewingSharedWithMe, setViewingSharedWithMe] = useState(false);
-  const [sharedWithMe, setSharedWithMe] = useState([]);
+  const [sharedWithMe, setSharedWithMe] = useState<JaettuKohde[]>([]);
   const [sharedWithMeLoading, setSharedWithMeLoading] = useState(false);
 
   // Tapahtumakohtaiset lisätyt lomakkeet ("Täytettävät lomakkeet"). Sisäänrakennetut
   // lomakkeet ovat edelleen koodissa, koska niihin liittyy toiminnallisuutta (tab,
   // tulostettava kenttäluettelo) — tänne tulevat vain käyttäjän itse lisäämät.
-  const [eventForms, setEventForms] = useState([]);
+  const [eventForms, setEventForms] = useState<TapahtumanLomake[]>([]);
   const [eventFormsLoaded, setEventFormsLoaded] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newFormName, setNewFormName] = useState('');
@@ -946,10 +838,10 @@ export default function App() {
   // Kansiot ja tiedostot ovat samassa kokoelmassa: type erottaa ne ja parentId tekee
   // sisäkkäisyyden. Navigointi tapahtuu "ollaan kansiossa" -mallilla murupolun kanssa,
   // mikä on yksinkertaisempi kuin aina auki oleva puu ja toimii mielivaltaisen syvänä.
-  const [eventFiles, setEventFiles] = useState([]);
+  const [eventFiles, setEventFiles] = useState<TapahtumanTiedosto[]>([]);
   const [eventFilesLoaded, setEventFilesLoaded] = useState(false);
-  const [fileShares, setFileShares] = useState([]);
-  const [currentFolderId, setCurrentFolderId] = useState(null);
+  const [fileShares, setFileShares] = useState<Jakolinkki[]>([]);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState('');
   const [tiedostoUploading, setTiedostoUploading] = useState(false);
   const tiedostoInputRef = useRef<HTMLInputElement>(null);
@@ -974,10 +866,10 @@ export default function App() {
   const [hylkaysSyyt, setHylkaysSyyt] = useState<Record<string, string>>({});
 
   // Jakodialogi: mitä jaetaan ja millä ehdoilla.
-  const [shareTarget, setShareTarget] = useState(null);   // eventFiles-tietue
+  const [shareTarget, setShareTarget] = useState<TapahtumanTiedosto | null>(null);
   const [shareMode, setShareMode] = useState('link');     // 'link' | 'password' | 'users'
   const [sharePassword, setSharePassword] = useState('');
-  const [shareUsers, setShareUsers] = useState([]);
+  const [shareUsers, setShareUsers] = useState<string[]>([]);
   const [shareVoimassa, setShareVoimassa] = useState('7');  // vrk tai 'oma' | 'ikuinen'
   const [shareOmaPvm, setShareOmaPvm] = useState('');
   const [shareOmaKlo, setShareOmaKlo] = useState('12:00');
@@ -987,7 +879,7 @@ export default function App() {
   const [luotuLinkki, setLuotuLinkki] = useState(null);   // { url, approvalStatus }
   // Tapahtumarajaus: tyhjä = ei rajoitusta (näkee kaikki tapahtumat), muuten lista
   // tapahtuma-id:itä joihin käyttäjä on rajattu (ks. server/permissions.js: eventAccess).
-  const [permEventAccess, setPermEventAccess] = useState([]);
+  const [permEventAccess, setPermEventAccess] = useState<TapahtumaPaasy[]>([]);
   // Tuotepääsy: mihin puoliin ('event' / 'guard') tunnus pääsee. Palvelin torjuu tyhjän
   // listan, joten UI ei anna poistaa viimeistä valintaa (ks. vaihdaTuote).
   const [permTuotteet, setPermTuotteet] = useState(['event']);
@@ -1005,13 +897,13 @@ export default function App() {
   // Työntekijäpankki: yrityksen koko henkilöstörekisteri (yhteinen tila, tallennetaan palvelimelle)
   const [employees, setEmployees] = useState(initialEmployees);
   const [employeesLoaded, setEmployeesLoaded] = useState(false);
-  const [viewingEmployeeBank, setViewingEmployeeBank] = useState(null); // null | 'list' | 'form'
+  const [viewingEmployeeBank, setViewingEmployeeBank] = useState<'list' | 'form' | null>(null);
   const [employeeBankSearch, setEmployeeBankSearch] = useState('');
   const [empForm, setEmpForm] = useState(emptyEmpForm);
 
   // "Lisää tapahtumaan työntekijä" -näkymän tila (per-tapahtuma monivalinta rekisteristä)
   const [addEmpSearch, setAddEmpSearch] = useState('');
-  const [addEmpSelectedIds, setAddEmpSelectedIds] = useState([]);
+  const [addEmpSelectedIds, setAddEmpSelectedIds] = useState<string[]>([]);
   // Tapahtumakohtaiset nimimerkit "Lisää tapahtumaan" -listassa: { [työntekijän id]: 'Ensiapu 1' }
   const [addEmpNicknames, setAddEmpNicknames] = useState({});
 
@@ -1037,7 +929,7 @@ export default function App() {
   const [selectedEmp, setSelectedEmp] = useState('');
   // Kun muokataan olemassa olevaa sisäänkirjausriviä "Tapahtuman työntekijät" -sivulta
   // (eikä tehdä uutta sisäänkirjausta) — kohdistaa tallennuksen tähän tiettyyn riviin id:llä.
-  const [editingCheckIn, setEditingCheckIn] = useState(null);
+  const [editingCheckIn, setEditingCheckIn] = useState<Checkin | null>(null);
   const [checkInDate, setCheckInDate] = useState('');
   const [checkInTime, setCheckInTime] = useState('');
   const [checkInRole, setCheckInRole] = useState('Järjestyksenvalvoja');
@@ -1052,7 +944,7 @@ export default function App() {
 
   // Check-out Form State
   const [outEmpSearch, setOutEmpSearch] = useState('');
-  const [selectedOutEmp, setSelectedOutEmp] = useState(null);
+  const [selectedOutEmp, setSelectedOutEmp] = useState<Checkin | null>(null);
   const [checkOutDate, setCheckOutDate] = useState('');
   const [checkOutTime, setCheckOutTime] = useState('');
   // Vuoron päätteeksi kirjattavat huomiot (rikkoutuneet/kadonneet välineet yms.).
@@ -1077,7 +969,7 @@ export default function App() {
   const [jvaDetainedCount, setJvaDetainedCount] = useState('');
   const [jvaForce, setJvaForce] = useState(false);
   const [jvaTools, setJvaTools] = useState(false);
-  const [jvaToolList, setJvaToolList] = useState([]);
+  const [jvaToolList, setJvaToolList] = useState<string[]>([]);
   const [jvaToolOther, setJvaToolOther] = useState('');
   const [jvaFirearm, setJvaFirearm] = useState(false);
   const [jvaFirstAid, setJvaFirstAid] = useState(false);
@@ -1135,7 +1027,7 @@ export default function App() {
   const [karttaUploading, setKarttaUploading] = useState(false);
 
   // Edit Employee Form State
-  const [editingEmp, setEditingEmp] = useState(null);
+  const [editingEmp, setEditingEmp] = useState<Tyontekija | null>(null);
 
   // Avausvalmius. Tallennettu tila tulee palvelimelta kokoelmana 'readiness'
   // (yksi tietue per tapahtuma) — aiemmin koko näkymä oli pelkkää paikallista
@@ -2415,7 +2307,7 @@ export default function App() {
       ...toAdd.map((e, idx) => ({
         id: Date.now() + idx,
         eventId: selectedEvent,
-        name: e.name,
+        name: e.name ?? '',
         // employeeId ja displayId sitovat rosterirvin työntekijäpankin tietueeseen, jotta
         // kirjautuneen käyttäjän oma nimimerkki löytyy tästä tapahtumasta (kirjaajanTunniste).
         employeeId: e.id,
