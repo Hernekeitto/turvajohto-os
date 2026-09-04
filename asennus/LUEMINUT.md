@@ -1,8 +1,8 @@
 # Asennettava sovellus — manifesti, kuvakkeet ja Digital Asset Links
 
 Tämä hakemisto tekee Turvajohto OS:sta laitteelle asennettavan sovelluksen. Se kattaa
-Android-edellytyslistan kohdat 1–3 (`2026-09-04 - Turvajohto OS Android-sovelluksen
-edellytykset`). Kohdat 4–8 ovat yhä avoinna, ks. lopun tarkistuslista.
+Android-edellytyslistan kohdat 1–4 (`2026-09-04 - Turvajohto OS Android-sovelluksen
+edellytykset`). Kohdat 5–8 ovat yhä avoinna, ks. lopun tarkistuslista.
 
 ## Mikä on valmiina
 
@@ -11,6 +11,7 @@ edellytykset`). Kohdat 4–8 ovat yhä avoinna, ks. lopun tarkistuslista.
 | Web app manifest, erikseen EVENTille ja GUARDille | valmis |
 | Kuvakkeet: 192, 512, maskable 192, maskable 512, apple-touch 180, favicon | valmis |
 | Manifestin ja kuvakkeiden kytkentä sivulle tuotteen mukaan | valmis |
+| Takaisin-painike: näkymät ja modaalit historiaan | valmis, `src/shared/navigointi.ts` |
 | `/.well-known/assetlinks.json` -reitti ja generaattori | valmis, **sisältö tyhjä** |
 | Sovelluksen allekirjoitustiiviste assetlinksiin | **puuttuu** — syntyy vasta kun sovellus on olemassa |
 
@@ -144,17 +145,44 @@ https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=http
 - Sisäinen testaus (internal testing) on oikea kanava ensimmäiselle versiolle: se ei
   vaadi arviointia ja jakelu tapahtuu linkillä.
 
+## Takaisin-painike (kohta 4, tehty)
+
+`display: standalone` tarkoittaa, että Androidin takaisin-nappi on sovelluksen ainoa
+paluunappi — ja jos historiassa ei ole mitään, se **sulkee sovelluksen** kesken
+lomakkeen tai kirjauksen. Navigointi on komponentin tilassa (EVENT: `activeTab` ja
+ylätason `viewing*`-tilat, GUARD: `*Kohde`-tilat), joten historiaan piti viedä ne.
+
+Toteutus on `src/shared/navigointi.ts`, kaksi hookia:
+
+- `useHistorianavigointi(nakyma, siirry)` — kutsutaan kertaalleen sovelluksen
+  juuressa. `nakyma` on näkymätunniste, joka **johdetaan** sovelluksen omista tiloista
+  (ei uutta rinnakkaista navigointitilaa), ja `siirry` asettaa tilat takaisin-napin
+  pyytämään näkymään.
+- `useTakaisinEste(auki, sulje)` — tekee modaalista takaisin-napilla suljettavan.
+  Modaali saa oman historiamerkintänsä, jonka takaisin kuluttaa: **näkymä ei vaihdu,
+  vain päällimmäinen modaali sulkeutuu.** Kytketty EVENTin yhdeksään ja GUARDin yhteen
+  modaaliin.
+
+Osoiterivi ei muutu: näkymä kuljetetaan `history.pushState`in tilaobjektissa. Omat
+osoitteet näkymille vaatisivat nginxiltä polkukohtaisen ohjauksen index.html:ään ja
+rikkoisivat manifestin scopen — eikä näkymien jakaminen linkkinä ole tavoite, koska
+sovellukseen kirjaudutaan.
+
+Malli on "yksi merkintä yhtä siirtymää kohti": myös sovelluksen oma paluulinkki työntää
+merkinnän, joten takaisin-nappi peruu käyttäjän viimeisen siirtymän kumpaan suuntaan
+tahansa. Se on sama käyttäytyminen kuin tavallisella verkkosivulla. Juurinäkymässä
+(EVENT: etusivu, GUARD: kohdevalinta) takaisin poistuu sovelluksesta, kuten pitääkin.
+
+**Mikä ei ole historiassa:** näkymien sisäinen selailu — tapahtuman tiedostojen
+kansiopolku, kierrospohjan sisäiset vaiheet — eikä kesken olevan lomakkeen
+varmistuskysely ("haluatko varmasti poistua"). Takaisin peruu näkymän, ei kirjoitettua
+tekstiä; kenttien sisältö säilyy sovelluksen tilassa, joten se on paikallaan kun
+näkymään palataan.
+
 ## Ennen kenttäkäyttöä: mitä on yhä auki
 
 Nämä eivät estä asennusta mutta koskevat käyttökelpoisuutta. Numerointi seuraa
 edellytyslistaa.
-
-**4. Takaisin-painike — suurin yksittäinen työ.** `display: standalone` tarkoittaa
-että Androidin takaisin-nappi **sulkee sovelluksen**, koska navigointi on komponentin
-tilassa (`activeTab`) eikä selaimen historiassa. Kesken lomakkeen, kesken kirjauksen.
-Tämä ei ole manifestin korjattavissa: se vaatii näkymävaihdot historiaan
-(`history.pushState`) ja `popstate`-kuuntelijan. Kannattaa tehdä App.tsx:n pilkkomisen
-yhteydessä, kun navigointi on yhdessä paikassa.
 
 **5. Istunnon kesto — päätös tehty, toteutus auki.** Sovelluksessa istuntoa **ei
 rajoiteta**: laitteen lukituksen vahva salasana on latauksen ehto, ja poikkeustapausta
@@ -194,8 +222,8 @@ selaimessa seuranta loppuu kun välilehti suljetaan.
 2. Valikko → _Lisää aloitusnäyttöön_ / _Asenna sovellus_.
 3. Sovellus avautuu ilman selainpalkkia, oma kuvake kotinäytöllä.
 4. Tarkista: kuvake ei ole leikkautunut (maskable toimii), tilapalkin väri on tumma,
-   näkymä pysyy pystyasennossa, ja **takaisin-nappi sulkee sovelluksen** — kohta 4
-   yllä, tämä on odotettu käyttäytyminen tällä hetkellä.
+   näkymä pysyy pystyasennossa (GUARD), takaisin-nappi palaa edelliseen näkymään ja
+   sulkee avoimen modaalin — ja **vasta juurinäkymässä sulkee sovelluksen**.
 
 Työpöydällä sama on tarkistettavissa `npm run preview` -palvelimessa: Chromen
 DevTools → Application → Manifest näyttää manifestin, kuvakkeet ja

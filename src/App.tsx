@@ -22,6 +22,7 @@ import { TILAT, VAKAVUUDET, tila as kirjauksenTila, onLukittu, onPoikkeama, uusi
 import { lomakeRaportille, lomakeTunnus } from './shared/lomakerekisteri';
 import { TilaMerkki, VakavuusMerkki, LukkoMerkki } from './shared/komponentit/TilaMerkki';
 import { useKanava, type Sijainti } from './shared/kanava';
+import { useHistorianavigointi, useTakaisinEste } from './shared/navigointi';
 import { useSijainninLahetys, ikaTekstina } from './shared/sijainninLahetys';
 import { luoMuunnos, kuvanSisalla, vyohykePisteessa } from './shared/georeferointi';
 import { Kartta } from './shared/komponentit/Kartta';
@@ -4430,6 +4431,121 @@ export default function App() {
     readinessStatusIconColor = 'text-rose-500';
     readinessStatusText = `Avaus on myöhässä! ${missingChecksCount} kohtaa puuttuu.`;
   }
+
+  // ====================== NÄKYMÄT JA TAKAISIN-PAINIKE ======================
+  //
+  // EVENT-puolen näkymä ei ole yksi tila vaan kolme kerrosta: ylätason näkymät
+  // (viewing*), tapahtumavalinta (selectedEvent + showEventPicker) ja tapahtuman
+  // sisäinen välilehti (activeTab). Historiaa varten niistä johdetaan yksi tunniste.
+  //
+  // JÄRJESTYS ON SAMA kuin alempana olevassa varhaisten palautusten ketjussa
+  // (TYÖNTEKIJÄPANKKI, MUOKKAA KÄYTTÄJIÄ, ...). Jos ne eroaisivat, historia kertoisi
+  // eri näkymän kuin ruudulla on — ja takaisin-nappi vaihtaisi väärän kerroksen.
+  //
+  // Tapahtuman id on tunnisteessa VIIMEISENÄ, koska se on ainoa osa joka voi
+  // sisältää kaksoispisteen.
+  const nakyma =
+    viewingEmployeeBank ? `tyontekijapankki:${viewingEmployeeBank}`
+      : viewingUserAdmin ? `kayttajat:${viewingUserAdmin}`
+      : viewingSmsLog ? 'smsloki'
+      : viewingSettings ? 'asetukset'
+      : viewingAuditLog ? 'auditloki'
+      : viewingAllReports ? 'raportit'
+      : viewingArchivedEvents ? 'arkisto'
+      : viewingSharedWithMe ? 'jaetut'
+      : selectedEvent === null ? (showEventPicker ? 'tapahtumalista' : 'etusivu')
+      : selectedEvent === 'new' ? 'uusi-tapahtuma'
+      : `tapahtuma:${activeTab}:${selectedEvent}`;
+
+  // Näkymän palautus takaisin-napista. Ylätason näkymät nollataan aina ensin, koska
+  // tunniste kertoo vain mikä on päällä — ei sitä mikä pitää sammuttaa.
+  const siirryNakymaan = (kohde: string) => {
+    setViewingEmployeeBank(null);
+    setViewingUserAdmin(null);
+    setViewingSmsLog(false);
+    setViewingSettings(false);
+    setViewingAuditLog(false);
+    setViewingAllReports(false);
+    setViewingArchivedEvents(false);
+    setViewingSharedWithMe(false);
+
+    const erotin = kohde.indexOf(':');
+    const laji = erotin === -1 ? kohde : kohde.slice(0, erotin);
+    const loppu = erotin === -1 ? '' : kohde.slice(erotin + 1);
+
+    switch (laji) {
+      case 'tyontekijapankki':
+        setViewingEmployeeBank(loppu as 'list' | 'form');
+        return;
+      case 'kayttajat':
+        setViewingUserAdmin(loppu as 'list' | 'new' | 'permissions');
+        return;
+      case 'smsloki':
+        setViewingSmsLog(true);
+        return;
+      case 'asetukset':
+        setViewingSettings(true);
+        return;
+      case 'auditloki':
+        setViewingAuditLog(true);
+        return;
+      case 'raportit':
+        setViewingAllReports(true);
+        return;
+      case 'arkisto':
+        setViewingArchivedEvents(true);
+        return;
+      case 'jaetut':
+        setViewingSharedWithMe(true);
+        return;
+      case 'etusivu':
+        setSelectedEvent(null);
+        setShowEventPicker(false);
+        return;
+      case 'tapahtumalista':
+        setSelectedEvent(null);
+        setShowEventPicker(true);
+        return;
+      case 'uusi-tapahtuma':
+        setSelectedEvent('new');
+        return;
+      case 'tapahtuma': {
+        // `tapahtuma:<valilehti>:<tapahtuman id>`
+        const raja = loppu.indexOf(':');
+        if (raja === -1) return;
+        setSelectedEvent(loppu.slice(raja + 1));
+        setActiveTab(loppu.slice(0, raja));
+        return;
+      }
+      // Tunnistamaton merkintä: ei arvata mitään, näkymä jää ennalleen.
+    }
+  };
+
+  useHistorianavigointi(nakyma, siirryNakymaan);
+
+  // Modaalit: takaisin-nappi sulkee päällimmäisen modaalin eikä vaihda näkymää.
+  // Sulkutoiminto on SAMA kuin modaalin omassa sulkunapissa — takaisin peruu, ei
+  // tallenna, aivan kuten taustan klikkaus. Nämä ovat tässä yhdessä paikassa eivätkä
+  // modaalien JSX:n vieressä, koska hookkia ei voi kutsua ehdollisesti; modaalit
+  // rakennetaan vasta alempana.
+  useTakaisinEste(showChangePassword, () => {
+    setShowChangePassword(false);
+    resetChangePasswordForm();
+  });
+  useTakaisinEste(!!pdfEsikatselu, () => setPdfEsikatselu(null));
+  useTakaisinEste(empUserModalOpen, () => setEmpUserModalOpen(false));
+  useTakaisinEste(!!shareTarget, () => {
+    setShareTarget(null);
+    setLuotuLinkki(null);
+  });
+  useTakaisinEste(!!smsModal, () => setSmsModal(null));
+  useTakaisinEste(showInfoModal, () => setShowInfoModal(false));
+  useTakaisinEste(!!completingTask, () => {
+    setCompletingTask(null);
+    setCompletingTaskComment('');
+  });
+  useTakaisinEste(!!openedReport, () => setOpenedReport(null));
+  useTakaisinEste(!!openedRiskAssessment, () => setOpenedRiskAssessment(null));
 
   const renderContent = () => {
     // Suoja tilanteille joissa aiemmin sallitun sivun activeTab jää voimaan sen jälkeen

@@ -30,6 +30,7 @@ import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from '../shared
 import { Mittaristo } from '../shared/komponentit/Mittaristo';
 import { Jalkiraportit } from '../shared/komponentit/Jalkiraportit';
 import { haeJalkiraportit, type Jalkiraportti } from '../shared/jalkiraportit';
+import { useHistorianavigointi, useTakaisinEste } from '../shared/navigointi';
 import {
   uusiId, type GuardRaportti, type Kohde, type KohteenTiedosto, type RaporttiTyyppi,
   type TehtavaSuoritus, type Kierrospohja, type Kierros as KierrosTietue,
@@ -42,6 +43,10 @@ import {
 // Kohteet ovat guardSites-kokoelmassa (server/store.js). Kohteen id toimii samana
 // oikeusavaimena kuin tapahtuman id EVENT-puolella, joten käyttäjän rajaus tiettyihin
 // kohteisiin toimii samalla eventAccess-listalla.
+
+// Kohdelista on GUARDin juurinäkymä: sinne palataan jokaisesta näkymästä ja sieltä
+// takaisin-nappi sulkee sovelluksen.
+const JUURINAKYMA = 'kohdevalinta';
 
 const tyhjaKohde = (): Kohde => ({
   id: '',
@@ -438,7 +443,9 @@ export default function GuardApp() {
     const token = new URLSearchParams(window.location.search).get('piste');
     if (!token) return;
     skannausTehty.current = true;
-    window.history.replaceState(null, '', window.location.pathname);
+    // Nykyinen tila säilytetään: siinä on navigoinnin näkymätunniste (shared/navigointi),
+    // ja sen nollaaminen tekisi ensimmäisestä takaisin-painalluksesta tehottoman.
+    window.history.replaceState(window.history.state, '', window.location.pathname);
     if (!saaKiertaa) {
       setSkannaus({ tyyppi: 'virhe', viesti: 'Sinulla ei ole oikeutta kuitata kierrospisteitä.' });
       return;
@@ -689,6 +696,57 @@ export default function GuardApp() {
     }
   };
 
+  // --- Näkymät ja takaisin-painike --------------------------------------------------
+  //
+  // GUARDin näkymät ovat kaikki YHDEN tason syvyydellä kohdelistasta: jokainen aukeaa
+  // kohderivin painikkeesta ja jokaisen paluulinkki sanoo "Takaisin kohdelistaan".
+  // Siksi näkymän sulkeminen on aina sama toimenpide — kaikkien nollaus — eikä
+  // näkymäkohtaista paluuta tarvita.
+  const nollaaNakymat = () => {
+    setLomake(null);
+    setPoistettava(null);
+    setTehtavaKohde(null);
+    setRaporttiKohde(null);
+    setTietoKohde(null);
+    setAsetuksissa(false);
+    setPohjaKohde(null);
+    setKierrosKohde(null);
+    setHalytysKohde(null);
+    setPohjaNakyma(null);
+    setTiedoteKohde(null);
+    setKalustoKohde(null);
+    setMittariKohde(null);
+    setJaksoKohde(null);
+  };
+
+  // Nykyisen näkymän tunniste historiaa varten. Järjestys on SAMA kuin alla olevassa
+  // renderöintiketjussa — jos ne eroaisivat, historia kertoisi eri näkymän kuin
+  // ruudulla on.
+  const nakyma =
+    asetuksissa ? 'asetukset'
+      : raporttiKohde ? 'raportit'
+      : tietoKohde ? 'kohteen-tiedot'
+      : kalustoKohde ? 'kalusto'
+      : mittariKohde ? 'mittaristo'
+      : jaksoKohde ? 'jaksoraportit'
+      : tiedoteKohde ? 'tiedotteet'
+      : pohjaNakyma ? 'pohjat'
+      : halytysKohde ? 'halytykset'
+      : kierrosKohde ? 'kierrokset'
+      : pohjaKohde ? 'kierrospohjat'
+      : tehtavaKohde ? 'tehtavat'
+      : lomake ? 'kohteen-hallinta'
+      : JUURINAKYMA;
+
+  // Takaisin-nappi vie kohdelistaan. Jos merkintä osoittaa johonkin muuhun näkymään,
+  // sinne ei yritetä palata: näkymä tarvitsisi kohteen jota historiamerkinnässä ei ole,
+  // ja Androidin asennetussa sovelluksessa ei ole eteenpäin-nappia jolla sellaiseen
+  // merkintään ylipäätään päätyisi.
+  useHistorianavigointi(nakyma, nollaaNakymat);
+
+  // Poistovahvistus on modaali: takaisin peruu sen eikä vie kohdelistaan.
+  useTakaisinEste(!!poistettava, () => setPoistettava(null));
+
   const kirjauduUlos = async () => {
     // Laitteelle ei jää työtietoja uloskirjautumisen jälkeen. Jonoa EI tyhjennetä:
     // lähettämätön kirjaus on tehtyä työtä, ja se odottaa seuraavaa kirjautumista.
@@ -702,7 +760,7 @@ export default function GuardApp() {
     <Ylapalkki
       tuoteNimi="Turvajohto GUARD"
       alaotsikko={alaotsikko}
-      onLogo={() => { setLomake(null); setPoistettava(null); setTehtavaKohde(null); setRaporttiKohde(null); setTietoKohde(null); setAsetuksissa(false); setPohjaKohde(null); setKierrosKohde(null); setHalytysKohde(null); setPohjaNakyma(null); setTiedoteKohde(null); setKalustoKohde(null); setMittariKohde(null); setJaksoKohde(null); }}
+      onLogo={nollaaNakymat}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}
