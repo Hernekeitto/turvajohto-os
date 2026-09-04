@@ -22,6 +22,7 @@ import {
 import { readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage } from './store.js';
 import { isAllowedFile, saveUpload, getUploadPath, deleteUpload, collectGarbage } from './uploads.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
+import { istunnonKesto } from './istunto.js';
 import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
 import {
   luoToken,
@@ -99,12 +100,11 @@ import { validateRecords, wouldWipeNonEmptyCollection } from './validation.js';
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const COOKIE_NAME = 'tj_session';
-// Admin: kiinteä 12h istunto (ei automaattista uloskirjausta käyttämättömyydestä).
-// Muut käyttäjät: 1h *liukuva* istunto — jokainen kirjautunut pyyntö (requireAuth)
-// pidentää evästeen voimassaoloa uudelleen tunnilla eteenpäin, joten aktiivikäyttö
-// ei koskaan katkea, mutta tunnin käyttämättömyys kirjaa automaattisesti ulos.
-const ADMIN_SESSION_HOURS = 12;
-const USER_SESSION_MINUTES = 60;
+// Istunnon kesto ja sen kolme tapausta ovat istunto.js:ssä, perusteluineen:
+// asennetussa sovelluksessa istuntoa EI rajoiteta, selaimessa pääkäyttäjä saa
+// kiinteän 12 tunnin ja muu käyttäjä liukuvan tunnin — liukuva tarkoittaa, että
+// jokainen kirjautunut pyyntö (requireAuth) pidentää evästettä uudelleen tunnilla
+// eteenpäin, joten aktiivikäyttö ei katkea mutta tunnin joutokäynti kirjaa ulos.
 
 if (!JWT_SECRET) {
   console.error('JWT_SECRET puuttuu ympäristömuuttujista. Palvelinta ei käynnistetä.');
@@ -191,9 +191,16 @@ function isValidPassword(pw) {
   return typeof pw === 'string' && pw.length >= 10 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /[0-9]/.test(pw);
 }
 
-function setSessionCookie(res, username, role) {
-  const maxAgeSeconds = role === 'admin' ? ADMIN_SESSION_HOURS * 60 * 60 : USER_SESSION_MINUTES * 60;
-  const token = jwt.sign({ sub: username }, JWT_SECRET, { expiresIn: maxAgeSeconds });
+// `sovellus` = istunto on avattu asennetusta sovelluksesta (ks. istunto.js). Tieto
+// leivotaan tokeniin, jotta istunnon kesto päätetään KIRJAUTUMISHETKELLÄ eikä
+// jokaisessa pyynnössä erikseen: muuten sama eväste voisi vaihtaa pituuttaan sen
+// mukaan kummasta — sovelluksesta vai selaimesta — viimeisin pyyntö tuli, ja
+// selaimessa käynti lyhentäisi kentällä olevan vartijan istunnon.
+function setSessionCookie(res, username, role, sovellus = false) {
+  const maxAgeSeconds = istunnonKesto({ role, sovellus });
+  const token = jwt.sign({ sub: username, sovellus: sovellus || undefined }, JWT_SECRET, {
+    expiresIn: maxAgeSeconds,
+  });
   res.setHeader(
     'Set-Cookie',
     cookie.serialize(COOKIE_NAME, token, {
@@ -213,16 +220,30 @@ function clearSessionCookie(res) {
   );
 }
 
-function getSessionUser(req) {
+// Evästeen token tarkistettuna, tai null. Erillinen funktio, koska istunnosta
+// tarvitaan kahta asiaa: käyttäjätunnus ja tieto siitä avattiinko istunto
+// sovelluksesta (istunnon uusiminen tarvitsee saman keston kuin kirjautuminen antoi).
+function lueIstuntoToken(req) {
   const cookies = cookie.parse(req.headers.cookie || '');
   const token = cookies[COOKIE_NAME];
   if (!token) return null;
-  let payload;
   try {
-    payload = jwt.verify(token, JWT_SECRET);
+    return jwt.verify(token, JWT_SECRET);
   } catch {
     return null;
   }
+}
+
+// Onko nykyinen istunto avattu asennetusta sovelluksesta. Luetaan ALLEKIRJOITETUSTA
+// tokenista eikä pyynnön otsakkeista: selain ei voi vaihtaa istunnon pituutta
+// kirjautumisen jälkeen.
+function onSovellusIstunto(req) {
+  return lueIstuntoToken(req)?.sovellus === true;
+}
+
+function getSessionUser(req) {
+  const payload = lueIstuntoToken(req);
+  if (!payload) return null;
   const user = findUser(payload.sub);
   if (!user) return null;
   // Admin on painanut "Kirjaa käyttäjä ulos" -painiketta — kaikki ennen sitä hetkeä
@@ -245,7 +266,11 @@ function getSessionUser(req) {
 // tietoturvamielessä oleellinen tieto, ja rate limiter (10/15min/IP) pitää lokin
 // koon kurissa vaikka joku yrittäisi arvata salasanoja.
 app.post('/api/login', loginLimiter, (req, res) => {
-  const { username, password, totpCode } = req.body || {};
+  const { username, password, totpCode, sovellus } = req.body || {};
+  // Selain kertoo onko se asennettu sovellus (src/shared/asennettu.ts). Vain
+  // täsmällinen true kelpaa: puuttuva, merkkijono tai muu totuudenmukainen arvo
+  // tarkoittaa selainta, koska rajoittamaton istunto ei saa syntyä vahingossa.
+  const sovelluksesta = sovellus === true;
   if (typeof username !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ ok: false, error: 'Käyttäjätunnus ja salasana vaaditaan.' });
   }
@@ -268,9 +293,17 @@ app.post('/api/login', loginLimiter, (req, res) => {
     }
   }
 
-  logAudit({ user: username, action: 'login_success', ip: req.ip });
+  // Istunnon laji lokiin: rajoittamaton istunto on tieto joka pitää voida jälkikäteen
+  // selvittää ("miksi tämä tunnus oli yhä kirjautuneena"), eikä sitä näe mistään
+  // muualta kuin tästä.
+  logAudit({
+    user: username,
+    action: 'login_success',
+    istunto: sovelluksesta ? 'sovellus' : 'selain',
+    ip: req.ip,
+  });
   recordLogin(user.username);
-  setSessionCookie(res, user.username, user.role);
+  setSessionCookie(res, user.username, user.role, sovelluksesta);
   // mustChangePassword kertoo frontille että istunto on käytettävissä vasta kun
   // käyttäjä on vaihtanut pääkäyttäjän asettaman väliaikaisen salasanan omakseen.
   res.json({ ok: true, username: user.username, mustChangePassword: !!user.must_change_password });
@@ -296,8 +329,11 @@ app.get('/api/session', (req, res) => {
   if (!user) return res.json({ authenticated: false, username: null });
   // Frontin käyttämättömyysvahti kutsuu tätä reittiä aina kun se havaitsee aktiivisuutta
   // (hiiri/näppäimistö) — tämä pitää ei-adminin liukuvan istunnon voimassa niin kauan
-  // kuin sovellusta oikeasti käytetään.
-  if (user.role !== 'admin') setSessionCookie(res, user.username, user.role);
+  // kuin sovellusta oikeasti käytetään. Uusinta saa SAMAN keston kuin kirjautuminen
+  // antoi, ks. setSessionCookie.
+  if (user.role !== 'admin') {
+    setSessionCookie(res, user.username, user.role, onSovellusIstunto(req));
+  }
   res.json({
     authenticated: true,
     username: user.username,
@@ -366,9 +402,12 @@ function requireAuth(req, res, next) {
   req.eventAccess = user.eventAccess;
   req.tuotteet = paaseeTuotteisiin(user);
   // Liukuva istunto: jokainen onnistunut kirjautunut pyyntö ei-adminilta pidentää
-  // evästeen voimassaoloa uudelleen USER_SESSION_MINUTES eteenpäin. Admin pysyy
-  // kiinteässä 12h istunnossa, ei koske automaattinen käyttämättömyyskatkaisu.
-  if (user.role !== 'admin') setSessionCookie(res, user.username, user.role);
+  // evästeen voimassaoloa uudelleen alkuperäisen keston verran eteenpäin (selaimessa
+  // tunnin, sovelluksessa rajoittamattoman ajan — ks. istunto.js). Admin pysyy
+  // kiinteässä istunnossa, jota automaattinen käyttämättömyyskatkaisu ei koske.
+  if (user.role !== 'admin') {
+    setSessionCookie(res, user.username, user.role, onSovellusIstunto(req));
+  }
   next();
 }
 

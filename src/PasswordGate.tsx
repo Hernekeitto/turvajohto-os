@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'rea
 import { ShieldAlert } from 'lucide-react';
 import { SessionContext, type SessionProfile, type Tuote } from './SessionContext';
 import { lueIstunto, tallennaIstunto, unohdaIstunto } from './shared/istunto';
+import { onAsennettuSovellus } from './shared/asennettu';
 
 type SessionState = 'loading' | 'authed' | 'anon';
 
@@ -255,7 +256,16 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ username, password, totpCode: totpRequired ? totpCode : undefined }),
+        // sovellus ratkaisee istunnon keston: asennetussa sovelluksessa istuntoa ei
+        // rajoiteta, selaimessa rajoitetaan (server/istunto.js). Lähetetään vain
+        // kirjautumisessa — palvelin leivoo tiedon tokeniin, joten sitä ei voi
+        // vaihtaa istunnon aikana.
+        body: JSON.stringify({
+          username,
+          password,
+          totpCode: totpRequired ? totpCode : undefined,
+          sovellus: onAsennettuSovellus(),
+        }),
       });
       const data = await res.json();
       if (data.requiresTotp) {

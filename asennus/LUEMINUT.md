@@ -1,8 +1,8 @@
-# Asennettava sovellus — manifesti, kuvakkeet ja Digital Asset Links
+# Asennettava sovellus — manifesti, kuvakkeet, takaisin-painike ja istunto
 
 Tämä hakemisto tekee Turvajohto OS:sta laitteelle asennettavan sovelluksen. Se kattaa
-Android-edellytyslistan kohdat 1–4 (`2026-09-04 - Turvajohto OS Android-sovelluksen
-edellytykset`). Kohdat 5–8 ovat yhä avoinna, ks. lopun tarkistuslista.
+Android-edellytyslistan kohdat 1–5 (`2026-09-04 - Turvajohto OS Android-sovelluksen
+edellytykset`). Kohdat 6–8 ovat yhä avoinna, ks. lopun tarkistuslista.
 
 ## Mikä on valmiina
 
@@ -12,6 +12,7 @@ edellytykset`). Kohdat 5–8 ovat yhä avoinna, ks. lopun tarkistuslista.
 | Kuvakkeet: 192, 512, maskable 192, maskable 512, apple-touch 180, favicon | valmis |
 | Manifestin ja kuvakkeiden kytkentä sivulle tuotteen mukaan | valmis |
 | Takaisin-painike: näkymät ja modaalit historiaan | valmis, `src/shared/navigointi.ts` |
+| Istunto: rajoittamaton sovelluksessa, rajattu selaimessa | valmis, `server/istunto.js` |
 | `/.well-known/assetlinks.json` -reitti ja generaattori | valmis, **sisältö tyhjä** |
 | Sovelluksen allekirjoitustiiviste assetlinksiin | **puuttuu** — syntyy vasta kun sovellus on olemassa |
 
@@ -179,22 +180,57 @@ varmistuskysely ("haluatko varmasti poistua"). Takaisin peruu näkymän, ei kirj
 tekstiä; kenttien sisältö säilyy sovelluksen tilassa, joten se on paikallaan kun
 näkymään palataan.
 
+## Istunnon kesto (kohta 5, tehty)
+
+**Sovelluksessa istuntoa ei rajoiteta. Selaimessa rajoitetaan.** Kesto ja sen
+perustelut ovat `server/istunto.js`:ssä:
+
+| Missä | Kesto |
+|---|---|
+| Asennettu sovellus | ei rajoitettu (tekninen yläraja 365 vrk, liukuva) |
+| Selain, pääkäyttäjä | 12 h kiinteä |
+| Selain, muu käyttäjä | 60 min liukuva |
+
+Aiempi 60 minuutin raja oli **joutokäyntiraja**: aktiivikäyttö ei katkennut, mutta
+tunti taskussa kirjasi ulos. Kentällä juuri se on kestämätöntä. Selaimessa sama raja
+on paikallaan, koska siellä istunto on auki työaseman selaimessa joka voi jäädä
+vartioimatta.
+
+Rajoittamattoman istunnon tekninen yläraja on **vuosi ja liukuva**, eli vuoro, viikko
+tai kuukauden loma ei katkaise sitä. Se ei siis ole kenttäkäytön raja vaan varmistus:
+laite joka katoaa käytöstä kokonaan ei jää kirjautuneeksi ikuisesti siinäkään
+tapauksessa ettei pakkouloskirjausta muisteta tehdä. Yhden vakion muutos jos linja
+muuttuu.
+
+**Miten palvelin tietää kummasta on kyse.** Selain kertoo sen kirjautumisen yhteydessä
+(`display-mode: standalone`, `src/shared/asennettu.ts`), ja palvelin leivoo tiedon
+allekirjoitettuun tokeniin. Siksi istunnon pituus päätetään kirjautumishetkellä eikä
+joka pyynnössä: muuten sama eväste vaihtaisi pituuttaan sen mukaan kummasta viimeisin
+pyyntö tuli, ja selaimessa käynti lyhentäisi kentällä olevan vartijan istunnon.
+Kirjautumisen laji (`sovellus` / `selain`) menee myös audit-lokiin.
+
+Palvelin ei voi päätellä tätä itse: TWA on tavallinen Chrome, ja sen ainoa tunnistettava
+piirre (`X-Requested-With`) tulee vain sivulatauksessa jonka tarjoilee nginx. Väittämä
+on siis väärennettävissä — mutta vain omalla tunnuksella kirjautumalla, eli kyse ei ole
+hyökkäyspolusta vaan siitä että käyttäjä voisi ohittaa oman selainistuntonsa aikarajan.
+Saman voi tehdä liikuttamalla hiirtä.
+
+**Mihin rajoittamattoman istunnon hallittavuus perustuu.** Kaksi asiaa, ja molempien on
+pidettävä:
+
+1. **Laitteen lukitus vahvalla salasanalla on sovelluksen asentamisen ehto.** Tämä on
+   organisatorinen ehto — palvelin ei voi tarkistaa sitä.
+2. **Pakkouloskirjaus.** `session_invalidated_at` mitätöi käyttäjän KAIKKI istunnot
+   välittömästi, myös rajoittamattoman (`server/index.js`, `getSessionUser`). Koneisto
+   on jo olemassa, joten GUARD TIKEn tuleva toiminto on käyttöliittymä ja oikeus
+   olemassa olevan päälle — ei uutta istuntologiikkaa. Front pollaa `/api/session`:ia
+   30 s välein juuri tätä varten, ja **se pollaus jää päälle myös sovelluksessa**;
+   vain automaattinen uloskirjaus joutokäynnistä on siellä pois.
+
 ## Ennen kenttäkäyttöä: mitä on yhä auki
 
 Nämä eivät estä asennusta mutta koskevat käyttökelpoisuutta. Numerointi seuraa
 edellytyslistaa.
-
-**5. Istunnon kesto — päätös tehty, toteutus auki.** Sovelluksessa istuntoa **ei
-rajoiteta**: laitteen lukituksen vahva salasana on latauksen ehto, ja poikkeustapausta
-varten GUARD TIKE saa myöhemmin oikeuden pakkokirjata käyttäjän ulos.
-
-Nykytila palvelimella: `server/index.js` `USER_SESSION_MINUTES = 60` on **liukuva
-joutokäyntiraja** — jokainen kirjautunut pyyntö pidentää istuntoa tunnilla, joten
-aktiivikäyttö ei katkea, mutta tunti taskussa kirjaa ulos. Juuri se on kentällä
-kestämätöntä. Pakkouloskirjaukselle on jo olemassa koneisto: `session_invalidated_at`
-mitätöi käyttäjän kaikki istunnot (`server/index.js`, `getSessionUser`), eli GUARD
-TIKEn toiminto on käyttöliittymä ja oikeus olemassa olevan päälle — ei uutta
-istuntologiikkaa.
 
 **6. Palvelutyöntekijän päivitys asennettuna.** Selaimessa käyttäjä voi aina ladata
 sivun uudelleen; asennetussa sovelluksessa ei voi. Jos palvelutyöntekijä jää jumiin

@@ -23,6 +23,7 @@ import { lomakeRaportille, lomakeTunnus } from './shared/lomakerekisteri';
 import { TilaMerkki, VakavuusMerkki, LukkoMerkki } from './shared/komponentit/TilaMerkki';
 import { useKanava, type Sijainti } from './shared/kanava';
 import { useHistorianavigointi, useTakaisinEste } from './shared/navigointi';
+import { onAsennettuSovellus } from './shared/asennettu';
 import { useSijainninLahetys, ikaTekstina } from './shared/sijainninLahetys';
 import { luoMuunnos, kuvanSisalla, vyohykePisteessa } from './shared/georeferointi';
 import { Kartta } from './shared/komponentit/Kartta';
@@ -1128,13 +1129,21 @@ export default function App() {
     return () => { window.fetch = originalFetch; };
   }, []);
 
-  // Automaattinen uloskirjaus 1h käyttämättömyyden jälkeen — ei koske pääkäyttäjää.
-  // Palvelimen istunto on jo itsessään liukuva (ks. server/index.js requireAuth), tämä
-  // antaa lisäksi välittömän palautteen (kirjaa ulos heti ilman että pitää odottaa
-  // seuraavaa epäonnistuvaa API-kutsua) ja pitää palvelimen istunnon voimassa
-  // pingaamalla /api/session kun oikeaa aktiivisuutta havaitaan.
+  // Automaattinen uloskirjaus 1h käyttämättömyyden jälkeen — ei koske pääkäyttäjää
+  // EIKÄ ASENNETTUA SOVELLUSTA. Palvelimen istunto on jo itsessään liukuva (ks.
+  // server/index.js requireAuth), tämä antaa lisäksi välittömän palautteen (kirjaa
+  // ulos heti ilman että pitää odottaa seuraavaa epäonnistuvaa API-kutsua) ja pitää
+  // palvelimen istunnon voimassa pingaamalla /api/session kun oikeaa aktiivisuutta
+  // havaitaan.
+  //
+  // Sovelluksessa istuntoa ei rajoiteta (server/istunto.js), joten tämä vahti olisi
+  // siellä palvelimen kanssa ristiriidassa: se kirjaisi ulos juuri sen käyttäjän
+  // jolle rajoittamaton istunto on tehty. POLLAUS JÄÄ SILTI PÄÄLLE myös
+  // sovelluksessa — se on se mekanismi joka huomaa pakkouloskirjauksen, ja
+  // rajoittamattoman istunnon koko hallittavuus perustuu siihen.
   useEffect(() => {
     if (isAdminUser) return;
+    const sovelluksessa = onAsennettuSovellus();
     const IDLE_MS = 60 * 60 * 1000; // 1h
     const TOUCH_INTERVAL_MS = 5 * 60 * 1000; // pidä palvelimen istunto elossa enintään 5 min välein
     const POLL_MS = 30 * 1000; // tarkista pakotettu uloskirjaus tasaisin väliajoin riippumatta siitä tekeekö käyttäjä mitään API-kutsua vaativaa
@@ -1154,6 +1163,7 @@ export default function App() {
 
     const resetIdleTimer = () => {
       clearTimeout(idleTimer);
+      if (sovelluksessa) return;
       idleTimer = setTimeout(() => { handleLogout(); }, IDLE_MS);
     };
 
