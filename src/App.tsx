@@ -37,8 +37,9 @@ import { Kalusto } from './shared/komponentit/Kalusto';
 import { Vyohykekirjaukset, type AlueKirjaus } from './shared/komponentit/Vyohykekirjaukset';
 import { avaaJono, kaynnistaAutomatiikka, kuunteleLahetyksia, lisaaJonoon } from './shared/jono';
 import type {
-  AuditMerkinta, Ilmoitus, JaettuKohde, Jakolinkki, KayttajaRivi,
-  TapahtumaPaasy, TapahtumanLomake, TapahtumanTiedosto,
+  AuditMerkinta, Ilmoitus, JaettuKohde, Jakolinkki, KayttajaRivi, LuotuLinkki,
+  Kirjaus, Tapahtuma, TapahtumaPaasy, TapahtumanLomake, TapahtumanTiedosto, TotpTiedot,
+  UusiSalasana,
 } from './event/tyypit';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from './shared/kalusto';
 import { Mittaristo } from './shared/komponentit/Mittaristo';
@@ -130,7 +131,7 @@ import {
 // tapahtumariippumattomassa raporttinäkymässä (nimen näyttämiseen).
 // Tämä on vain alkuarvo ensimmäistä latausta varten — todellinen lista tulee
 // palvelimelta (ks. `events`-tila) ja "Luo uusi tapahtuma" -lomake lisää siihen.
-const INITIAL_EVENTS = [
+const INITIAL_EVENTS: Tapahtuma[] = [
   {
     id: 'fesx',
     name: 'FestivaaliX',
@@ -155,7 +156,7 @@ const INITIAL_EVENTS = [
   }
 ];
 
-function findEventName(eventId, eventsList) {
+function findEventName(eventId: string | null | undefined, eventsList: Tapahtuma[]) {
   // Vanha data ilman eventId-kenttää lasketaan kuuluvaksi FestivaaliX:ään
   // (sama oletus kuin currentEventReports/currentEventCheckedIn-suodatuksessa)
   const id = eventId || 'fesx';
@@ -337,7 +338,7 @@ const DEVIATION_TYPES = ['jvaction', 'jvreport', 'firstaid', 'threat', 'fence', 
 // (ks. REPORT_DETAIL_FIELDS ja server/validation.js:n sama perustelu). Siemendatan
 // muodosta johdettu tyyppi ei siksi kuvaa kokoelmaa, vaan estäisi uusien kenttien
 // lukemisen — siksi any[].
-const initialReports: any[] = [
+const initialReports: Kirjaus[] = [
   { id: '26/FesX/1108/099', eventId: 'fesx', typeId: 'out', type: 'Työntekijän uloskirjaus', author: 'TIKE Päivystäjä', time: '14:10', summary: 'Virtanen ulos, radiopuhelin rikki.' },
   { id: '26/FesX/1108/098', eventId: 'fesx', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Korhonen Elli', time: '13:45', summary: 'Kiinniotto portilla 2.', denied: 0, removed: 1, detained: 1, force: true, tools: true, firearm: false, firstAid: false },
   { id: '26/FesX/1108/097', eventId: 'fesx', typeId: 'firstaid', type: 'Ensiaputilanne', author: 'EA-Päivystys', time: '12:15', summary: 'Nyrjähdys, paikattu pisteellä.' },
@@ -371,7 +372,7 @@ const tyhjatKuittaukset = () => Object.fromEntries(READINESS_CHECKS.map((i) => [
 // Sisäänkirjausrivin kommentit listana ({id, text, author, date, time}) — vanha data
 // tunsi vain yhden merkkijonokentän (comment), joka näytetään taannehtivasti yhtenä
 // "legacy"-kommenttina kunnes se korvautuu uudella listalla.
-const getEmpComments = (emp) => {
+const getEmpComments = (emp: any) => {
   if (Array.isArray(emp.comments)) return emp.comments;
   if (emp.comment) {
     return [{ id: 'legacy', text: emp.comment, author: '', date: emp.checkInDate || '', time: emp.checkInTime || '' }];
@@ -631,7 +632,7 @@ export default function App() {
     mapUploadId: '', mapUploadName: ''
   };
   const [newEvent, setNewEvent] = useState(emptyNewEvent);
-  const updNewEvent = (key, value) => setNewEvent(prev => ({ ...prev, [key]: value }));
+  const updNewEvent = (key: string, value: any) => setNewEvent(prev => ({ ...prev, [key]: value }));
 
   // Radiokanavat ovat tapahtuman oma lista, joten niitä muokataan rivi kerrallaan.
   const paivitaRadiokanava = (idx: number, arvo: string) => setNewEvent(prev => ({
@@ -806,14 +807,14 @@ export default function App() {
 
   const [newUserError, setNewUserError] = useState('');
   const [newUserSubmitting, setNewUserSubmitting] = useState(false);
-  const [editingPermUser, setEditingPermUser] = useState(null);
+  const [editingPermUser, setEditingPermUser] = useState<KayttajaRivi | null>(null);
   // Käyttäjätasot (server/roles.js). Taso määrää sivukartta-oikeudet — käyttäjäkohtaista
   // sivukarttaa ei enää muokata, joten "Muokkaa oikeuksia" -näkymässä valitaan vain taso.
   const [roles, setRoles] = useState<any[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [permRoleId, setPermRoleId] = useState('');
   // Palvelimen arvoma salasana näytetään kertaalleen luonnin/nollauksen jälkeen.
-  const [uusiSalasanaNaytto, setUusiSalasanaNaytto] = useState(null); // { username, password }
+  const [uusiSalasanaNaytto, setUusiSalasanaNaytto] = useState<UusiSalasana | null>(null);
 
   // Ilmoituskello. Palvelin koostaa listan (/api/notifications), joten uusia
   // ilmoituslajeja voi lisätä ilman frontin muutoksia.
@@ -876,7 +877,7 @@ export default function App() {
   const [shareMaxDownloads, setShareMaxDownloads] = useState('');
   const [shareError, setShareError] = useState('');
   const [shareSubmitting, setShareSubmitting] = useState(false);
-  const [luotuLinkki, setLuotuLinkki] = useState(null);   // { url, approvalStatus }
+  const [luotuLinkki, setLuotuLinkki] = useState<LuotuLinkki | null>(null);
   // Tapahtumarajaus: tyhjä = ei rajoitusta (näkee kaikki tapahtumat), muuten lista
   // tapahtuma-id:itä joihin käyttäjä on rajattu (ks. server/permissions.js: eventAccess).
   const [permEventAccess, setPermEventAccess] = useState<TapahtumaPaasy[]>([]);
@@ -886,7 +887,7 @@ export default function App() {
   const [permNickname, setPermNickname] = useState('');
   const [permSaveError, setPermSaveError] = useState('');
   const [permSaving, setPermSaving] = useState(false);
-  const [permTotpInfo, setPermTotpInfo] = useState(null); // { secret, otpauthUri, qrDataUri }
+  const [permTotpInfo, setPermTotpInfo] = useState<TotpTiedot | null>(null);
   const [permTotpLoading, setPermTotpLoading] = useState(false);
   const [permTotpError, setPermTotpError] = useState('');
   const [permTotpResetting, setPermTotpResetting] = useState(false);
@@ -905,7 +906,7 @@ export default function App() {
   const [addEmpSearch, setAddEmpSearch] = useState('');
   const [addEmpSelectedIds, setAddEmpSelectedIds] = useState<string[]>([]);
   // Tapahtumakohtaiset nimimerkit "Lisää tapahtumaan" -listassa: { [työntekijän id]: 'Ensiapu 1' }
-  const [addEmpNicknames, setAddEmpNicknames] = useState({});
+  const [addEmpNicknames, setAddEmpNicknames] = useState<Record<string, string>>({});
 
   // Työntekijälomakkeen tunnusmodaali. Avataan osiosta 10; ei navigoi pois lomakkeelta,
   // jottei keskeneräinen työntekijän muokkaus katoa.
@@ -1067,7 +1068,7 @@ export default function App() {
 
   // before annettuna haetaan "lisää" edellisen sivun jatkoksi (append), muuten
   // tuore ensimmäinen sivu suodattimilla (replace).
-  const fetchAuditLog = (before) => {
+  const fetchAuditLog = (before?: string) => {
     setAuditLoading(true);
     setAuditError('');
     const params = new URLSearchParams({ limit: '50' });
@@ -1959,11 +1960,11 @@ export default function App() {
     (r) => (r.eventId || 'fesx') === selectedEvent
   );
 
-  const formatTime = (date) => {
+  const formatTime = (date: Date) => {
     return date.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
 
-  const getGreeting = (date) => {
+  const getGreeting = (date: Date) => {
     const hour = date.getHours();
     if (hour >= 5 && hour < 10) return 'Hyvää huomenta';
     if (hour >= 10 && hour < 17) return 'Hyvää päivää';
@@ -1978,12 +1979,12 @@ export default function App() {
     [3, 4, 5]
   ];
 
-  const getRiskScore = (prob, sev) => {
+  const getRiskScore = (prob: unknown, sev: unknown) => {
     if (!prob || !sev) return 0;
     return riskMatrix[prob - 1][sev - 1];
   };
 
-  const riskLevels = {
+  const riskLevels: Record<number, { label: string; tone: string; action: string }> = {
     1: { label: 'Merkityksetön riski', tone: 'emerald', action: 'Toimenpiteitä ei tarvita. Tilannetta seurataan normaalisti.' },
     2: { label: 'Vähäinen riski', tone: 'lime', action: 'Seurataan tilannetta. Harkitaan edullisia parannuksia, jos ne ovat helposti toteutettavissa.' },
     3: { label: 'Kohtalainen riski', tone: 'amber', action: 'Toimenpiteet on suunniteltava ja toteutettava määräajassa. Riskiä pienennetään ennen tapahtuman alkua.' },
@@ -1991,7 +1992,7 @@ export default function App() {
     5: { label: 'Sietämätön riski', tone: 'rose', action: 'Toiminta keskeytetään tai sitä ei aloiteta. Riski on poistettava ennen jatkamista.' }
   };
 
-  const riskTones = {
+  const riskTones: Record<string, { bg: string; border: string; text: string; solid: string }> = {
     emerald: { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', solid: 'bg-emerald-600' },
     lime: { bg: 'bg-lime-50', border: 'border-lime-200', text: 'text-lime-700', solid: 'bg-lime-600' },
     amber: { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700', solid: 'bg-amber-500' },
@@ -2110,21 +2111,21 @@ export default function App() {
   // "Toimenpiteet kesken" eikä mikään asettanut arvoa "Hyväksytty", joten
   // listanäkymän vihreä tila oli saavuttamaton. Hyväksyntä kirjaa myös kuka
   // hyväksyi ja milloin, koska se on riskiarviossa nimenomaan päätös.
-  const handleApproveRiskAssessment = (ra) => {
+  const handleApproveRiskAssessment = (ra: any) => {
     setRiskAssessments(prev => prev.map(r => (r === ra
       ? { ...r, status: 'Hyväksytty', approvedBy: sessionNickname || '', approvedAt: new Date().toISOString() }
       : r)));
     setOpenedRiskAssessment(null);
   };
 
-  const handleReopenRiskAssessment = (ra) => {
+  const handleReopenRiskAssessment = (ra: any) => {
     setRiskAssessments(prev => prev.map(r => (r === ra
       ? { ...r, status: 'Toimenpiteet kesken', approvedBy: '', approvedAt: '' }
       : r)));
     setOpenedRiskAssessment(null);
   };
 
-  const handleDeleteRiskAssessment = (ra) => {
+  const handleDeleteRiskAssessment = (ra: any) => {
     const confirmed = window.confirm(
       `Haluatko varmasti poistaa riskiarvion "${ra.target}" (${ra.id})?\n\n` +
       'Poistoa ei voi perua.'
@@ -2135,11 +2136,11 @@ export default function App() {
     setOpenedRiskAssessment(null);
   };
 
-  const updEmpForm = (key, value) => setEmpForm(prev => ({ ...prev, [key]: value }));
+  const updEmpForm = (key: string, value: any) => setEmpForm(prev => ({ ...prev, [key]: value }));
 
   const addEmpLanguage = () => setEmpForm(prev => ({ ...prev, languages: [...prev.languages, { language: '', level: 3 }] }));
-  const removeEmpLanguage = (idx) => setEmpForm(prev => ({ ...prev, languages: prev.languages.filter((_, i) => i !== idx) }));
-  const updEmpLanguage = (idx, key, value) => setEmpForm(prev => ({
+  const removeEmpLanguage = (idx: number) => setEmpForm(prev => ({ ...prev, languages: prev.languages.filter((_, i) => i !== idx) }));
+  const updEmpLanguage = (idx: number, key: string, value: any) => setEmpForm(prev => ({
     ...prev,
     languages: prev.languages.map((l, i) => (i === idx ? { ...l, [key]: value } : l))
   }));
@@ -2270,7 +2271,7 @@ export default function App() {
     }
   };
 
-  const handleDeleteEmployee = async (emp) => {
+  const handleDeleteEmployee = async (emp: Tyontekija) => {
     const confirmed = window.confirm(
       `Haluatko varmasti poistaa työntekijän "${emp.name}" työntekijäpankista?\n\n` +
       'Poistoa ei voi perua. Jo tehdyt sisäänkirjaukset tapahtumiin säilyvät ennallaan.'
@@ -2293,7 +2294,7 @@ export default function App() {
     setViewingEmployeeBank('list');
   };
 
-  const toggleAddEmpSelected = (id) => {
+  const toggleAddEmpSelected = (id: string) => {
     setAddEmpSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
 
@@ -2442,7 +2443,7 @@ export default function App() {
     }
   };
 
-  const fetchPermTotpInfo = (username) => {
+  const fetchPermTotpInfo = (username: string) => {
     setPermTotpLoading(true);
     setPermTotpError('');
     fetch(`/api/users/${encodeURIComponent(username)}/totp`, { credentials: 'include' })
@@ -2505,7 +2506,7 @@ export default function App() {
 
   // Ilmoituksen avaus vie sinne missä asia hoidetaan. Toistaiseksi kaikki ilmoitukset
   // ovat jakolinkkien hyväksymispyyntöjä, jotka käsitellään tapahtuman tiedostosivulla.
-  const avaaIlmoitus = (ilm) => {
+  const avaaIlmoitus = (ilm: Ilmoitus) => {
     if (ilm.tyyppi === 'share_approval') {
       setViewingSettings(false);
       setViewingUserAdmin(null);
@@ -2549,7 +2550,7 @@ export default function App() {
       .finally(() => setRolesLoading(false));
   };
 
-  const handleOpenPermissions = (user) => {
+  const handleOpenPermissions = (user: KayttajaRivi) => {
     setEditingPermUser(user);
     setPermEventAccess(user.eventAccess || []);
     setPermTuotteet(Array.isArray(user.tuotteet) && user.tuotteet.length > 0 ? user.tuotteet : ['event']);
@@ -2636,7 +2637,7 @@ export default function App() {
 
   // Tapahtumarajauksen valintaruudun kytkin — sama "lista mukana / pois" -periaate kuin
   // muuallakin sovelluksessa (ks. esim. toggleAddEmpSelected).
-  const handleToggleEventAccess = (eventId) => {
+  const handleToggleEventAccess = (eventId: string) => {
     setPermEventAccess((prev) => (
       prev.includes(eventId) ? prev.filter((id) => id !== eventId) : [...prev, eventId]
     ));
@@ -2769,7 +2770,7 @@ export default function App() {
     nollaaLomakeLisays();
   };
 
-  const poistaLomake = async (lomake) => {
+  const poistaLomake = async (lomake: TapahtumanLomake) => {
     if (!window.confirm(`Poistetaanko lomake "${lomake.name}"? Tätä ei voi perua.`)) return;
     const jaljelle = eventForms.filter((f) => f.id !== lomake.id);
     // Viimeisen poisto tyhjentää kokoelman, jonka palvelimen romahdussuoja hylkää
@@ -2803,7 +2804,7 @@ export default function App() {
 
   // Periytyvä henkilötietolippu: alikansiossa oleva tiedosto on henkilötietoa myös
   // silloin kun lippu on asetettu vain yläkansioon. Sama sääntö kuin palvelimella.
-  const onHenkilotietoa = (kohde) => {
+  const onHenkilotietoa = (kohde: TapahtumanTiedosto) => {
     if (!kohde) return false;
     if (kohde.containsPersonalData) return true;
     const byId = Object.fromEntries(tapahtumanTiedostot.map((f) => [f.id, f]));
@@ -2835,7 +2836,7 @@ export default function App() {
     setNewFolderName('');
   };
 
-  const lataaTiedosto = async (tiedosto) => {
+  const lataaTiedosto = async (tiedosto: TapahtumanTiedosto) => {
     if (!tiedosto) return;
     setTiedostoUploading(true);
     try {
@@ -2872,7 +2873,7 @@ export default function App() {
 
   // Kansion poisto vie mukanaan koko alipuun — muuten sen sisältö jäisi orvoiksi
   // tietueiksi joihin ei pääse käsiksi mistään.
-  const poistaTiedostoTaiKansio = async (kohde) => {
+  const poistaTiedostoTaiKansio = async (kohde: TapahtumanTiedosto) => {
     const alipuu = [kohde.id];
     if (kohde.type === 'folder') {
       let muuttui = true;
@@ -2905,7 +2906,7 @@ export default function App() {
     setEventFiles(jaljelle);
   };
 
-  const vaihdaHenkilotietoLippu = (kohde) => {
+  const vaihdaHenkilotietoLippu = (kohde: TapahtumanTiedosto) => {
     setEventFiles((prev) => prev.map((f) => (f.id === kohde.id
       ? { ...f, containsPersonalData: !f.containsPersonalData }
       : f)));
@@ -2920,7 +2921,7 @@ export default function App() {
     { arvo: '65', label: '65 vrk', tunnit: 24 * 65 },
   ];
 
-  const avaaJakoDialogi = (kohde) => {
+  const avaaJakoDialogi = (kohde: TapahtumanTiedosto) => {
     setShareTarget(kohde);
     // Henkilötietoa sisältävää ei voi jakaa pelkällä linkillä, joten oletus on salasana.
     setShareMode(onHenkilotietoa(kohde) ? 'password' : 'link');
@@ -2991,7 +2992,7 @@ export default function App() {
     }
   };
 
-  const peruutaJako = async (share) => {
+  const peruutaJako = async (share: Jakolinkki) => {
     if (!window.confirm('Peruutetaanko jakolinkki? Se lakkaa toimimasta heti.')) return;
     try {
       const res = await fetch(`/api/shares/${encodeURIComponent(share.id)}`, {
@@ -3006,7 +3007,7 @@ export default function App() {
     }
   };
 
-  const hyvaksyJako = async (share, hyvaksy) => {
+  const hyvaksyJako = async (share: Jakolinkki, hyvaksy: boolean) => {
     try {
       const res = await fetch(`/api/shares/${encodeURIComponent(share.id)}/approval`, {
         method: 'POST',
@@ -3022,7 +3023,7 @@ export default function App() {
     }
   };
 
-  const naytaJakoLinkki = async (share) => {
+  const naytaJakoLinkki = async (share: Jakolinkki) => {
     try {
       const res = await fetch(`/api/shares/${encodeURIComponent(share.id)}/token`, { credentials: 'include' });
       const data = await res.json();
@@ -3227,13 +3228,13 @@ export default function App() {
     setEditingCheckIn(null);
   };
 
-  const formatFiDate = (isoDate) => {
+  const formatFiDate = (isoDate: string) => {
     if (!isoDate) return '';
     const [y, m, d] = isoDate.split('-');
     return `${Number(d)}.${Number(m)}.${y}`;
   };
 
-  const slugify = (text) =>
+  const slugify = (text: string) =>
     (text || '')
       .toLowerCase()
       .normalize('NFD').replace(/[̀-ͯ]/g, '') // poistaa aksentit yhdistelmämerkeistä
@@ -3296,7 +3297,7 @@ export default function App() {
     setActiveTab(oletusValilehti(id));
   };
 
-  const handleStartEditEvent = (id) => {
+  const handleStartEditEvent = (id: string) => {
     const ev = events.find(e => e.id === id);
     setEditingEventId(id);
     // Esitäytetään lomake tapahtuman aiemmilla tiedoilla, jotta vain tarvittavat
@@ -3306,7 +3307,7 @@ export default function App() {
     setSelectedEvent('new');
   };
 
-  const handleDeleteEvent = (ev) => {
+  const handleDeleteEvent = (ev: Tapahtuma) => {
     const confirmed = window.confirm(
       `Haluatko varmasti poistaa tapahtuman "${ev.name}"?\n\n` +
       'Tapahtuma piilotetaan tapahtumavalinnasta, mutta sen raportit ja kirjaukset ' +
@@ -3544,7 +3545,7 @@ export default function App() {
   // Poisto siirtää kirjauksen roskakoriin eikä hävitä sitä. Näkymä lupasi tämän jo
   // ennestään ("Kirjauksia ei poisteta lopullisesti ennen säilytysajan päättymistä"),
   // mutta toteutus poisti tietueen heti — lupaus oli siis paikkansapitämätön.
-  const handleDeleteReport = (report) => {
+  const handleDeleteReport = (report: Kirjaus) => {
     const confirmed = window.confirm(
       `Siirretäänkö raportti "${report.type}" (${report.id}) roskakoriin?\n\n` +
       'Kirjaus säilyy roskakorissa, josta sen voi palauttaa tai hävittää pysyvästi.'
@@ -3759,7 +3760,7 @@ export default function App() {
     setKorjausTeksti('');
   };
 
-  const handleRestoreReport = (report) => {
+  const handleRestoreReport = (report: Kirjaus) => {
     setReports(prev => prev.map(r => {
       if (r !== report) return r;
       // Kentät irrotetaan pois tietueesta; alaviiva kertoo ettei arvoja käytetä.
@@ -3872,7 +3873,7 @@ export default function App() {
     setCheckInComment('');
   };
 
-  const handleDeleteEmpComment = (commentId) => {
+  const handleDeleteEmpComment = (commentId: string) => {
     if (!editingCheckIn) return;
     const confirmed = window.confirm('Haluatko varmasti poistaa tämän kommentin?\n\nPoistoa ei voi perua.');
     if (!confirmed) return;
@@ -3934,7 +3935,7 @@ export default function App() {
     setCheckOutComment('');
   };
 
-  const handleRemoveFromEventRoster = (emp) => {
+  const handleRemoveFromEventRoster = (emp: Checkin) => {
     const confirmed = window.confirm(
       `Haluatko varmasti poistaa "${emp.name}" tästä tapahtumasta?\n\n` +
       'Tämä ei ole uloskirjaus — jos työntekijä on paikan päällä ja poistuu tapahtumasta, ' +
@@ -3960,7 +3961,7 @@ export default function App() {
     setJvaTime(t);
   };
 
-  const toggleJvaTool = (tool) => {
+  const toggleJvaTool = (tool: string) => {
     setJvaToolList(prev => prev.includes(tool) ? prev.filter(t => t !== tool) : [...prev, tool]);
   };
 
@@ -4214,7 +4215,7 @@ export default function App() {
   };
 
   // Yhteinen tallennus uhkatilanne-, omaisuusvaurio-, löytötavara-, jono- ja sääraporteille
-  const handleSaveGenericReport = (typeId, title) => {
+  const handleSaveGenericReport = (typeId: string, title: string) => {
     if (!genRepDesc.trim()) {
       alert('Kirjaa tapahtuman kuvaus ennen tallennusta.');
       return;
@@ -4282,14 +4283,14 @@ export default function App() {
     setActiveTab('planning');
   };
 
-  const toggleReadinessCheck = (key) => {
+  const toggleReadinessCheck = (key: string) => {
     setReadinessChecks(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
   // Sisäänkirjaushaku: pois suljetaan vain jo aktiivisesti sisäänkirjatut — tapahtumaan
   // merkityt (mutta ei vielä sisäänkirjatut) ja jo uloskirjatut saa hakea uudelleen.
   const filteredEmployees = empSearch.length >= 3
-    ? employees.map(e => e.name).filter(e =>
+    ? employees.map(e => e.name).filter((e): e is string => !!e).filter(e =>
         e.toLowerCase().includes(empSearch.toLowerCase()) &&
         !currentEventCheckedIn.some(c => c.name === e && getEmpStatus(c) === 'checked_in'))
     : [];
@@ -4329,14 +4330,14 @@ export default function App() {
   // ---- Tilannekuvan laskurit raportoiduista kirjauksista ----
 
   // Kellonaika tunteina, käytetään viimeisen tunnin suodatukseen
-  const minutesFromTimeString = (t) => {
+  const minutesFromTimeString = (t: string) => {
     if (!t || typeof t !== 'string' || !t.includes(':')) return null;
     const [h, m] = t.split(':').map(Number);
     if (Number.isNaN(h) || Number.isNaN(m)) return null;
     return h * 60 + m;
   };
   const nowMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
-  const withinLastHour = (t) => {
+  const withinLastHour = (t: string) => {
     const mins = minutesFromTimeString(t);
     if (mins === null) return false;
     return mins <= nowMinutes && nowMinutes - mins <= 60;
@@ -4479,7 +4480,7 @@ export default function App() {
             if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
             return String(a.name).localeCompare(String(b.name), 'fi');
           });
-        const kohteenJaot = (id) => fileShares.filter((sh) => sh.targetId === id && !sh.revokedAt);
+        const kohteenJaot = (id: string) => fileShares.filter((sh) => sh.targetId === id && !sh.revokedAt);
         const odottavat = fileShares.filter((sh) => sh.approvalStatus === 'pending' && !sh.revokedAt);
 
         return (
@@ -5118,7 +5119,7 @@ export default function App() {
                 .filter(r => !boardVyohyke || r.zoneId === boardVyohyke)
                 .filter(r => !boardTyyppi || r.typeId === boardTyyppi)
                 .sort((a, b) =>
-                  (TILAJARJESTYS[a.status] ?? 3) - (TILAJARJESTYS[b.status] ?? 3) ||
+                  (TILAJARJESTYS[a.status ?? ''] ?? 3) - (TILAJARJESTYS[b.status ?? ''] ?? 3) ||
                   String(b.time || '').localeCompare(String(a.time || ''))
                 );
               const suodattimet = [{ id: 'avoimet', nimi: 'Keskeneräiset' }, ...TILAT, { id: '', nimi: 'Kaikki' }];
@@ -9763,7 +9764,7 @@ export default function App() {
           { title: 'Sähkökatko', icon: Wrench, tone: 'slate', steps: ['Varmista varavalaistus', 'Siirry radioyhteyteen', 'Estä pääsy pimeille alueille', 'Ota yhteys tekniseen vastaavaan', 'Arvioi tarve keskeyttää tapahtuma'] },
           { title: 'Sään äkillinen muutos', icon: Cloud, tone: 'sky', steps: ['Seuraa varoituksia', 'Tarkista rakenteiden kiinnitykset', 'Valmistele suojautumisohjeet', 'Harkitse esityksen keskeytystä', 'Tiedota yleisölle ajoissa'] }
         ];
-        const toneMap = {
+        const toneMap: Record<string, string> = {
           rose: { bg: 'bg-rose-50', border: 'border-rose-200', text: 'text-rose-600', num: 'bg-rose-600' },
           amber: { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', num: 'bg-amber-600' },
           slate: { bg: 'bg-slate-100', border: 'border-slate-200', text: 'text-slate-600', num: 'bg-slate-600' },
@@ -11458,7 +11459,7 @@ export default function App() {
   // ====================== MUOKKAA KÄYTTÄJIÄ (vain admin) ======================
   if (viewingUserAdmin) {
     const isAdmin = session?.role === 'admin';
-    const roleBadge = (role) => (
+    const roleBadge = (role?: string) => (
       <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${role === 'admin' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'}`}>
         {role === 'admin' ? 'Pääkäyttäjä' : 'Käyttäjä'}
       </span>
@@ -12629,7 +12630,7 @@ export default function App() {
       sms_saldo_vahissa: 'SMS-saldo alle varoitusrajan',
       sms_webhook_rejected: 'Webhook hylätty (väärä salaisuus)',
     };
-    const collectionLabels = {
+    const collectionLabels: Record<string, string> = {
       checkins: 'Sisäänkirjaukset',
       reports: 'Raportit',
       events: 'Tapahtumat',
@@ -12641,7 +12642,7 @@ export default function App() {
     // molemmat asioita jotka lokia selaavan pitää huomata heti.
     const korostaVirheena = (a: string) =>
       a === 'login_failed' || a === 'sms_failed' || a === 'sms_webhook_rejected' || a === 'sms_saldo_vahissa';
-    const targetLabel = (e) => {
+    const targetLabel = (e: AuditMerkinta) => {
       if (e.collection) {
         const label = collectionLabels[e.collection] || e.collection;
         return e.recordId ? `${label} (${e.recordId})` : label;

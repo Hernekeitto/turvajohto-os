@@ -13,6 +13,8 @@
 // puuttuvia kenttiä (migraatioita on tehty useita), ja pakolliseksi merkitty kenttä joka
 // voi puuttua on huonompi kuin merkitsemätön — se siirtää virheen ajoaikaan.
 
+import type { Vyohyke } from '../shared/vyohykkeet';
+
 // --- Käyttäjähallinta ---------------------------------------------------------------
 
 // GET /api/users -> listUsers() (server/db.js). Salaisuudet (password_hash, totp_secret)
@@ -30,6 +32,10 @@ export type KayttajaRivi = {
   eventAccess?: string[];
   tuotteet?: string[];
   totpRequired?: boolean;
+  // Authenticator-vaatimus levyllä. Eri kenttä kuin totpRequired: tämä on
+  // käyttäjätiedoston oma nimi, jonka /api/users palauttaa sellaisenaan.
+  totp_required?: boolean;
+  created_at?: string;
 };
 
 // GET /api/audit. Sisältö on metadataa tapahtuneesta, ei tietueen sisältöä
@@ -89,7 +95,7 @@ export type Jakolinkki = {
   expiresAt?: string | null;
   revokedAt?: string | null;
   maxDownloads?: number | null;
-  downloads?: number;
+  downloadCount?: number;
   // Pysyvä linkki vaatii pääkäyttäjän hyväksynnän.
   approvalStatus?: string;
   url?: string;
@@ -109,6 +115,7 @@ export type TapahtumanTiedosto = {
   size?: number;
   createdAt?: string;
   createdBy?: string;
+  containsPersonalData?: boolean;
 };
 
 // eventForms-kokoelma: tapahtumakohtaiset lisätyt lomakkeet ("Täytettävät lomakkeet").
@@ -129,3 +136,99 @@ export type TapahtumanLomake = {
 
 // Käyttäjälle myönnetty tapahtumakohtainen pääsy oikeuksien muokkausnäkymässä.
 export type TapahtumaPaasy = { id: string; name?: string };
+
+// --- Kertanäytöt ---------------------------------------------------------------------
+//
+// Nämä kolme näytetään kerran ja unohdetaan: salasana ja jakolinkki eivät ole haettavissa
+// uudelleen, ja TOTP-salaisuus näytetään vain käyttöönoton ajan. Siksi ne ovat tilassa
+// eivätkä kokoelmassa.
+
+// POST /api/users ja salasanan nollaus: palvelin arpoo salasanan eikä tallenna sitä
+// selväkielisenä, joten tämä on ainoa hetki jolloin se on luettavissa.
+export type UusiSalasana = { username: string; password: string };
+
+// Luotu jakolinkki. `url` puuttuu kun linkki jäi odottamaan pääkäyttäjän
+// hyväksyntää — silloin sitä ei ole vielä olemassa jaettavaksi.
+export type LuotuLinkki = { url?: string; approvalStatus?: string };
+
+// GET /api/users/:username/totp. qrDataUri on data:-URI (ks. csp.ts: img-src).
+export type TotpTiedot = {
+  secret: string;
+  otpauthUri: string;
+  qrDataUri: string;
+  totpRequired?: boolean;
+};
+
+// --- Tapahtuma -----------------------------------------------------------------------
+
+// events-kokoelma. Perustiedot ovat tietueen omia kenttiä, mutta aloituslomakkeen koko
+// sisältö (tilaaja, vastuuhenkilöt, aikataulut, radiokanavat) on `formData`-oliossa:
+// se on kymmeniä kenttiä, ja niiden nostaminen ylätasolle tarkoittaisi että jokainen
+// lomakkeen muutos muuttaisi myös tietueen muotoa.
+//
+// `statusTone` ja `accent` ovat Tailwind-luokkia. Ne ovat datassa eivätkä koodissa,
+// koska tapahtuman tila on käyttäjän valitsema eikä kiinteä lista — väri seuraa tilaa.
+export type Tapahtuma = {
+  id: string;
+  name: string;
+  status?: string;
+  statusTone?: string;
+  dates?: string;
+  place?: string;
+  audience?: string;
+  client?: string;
+  accent?: string;
+  // Arkistointi on pehmeä: tapahtuma katoaa listalta mutta sen kirjaukset säilyvät.
+  archived?: boolean;
+  archivedAt?: string | null;
+  // Vyöhykkeet ovat tapahtuman KENTTÄ eivätkä oma kokoelmansa (päätös V5,
+  // ks. shared/vyohykkeet.ts).
+  zones?: Vyohyke[];
+  // Kartan kalibrointipisteet GPS:n ja kuvakoordinaatin välillä (erä 3).
+  kalibrointi?: unknown[];
+  // Aloituslomakkeen kentät. Löyhä tarkoituksella: lomake on laaja ja elää.
+  formData?: Record<string, any>;
+};
+
+// --- Kirjaus -------------------------------------------------------------------------
+
+// reports-kokoelma. Kenttiä on kymmeniä ja ne vaihtelevat lomaketyypeittäin (`typeId`):
+// tapahtumailmoituksessa on kohdehenkilön tiedot, ensiapukirjauksessa toimenpiteet ja
+// resurssit, sisäänkirjauksessa ei kumpaakaan.
+//
+// TYYPPI ON TARKOITUKSELLA LÖYHÄ. Se nimeää tietueen ja dokumentoi ne kentät jotka ovat
+// yhteisiä kaikille — tila, vakavuus, vyöhyke, aikaleimat — mutta ei väitä tuntevansa
+// jokaista lomakekohtaista kenttää. Tiukka tyyppi vaatisi oman tyypin jokaiselle
+// lomakkeelle, ja se työ kannattaa tehdä silloin kun lomakkeet pilkotaan omiksi
+// komponenteikseen; ennen sitä se olisi arvausta siitä mitä kenttiä missäkin on.
+export type Kirjaus = {
+  id: string;
+  eventId?: string | null;
+  // Lomaketyyppi ('jvaction', 'firstaid', ...) ja sen ihmisluettava nimi.
+  typeId?: string;
+  type?: string;
+  // Käsittelytila vain poikkeamille: sisäänkirjausta tai sääraporttia ei suljeta
+  // (ks. shared/kirjaukset.ts: POIKKEAMATYYPIT).
+  status?: string | null;
+  severity?: number | null;
+  zoneId?: string | null;
+  assignedTo?: string | null;
+  closedAt?: string | null;
+  closedBy?: string | null;
+  // Syntyhetki. Erän 1 migraatiota vanhemmilla kirjauksilla on vain date + time.
+  createdAt?: string;
+  date?: string;
+  time?: string;
+  author?: string;
+  place?: string;
+  summary?: string;
+  attachments?: any[];
+  corrections?: any[];
+  location?: { img?: { x: number; y: number } | null; gps?: unknown };
+  // Jonon idempotenssiavain (ks. server/kirjaukset.js: loydaSamaKirjaus).
+  jonoId?: string;
+  // Roskakori on pehmeä poisto: tietue säilyy ja on palautettavissa.
+  deletedAt?: string | null;
+  deletedBy?: string | null;
+  [lisa: string]: any;
+};
