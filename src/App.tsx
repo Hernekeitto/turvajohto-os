@@ -38,7 +38,7 @@ import { Vyohykekirjaukset, type AlueKirjaus } from './shared/komponentit/Vyohyk
 import { avaaJono, kaynnistaAutomatiikka, kuunteleLahetyksia, lisaaJonoon } from './shared/jono';
 import type {
   AuditMerkinta, Ilmoitus, JaettuKohde, Jakolinkki, KayttajaRivi, LuotuLinkki,
-  Kirjaus, Tapahtuma, TapahtumaPaasy, TapahtumanLomake, TapahtumanTiedosto, TotpTiedot,
+  Kirjaus, LomakeRivi, Tapahtuma, TapahtumanLomake, TapahtumanTiedosto, TotpTiedot,
   UusiSalasana,
 } from './event/tyypit';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from './shared/kalusto';
@@ -880,7 +880,7 @@ export default function App() {
   const [luotuLinkki, setLuotuLinkki] = useState<LuotuLinkki | null>(null);
   // Tapahtumarajaus: tyhjä = ei rajoitusta (näkee kaikki tapahtumat), muuten lista
   // tapahtuma-id:itä joihin käyttäjä on rajattu (ks. server/permissions.js: eventAccess).
-  const [permEventAccess, setPermEventAccess] = useState<TapahtumaPaasy[]>([]);
+  const [permEventAccess, setPermEventAccess] = useState<string[]>([]);
   // Tuotepääsy: mihin puoliin ('event' / 'guard') tunnus pääsee. Palvelin torjuu tyhjän
   // listan, joten UI ei anna poistaa viimeistä valintaa (ks. vaihdaTuote).
   const [permTuotteet, setPermTuotteet] = useState(['event']);
@@ -4305,7 +4305,7 @@ export default function App() {
     ? Array.from(new Set([
         ...currentEventCheckedIn.filter(e => e.role === jvaRole && getEmpStatus(e) === 'checked_in').map(e => e.name),
         ...employees.map(e => e.name)
-      ])).filter(n => n.toLowerCase().includes(jvaSearch.toLowerCase()))
+      ])).filter((n): n is string => !!n).filter(n => n.toLowerCase().includes(jvaSearch.toLowerCase()))
     : [];
 
   // Miehityslaskurit vain aktiivisesti sisäänkirjatuista työntekijöistä (ei tapahtumaan
@@ -4330,14 +4330,14 @@ export default function App() {
   // ---- Tilannekuvan laskurit raportoiduista kirjauksista ----
 
   // Kellonaika tunteina, käytetään viimeisen tunnin suodatukseen
-  const minutesFromTimeString = (t: string) => {
+  const minutesFromTimeString = (t?: string) => {
     if (!t || typeof t !== 'string' || !t.includes(':')) return null;
     const [h, m] = t.split(':').map(Number);
     if (Number.isNaN(h) || Number.isNaN(m)) return null;
     return h * 60 + m;
   };
   const nowMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
-  const withinLastHour = (t: string) => {
+  const withinLastHour = (t?: string) => {
     const mins = minutesFromTimeString(t);
     if (mins === null) return false;
     return mins <= nowMinutes && nowMinutes - mins <= 60;
@@ -4358,7 +4358,7 @@ export default function App() {
 
   // Poikkeamat: JV:n tai vartijan toimenpide, ensiaputilanne, uhkatilanne,
   // aitojen ylitys tai luvaton sisäänpääsy sekä omaisuusvaurio
-  const deviationReports = currentEventReports.filter(r => DEVIATION_TYPES.includes(r.typeId));
+  const deviationReports = currentEventReports.filter(r => DEVIATION_TYPES.includes(r.typeId ?? ''));
   const deviationCount = deviationReports.length;
   const deviationLastHour = deviationReports.filter(r => withinLastHour(r.time)).length;
 
@@ -6280,7 +6280,7 @@ export default function App() {
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Kohdehenkilön tuntomerkit (tunnistamista varten)</label>
                     <textarea
-                      rows="2"
+                      rows={2}
                       value={jvrFeatures}
                       onChange={(e) => setJvrFeatures(e.target.value)}
                       className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
@@ -6290,7 +6290,7 @@ export default function App() {
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Havainnot käyttäytymisestä ja tilasta</label>
                     <textarea
-                      rows="2"
+                      rows={2}
                       value={jvrObservations}
                       onChange={(e) => setJvrObservations(e.target.value)}
                       className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
@@ -6305,7 +6305,7 @@ export default function App() {
                 <h3 className="text-md font-semibold text-slate-700 border-b pb-2">4. Vapaa kuvaus ja lisätiedot</h3>
                 <div>
                   <textarea
-                    rows="4"
+                    rows={4}
                     value={jvrDesc}
                     onChange={(e) => setJvrDesc(e.target.value)}
                     className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
@@ -6363,7 +6363,7 @@ export default function App() {
                 <div>
                   <label className="block text-sm font-bold text-slate-800 mb-2">TIKE:n kommentti:</label>
                   <textarea
-                    rows="3"
+                    rows={3}
                     value={jvrTikeComment}
                     onChange={(e) => setJvrTikeComment(e.target.value)}
                     className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-indigo-500 bg-white"
@@ -6700,7 +6700,7 @@ export default function App() {
                     </h3>
                     <div>
                       <textarea
-                        rows="3"
+                        rows={3}
                         value={checkInComment}
                         onChange={(e) => setCheckInComment(e.target.value)}
                         className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-emerald-500"
@@ -6968,7 +6968,7 @@ export default function App() {
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">Uloskirjauksen kommentit ja huomiot</label>
                     <textarea
-                      rows="3"
+                      rows={3}
                       value={checkOutComment}
                       onChange={(e) => setCheckOutComment(e.target.value)}
                       className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-rose-500"
@@ -7106,7 +7106,7 @@ export default function App() {
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">Kuvaus tapahtuneesta</label>
                 <textarea
-                  rows="6"
+                  rows={6}
                   value={openKirjausText}
                   onChange={(e) => setOpenKirjausText(e.target.value)}
                   className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-indigo-500" 
@@ -7279,7 +7279,7 @@ export default function App() {
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">Tapahtuman kuvaus</label>
                   <textarea
-                    rows="3"
+                    rows={3}
                     value={faDesc}
                     onChange={(e) => setFaDesc(e.target.value)}
                     className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-rose-500" 
@@ -7290,7 +7290,7 @@ export default function App() {
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">Tehdyt toimenpiteet</label>
                   <textarea 
-                    rows="3" 
+                    rows={3} 
                     value={faActions}
                     onChange={(e) => setFaActions(e.target.value)}
                     className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-rose-500" 
@@ -7302,7 +7302,7 @@ export default function App() {
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-1">Mitä resursseja kului</label>
                     <textarea 
-                      rows="2" 
+                      rows={2} 
                       value={faResources}
                       onChange={(e) => setFaResources(e.target.value)}
                       className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-rose-500" 
@@ -7312,7 +7312,7 @@ export default function App() {
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-1">Mitkä työntekijät paikalla olivat</label>
                     <textarea 
-                      rows="2" 
+                      rows={2} 
                       value={faEmployees}
                       onChange={(e) => setFaEmployees(e.target.value)}
                       className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-rose-500" 
@@ -7717,7 +7717,7 @@ export default function App() {
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">Vapaa kuvaus tapahtumasta</label>
                 <textarea
-                  rows="5"
+                  rows={5}
                   value={jvaDesc}
                   onChange={(e) => setJvaDesc(e.target.value)}
                   className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-amber-500"
@@ -7874,7 +7874,7 @@ export default function App() {
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">Tapahtuman kuvaus</label>
                   <textarea
-                    rows="3"
+                    rows={3}
                     value={genRepDesc}
                     onChange={(e) => setGenRepDesc(e.target.value)}
                     className={`w-full rounded-lg border-slate-300 border p-3 text-sm ${config.focusRing}`}
@@ -7885,7 +7885,7 @@ export default function App() {
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">Tehdyt toimenpiteet</label>
                   <textarea 
-                    rows="3" 
+                    rows={3} 
                     value={genRepActions}
                     onChange={(e) => setGenRepActions(e.target.value)}
                     className={`w-full rounded-lg border-slate-300 border p-3 text-sm ${config.focusRing}`}
@@ -7896,7 +7896,7 @@ export default function App() {
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">Mitkä työntekijät paikalla olivat</label>
                   <textarea 
-                    rows="2" 
+                    rows={2} 
                     value={genRepEmps}
                     onChange={(e) => setGenRepEmps(e.target.value)}
                     className={`w-full rounded-lg border-slate-300 border p-3 text-sm ${config.focusRing}`}
@@ -8130,7 +8130,7 @@ export default function App() {
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">Avauksen poikkeamat ja lisätiedot</label>
                 <textarea 
-                  rows="4" 
+                  rows={4} 
                   value={readinessComments}
                   onChange={(e) => setReadinessComments(e.target.value)}
                   className="w-full rounded-lg border-slate-300 border p-3 text-sm focus:ring-2 focus:ring-indigo-500" 
@@ -8216,7 +8216,7 @@ export default function App() {
                       type="file"
                       accept="image/*,.pdf"
                       className="hidden"
-                      onChange={(e) => tallennaPohjakartta(e.target.files[0])}
+                      onChange={(e) => tallennaPohjakartta(e.target.files?.[0])}
                     />
                   </label>
                 )}
@@ -8229,17 +8229,20 @@ export default function App() {
                 // Piirtotilassa merkit piilotetaan, jottei uutta vyöhykettä piirrettäessä
                 // osu vahingossa kirjausmerkkiin.
                 merkit={vyohykeMuokkaus ? [] : currentEventReports
-                  .filter(r => r.location?.img)
-                  .map(r => ({
-                    id: r.id,
-                    x: r.location.img.x,
-                    y: r.location.img.y,
-                    // Tilaton kirjaus (sisäänkirjaus, sääraportti) on harmaa: tilaväri
-                    // lupaisi käsittelyä jota sille ei kuulu tehdä.
-                    vari: kirjauksenTila(r.status)?.merkki || '#64748b',
-                    otsikko: `${r.time || ''} ${r.type}`.trim(),
-                    onKlikkaus: () => { setOpenedReport(r); setOpenedReportSource('overview'); },
-                  }))}
+                  .flatMap(r => {
+                    const img = r.location?.img;
+                    if (!img) return [];
+                    return [{
+                      id: r.id,
+                      x: img.x,
+                      y: img.y,
+                      // Tilaton kirjaus (sisäänkirjaus, sääraportti) on harmaa: tilaväri
+                      // lupaisi käsittelyä jota sille ei kuulu tehdä.
+                      vari: kirjauksenTila(r.status)?.merkki || '#64748b',
+                      otsikko: `${r.time || ''} ${r.type}`.trim(),
+                      onKlikkaus: () => { setOpenedReport(r); setOpenedReportSource('overview'); },
+                    }];
+                  })}
                 // Henkilöstötaso. Vain ne joilla on kuvakoordinaatti: pohjakartta ei ole
                 // georeferoitu, joten pelkästä GPS-sijainnista ei voi päätellä kohtaa
                 // kuvalla. Ne näkyvät kartan alla listana.
@@ -8747,7 +8750,7 @@ export default function App() {
       case 'planning_employee_add': {
         const availableEmployees = employees.filter(e => !currentEventCheckedIn.some(c => c.name === e.name));
         const visibleAddEmployees = addEmpSearch.trim()
-          ? availableEmployees.filter(e => e.name.toLowerCase().includes(addEmpSearch.trim().toLowerCase()))
+          ? availableEmployees.filter(e => (e.name || '').toLowerCase().includes(addEmpSearch.trim().toLowerCase()))
           : availableEmployees;
         const allVisibleSelected = visibleAddEmployees.length > 0 && visibleAddEmployees.every(e => addEmpSelectedIds.includes(e.id));
 
@@ -9109,11 +9112,11 @@ export default function App() {
                 </div>
                 <div>
                   <label className={labelCls}>Vaaran kuvaus</label>
-                  <textarea rows="3" className={inputCls} value={raHazard} onChange={(e) => setRaHazard(e.target.value)} placeholder="Mikä voi mennä pieleen, kenelle ja missä tilanteessa."></textarea>
+                  <textarea rows={3} className={inputCls} value={raHazard} onChange={(e) => setRaHazard(e.target.value)} placeholder="Mikä voi mennä pieleen, kenelle ja missä tilanteessa."></textarea>
                 </div>
                 <div>
                   <label className={labelCls}>Nykyiset hallintakeinot</label>
-                  <textarea rows="3" className={inputCls} value={raControls} onChange={(e) => setRaControls(e.target.value)} placeholder="Mitä on jo tehty: aidat, miehitys, opastus, ohjeistus, tekniset ratkaisut."></textarea>
+                  <textarea rows={3} className={inputCls} value={raControls} onChange={(e) => setRaControls(e.target.value)} placeholder="Mitä on jo tehty: aidat, miehitys, opastus, ohjeistus, tekniset ratkaisut."></textarea>
                 </div>
               </div>
 
@@ -9211,7 +9214,7 @@ export default function App() {
                 </div>
 
                 {/* Tulos */}
-                {level ? (
+                {level && tone ? (
                   <div className={`rounded-xl border-2 p-5 ${tone.bg} ${tone.border}`}>
                     <div className="flex items-center gap-4">
                       <div className={`shrink-0 w-16 h-16 rounded-xl ${tone.solid} text-white font-bold text-3xl flex items-center justify-center shadow-sm`}>
@@ -9240,7 +9243,7 @@ export default function App() {
                 <h3 className="text-md font-semibold text-slate-700 border-b pb-2">3. Toimenpiteet</h3>
                 <div>
                   <label className={labelCls}>Päätetyt toimenpiteet riskin pienentämiseksi</label>
-                  <textarea rows="4" className={inputCls} value={raActions} onChange={(e) => setRaActions(e.target.value)} placeholder="Konkreettiset toimet: lisämiehitys, rakenteelliset muutokset, ohjeistus, seuranta, keskeytyskriteerit."></textarea>
+                  <textarea rows={4} className={inputCls} value={raActions} onChange={(e) => setRaActions(e.target.value)} placeholder="Konkreettiset toimet: lisämiehitys, rakenteelliset muutokset, ohjeistus, seuranta, keskeytyskriteerit."></textarea>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <div>
@@ -9274,7 +9277,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {resLevel && (
+                {resLevel && resTone && (
                   <div className={`rounded-xl border p-4 flex items-center gap-4 ${resTone.bg} ${resTone.border}`}>
                     <div className={`shrink-0 w-12 h-12 rounded-lg ${resTone.solid} text-white font-bold text-xl flex items-center justify-center`}>
                       {resScore}
@@ -9394,14 +9397,14 @@ export default function App() {
         // Sisäänrakennetut ja käyttäjän lisäämät samassa listassa. lisatty-lippu
         // erottaa ne: vain lisätyt voi poistaa, ja vain sisäänrakennetuilla on
         // täyttölomake tai tulostettava pohja.
-        const kaikkiLomakkeet = [
+        const kaikkiLomakkeet: LomakeRivi[] = [
           ...fillableForms,
           ...eventForms
             .filter((f) => (f.eventId || 'fesx') === selectedEvent)
             .map((f) => ({ ...f, lisatty: true })),
         ];
 
-        const tulostaTyhjaPohja = (lomake: { name: string; desc: string; kentat?: string[] }) => {
+        const tulostaTyhjaPohja = (lomake: LomakeRivi) => {
           setPdfEsikatselu({
             otsikko: `${lomake.name} — tyhjä pohja`,
             html: tulostusDokumentti({
@@ -10210,7 +10213,7 @@ export default function App() {
                   </code>
                   <button
                     type="button"
-                    onClick={() => navigator.clipboard?.writeText(luotuLinkki.url)}
+                    onClick={() => navigator.clipboard?.writeText(luotuLinkki.url ?? '')}
                     className="mt-3 text-xs font-bold text-emerald-800 bg-white border border-emerald-200 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors"
                   >
                     Kopioi leikepöydälle
@@ -12640,7 +12643,7 @@ export default function App() {
     };
     // Korostettavat rivit: epäonnistunut kirjautuminen ja epäonnistunut hätäviesti ovat
     // molemmat asioita jotka lokia selaavan pitää huomata heti.
-    const korostaVirheena = (a: string) =>
+    const korostaVirheena = (a?: string) =>
       a === 'login_failed' || a === 'sms_failed' || a === 'sms_webhook_rejected' || a === 'sms_saldo_vahissa';
     const targetLabel = (e: AuditMerkinta) => {
       if (e.collection) {
@@ -13621,7 +13624,7 @@ export default function App() {
                 </div>
                 <div className="mt-4">
                   <label className={labelCls}>Aluerajaukset ja huomiot</label>
-                  <textarea rows="3" className={inputCls} value={newEvent.areaNotes} onChange={(e) => updNewEvent('areaNotes', e.target.value)} placeholder="Sisäänkäynnit, VIP-alueet, backstage, yleisen alueen rajapinnat, liikennejärjestelyt."></textarea>
+                  <textarea rows={3} className={inputCls} value={newEvent.areaNotes} onChange={(e) => updNewEvent('areaNotes', e.target.value)} placeholder="Sisäänkäynnit, VIP-alueet, backstage, yleisen alueen rajapinnat, liikennejärjestelyt."></textarea>
                 </div>
               </div>
 
@@ -13672,7 +13675,7 @@ export default function App() {
                 </div>
                 <div className="mt-4">
                   <label className={labelCls}>Kohderyhmän kuvaus</label>
-                  <textarea rows="2" className={inputCls} value={newEvent.audienceNotes} onChange={(e) => updNewEvent('audienceNotes', e.target.value)}></textarea>
+                  <textarea rows={2} className={inputCls} value={newEvent.audienceNotes} onChange={(e) => updNewEvent('audienceNotes', e.target.value)}></textarea>
                 </div>
               </div>
 
@@ -13690,7 +13693,7 @@ export default function App() {
                 </div>
                 <div>
                   <label className={labelCls}>Aiemmat järjestyshäiriöt, sairaankuljetukset ja poikkeamat</label>
-                  <textarea rows="4" className={inputCls} value={newEvent.previousIncidents} onChange={(e) => updNewEvent('previousIncidents', e.target.value)} placeholder="Kirjaa lukumäärät ja tyypit, jos tiedossa. Esimerkiksi poistot, kiinniotot, ensiaputapahtumat ja poliisin tehtävät."></textarea>
+                  <textarea rows={4} className={inputCls} value={newEvent.previousIncidents} onChange={(e) => updNewEvent('previousIncidents', e.target.value)} placeholder="Kirjaa lukumäärät ja tyypit, jos tiedossa. Esimerkiksi poistot, kiinniotot, ensiaputapahtumat ja poliisin tehtävät."></textarea>
                 </div>
               </div>
 
@@ -13724,7 +13727,7 @@ export default function App() {
                 <h3 className={headCls}><Users size={18} className="text-indigo-500" />10. Esiintyjät ja ohjelmisto</h3>
                 <div className="mb-4">
                   <label className={labelCls}>Esiintyjät ja puhujat</label>
-                  <textarea rows="3" className={inputCls} value={newEvent.performers} onChange={(e) => updNewEvent('performers', e.target.value)} placeholder="Nimet ja esiintymisajat, jos tiedossa."></textarea>
+                  <textarea rows={3} className={inputCls} value={newEvent.performers} onChange={(e) => updNewEvent('performers', e.target.value)} placeholder="Nimet ja esiintymisajat, jos tiedossa."></textarea>
                 </div>
                 <div className="space-y-3">
                   <label className={`flex items-center gap-3 cursor-pointer border rounded-lg p-4 transition-colors ${newEvent.reactionRisk ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
@@ -13739,7 +13742,7 @@ export default function App() {
                 {(newEvent.reactionRisk || newEvent.vipGuests) && (
                   <div className="mt-4">
                     <label className={labelCls}>Tarkennus suojaustarpeesta</label>
-                    <textarea rows="3" className={inputCls} value={newEvent.vipNotes} onChange={(e) => updNewEvent('vipNotes', e.target.value)} placeholder="Kohteet, saapumisreitit, backstage-järjestelyt, mahdolliset uhka-arviot."></textarea>
+                    <textarea rows={3} className={inputCls} value={newEvent.vipNotes} onChange={(e) => updNewEvent('vipNotes', e.target.value)} placeholder="Kohteet, saapumisreitit, backstage-järjestelyt, mahdolliset uhka-arviot."></textarea>
                   </div>
                 )}
               </div>
@@ -13764,11 +13767,11 @@ export default function App() {
                 </div>
                 <div className="mb-4">
                   <label className={labelCls}>Valaistus pimeän aikaan</label>
-                  <textarea rows="2" className={inputCls} value={newEvent.lighting} onChange={(e) => updNewEvent('lighting', e.target.value)} placeholder="Kiinteä valaistus, tilapäisvalaistus, pimeät alueet ja lisävalaistuksen tarve."></textarea>
+                  <textarea rows={2} className={inputCls} value={newEvent.lighting} onChange={(e) => updNewEvent('lighting', e.target.value)} placeholder="Kiinteä valaistus, tilapäisvalaistus, pimeät alueet ja lisävalaistuksen tarve."></textarea>
                 </div>
                 <div>
                   <label className={labelCls}>Poistumisreitit ja pelastustiet</label>
-                  <textarea rows="3" className={inputCls} value={newEvent.exitRoutes} onChange={(e) => updNewEvent('exitRoutes', e.target.value)} placeholder="Sijainnit, leveydet, opastus ja pelastusteiden pitäminen vapaana."></textarea>
+                  <textarea rows={3} className={inputCls} value={newEvent.exitRoutes} onChange={(e) => updNewEvent('exitRoutes', e.target.value)} placeholder="Sijainnit, leveydet, opastus ja pelastusteiden pitäminen vapaana."></textarea>
                 </div>
               </div>
 
@@ -13813,7 +13816,7 @@ export default function App() {
                 <h3 className={headCls}><Layers size={18} className="text-indigo-500" />13. Muiden toimijoiden läsnäolo</h3>
                 <div className="mb-4">
                   <label className={labelCls}>Alueella toimivat muut osapuolet</label>
-                  <textarea rows="3" className={inputCls} value={newEvent.otherOperators} onChange={(e) => updNewEvent('otherOperators', e.target.value)} placeholder="Ensiapupäivystys, liikenteenohjaus, lavarakentajat, siivous, ravintolatoimijat. Kirjaa yhteyshenkilöt."></textarea>
+                  <textarea rows={3} className={inputCls} value={newEvent.otherOperators} onChange={(e) => updNewEvent('otherOperators', e.target.value)} placeholder="Ensiapupäivystys, liikenteenohjaus, lavarakentajat, siivous, ravintolatoimijat. Kirjaa yhteyshenkilöt."></textarea>
                 </div>
                 <div>
                   <label className={labelCls}>Päävastuu alueen kokonaisturvallisuudesta rakennusvaiheessa</label>

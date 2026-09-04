@@ -132,11 +132,6 @@ export type TapahtumanLomake = {
   approvalStatus?: string;
 };
 
-// --- Oikeuseditori -------------------------------------------------------------------
-
-// Käyttäjälle myönnetty tapahtumakohtainen pääsy oikeuksien muokkausnäkymässä.
-export type TapahtumaPaasy = { id: string; name?: string };
-
 // --- Kertanäytöt ---------------------------------------------------------------------
 //
 // Nämä kolme näytetään kerran ja unohdetaan: salasana ja jakolinkki eivät ole haettavissa
@@ -231,4 +226,31 @@ export type Kirjaus = {
   deletedAt?: string | null;
   deletedBy?: string | null;
   [lisa: string]: any;
+};
+
+// --- Lomakelistaus -------------------------------------------------------------------
+
+// "Täytettävät lomakkeet" -listaus yhdistää kaksi lähdettä: sisäänrakennetut lomakkeet
+// (koodissa, koska niissä on toiminnallisuutta) ja tapahtumaan lisätyt (eventForms).
+// Listaus lukee molemmista samat kentät, joten se tarvitsee yhteisen muodon — ilman sitä
+// yhdistetystä taulukosta tulee union-tyyppi, joka estää jokaisen kentän luvun.
+export type LomakeRivi = {
+  name: string;
+  desc?: string;
+  // Luokitus ('Sisäinen', 'Ulkoinen', 'Viranomaislomake', 'Muu'). `tagOther` on
+  // vapaa teksti silloin kun luokitus on 'Muu'.
+  tag?: string;
+  tagOther?: string;
+  // Mille välilehdelle sisäänrakennettu lomake vie.
+  tab?: string;
+  kentat?: string[];
+  // Nämä ovat vain lisätyillä lomakkeilla.
+  lisatty?: boolean;
+  id?: string;
+  eventId?: string | null;
+  uploadId?: string;
+  containsPersonalData?: boolean;
+  approvalStatus?: string;
+  createdAt?: string;
+  createdBy?: string;
 };
