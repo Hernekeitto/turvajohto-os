@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import { TURVAOTSAKKEET } from './csp.ts'
 
 // Palvelutyöntekijän kokoaminen (erä 6, perusta P7).
 //
@@ -47,4 +48,9 @@ export default defineConfig({
   // repossa että palvelimella — muuten tuotepolut osuvat väärään paikkaan.
   base: '/',
   plugins: [react(), palvelutyontekija()],
+  // Samat turvaotsakkeet kuin tuotannon nginxissä (ks. csp.js). Ilman näitä CSP-rikkomus
+  // — estetty tyyli, skripti tai yhteys — näkyisi vasta tuotannossa, ja siellä se näkyy
+  // hiljaisena: mitään ei kaadu, jokin vain jää tekemättä.
+  server: { headers: TURVAOTSAKKEET },
+  preview: { headers: TURVAOTSAKKEET },
 })
