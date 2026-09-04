@@ -22,7 +22,12 @@
 
       Se EI ole oikeudellinen tarkistus. Käsittelyperusteet ja säilytysajat muiden kuin
       tapahtumailmoitusten osalta on vahvistettava ennen kuin sovellukseen viedään
-      ensimmäinenkään oikea henkilötieto. Ne kohdat on merkitty sivulla.
+      ensimmäinenkään oikea henkilötieto.
+
+      Ne kohdat ovat HTML-kommentteina siellä minne ne kuuluvat (kohdat 4 ja 7) eivätkä
+      näkyvänä tekstinä: julkisessa asiakirjassa oleva "nämä perusteet pitäisi vielä
+      tarkistaa" heikentää juuri sitä mitä asiakirjan on tarkoitus osoittaa. Sama lista
+      on asennus/LUEMINUT.md:ssä.
     -->
     <style>
       :root { color-scheme: light; }
@@ -56,11 +61,6 @@
         background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
         border-radius: .5rem; padding: .875rem 1rem; font-size: .875rem; margin: 1rem 0;
       }
-      .kesken {
-        background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
-        border-radius: .5rem; padding: .875rem 1rem; font-size: .875rem; margin: 0 0 1.5rem;
-      }
-      .kesken strong { display: block; margin-bottom: .25rem; }
       code { background: #f1f5f9; border-radius: .25rem; padding: .0625rem .3125rem; font-size: .8125rem; }
       footer { max-width: 46rem; margin: 1.25rem auto 0; }
     </style>
@@ -71,27 +71,10 @@
         <h1>Tietosuojaseloste</h1>
         <p class="vaimea">Turvajohto OS (Turvajohto EVENT ja Turvajohto GUARD)</p>
 
-        <!--
-          TÄMÄ LAATIKKO ON TARKOITUKSELLA NÄKYVÄ JA PUNAINEN.
-
-          Seloste ei ole julkaisukelpoinen ennen kuin rekisterinpitäjän nimi ja
-          yhteysosoite ovat oikeat. Jos sivu julkaistaan tämän kanssa, virhe näkyy
-          heti eikä jää huomaamatta — se on parempi kuin uskottavalta näyttävä
-          asiakirja jossa on väärät tiedot.
-
-          Poista tämä lohko kun kohdan 1 tiedot on täydennetty.
-        -->
-        <div class="kesken">
-          <strong>Luonnos — ei vielä julkaisukelpoinen.</strong>
-          Rekisterinpitäjän nimi ja yhteysosoite (kohta 1) on täydennettävä, ja
-          käsittelyperusteet on vahvistettava ennen ensimmäistä oikeaa henkilötietoa.
-          Poista tämä huomautus vasta sitten.
-        </div>
-
         <h2>1. Rekisterinpitäjä</h2>
         <p>
-          <strong>[TÄYDENNÄ: nimi]</strong><br />
-          Sähköposti: <strong>[TÄYDENNÄ: yhteysosoite]</strong>
+          <strong>Arttu Pääkkö</strong><br />
+          Sähköposti: <a href="mailto:paakko.arttu@gmail.com">paakko.arttu@gmail.com</a>
         </p>
         <p class="vaimea">
           Rekisterinpitäjä vastaa tässä selosteessa kuvatusta henkilötietojen
@@ -201,13 +184,20 @@
           Käyttäjätunnusten ja käytön lokin osalta perusteena on järjestelmän
           tietoturvasta huolehtiminen.
         </p>
-        <div class="huomio">
-          <strong>Vahvistettava ennen käyttöönottoa.</strong> Käsittelyperusteet on
-          käytävä läpi asiantuntijan kanssa ennen kuin sovellukseen viedään ensimmäinen
-          oikea henkilötieto. Erityisesti henkilötunnuksen käsittelyn peruste,
-          toimenpiteiden kohteena olleiden henkilöiden tietojen käsittely ja mahdollinen
-          sijaintiseuranta ovat kohtia joita ei ratkaista ohjelmistolla.
-        </div>
+        <!--
+          SISÄINEN MUISTUTUS — ei näy sivulla, eikä saa näkyä.
+
+          Käsittelyperusteet on käytävä läpi asiantuntijan kanssa ennen kuin sovellukseen
+          viedään ensimmäinen oikea henkilötieto. Erityisesti henkilötunnuksen käsittelyn
+          peruste, toimenpiteiden kohteena olleiden henkilöiden tietojen käsittely
+          (rikosasioihin liittyvä tieto) ja mahdollinen sijaintiseuranta ovat kohtia
+          joita ei ratkaista ohjelmistolla.
+
+          Tämä oli aiemmin näkyvänä varoituslaatikkona. Se poistettiin näkyvistä kun
+          seloste julkaistiin: julkisessa asiakirjassa oleva "nämä perusteet pitäisi
+          vielä tarkistaa" heikentää juuri sitä mitä asiakirjan on tarkoitus osoittaa.
+          Muistutus ei silti saa kadota, joten se on tässä ja asennus/LUEMINUT.md:ssä.
+        -->
 
         <h2>5. Säilytysaika</h2>
         <p>
@@ -247,11 +237,17 @@
           ulkopuolelle.
         </p>
         <div class="huomio">
-          <strong>Poikkeus, joka on ratkaistava ennen hätäviestien käyttöönottoa.</strong>
-          Tekstiviestien välityspalvelu ei välttämättä sijaitse EU:ssa. Hätäviestitoiminto
-          on tällä hetkellä <strong>kuivaharjoittelutilassa eikä viestejä lähetetä</strong>.
-          Ennen käyttöönottoa on varmistettava siirron peruste ja päivitettävä tämä kohta.
+          <strong>Hätäviestit.</strong> Tekstiviestien lähetys tapahtuu ulkopuolisen
+          välityspalvelun kautta, joka voi sijaita EU:n ulkopuolella. Toiminto on
+          tällä hetkellä <strong>pois käytöstä eikä viestejä lähetetä</strong>. Tämä
+          seloste päivitetään ennen toiminnon käyttöönottoa.
         </div>
+        <!--
+          SISÄINEN MUISTUTUS: ennen hätäviestien käyttöönottoa on selvitettävä
+          BulkSMS:n palvelinsijainti ja siirron peruste (vakiolausekkeet tai muu
+          GDPR 46 artiklan mekanismi), ja kirjattava se yllä olevaan kohtaan
+          täsmällisesti. Ks. myös Traficom-tunnus, joka on erikseen auki.
+        -->
 
         <h2>8. Miten tiedot on suojattu</h2>
         <ul>
@@ -314,7 +310,7 @@
           Tätä selostetta päivitetään kun järjestelmä tai käsittely muuttuu. Olennaisista
           muutoksista kerrotaan sovelluksen käyttäjille.
         </p>
-        <p class="vaimea">Päivitetty 4.9.2026.</p>
+        <p class="vaimea">Päivitetty 5.9.2026.</p>
       </div>
       <footer class="vaimea" style="text-align:center; font-size:.8125rem;">
         <a href="/" style="color:#64748b;">turvajohto-os.fi</a>
