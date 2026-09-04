@@ -86,15 +86,58 @@ nimetä molemmat.
 
 ### 2. Sovelluksen kääriminen
 
+Aja **repon ULKOPUOLELLA** omassa hakemistossaan (esim. `C:\Users\Arttu\Documents\twa-guard`):
+Bubblewrap tuottaa Android-projektin, avainvaraston ja gradle-roinaa, eikä mikään siitä
+kuulu sivuston repoon.
+
 ```
 npx @bubblewrap/cli init --manifest https://turvajohto-os.fi/manifest-guard.json
-npx @bubblewrap/cli build
 ```
 
-Bubblewrap lukee nimen, värit, orientaation ja kuvakkeet manifestista, joten ne ovat
-jo kunnossa. Se kysyy paketin nimen ja luo allekirjoitusavaimen (`android.keystore`)
-— **ota avaimesta ja sen salasanasta varmuuskopio heti**: ilman sitä sovellusta ei voi
-enää päivittää.
+**Java puuttuu tästä koneesta** (4.9.2026). Bubblewrap tarjoutuu lataamaan oman JDK:nsa
+ja Android SDK:nsa `~/.bubblewrap`-hakemistoon, noin gigatavun verran — hyväksy se, sillä
+erillistä Android Studiota ei tarvita.
+
+Manifestista tulevat valmiina nimi, lyhyt nimi, värit, orientaatio, aloitusosoite ja
+kuvakkeet. Loput se kysyy, ja näistä neljä on päätöksiä eikä muodollisuuksia:
+
+| Kysymys | Vastaus | Miksi |
+|---|---|---|
+| Application ID | `fi.turvajohto_os.guard` | Pysyvä, ei vaihdettavissa julkaisun jälkeen |
+| Display mode | `standalone` | Sama kuin manifestissa |
+| Fallback behaviour | `customtabs` | Oletus; webview menettää palvelutyöntekijän |
+| **Notification delegation** | **ei** | Ks. alla |
+| **Request geolocation permission** | **ei** | Ks. alla |
+| Key store / passwords | uusi avain, **kirjoita salasana talteen** | Ks. alla |
+| App version / versionCode | `1` / `1` | Sisäinen testi |
+
+**Ilmoitusdelegointi = ei, vaikka push on suunnitteilla (kohta 7).** Delegointi lisää
+sovellukseen `POST_NOTIFICATIONS`-oikeuden. Oikeus jota sovellus ei käytä on Play-arviossa
+turhaa selitettävää ja Data safety -lomakkeessa väärä vastaus. Kytketään päälle siinä
+versiossa joka oikeasti lähettää ilmoituksia — se on uusi build, ei uusi paketti.
+
+**Sijaintidelegointi = ei tässä vaiheessa.** Sijaintiseuranta on kytketty pois ja sen
+juridiikka on yhä auki (kohta 8), eikä `ACCESS_FINE_LOCATION` kuulu sovellukseen jossa
+toimintoa ei käytetä — se on Play Storen tarkimmin valvottuja oikeuksia. **Huom: kun
+sijainti joskus otetaan käyttöön, selaimen paikannus on testattava nimenomaan TWA:n
+sisällä** — TWA:ssa sijaintilupa on isäntäsovelluksen eikä Chromen, ja tämä on
+tarkistettava laitteella eikä pääteltävä.
+
+**Avainvarasto: tästä ei ole paluuta.** Bubblewrap luo `android.keystore`-tiedoston ja
+kysyy sille salasanan. Jos tiedosto tai salasana katoaa, **sovellusta ei voi enää
+koskaan päivittää** — ainoa tie olisi uusi paketti uudella nimellä, eli käytännössä uusi
+sovellus kaupassa. Ota molemmista varmuuskopio heti, äläkä jätä avainta vain tähän
+hakemistoon.
+
+Sitten build ja asennus omaan puhelimeen (USB-debug päällä):
+
+```
+npx @bubblewrap/cli build
+npx @bubblewrap/cli install
+```
+
+Ensimmäinen asennus näyttää **osoitepalkin**, ja se on odotettua: `assetlinks.json` on
+vielä tyhjä. Se korjataan kohdassa 3.
 
 ### 3. Digital Asset Links — tässä testaus tyypillisesti kaatuu
 
@@ -137,8 +180,11 @@ https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=http
 
 ### 4. Play Consolen paperit (ei koodia)
 
-- **Tietosuojaseloste julkisesti saatavilla** — pakollinen. Sovellus käsittelee
-  henkilötunnuksia ja sijaintia, joten tämä ei ole muotoseikka.
+- **Tietosuojaseloste julkisesti saatavilla** — pakollinen, ja **sitä ei ole vielä
+  olemassa** (tarkistettu 4.9.2026: sivustolla on vain `jako.html` ja `ilmoitus.html`).
+  Tämä on kohdan 3 ohella toinen kova este julkaisulle. Sovellus käsittelee
+  henkilötunnuksia ja sijaintia, joten se ei ole muotoseikka vaan asiakirja jonka
+  sisällön on vastattava sitä mitä sovellus oikeasti tekee.
 - **Data safety -lomake**: mitä kerätään, mihin, kenelle jaetaan, salataanko siirrossa.
 - Käyttöoikeuksien perustelut, erityisesti sijainti ja kamera.
 - **Testitunnukset arvioijalle.** Sovellus ei ole julkinen: siihen kirjaudutaan, ja
