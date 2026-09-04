@@ -84,8 +84,16 @@ export default function Landing() {
         </div>
       </main>
 
+      {/* Tietosuojaseloste linkitetään mainossivulta, koska Google Play edellyttää
+          selosteelle julkista osoitetta ja arvioija etsii sen nimenomaan täältä —
+          sovelluksen sisään hän ei pääse. Tavallinen <a>, ei reititystä: sivu on
+          staattinen HTML (public/tietosuoja.html) eikä osa sovellusnippua. */}
       <footer className="text-center text-xs text-ink-subtle pb-8 px-6">
         Turvajohto OS · Kirjautuminen vaaditaan molemmille puolille
+        <span className="mx-2" aria-hidden="true">·</span>
+        <a href="/tietosuoja.html" className="underline hover:text-ink-muted transition-colors">
+          Tietosuojaseloste
+        </a>
       </footer>
     </div>
   );

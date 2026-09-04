@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="fi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tietosuojaseloste – Turvajohto OS</title>
+    <!--
+      TIETOSUOJASELOSTE. Julkinen sivu, johon Google Play viittaa sovelluksen
+      tietosuojaselosteena (pakollinen kenttä Play Consolessa).
+
+      OMA STAATTINEN SIVU eikä sovelluksen näkymä, koska selosteen on oltava luettavissa
+      ILMAN KIRJAUTUMISTA: Play-arvioija, sovelluskaupan kävijä ja rekisteröity eivät
+      pääse sovellukseen sisään. Sama syy kuin jako.html:llä ja ilmoitus.html:llä.
+
+      Toisin kuin ne, tämä sivu EI ole noindex: selosteen kuuluu löytyä.
+
+      --- MITÄ TÄSSÄ ON JA MITÄ EI ---
+
+      Sisältö on johdettu siitä mitä koodi oikeasti tekee (kenttäsalaus store.js,
+      säilytysajat shared/sailytysaika.ts, sijainti server/sijainti.js, tekstiviestit
+      server/bulksms.js). Se on siis paikkansapitävä kuvaus järjestelmästä.
+
+      Se EI ole oikeudellinen tarkistus. Käsittelyperusteet ja säilytysajat muiden kuin
+      tapahtumailmoitusten osalta on vahvistettava ennen kuin sovellukseen viedään
+      ensimmäinenkään oikea henkilötieto. Ne kohdat on merkitty sivulla.
+    -->
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: #f8fafc; padding: 2rem 1rem;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        color: #334155; line-height: 1.65;
+      }
+      main { max-width: 46rem; margin: 0 auto; }
+      .kortti {
+        background: #fff; border: 1px solid #e2e8f0; border-radius: 0.75rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 2rem 1.75rem;
+      }
+      h1 { font-size: 1.5rem; color: #0f172a; margin: 0 0 .25rem; }
+      h2 {
+        font-size: 1rem; color: #0f172a; margin: 2rem 0 .5rem;
+        padding-top: 1.25rem; border-top: 1px solid #f1f5f9;
+      }
+      h2:first-of-type { border-top: 0; padding-top: 0; }
+      h3 { font-size: .875rem; color: #1e293b; margin: 1.25rem 0 .25rem; }
+      p, li { font-size: .9375rem; }
+      .vaimea { color: #64748b; font-size: .875rem; }
+      ul { padding-left: 1.25rem; }
+      li { margin-bottom: .35rem; }
+      table { width: 100%; border-collapse: collapse; margin: .75rem 0 1rem; font-size: .875rem; }
+      th, td { text-align: left; vertical-align: top; padding: .5rem .625rem; border-bottom: 1px solid #f1f5f9; }
+      th { color: #0f172a; font-weight: 600; white-space: nowrap; }
+      .taulukkokehys { overflow-x: auto; }
+      .huomio {
+        background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+        border-radius: .5rem; padding: .875rem 1rem; font-size: .875rem; margin: 1rem 0;
+      }
+      .kesken {
+        background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
+        border-radius: .5rem; padding: .875rem 1rem; font-size: .875rem; margin: 0 0 1.5rem;
+      }
+      .kesken strong { display: block; margin-bottom: .25rem; }
+      code { background: #f1f5f9; border-radius: .25rem; padding: .0625rem .3125rem; font-size: .8125rem; }
+      footer { max-width: 46rem; margin: 1.25rem auto 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="kortti">
+        <h1>Tietosuojaseloste</h1>
+        <p class="vaimea">Turvajohto OS (Turvajohto EVENT ja Turvajohto GUARD)</p>
+
+        <!--
+          TÄMÄ LAATIKKO ON TARKOITUKSELLA NÄKYVÄ JA PUNAINEN.
+
+          Seloste ei ole julkaisukelpoinen ennen kuin rekisterinpitäjän nimi ja
+          yhteysosoite ovat oikeat. Jos sivu julkaistaan tämän kanssa, virhe näkyy
+          heti eikä jää huomaamatta — se on parempi kuin uskottavalta näyttävä
+          asiakirja jossa on väärät tiedot.
+
+          Poista tämä lohko kun kohdan 1 tiedot on täydennetty.
+        -->
+        <div class="kesken">
+          <strong>Luonnos — ei vielä julkaisukelpoinen.</strong>
+          Rekisterinpitäjän nimi ja yhteysosoite (kohta 1) on täydennettävä, ja
+          käsittelyperusteet on vahvistettava ennen ensimmäistä oikeaa henkilötietoa.
+          Poista tämä huomautus vasta sitten.
+        </div>
+
+        <h2>1. Rekisterinpitäjä</h2>
+        <p>
+          <strong>[TÄYDENNÄ: nimi]</strong><br />
+          Sähköposti: <strong>[TÄYDENNÄ: yhteysosoite]</strong>
+        </p>
+        <p class="vaimea">
+          Rekisterinpitäjä vastaa tässä selosteessa kuvatusta henkilötietojen
+          käsittelystä. Tietosuoja-asioita koskevat pyynnöt osoitetaan yllä olevaan
+          osoitteeseen.
+        </p>
+
+        <h2>2. Mitä tietoja käsitellään ja mihin</h2>
+        <p>
+          Turvajohto OS on tapahtumaturvallisuuden ja vartioinnin työkalu. Siihen
+          kirjataan turvallisuustyön tapahtumat sekä työvuoroissa toimivien
+          työntekijöiden tiedot. Sovellus ei ole julkinen: siihen kirjaudutaan, ja
+          jokainen näkymä on käyttöoikeuksien takana.
+        </p>
+
+        <div class="taulukkokehys">
+          <table>
+            <thead>
+              <tr><th>Tietoryhmä</th><th>Sisältö</th><th>Tarkoitus</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Käyttäjätunnukset</td>
+                <td>Käyttäjätunnus, nimimerkki, salasanan tiiviste, kaksivaiheisen
+                    tunnistautumisen avain, kirjautumisajat, käyttäjätaso ja
+                    käyttöoikeudet</td>
+                <td>Kirjautuminen ja pääsynhallinta</td>
+              </tr>
+              <tr>
+                <td>Työntekijätiedot</td>
+                <td>Nimi, henkilötunnus, syntymäaika, kansalaisuus, osoite, sähköposti,
+                    puhelinnumero, pankkiyhteys (IBAN, BIC), veronumero, työsuhteen ehdot
+                    ja palkkatiedot, koulutukset ja kortit</td>
+                <td>Työvuorojen ja työsuhteen hallinta, palkanmaksun perustiedot,
+                    lakisääteisten kelpoisuuksien todentaminen</td>
+              </tr>
+              <tr>
+                <td>Työvuorokirjaukset</td>
+                <td>Sisään- ja uloskirjaukset, varusteet, vuoron huomiot,
+                    vartiokierrokset ja tarkastuspisteiden kuittaukset</td>
+                <td>Vuoron toteutuman ja kierrosten todentaminen</td>
+              </tr>
+              <tr>
+                <td>Turvallisuuskirjaukset ja raportit</td>
+                <td>Poikkeamat, tapahtumailmoitukset, järjestyksenvalvojan ja vartijan
+                    toimenpideraportit. <strong>Voivat sisältää toimenpiteiden kohteena
+                    olleen henkilön nimen, henkilötunnuksen, osoitetiedot ja
+                    tuntomerkit</strong>, sekä kuvauksen tapahtuneesta</td>
+                <td>Laissa yksityisistä turvallisuuspalveluista säädetty
+                    ilmoitus- ja kirjaamisvelvollisuus</td>
+              </tr>
+              <tr>
+                <td>Liitteet</td>
+                <td>Valokuvat ja tiedostot, jotka käyttäjä liittää kirjaukseen</td>
+                <td>Kirjauksen todentaminen</td>
+              </tr>
+              <tr>
+                <td>Hätäviestit</td>
+                <td>Vastaanottajien puhelinnumerot, viestin teksti ja toimitustila</td>
+                <td>Hälytysviestintä poikkeustilanteessa</td>
+              </tr>
+              <tr>
+                <td>Käytön loki</td>
+                <td>Kuka teki minkä toiminnon ja milloin, kirjautumisyritykset
+                    (myös epäonnistuneet) ja IP-osoite</td>
+                <td>Kirjausten luotettavuus ja väärinkäytösten selvittäminen</td>
+              </tr>
+              <tr>
+                <td>Sijainti</td>
+                <td><strong>Ei käytössä.</strong> Toiminto on rakennettu mutta kytketty
+                    pois päältä</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="huomio">
+          <strong>Sijaintiseurannasta erikseen.</strong> Sovelluksessa on valmius näyttää
+          työntekijöiden sijainti kartalla, mutta se on <strong>kytketty pois päältä
+          eikä sijaintitietoja käsitellä</strong>. Jos toiminto otetaan käyttöön, se on
+          työntekijöihin kohdistuvaa teknistä valvontaa: se edellyttää
+          yhteistoimintakäsittelyä, erillistä informointia ja käsittelyperusteen
+          arviointia, ja tätä selostetta päivitetään ennen käyttöönottoa. Toiminnon
+          ollessa käytössä palvelimella säilytetään vain viimeisin sijainti, se vanhenee
+          30 minuutissa eikä sitä tallenneta levylle. Uloskirjautuminen poistaa sen
+          välittömästi.
+        </div>
+
+        <h2>3. Mistä tiedot saadaan</h2>
+        <ul>
+          <li>Työntekijältä itseltään tai työnantajalta työsuhteen alkaessa.</li>
+          <li>Sovelluksen käyttäjiltä heidän kirjatessaan työvuoron tapahtumia.</li>
+          <li>Järjestelmän omasta toiminnasta (kirjautumisajat, käytön loki).</li>
+        </ul>
+        <p class="vaimea">
+          Tietoja ei kerätä ulkopuolisista lähteistä eikä niitä rikastu millään
+          ulkopuolisella palvelulla.
+        </p>
+
+        <h2>4. Käsittelyn peruste</h2>
+        <p>
+          Turvallisuuskirjausten ja tapahtumailmoitusten osalta käsittely perustuu
+          <strong>lakisääteiseen velvoitteeseen</strong> (laki yksityisistä
+          turvallisuuspalveluista). Työntekijätietojen osalta käsittely perustuu
+          työsopimukseen ja työnantajan lakisääteisiin velvoitteisiin.
+          Käyttäjätunnusten ja käytön lokin osalta perusteena on järjestelmän
+          tietoturvasta huolehtiminen.
+        </p>
+        <div class="huomio">
+          <strong>Vahvistettava ennen käyttöönottoa.</strong> Käsittelyperusteet on
+          käytävä läpi asiantuntijan kanssa ennen kuin sovellukseen viedään ensimmäinen
+          oikea henkilötieto. Erityisesti henkilötunnuksen käsittelyn peruste,
+          toimenpiteiden kohteena olleiden henkilöiden tietojen käsittely ja mahdollinen
+          sijaintiseuranta ovat kohtia joita ei ratkaista ohjelmistolla.
+        </div>
+
+        <h2>5. Säilytysaika</h2>
+        <p>
+          <strong>Tapahtumailmoitukset ja toimenpideraportit säilytetään kaksi vuotta</strong>
+          laatimisvuoden päättymisestä, minkä jälkeen ne hävitetään pysyvästi liitteineen.
+          Sovellus laskee määräajan automaattisesti ja erittelee hävitettävät ilmoitukset.
+        </p>
+        <p>
+          Työntekijätiedot säilytetään työsuhteen ajan ja sen jälkeen niin kauan kuin
+          työnantajan velvoitteet sitä edellyttävät. Käyttäjätunnukset poistetaan kun
+          käyttöoikeutta ei enää tarvita. Käytön loki on muuttumaton
+          (append-only) ja säilytetään järjestelmän elinkaaren ajan.
+        </p>
+
+        <h2>6. Kenelle tietoja luovutetaan</h2>
+        <p>
+          Tietoja ei myydä, vuokrata eikä luovuteta markkinointitarkoituksiin.
+          Tietoja luovutetaan vain:
+        </p>
+        <ul>
+          <li><strong>Viranomaiselle</strong> lain edellyttämässä laajuudessa
+              (esimerkiksi poliisille tapahtumailmoitus).</li>
+          <li><strong>Tekstiviestien välittäjälle</strong> silloin kun hätäviesti
+              lähetetään: välittäjä saa vastaanottajan puhelinnumeron ja viestin tekstin.
+              Viestin tekstiin ei kirjoiteta henkilötunnusta.</li>
+        </ul>
+        <p class="vaimea">
+          Palvelinalusta (konesali Helsingissä) toimii käsittelijänä. Sovelluksessa ei
+          ole analytiikkaa, mainoksia, seurantapikseleitä eikä kolmannen osapuolen
+          upotettua sisältöä — myös kirjasimet tarjoillaan omalta palvelimelta, jotta
+          käyttäjän selain ei ota yhteyttä ulkopuolisiin.
+        </p>
+
+        <h2>7. Tietojen sijainti ja siirto EU:n ulkopuolelle</h2>
+        <p>
+          Tiedot säilytetään palvelimella Suomessa. Tietoja ei siirretä EU:n tai ETA:n
+          ulkopuolelle.
+        </p>
+        <div class="huomio">
+          <strong>Poikkeus, joka on ratkaistava ennen hätäviestien käyttöönottoa.</strong>
+          Tekstiviestien välityspalvelu ei välttämättä sijaitse EU:ssa. Hätäviestitoiminto
+          on tällä hetkellä <strong>kuivaharjoittelutilassa eikä viestejä lähetetä</strong>.
+          Ennen käyttöönottoa on varmistettava siirron peruste ja päivitettävä tämä kohta.
+        </div>
+
+        <h2>8. Miten tiedot on suojattu</h2>
+        <ul>
+          <li>Yhteys sovellukseen on aina salattu (HTTPS).</li>
+          <li><strong>Henkilötunnukset, veronumerot ja raporttien vapaa teksti on
+              salattu erikseen levylle</strong> omalla avaimellaan (AES-256-GCM). Levyn
+              varmuuskopio tai kopioitu tiedosto ei sisällä luettavia henkilötunnuksia.</li>
+          <li>Palvelimen levy on salattu.</li>
+          <li>Salasanat säilytetään vain laskennallisena tiivisteenä (bcrypt); niitä ei
+              voi lukea järjestelmästä.</li>
+          <li>Kirjautuminen vaatii kaksivaiheisen tunnistautumisen (Authenticator-koodi)
+              kaikilta muilta paitsi pääkäyttäjältä.</li>
+          <li>Jokainen näkymä on käyttöoikeuksien takana, ja oikeudet voidaan rajata
+              tapahtuma- ja kohdekohtaisesti. Rajaukset tarkistetaan palvelimella, ei
+              vain käyttöliittymässä.</li>
+          <li>Käytön loki kirjaa kuka teki mitä.</li>
+          <li>Selaimessa istunto katkeaa käyttämättömänä. Laitteelle asennetussa
+              sovelluksessa istuntoa ei katkaista, koska sen käyttö kentällä sitä
+              edellyttää; asentamisen ehtona on laitteen lukitseminen vahvalla
+              salasanalla, ja pääkäyttäjä voi kirjata käyttäjän ulos välittömästi.</li>
+          <li>Sovellus säilyttää laitteella vain kuluvan vuoron työtiedot, ja ne
+              poistetaan uloskirjautuessa.</li>
+        </ul>
+
+        <h2>9. Sovelluksen käyttöoikeudet laitteella</h2>
+        <ul>
+          <li><strong>Kamera:</strong> kysytään vain silloin kun käyttäjä liittää
+              valokuvan kirjaukseen. Sovellus ei käytä kameraa taustalla.</li>
+          <li><strong>Sijainti:</strong> ei käytössä (ks. kohta 2).</li>
+          <li><strong>Ilmoitukset:</strong> ei käytössä.</li>
+        </ul>
+
+        <h2>10. Evästeet</h2>
+        <p>
+          Sovellus asettaa yhden evästeen (<code>tj_session</code>), joka pitää
+          kirjautumisen voimassa. Se on välttämätön sovelluksen toiminnalle. Seuranta-,
+          mainos- tai analytiikkaevästeitä ei käytetä.
+        </p>
+
+        <h2>11. Rekisteröidyn oikeudet</h2>
+        <p>Sinulla on oikeus:</p>
+        <ul>
+          <li>saada tietää, käsitelläänkö sinua koskevia tietoja, ja saada niistä jäljennös</li>
+          <li>vaatia virheellisen tiedon oikaisemista</li>
+          <li>vaatia tietojen poistamista, jollei säilyttäminen perustu lakiin</li>
+          <li>vaatia käsittelyn rajoittamista tai vastustaa käsittelyä</li>
+          <li>tehdä valitus valvontaviranomaiselle</li>
+        </ul>
+        <p>
+          Pyynnöt osoitetaan kohdan 1 yhteysosoitteeseen. Valvontaviranomainen Suomessa
+          on tietosuojavaltuutetun toimisto (tietosuoja.fi).
+        </p>
+        <p class="vaimea">
+          Huomaa, että lakisääteisesti säilytettävää tapahtumailmoitusta ei voida poistaa
+          pyynnöstä ennen säilytysajan päättymistä.
+        </p>
+
+        <h2>12. Muutokset</h2>
+        <p>
+          Tätä selostetta päivitetään kun järjestelmä tai käsittely muuttuu. Olennaisista
+          muutoksista kerrotaan sovelluksen käyttäjille.
+        </p>
+        <p class="vaimea">Päivitetty 4.9.2026.</p>
+      </div>
+      <footer class="vaimea" style="text-align:center; font-size:.8125rem;">
+        <a href="/" style="color:#64748b;">turvajohto-os.fi</a>
+      </footer>
+    </main>
+  </body>
+</html>

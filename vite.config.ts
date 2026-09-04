@@ -21,9 +21,11 @@ function palvelutyontekija(): Plugin {
     apply: 'build',
     generateBundle(_asetukset, nippu) {
       const tiedostot = ['/index.html', ...Object.keys(nippu).map((nimi) => `/${nimi}`)]
-        // jako.html ja ilmoitus.html ovat julkisia sivuja jotka avataan linkistä tai
-        // QR-koodista, eivätkä ne kuulu sovellusrunkoon. Kuvakkeet kuuluvat.
-        .filter((polku) => !polku.endsWith('jako.html') && !polku.endsWith('ilmoitus.html'))
+        // jako.html, ilmoitus.html ja tietosuoja.html ovat julkisia sivuja jotka
+        // avataan linkistä tai QR-koodista, eivätkä ne kuulu sovellusrunkoon.
+        // Kuvakkeet kuuluvat.
+        .filter((polku) => !['jako.html', 'ilmoitus.html', 'tietosuoja.html']
+          .some((sivu) => polku.endsWith(sivu)))
         .sort()
 
       const versio = createHash('sha256').update(tiedostot.join('|')).digest('hex').slice(0, 12)
