@@ -16,6 +16,7 @@ import './index.css'
 import Landing from './Landing.tsx'
 import PasswordGate from './PasswordGate.tsx'
 import { PaivitysKehote } from './shared/komponentit/PaivitysKehote.tsx'
+import { JonoTila } from './shared/komponentit/JonoTila.tsx'
 import { rekisteroiPalvelutyontekija } from './shared/palvelutyontekija.ts'
 
 // Tuotekohtaiset osat ladataan vasta tarvittaessa: mainossivu on julkinen ja sen
@@ -77,6 +78,14 @@ createRoot(document.getElementById('root')!).render(
         sovellusnippua. Mainossivulla se ei näy: sinne ei kirjauduta eikä siellä ole
         mitään kesken. */}
     {tuote !== 'landing' && <PaivitysKehote />}
+    {/* Lähtevä jono on molempien puolien ulkopuolella samasta syystä kuin päivityskehote:
+        kirjaus voi olla lähettämättä kummalla puolella tahansa, ja kahtena kappaleena
+        sama ilmoitus olisi kaksi paikkaa joita pitää muistaa päivittää.
+
+        Komponentti näyttää itsensä vain kun jonossa on jotain, ja jono on tyhjä kunnes
+        sovellus avaa sen kirjautuneen käyttäjän tunnuksella — joten se ei voi vuotaa
+        edellisen käyttäjän kirjauksia siinäkään hetkessä ennen kirjautumista. */}
+    {tuote !== 'landing' && <JonoTila />}
   </StrictMode>,
 )
 

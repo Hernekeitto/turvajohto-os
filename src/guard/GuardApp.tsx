@@ -9,7 +9,6 @@ import { Tehtavat } from './Tehtavat';
 import { Raportit } from './Raportit';
 import { KohteenTiedot } from './KohteenTiedot';
 import { Asetukset } from './Asetukset';
-import { JonoTila } from '../shared/komponentit/JonoTila';
 import { avaaJono, kaynnistaAutomatiikka, lisaaJonoon } from '../shared/jono';
 import { lueVuorodata, tallennaVuorodata, unohdaVuorodata } from '../shared/vuorodata';
 import { unohdaIstunto } from '../shared/istunto';
@@ -1252,11 +1251,6 @@ export default function GuardApp() {
           )}
         </div>
       </main>
-
-      {/* Lähtevä jono. Renderöidään GUARD-puolella, koska tässä sitä käytetään:
-          EVENT-puolen kirjaukset kulkevat vielä koko kokoelman tallennuksena. Kun ne
-          siirtyvät jonoon, tämä nousee main.tsx:ään molempien puolien yhteiseksi. */}
-      <JonoTila />
 
       {poistettava && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">

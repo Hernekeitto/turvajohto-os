@@ -78,6 +78,7 @@ import {
   luoPoikkeama, kasittele as kasittelePoikkeama, eskaloituu, halytyksenKuvaus,
 } from './varusteet.js';
 import { teeIkkuna, kooste as laskeKooste } from './analytiikka.js';
+import { loydaSamaKirjaus, seuraavaVapaaTunniste } from './kirjaukset.js';
 import {
   luoJalkiraportti, paivita as paivitaJalkiraportti, merkitseValmiiksi, avaaUudelleen,
   onLukittu as jalkiraporttiLukittu,
@@ -671,17 +672,37 @@ app.post('/api/kirjaa/:name', requireAuth, (req, res) => {
   if (!rakenne.ok) return res.status(400).json(rakenne);
 
   const current = readCollection(name) || [];
-  const id = String(tietue.id);
-  if (current.some((t) => String(t?.id) === id)) {
-    // Jono yritti uudelleen. Ei virhe: kirjaus on jo perillä, ja jonon kuuluu poistaa
-    // se listaltaan onnistuneena. Virhe tässä kohdassa jättäisi kirjauksen jonoon
-    // ikuisesti yrittämään uudelleen.
-    return res.json({ ok: true, id, duplikaatti: true });
+
+  // Onko tämä sama kirjaus joka on jo perillä (ks. kirjaukset.js: loydaSamaKirjaus).
+  // Ei virhe: jono yritti uudelleen, ja sen kuuluu poistaa kirjaus listaltaan
+  // onnistuneena. Virhe tässä kohdassa jättäisi kirjauksen jonoon ikuisesti yrittämään.
+  const sama = loydaSamaKirjaus(tietue, current);
+  if (sama) {
+    return res.json({ ok: true, id: String(sama.id), duplikaatti: true });
+  }
+
+  // TUNNISTETÖRMÄYS. EVENT-puolen tunniste on juokseva sarja jonka selain muodostaa
+  // omasta listastaan, ja offline-tilassa kaksi laitetta antaa saman numeron. Sarjan
+  // omistaja on palvelin, joten se siirtää jälkimmäisen seuraavaan vapaaseen numeroon
+  // sen sijaan että hylkäisi sen — hylkääminen tarkoittaisi, että offline-tuki hävittää
+  // juuri sen kirjauksen jonka se on olemassa pelastamaan.
+  let tallennettava = tietue;
+  let siirrettyTunnisteesta = null;
+  if (current.some((t) => String(t?.id) === String(tietue.id))) {
+    const vapaa = seuraavaVapaaTunniste(tietue.id, new Set(current.map((t) => String(t?.id))));
+    if (!vapaa) {
+      // Satunnainen tunniste (UUID) jota ei voi siirtää sarjassa eteenpäin. Sama id ilman
+      // samaa jonoId:tä on silloin niin epätodennäköinen, että se on todennäköisemmin
+      // virhe kuin törmäys — ja hiljainen ylikirjoitus olisi pahin vaihtoehto.
+      return res.status(409).json({ ok: false, error: 'Tunniste on jo käytössä.' });
+    }
+    siirrettyTunnisteesta = String(tietue.id);
+    tallennettava = { ...tietue, id: vapaa };
   }
 
   // Oikeustarkistus tehdään SAMALLA funktiolla kuin koko kokoelman kirjoituksessa, jotta
   // lisäysreitti ei voi olla eri mieltä oikeuksista kuin tavallinen tallennus.
-  const verdict = authorizeWrite(req.role, req.permissions, req.eventAccess, name, current, [...current, tietue]);
+  const verdict = authorizeWrite(req.role, req.permissions, req.eventAccess, name, current, [...current, tallennettava]);
   if (!verdict.ok) return res.status(403).json(verdict);
 
   writeCollection(name, verdict.data);
@@ -701,9 +722,16 @@ app.post('/api/kirjaa/:name', requireAuth, (req, res) => {
       // Jonosta tullut kirjaus merkitään lokiin: jälkikäteen on olennaista tietää, että
       // kirjaus syntyi kentällä eri aikaan kuin se saapui palvelimelle.
       ...(req.body?.jonossaAlkaen ? { jonossaAlkaen: req.body.jonossaAlkaen } : {}),
+      // Siirretty tunniste kirjataan lokiin: jälkikäteen on voitava selvittää miksi
+      // kirjauksen numero ei ole se jonka kirjaaja näki laitteellaan.
+      ...(siirrettyTunnisteesta ? { siirrettyTunnisteesta } : {}),
     });
   }
-  res.json({ ok: true, id });
+  res.json({
+    ok: true,
+    id: String(tallennettava.id),
+    ...(siirrettyTunnisteesta ? { siirretty: true } : {}),
+  });
 });
 
 // Käyttäjähallinta (vain admin) ja oman salasanan itsepalveluvaihto (kuka tahansa kirjautunut).

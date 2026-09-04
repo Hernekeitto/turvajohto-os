@@ -13,6 +13,8 @@ import {
   lukitusEstaaMuokkauksen,
   lukitusEstaaPoiston,
   muutoksenLisatiedot,
+  seuraavaVapaaTunniste,
+  loydaSamaKirjaus,
 } from './kirjaukset.js';
 
 const kirjaus = (yli = {}) => ({
@@ -150,4 +152,45 @@ test('audit-lisätiedot kertovat tilamuutoksen ja korjausmerkinnän', () => {
     correctionAdded: true,
   });
   assert.deepEqual(muutoksenLisatiedot(ennen, ennen), {});
+});
+
+// --- Juokseva tunniste ja offline-jono ---------------------------------------------
+//
+// Nämä ovat sen varalta ettei offline-tuki hävittäisi juuri sitä kirjausta jonka se on
+// olemassa pelastamaan: kaksi verkotonta laitetta antaa saman juoksevan numeron, ja
+// ilman siirtoa jälkimmäinen katoaisi "jo perillä olevana".
+
+test('törmännyt tunniste siirtyy seuraavaan vapaaseen numeroon', () => {
+  const varatut = new Set(['26/FesX/0409/101', '26/FesX/0409/102']);
+  assert.equal(seuraavaVapaaTunniste('26/FesX/0409/101', varatut), '26/FesX/0409/103');
+  // Etuliite säilyy: siirto ei saa siirtää kirjausta toiseen tapahtumaan tai päivään.
+  assert.equal(seuraavaVapaaTunniste('26/Muu/0101/5', new Set()), '26/Muu/0101/6');
+});
+
+test('tunnistetta jota ei voi jakaa sarjaksi ei siirretä', () => {
+  // GUARD-puolen tunniste on UUID: siinä ei ole juoksevaa osaa eikä törmäysriskiä,
+  // joten siirto ei kuulu sille. null kertoo kutsujalle että kyse on duplikaatista.
+  assert.equal(seuraavaVapaaTunniste('7f4f4dcd-3515-4afd-ab98-9f916fc0b982', new Set()), null);
+  assert.equal(seuraavaVapaaTunniste('', new Set()), null);
+  assert.equal(seuraavaVapaaTunniste(null, new Set()), null);
+});
+
+test('sama jonoId tunnistetaan samaksi kirjaukseksi vaikka tunniste olisi siirtynyt', () => {
+  const perilla = [{ jonoId: 'j-1', id: '26/FesX/0409/103' }];
+  // Jono yrittää uudelleen alkuperäisellä tunnisteella 101, koska se ei tiedä siirrosta.
+  const osuma = loydaSamaKirjaus({ jonoId: 'j-1', id: '26/FesX/0409/101' }, perilla);
+  assert.equal(osuma?.id, '26/FesX/0409/103');
+});
+
+test('eri jonoId samalla tunnisteella EI ole sama kirjaus', () => {
+  // Tämä on koko siirron syy: kaksi laitetta antoi saman numeron, mutta kyse on kahdesta
+  // eri kirjauksesta joista kumpikaan ei saa kadota.
+  const perilla = [{ jonoId: 'j-1', id: '26/FesX/0409/101' }];
+  assert.equal(loydaSamaKirjaus({ jonoId: 'j-2', id: '26/FesX/0409/101' }, perilla), null);
+});
+
+test('ilman jonoId:tä tunniste ratkaisee, kuten ennenkin', () => {
+  const perilla = [{ id: 'abc' }];
+  assert.equal(loydaSamaKirjaus({ id: 'abc' }, perilla)?.id, 'abc');
+  assert.equal(loydaSamaKirjaus({ id: 'muu' }, perilla), null);
 });

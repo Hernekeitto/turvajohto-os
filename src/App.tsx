@@ -31,6 +31,7 @@ import { Tiedotteet, TiedoteKehote } from './shared/komponentit/Tiedotteet';
 import { haeTiedotteet, onKuitannut, onVoimassa, type Tiedote } from './shared/tiedotteet';
 import { Kalusto } from './shared/komponentit/Kalusto';
 import { Vyohykekirjaukset, type AlueKirjaus } from './shared/komponentit/Vyohykekirjaukset';
+import { avaaJono, kaynnistaAutomatiikka, kuunteleLahetyksia, lisaaJonoon } from './shared/jono';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from './shared/kalusto';
 import { Mittaristo } from './shared/komponentit/Mittaristo';
 import { Jalkiraportit } from './shared/komponentit/Jalkiraportit';
@@ -1468,6 +1469,14 @@ export default function App() {
   const saaNahdaMittarit = isAdminUser || canView(perms, selectedEvent, 'analytics');
   const saaNahdaJalkiraportteja = isAdminUser || canView(perms, selectedEvent, 'debrief');
   const saaLaatiaJalkiraportteja = isAdminUser || canEdit(perms, selectedEvent, 'debrief');
+
+  // Lähtevä jono (erä 6) avataan käyttäjäkohtaisena myös tapahtumapuolella. Sama
+  // peruste kuin GUARD-puolella: jaetulla laitteella vuoron vaihtuessa seuraava käyttäjä
+  // ei saa nähdä eikä lähettää edellisen kirjauksia omissa nimissään.
+  useEffect(() => {
+    avaaJono(session?.username || '');
+    kaynnistaAutomatiikka();
+  }, [session?.username]);
 
   const paivitaJalkiraportit = useCallback(() => {
     haeJalkiraportit().then((lista) => { if (lista) setJalkiraportit(lista); });
@@ -3230,7 +3239,7 @@ export default function App() {
     const saapui = new Date(ilmoitus.createdAt || Date.now());
     const kirjausId = getDynamicId();
 
-    setReports((prev) => [{
+    kirjaaUusi({
       id: kirjausId,
       createdAt: new Date().toISOString(),
       eventId: ilmoitus.eventId || selectedEvent,
@@ -3254,7 +3263,7 @@ export default function App() {
       publicReceivedAt: ilmoitus.createdAt || null,
       publicReportId: ilmoitus.id,
       attachment: null,
-    }, ...prev]);
+    });
     setRunningNumber((prev) => prev + 1);
 
     setPublicReports((prev) => prev.map((i) => (i.id === ilmoitus.id
@@ -3759,6 +3768,63 @@ export default function App() {
     };
   };
 
+  // UUSI KIRJAUS MENEE LÄHTEVÄN JONON KAUTTA YHTENÄ TIETUEENA, ei autosaven mukana koko
+  // kokoelmana. Tämä on se muutos jota erän 6 offline-tuki odotti tapahtumapuolella.
+  //
+  // Kaksi syytä, ja jälkimmäinen koskee myös verkon toimiessa:
+  //
+  // 1. Verkko voi olla poikki. Silloin kirjaus jää laitteelle ja lähtee itsestään kun
+  //    yhteys palaa — kirjaajan ei tarvitse muistaa mitään eikä kirjoittaa uudelleen.
+  //
+  // 2. Koko kokoelman tallennus vanhentuneesta selaimesta PYYHKISI sen mitä muut ovat
+  //    sillä välin kirjanneet. Juuri siksi jonoon ei voi laittaa autosavea sellaisenaan:
+  //    jonoon jäänyt koko taulukon ylikirjoitus lähtisi matkaan minuutteja myöhemmin ja
+  //    palauttaisi kokoelman siihen tilaan jossa se oli katkoksen alkaessa. Lisäysreitti
+  //    (server/index.js: /api/kirjaa/:name) koskee vain yhtä tietuetta, joten
+  //    samanaikaiset kirjaukset eivät voi kadota.
+  //
+  // Kirjaus näytetään omassa listassa heti: se on tehty, vaikka olisi vielä matkalla.
+  // Autosave ohitetaan samalla lipulla jota kanavapäivitys käyttää — muuten sama tietue
+  // lähtisi kahta reittiä, ja koko kokoelman PUT kumoaisi juuri sen hyödyn jonka
+  // lisäysreitti antaa.
+  //
+  // MUUT MUUTOKSET (tilan vaihto, korjausmerkintä, poisto) jäävät autosaveen. Ne
+  // muokkaavat olemassa olevaa tietuetta, eikä lisäysreitti tue sitä — se on
+  // tarkoituksellinen rajaus eikä puute: muokkaus tehdään valvomossa verkon ääressä,
+  // kirjaus kentällä.
+  const kirjaaUusi = (kirjaus: any) => {
+    // jonoId on jonon idempotenssiavain, ja se on ERI ASIA kuin kirjauksen tunniste.
+    // Tunniste on juokseva sarja (26/FesX/0409/101) jonka selain laskee omasta
+    // listastaan — offline-tilassa kaksi laitetta antaa saman numeron, ja palvelin
+    // siirtää jälkimmäisen seuraavaan vapaaseen. Siksi uusinnan tunnistaminen ei voi
+    // nojata tunnisteeseen: se on juuri se arvo joka saattaa muuttua matkalla.
+    const kirjattava = { ...kirjaus, jonoId: (crypto.randomUUID?.() ?? `j-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`) };
+    ohitaSeuraavaTallennus.current.add('reports');
+    setReports((prev) => [kirjattava, ...prev]);
+    // Jonolistaan tulee tyyppi ja paikka, EI vapaata tekstiä: lista on näkyvissä ruudulla
+    // ja kuvaus tallentuu laitteelle, eikä kummankaan kautta pidä vuotaa sitä mitä
+    // kirjaukseen on kirjoitettu. Sama valinta kuin GUARD-puolella.
+    void lisaaJonoon({
+      polku: '/api/kirjaa/reports',
+      runko: kirjattava,
+      kuvaus: `${kirjattava.type || 'Kirjaus'}${kirjattava.place ? `: ${kirjattava.place}` : ''}`,
+      tunniste: `report:${kirjattava.jonoId}`,
+    });
+  };
+
+  // Palvelin siirsi tunnisteen: näytettävä lista on päivitettävä, tai laite näyttäisi
+  // numeroa joka ei ole se joka arkistoon meni — ja tulostaisi sen raporttiin.
+  //
+  // Kanava ei hoida tätä: palvelin ei lähetä muutosviestiä sen omalle tekijälle, eikä
+  // sen kuulukaan — muuten jokainen oma tallennus laukaisisi turhan uudelleenhaun.
+  useEffect(() => kuunteleLahetyksia(({ polku, runko, vastaus }) => {
+    if (polku !== '/api/kirjaa/reports' || !vastaus?.siirretty || !vastaus?.id) return;
+    const jonoId = (runko as any)?.jonoId;
+    if (!jonoId) return;
+    ohitaSeuraavaTallennus.current.add('reports');
+    setReports((prev) => prev.map((r) => (r.jonoId === jonoId ? { ...r, id: vastaus.id } : r)));
+  }), []);
+
   // Tilan vaihto ja korjausmerkintä ovat ainoat muutokset jotka lukittuun kirjaukseen
   // voi tehdä (ks. shared/kirjaukset.ts ja server/kirjaukset.js). Molemmat päivittävät
   // myös avatun kirjauksen, jotta modaali näyttää muutoksen heti eikä vasta uudelleen
@@ -3936,7 +4002,7 @@ export default function App() {
     }
     const now = new Date();
     const timeLabel = checkInTime || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
-    setReports(prev => [{
+    kirjaaUusi({
       id: getDynamicId(),
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
@@ -3947,7 +4013,7 @@ export default function App() {
       date: checkInDate || now.toLocaleDateString('sv-SE'),
       time: timeLabel,
       summary: `${selectedEmp}: ${text}`,
-    }, ...prev]);
+    });
     setRunningNumber(prev => prev + 1);
     setCheckInComment('');
     alert('Poikkeamaraportti tallennettu TIKE-arkistoon.');
@@ -4076,7 +4142,7 @@ export default function App() {
     if (jvrFirearm) parts.push('ampuma-ase esillä tai käytetty');
     if (jvrFirstAid) parts.push('ensiapu tai ensihoito');
 
-    setReports(prev => [{
+    kirjaaUusi({
       id: getDynamicId(),
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
@@ -4102,7 +4168,7 @@ export default function App() {
       firearm: jvrFirearm,
       firstAid: jvrFirstAid,
       attachments: jvrLiitteet,
-    }, ...prev]);
+    });
 
     setRunningNumber(prev => prev + 1);
     handleClearJvReport();
@@ -4137,7 +4203,7 @@ export default function App() {
     if (jvaFirearm) parts.push('ampuma-ase esillä tai käytetty');
     if (jvaFirstAid) parts.push('ensiapu tai ensihoito');
 
-    setReports(prev => [{
+    kirjaaUusi({
       id: getDynamicId(),
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
@@ -4161,7 +4227,7 @@ export default function App() {
       firearm: jvaFirearm,
       firstAid: jvaFirstAid,
       attachments: jvaLiitteet,
-    }, ...prev]);
+    });
 
     setRunningNumber(prev => prev + 1);
     resetJvaForm();
@@ -4190,7 +4256,7 @@ export default function App() {
     const now = new Date();
     const timeLabel = openKirjausTime || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
 
-    setReports(prev => [{
+    kirjaaUusi({
       id: getDynamicId(),
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
@@ -4207,7 +4273,7 @@ export default function App() {
       taskTitle: openKirjausTask ? openKirjausTaskTitle.trim() : '',
       taskUrgency: openKirjausTask ? openKirjausTaskUrgency : '',
       attachments: openLiitteet,
-    }, ...prev]);
+    });
 
     setRunningNumber(prev => prev + 1);
     setActiveTab('report_tike');
@@ -4232,7 +4298,7 @@ export default function App() {
     const now = new Date();
     const timeLabel = faTime || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
 
-    setReports(prev => [{
+    kirjaaUusi({
       id: getDynamicId(),
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
@@ -4247,7 +4313,7 @@ export default function App() {
       resources: faResources.trim(),
       employees: faEmployees.trim(),
       attachments: faLiitteet,
-    }, ...prev]);
+    });
 
     setRunningNumber(prev => prev + 1);
     setActiveTab('report_tike');
@@ -4268,7 +4334,7 @@ export default function App() {
     const now = new Date();
     const timeLabel = genRepTime || now.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
 
-    setReports(prev => [{
+    kirjaaUusi({
       id: getDynamicId(),
       createdAt: new Date().toISOString(),
       eventId: selectedEvent,
@@ -4282,7 +4348,7 @@ export default function App() {
       actions: genRepActions.trim(),
       employees: genRepEmps.trim(),
       attachments: genRepLiitteet,
-    }, ...prev]);
+    });
 
     setRunningNumber(prev => prev + 1);
     setActiveTab('report_tike');

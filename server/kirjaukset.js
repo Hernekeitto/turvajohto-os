@@ -160,3 +160,56 @@ export function muutoksenLisatiedot(before, after) {
   if (uudet > vanhat) lisa.correctionAdded = true;
   return lisa;
 }
+
+// --- Juokseva tunniste ja offline-jono ---------------------------------------------
+//
+// EVENT-puolen kirjauksen tunniste on juokseva sarja: `26/FesX/0409/101`. Selain
+// muodostaa sen omasta listastaan, mikä toimii niin kauan kuin lista on ajan tasalla.
+//
+// OFFLINE-TILASSA SE EI OLE. Kaksi laitetta samassa tapahtumassa samana päivänä ilman
+// verkkoa antaa molemmat saman numeron, koska kumpikaan ei näe toisen kirjausta. Kun
+// jono purkautuu, jälkimmäinen osuisi duplikaattitarkistukseen ja katoaisi lopullisesti
+// merkittynä "jo perillä olevaksi" — eli offline-tuki hävittäisi juuri sen kirjauksen
+// jonka se on olemassa pelastamaan.
+//
+// Juoksevaa numeroa ei voi jakaa laitteille. Sarjan omistaja on palvelin, joten se myös
+// siirtää törmänneen kirjauksen seuraavaan vapaaseen numeroon. Tunniste ei ole tietueen
+// sisältöä vaan sen paikka arkistossa, joten siirto ei muuta sitä mitä kirjaaja kirjoitti.
+//
+// Etuliite luetaan törmänneestä tunnisteesta itsestään: palvelimen ei tarvitse tuntea
+// tapahtumakoodia eikä päivämäärän muotoa, vain sen että sarja päättyy numeroon.
+const TUNNISTE_OSAT = /^(.*\/)(\d+)$/;
+
+export function seuraavaVapaaTunniste(id, varatut) {
+  const osat = TUNNISTE_OSAT.exec(String(id ?? ''));
+  // Tunniste jota ei voi jakaa etuliitteeseen ja numeroon (esim. UUID) ei ole juokseva
+  // sarja, eikä sitä siirretä. Kutsuja käsittelee sen duplikaattina kuten ennenkin.
+  if (!osat) return null;
+  const [, etuliite, numero] = osat;
+  let seuraava = Number(numero) + 1;
+  // Yläraja on olemassa vain siltä varalta että varatut-joukko on jotain odottamatonta:
+  // ilman sitä virheellinen syöte tarkoittaisi ikuista silmukkaa pyyntöketjussa.
+  for (let i = 0; i < 100000; i++) {
+    const ehdokas = `${etuliite}${seuraava}`;
+    if (!varatut.has(ehdokas)) return ehdokas;
+    seuraava++;
+  }
+  return null;
+}
+
+// Onko tämä sama kirjaus joka on jo perillä. `jonoId` on selaimessa syntyvä satunnainen
+// tunniste, joka EI muutu vaikka juokseva tunniste siirtyisi — se on siis se avain jolla
+// uusinta erotetaan uudesta kirjauksesta.
+export function loydaSamaKirjaus(tietue, olemassaolevat) {
+  const jonoId = tietue?.jonoId;
+  if (typeof jonoId === 'string' && jonoId) {
+    // EI varasuunnitelmaa tunnisteeseen. Jos jonoId on mutta sitä ei löydy, kyseessä on
+    // UUSI kirjaus — ja jos tunniste silti törmää, se on juuri se törmäys jota varten
+    // siirto on olemassa. Tunnisteeseen putoaminen tässä kohdassa tekisi kahdesta eri
+    // laitteen kirjauksesta saman ja hävittäisi jälkimmäisen.
+    return olemassaolevat.find((t) => t?.jonoId === jonoId) || null;
+  }
+  // Ilman jonoId:tä (vanhat asiakkaat, GUARD-puolen tietueet joilla on UUID) tunniste on
+  // ainoa mitä on. Se riittää siellä missä tunniste on satunnainen.
+  return olemassaolevat.find((t) => String(t?.id) === String(tietue?.id)) || null;
+}

@@ -97,6 +97,31 @@ export function kuunteleJonoa(kuuntelija: (jono: JonoKirjaus[]) => void) {
   return () => { kuuntelijat.delete(kuuntelija); };
 }
 
+// Onnistuneen lähetyksen ilmoitus. Erillinen kuunteleJonoasta, koska kyse on eri
+// tiedosta: jonolistan muutos kertoo mitä on odottamassa, tämä kertoo mitä palvelin
+// vastasi juuri lähteneelle kirjaukselle.
+//
+// Tätä tarvitaan, koska palvelin voi muuttaa lähetettyä tietuetta: EVENT-puolen juokseva
+// tunniste siirtyy seuraavaan vapaaseen numeroon jos kaksi verkotonta laitetta antoi
+// saman (server/kirjaukset.js: seuraavaVapaaTunniste). Ilman ilmoitusta laite näyttäisi
+// omassa listassaan tunnistetta joka ei ole se joka arkistoon meni — ja tulostaisi sen
+// raporttiin. Kanava ei auta: palvelin ei lähetä muutosviestiä sen omalle tekijälle.
+export type LahetysIlmoitus = { polku: string; runko: unknown; vastaus: any };
+const lahetysKuuntelijat = new Set<(ilmoitus: LahetysIlmoitus) => void>();
+
+export function kuunteleLahetyksia(kuuntelija: (ilmoitus: LahetysIlmoitus) => void) {
+  lahetysKuuntelijat.add(kuuntelija);
+  return () => { lahetysKuuntelijat.delete(kuuntelija); };
+}
+
+const kerroLahetyksesta = (ilmoitus: LahetysIlmoitus) => {
+  for (const kuuntelija of lahetysKuuntelijat) {
+    // Yhden kuuntelijan virhe ei saa jättää jonoa puolitiehen: lähetys on jo tapahtunut,
+    // ja tässä ollaan kesken silmukan joka tyhjentää jonoa.
+    try { kuuntelija(ilmoitus); } catch { /* jatketaan seuraavaan */ }
+  }
+};
+
 export const jononPituus = () => jono.length;
 
 export type LisaysTulos = {
@@ -168,6 +193,7 @@ export async function tyhjennaJono() {
         jono = jono.filter((k) => k.id !== kirjaus.id);
         lahetetty += 1;
         kirjoita();
+        kerroLahetyksesta({ polku: kirjaus.polku, runko: kirjaus.runko, vastaus: tulos.vastaus });
       } else if (tulos.tila === 'jumissa') {
         epaonnistui += 1;
         // Pysyvä virhe: ei yritetä seuraaviakaan heti perään, koska sama syy (esim.
@@ -246,6 +272,7 @@ export function kaynnistaAutomatiikka() {
 export function nollaaJono() {
   jono = [];
   kuuntelijat.clear();
+  lahetysKuuntelijat.clear();
   if (ajastin !== null) { clearInterval(ajastin); ajastin = null; }
   lahettaaParhaillaan = false;
 }

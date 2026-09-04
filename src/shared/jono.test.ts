@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 
 import {
   avaaJono, lisaaJonoon, tyhjennaJono, poistaJonosta, yritaUudelleen,
-  kuunteleJonoa, jononPituus, nollaaJono, type JonoKirjaus,
+  kuunteleJonoa, kuunteleLahetyksia, jononPituus, nollaaJono, type JonoKirjaus,
 } from './jono.ts';
 
 // --- Tekaistu selainympäristö -----------------------------------------------------
@@ -200,4 +200,54 @@ test('toisen vartijan jono ei näy eikä lähde omissa nimissä', async () => {
   // Ja edellisen jono säilyy omalla tunnuksellaan.
   avaaJono('vartija1');
   assert.equal(jononPituus(), 1);
+});
+
+// --- Lähetysilmoitus ---------------------------------------------------------------
+//
+// Palvelin voi muuttaa lähetettyä tietuetta: EVENT-puolen juokseva tunniste siirtyy
+// seuraavaan vapaaseen numeroon jos kaksi verkotonta laitetta antoi saman. Ilman
+// ilmoitusta laite näyttäisi listassaan numeroa joka ei ole se joka arkistoon meni.
+
+test('onnistunut lähetys kertoo kuuntelijalle mitä palvelin vastasi', async () => {
+  alusta();
+  const ilmoitukset: any[] = [];
+  const lopeta = kuunteleLahetyksia((i) => ilmoitukset.push(i));
+  vastaukset = [{ status: 200, keho: { ok: true, id: '26/FesX/0409/103', siirretty: true } }];
+
+  await lisaaJonoon({ ...kirjaus(), runko: { id: '26/FesX/0409/101', jonoId: 'j-1' } });
+
+  assert.equal(ilmoitukset.length, 1);
+  assert.equal(ilmoitukset[0].vastaus.id, '26/FesX/0409/103');
+  assert.equal(ilmoitukset[0].vastaus.siirretty, true);
+  // Runko on mukana, jotta kuuntelija tietää MINKÄ rivin tunniste siirtyi.
+  assert.equal((ilmoitukset[0].runko as any).jonoId, 'j-1');
+  lopeta();
+});
+
+test('epäonnistunut lähetys ei kerro onnistumisesta', async () => {
+  alusta();
+  const ilmoitukset: any[] = [];
+  const lopeta = kuunteleLahetyksia((i) => ilmoitukset.push(i));
+  vastaukset = [{ status: 0, keho: null }];
+
+  await lisaaJonoon(kirjaus());
+
+  assert.equal(ilmoitukset.length, 0);
+  assert.equal(jononPituus(), 1, 'kirjaus jäi jonoon');
+  lopeta();
+});
+
+test('kuuntelijan virhe ei jätä jonoa puolitiehen', async () => {
+  alusta();
+  const lopeta = kuunteleLahetyksia(() => { throw new Error('kuuntelija hajosi'); });
+  vastaukset = [
+    { status: 200, keho: { ok: true } },
+    { status: 200, keho: { ok: true } },
+  ];
+
+  await lisaaJonoon({ ...kirjaus('eka'), runko: { id: 'a' }, tunniste: 'a' });
+  await lisaaJonoon({ ...kirjaus('toka'), runko: { id: 'b' }, tunniste: 'b' });
+
+  assert.equal(jononPituus(), 0, 'molemmat lähtivät kuuntelijan virheestä huolimatta');
+  lopeta();
 });
