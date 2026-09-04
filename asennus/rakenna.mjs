@@ -1,7 +1,9 @@
 // Sovelluskuvakkeet ja web app manifestit — yksi lähde, generoitu tulos.
 //
 // Ajo:  npm run asennus
-// Kirjoittaa:  public/kuvakkeet/*  ja  public/manifest-event.json, public/manifest-guard.json
+// Kirjoittaa:  public/kuvakkeet/*
+//              public/manifest-event.json, public/manifest-guard.json
+//              asennus/kauppa/*  (Google Playn feature graphic, ei tarjoilla sivustolta)
 //
 // TULOS ON VERSIONHALLINNASSA, tämä skripti ei ole osa buildia. Kuvakkeet muuttuvat
 // kerran vuodessa jos silloinkaan, eikä `npm run build` saa riippua kuvarasteroijasta.
@@ -40,6 +42,11 @@ import { Resvg } from '@resvg/resvg-js'
 const JUURI = new URL('../', import.meta.url)
 const KUVAKEHAKEMISTO = new URL('public/kuvakkeet/', JUURI)
 
+// Kaupan kuvamateriaali EI ole public/-hakemistossa: se ladataan Play Consoleen käsin
+// eikä sitä tarjoilla sivustolta. Versionhallinnassa se silti on, koska se on
+// generoitua sisältöä jonka pitää syntyä uudelleen samanlaisena.
+const KAUPPAHAKEMISTO = new URL('asennus/kauppa/', JUURI)
+
 // --- Tuotteet -----------------------------------------------------------------------
 //
 // Kolme kuvakesarjaa, joista kaksi on asennettavia sovelluksia ja yksi pelkkä favicon.
@@ -51,6 +58,11 @@ const KUVAKEHAKEMISTO = new URL('public/kuvakkeet/', JUURI)
 const TUOTTEET = [
   {
     id: 'event',
+    // Kaupan bannerin tumma pohja ja kirkas korostus. Samat arvot kuin sovelluksen
+    // yläpalkissa (--color-surface-dark) ja tummaa vasten luettavassa tunnusvärissä
+    // (--color-accent-on-dark) — banneri ei ole oma ilmeensä vaan sovelluksen ilme.
+    pohja: '#0f172a',
+    korostus: '#818cf8',
     // Laatan väri = tuotteen accent, merkki valkoisena. Väri kantaa tunnistuksen
     // sovelluslaatikossa; muoto kertoo kummasta tuotteesta on kyse.
     laatta: '#4f46e5',
@@ -74,6 +86,8 @@ const TUOTTEET = [
   },
   {
     id: 'guard',
+    pohja: '#1e293b',
+    korostus: '#02c082',
     laatta: '#019765',
     merkki: 'shield-check',
     manifesti: {
@@ -195,26 +209,28 @@ function lueMerkki(nimi) {
 
 // --- SVG:n rakentaminen -------------------------------------------------------------
 
-function svgKuvake({ laatta, merkki, muunnelma, viivanpaksuus = VIIVANPAKSUUS }) {
-  const { taytaReuna, merkkiOsuus } = MUUNNELMAT[muunnelma]
+// Liukuluvut pyöristetään ennen SVG:hen kirjoittamista: 105.88159999999999 on
+// rasteroijalle sama luku kuin 105.882, mutta tiedostoon jäävänä tekstinä se on
+// pelkkää melua.
+const lyhennä = (luku) => Number(luku.toFixed(3))
 
-  // Liukuluvut pyöristetään ennen SVG:hen kirjoittamista: 105.88159999999999 on
-  // rasteroijalle sama luku kuin 105.882, mutta tiedostoon jäävänä tekstinä se on
-  // pelkkää melua.
-  const lyhennä = (luku) => Number(luku.toFixed(3))
-
-  const marginaali = taytaReuna ? 0 : RUUDUKKO * MARGINAALI_OSUUS
-  const laattaKoko = RUUDUKKO - 2 * marginaali
-  // Täyteen maalattu pohja EI ole pyöristetty: Android ja iOS leikkaavat sen itse, ja
-  // valmiiksi pyöristetty kulma näkyisi siellä kuvakkeen sisällä olevana kaarena.
-  const pyoristys = taytaReuna ? 0 : laattaKoko * PYORISTYS_OSUUS
-
+// Laatta ja sen merkki annetun kokoisena, annettuun kohtaan. Oma funktionsa, koska
+// SAMA laatta piirretään kahdessa eri kokoisessa kuvassa: kuvakkeissa (512:n ruudukko)
+// ja kaupan bannerissa (1024×500). Jos geometria olisi kahdessa paikassa, kuvake ja
+// banneri erkanisivat ensimmäisessä muutoksessa — ja juuri niiden PITÄÄ näyttää
+// samalta, koska ne esiintyvät kaupassa vierekkäin.
+//
+// `merkkiKoko` annetaan PIKSELEINÄ eikä osuutena laatasta, ja se on tahallista:
+// kuvakkeissa merkin koko on osuus koko kuvakkeen ruudukosta (512), ei laatasta, jonka
+// ympärillä on läpinäkyvä marginaali. Jos tämä laskettaisiin laatan koosta,
+// laattamuunnelman merkki kutistuisi kuudella prosentilla — eli jo julkaistut kuvakkeet
+// muuttuisivat siksi että tämä funktio erotettiin omakseen.
+function laattaJaMerkki({ x, y, koko, pyoristys, laatta, merkki, merkkiKoko, viivanpaksuus }) {
   // lucide-merkit piirretään 24×24-ruudukolle. Skaalataan se halutun kokoiseksi ja
   // keskitetään; viivanpaksuus skaalautuu mukana, joten merkki näyttää samalta kuin
   // sovelluksen ikonit.
-  const merkkiKoko = RUUDUKKO * merkkiOsuus
   const skaala = merkkiKoko / 24
-  const siirto = (RUUDUKKO - merkkiKoko) / 2
+  const siirto = (koko - merkkiKoko) / 2
 
   const elementit = merkki
     .map(({ elementti, attribuutit }) => {
@@ -228,20 +244,89 @@ function svgKuvake({ laatta, merkki, muunnelma, viivanpaksuus = VIIVANPAKSUUS })
   // stroke-linecap="round" on lucide-merkeille pakollinen eikä koriste: kalenterin
   // päivämerkit ovat polkuja joiden pituus on 0.01 ("M8 13h.01"), ja ne piirtyvät
   // pisteiksi VAIN pyöreällä viivanpäällä. Ilman sitä kalenteri on tyhjä.
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${RUUDUKKO} ${RUUDUKKO}" width="${RUUDUKKO}" height="${RUUDUKKO}">
-  <rect x="${lyhennä(marginaali)}" y="${lyhennä(marginaali)}" width="${lyhennä(laattaKoko)}" height="${lyhennä(laattaKoko)}" rx="${lyhennä(pyoristys)}" fill="${laatta}"/>
-  <g transform="translate(${lyhennä(siirto)} ${lyhennä(siirto)}) scale(${lyhennä(skaala)})"
+  return `  <rect x="${lyhennä(x)}" y="${lyhennä(y)}" width="${lyhennä(koko)}" height="${lyhennä(koko)}" rx="${lyhennä(pyoristys)}" fill="${laatta}"/>
+  <g transform="translate(${lyhennä(x + siirto)} ${lyhennä(y + siirto)}) scale(${lyhennä(skaala)})"
      fill="none" stroke="#ffffff" stroke-width="${viivanpaksuus}"
      stroke-linecap="round" stroke-linejoin="round">
 ${elementit}
-  </g>
+  </g>`
+}
+
+function svgKuvake({ laatta, merkki, muunnelma, viivanpaksuus = VIIVANPAKSUUS }) {
+  const { taytaReuna, merkkiOsuus } = MUUNNELMAT[muunnelma]
+
+  const marginaali = taytaReuna ? 0 : RUUDUKKO * MARGINAALI_OSUUS
+  const laattaKoko = RUUDUKKO - 2 * marginaali
+  // Täyteen maalattu pohja EI ole pyöristetty: Android ja iOS leikkaavat sen itse, ja
+  // valmiiksi pyöristetty kulma näkyisi siellä kuvakkeen sisällä olevana kaarena.
+  const pyoristys = taytaReuna ? 0 : laattaKoko * PYORISTYS_OSUUS
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${RUUDUKKO} ${RUUDUKKO}" width="${RUUDUKKO}" height="${RUUDUKKO}">
+${laattaJaMerkki({
+    x: marginaali,
+    y: marginaali,
+    koko: laattaKoko,
+    pyoristys,
+    laatta,
+    merkki,
+    // Osuus KOKO ruudukosta, ei laatasta — ks. laattaJaMerkki.
+    merkkiKoko: RUUDUKKO * merkkiOsuus,
+    viivanpaksuus,
+  })}
 </svg>
 `
 }
 
-function kirjoitaPng(svg, koko, tiedosto) {
+// --- Google Playn feature graphic -----------------------------------------------------
+//
+// 1024×500, ja kaupassa se on sovelluksen sivun ylin elementti.
+//
+// EI TEKSTIÄ, ja se on valinta eikä puute. Kaksi syytä:
+//
+// 1. Play näyttää sovelluksen nimen bannerin päällä tai vieressä, ja eri
+//    sijoittelussa eri tavoin. Kuvaan poltettu nimi rajautuu jossain näistä väärin
+//    tai näkyy kahteen kertaan.
+// 2. Rasteroija ei osaa lukea Fira Sansia: @fontsource toimittaa sen vain woff- ja
+//    woff2-muodossa, eikä resvg lue kumpaakaan. Tekstin saisi mukaan vain tuomalla
+//    fontin toisessa muodossa repoon, ja se olisi iso lisäys yhtä kuvaa varten.
+//
+// Sommittelu on keskitetty, koska osa Playn sijoitteluista rajaa bannerin reunoja.
+const BANNERI_LEVEYS = 1024
+const BANNERI_KORKEUS = 500
+
+function svgKauppabanneri({ pohja, laatta, korostus, merkki }) {
+  // Laatta on sama kuin sovelluskuvake, ja sen koko on sidottu bannerin korkeuteen
+  // eikä kiinteään pikselimäärään: 56 % korkeudesta jättää ylä- ja alapuolelle
+  // yhtä paljon tilaa kuin laatta on leveä puolikkaana.
+  const laattaKoko = BANNERI_KORKEUS * 0.56
+  const pyoristys = laattaKoko * PYORISTYS_OSUUS
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${BANNERI_LEVEYS} ${BANNERI_KORKEUS}" width="${BANNERI_LEVEYS}" height="${BANNERI_KORKEUS}">
+  <rect width="${BANNERI_LEVEYS}" height="${BANNERI_KORKEUS}" fill="${pohja}"/>
+  <!-- Kaksi pehmeää kehää tunnusvärillä: syvyyttä tasaiseen pohjaan ilman kuviota
+       joka veisi huomion merkiltä. Osittain kuvan ulkopuolella tarkoituksella. -->
+  <circle cx="120" cy="60" r="300" fill="${korostus}" opacity="0.10"/>
+  <circle cx="930" cy="470" r="230" fill="${korostus}" opacity="0.08"/>
+${laattaJaMerkki({
+    x: (BANNERI_LEVEYS - laattaKoko) / 2,
+    y: (BANNERI_KORKEUS - laattaKoko) / 2,
+    koko: laattaKoko,
+    pyoristys,
+    laatta,
+    merkki,
+    merkkiKoko: laattaKoko * MUUNNELMAT.laatta.merkkiOsuus,
+    viivanpaksuus: VIIVANPAKSUUS,
+  })}
+  <!-- Alareunan tunnusviiva. Ainoa koriste-elementti, ja se sitoo bannerin samaan
+       ilmeeseen kuin sovelluksen tumma yläpalkki korostusväreineen. -->
+  <rect x="0" y="${BANNERI_KORKEUS - 8}" width="${BANNERI_LEVEYS}" height="8" fill="${korostus}"/>
+</svg>
+`
+}
+
+function kirjoitaPng(svg, koko, tiedosto, hakemisto = KUVAKEHAKEMISTO) {
   const rasteri = new Resvg(svg, { fitTo: { mode: 'width', value: koko } })
-  writeFileSync(new URL(tiedosto, KUVAKEHAKEMISTO), rasteri.render().asPng())
+  writeFileSync(new URL(tiedosto, hakemisto), rasteri.render().asPng())
 }
 
 // --- Kuvakkeiden koot ---------------------------------------------------------------
@@ -328,6 +413,7 @@ function manifesti(tuote, kuvakkeet) {
 // --- Ajo ----------------------------------------------------------------------------
 
 mkdirSync(KUVAKEHAKEMISTO, { recursive: true })
+mkdirSync(KAUPPAHAKEMISTO, { recursive: true })
 
 const kirjoitetut = []
 
@@ -379,6 +465,22 @@ for (const tuote of TUOTTEET) {
       JSON.stringify(manifesti(tuote, manifestiKuvakkeet), null, 2) + '\n',
     )
     kirjoitetut.push(`public/${tiedosto}`)
+
+    // Kaupan banneri vain asennettaville tuotteille: mainossivua ei julkaista
+    // kaupassa, joten sille ei ole mitään mihin banneria käyttäisi.
+    const banneri = `${tuote.id}-feature-1024x500.png`
+    kirjoitaPng(
+      svgKauppabanneri({
+        pohja: tuote.pohja,
+        laatta: tuote.laatta,
+        korostus: tuote.korostus,
+        merkki,
+      }),
+      BANNERI_LEVEYS,
+      banneri,
+      KAUPPAHAKEMISTO,
+    )
+    kirjoitetut.push(`asennus/kauppa/${banneri}`)
   }
 }
 
