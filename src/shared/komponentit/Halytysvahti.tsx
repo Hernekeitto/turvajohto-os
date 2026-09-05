@@ -29,9 +29,15 @@ type Props = {
   // Kutsutaan kun kannattaa hakea hälytykset uudelleen (laskuri meni nollaan).
   onVirkista: () => void;
   mandown: boolean;
+  // Kuinka kauan laite saa olla liikkumatta ennen kyselyä. Säädetään mobiiliversion
+  // valikosta; muualta tulevalle vahdille kelpaa moduulin oma oletus. Isku ja sitä
+  // seuraava liikkumattomuus kysyvät aina, eikä tämä koske sitä sääntöä.
+  liikkumatonMin?: number;
 };
 
-export const Halytysvahti = ({ eventId, kayttaja, halytykset, onMuutos, onVirkista, mandown }: Props) => {
+export const Halytysvahti = ({
+  eventId, kayttaja, halytykset, onMuutos, onVirkista, mandown, liikkumatonMin,
+}: Props) => {
   const [nyt, setNyt] = useState(Date.now());
   const [epaily, setEpaily] = useState<MandownEpaily | null>(null);
   const [epailynAlku, setEpailynAlku] = useState(0);
@@ -93,7 +99,11 @@ export const Halytysvahti = ({ eventId, kayttaja, halytykset, onMuutos, onVirkis
       viimeksi = hetki;
       const v = voimakkuus(tapahtuma.accelerationIncludingGravity);
       if (v === null) return;
-      const tulos = syota(tila, { ts: hetki, voimakkuus: v });
+      const tulos = syota(
+        tila,
+        { ts: hetki, voimakkuus: v },
+        liikkumatonMin ? { liikkumatonMs: liikkumatonMin * 60_000 } : {}
+      );
       tila = tulos.tila;
       // Uutta epäilyä ei oteta vastaan silloin kun edellinen on jo kysymässä.
       if (tulos.epaily && !epailyRef.current) {
@@ -105,7 +115,7 @@ export const Halytysvahti = ({ eventId, kayttaja, halytykset, onMuutos, onVirkis
 
     window.addEventListener('devicemotion', kuuntelija);
     return () => window.removeEventListener('devicemotion', kuuntelija);
-  }, [mandown]);
+  }, [mandown, liikkumatonMin]);
 
   // Vastausaika umpeen: hälytys lähtee. Tämä on ainoa kohta jossa käyttöliittymä
   // laukaisee hälytyksen itse, ja se tapahtuu vasta kun ihminen ei ole vastannut.

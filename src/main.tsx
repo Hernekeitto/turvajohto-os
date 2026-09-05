@@ -19,6 +19,7 @@ import { PaivitysKehote } from './shared/komponentit/PaivitysKehote.tsx'
 import { JonoTila } from './shared/komponentit/JonoTila.tsx'
 import { rekisteroiPalvelutyontekija } from './shared/palvelutyontekija.ts'
 import { asetaKuvakkeetJaManifesti } from './shared/kuvakkeet.ts'
+import { lueLaitevalinta, MOBIILIPOLKU, TYOPOYTAPOLKU } from './shared/laitevalinta.ts'
 
 // Tuotekohtaiset osat ladataan vasta tarvittaessa: mainossivu on julkinen ja sen
 // pitää aueta heti, eikä sen kuulu vetää mukanaan koko sovellusnippua.
@@ -26,6 +27,9 @@ const EventApp = lazy(() => import('./App.tsx'))
 const GuardApp = lazy(() => import('./guard/GuardApp.tsx'))
 
 type Tuote = 'landing' | 'event' | 'guard'
+
+// Osoitteen lopussa oleva kenoviiva ei muuta polkua: /guard/ ja /guard ovat sama.
+const LOPUN_KENOVIIVAT = /[/]+$/
 
 // Ainoa kohta koko sovelluksessa joka katsoo osoiteriviä. Tuotteiden SISÄINEN
 // navigointi toimii edelleen komponenttien omalla tilalla (App.tsx: activeTab),
@@ -35,24 +39,43 @@ type Tuote = 'landing' | 'event' | 'guard'
 // jaetaan puheessa muodossa "turvajohto-os.fi/Guard" — kanoninen muoto on silti
 // pieni kirjain, ks. normalisoiPolku.
 function ratkaiseTuote(pathname: string): Tuote {
-  const polku = pathname.replace(/\/+$/, '').toLowerCase()
+  const polku = pathname.replace(LOPUN_KENOVIIVAT, '').toLowerCase()
   if (polku === '/event' || polku.startsWith('/event/')) return 'event'
   if (polku === '/guard' || polku.startsWith('/guard/')) return 'guard'
   return 'landing'
 }
 
+// GUARD-puolella on kaksi versiota samaan dataan: työpöytä (/guard) ja puhelimelle
+// tehty kenttäversio (/guard/mobile). Osoite ratkaisee kumman saa, koska se on ainoa
+// tapa jolla valinnan voi jakaa, kirjanmerkitä ja kirjoittaa käsin.
+//
+// Tallennettu laitevalinta ohjaa VAIN silloin kun osoite ei sano mitään: asennettu
+// sovellus käynnistyy aina /guard-polkuun (manifestin start_url), joten ilman tätä
+// mobiiliversion valinnut vartija päätyisi työpöytäversioon joka ainoa kerta.
+// Nimenomainen /guard/mobile voittaa aina tallennetun valinnan.
+function ratkaiseGuardMobiili(pathname: string): boolean {
+  const polku = pathname.replace(LOPUN_KENOVIIVAT, '').toLowerCase()
+  if (polku === MOBIILIPOLKU) return true
+  if (polku !== TYOPOYTAPOLKU) return false
+  return lueLaitevalinta() === 'mobiili'
+}
+
 // Siivoaa osoiterivin kanoniseen muotoon ilman uudelleenlatausta: /Guard/ -> /guard,
 // ja kaikki tuntemattomat polut mainossivulle (/), jotta kirjoitusvirhe ei jätä
 // käyttäjää katsomaan mainossivua väärässä osoitteessa.
-function normalisoiPolku(tuote: Tuote) {
-  const kanoninen = tuote === 'landing' ? '/' : `/${tuote}`
+function normalisoiPolku(tuote: Tuote, guardMobiili: boolean) {
+  const kanoninen = tuote === 'landing' ? '/' : guardMobiili ? MOBIILIPOLKU : `/${tuote}`
   if (window.location.pathname !== kanoninen) {
     window.history.replaceState(null, '', kanoninen + window.location.search + window.location.hash)
   }
 }
 
 const tuote = ratkaiseTuote(window.location.pathname)
-normalisoiPolku(tuote)
+const guardMobiili = tuote === 'guard' && ratkaiseGuardMobiili(window.location.pathname)
+// replaceState eikä uudelleenohjaus: sovellusnippu on jo ladattu, ja koko ero on siinä
+// mikä komponentti renderöidään. Uudelleenlataus tässä kohdassa maksaisi vartijalle
+// yhden ylimääräisen latauksen jokaisella käynnistyksellä.
+normalisoiPolku(tuote, guardMobiili)
 
 // Väritokenien arvot ratkeavat juuren data-tuote-attribuutista (ks. index.css), jolloin
 // sama komponentti näyttää EVENT-puolella slate/indigo-ilmeeltä ja GUARD-puolella
@@ -77,7 +100,7 @@ createRoot(document.getElementById('root')!).render(
     ) : (
       <Suspense fallback={Latautuu}>
         <PasswordGate tuote={tuote}>
-          {tuote === 'guard' ? <GuardApp /> : <EventApp />}
+          {tuote === 'guard' ? <GuardApp mobiili={guardMobiili} /> : <EventApp />}
         </PasswordGate>
       </Suspense>
     )}

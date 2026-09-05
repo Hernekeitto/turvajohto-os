@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { ShieldAlert } from 'lucide-react';
+import { Check, Monitor, ShieldAlert, Smartphone } from 'lucide-react';
 import { SessionContext, type SessionProfile, type Tuote } from './SessionContext';
 import { lueIstunto, tallennaIstunto, unohdaIstunto } from './shared/istunto';
 import { onAsennettuSovellus } from './shared/asennettu';
+import { arvaaLaite, laitteenPolku, lueLaitevalinta, tallennaLaitevalinta, type Laite } from './shared/laitevalinta';
 
 type SessionState = 'loading' | 'authed' | 'anon';
 
@@ -163,6 +164,60 @@ function EiPaasyaTuotteeseen({ tuote, profile }: { tuote: Tuote; profile: Sessio
   );
 }
 
+// GUARD-puolen laitevalinta kirjautumislomakkeella. Vartija tekee vuoron työn
+// puhelimella ja pidemmät raportit tietokoneella, ja nämä ovat kaksi eri
+// käyttöliittymää samaan dataan (ks. shared/laitevalinta.ts).
+//
+// Radiopainikkeet, ei valintaruutuja: vaihtoehdot sulkevat toisensa, joten
+// näppäimistöllä ja ruudunlukijalla niiden on käyttäydyttävä sen mukaisesti. Ulkoasu
+// on silti ruutu, koska siitä valinta erottuu lomakkeella parhaiten.
+function LaiteValinta({ arvo, onValitse }: { arvo: Laite; onValitse: (laite: Laite) => void }) {
+  const vaihtoehdot: { laite: Laite; teksti: string; Ikoni: typeof Monitor; selite: string }[] = [
+    { laite: 'tyopoyta', teksti: 'Kirjaudu tietokoneella', Ikoni: Monitor, selite: 'Koko näkymä: raportit, hallinta ja hälytyskeskus' },
+    { laite: 'mobiili', teksti: 'Kirjaudu mobiililaitteella', Ikoni: Smartphone, selite: 'Kenttänäkymä: vuoro, kierrokset ja kameran skannaus' },
+  ];
+  return (
+    <fieldset className="mt-4 mb-1">
+      <legend className="text-xs font-medium text-ink-muted mb-2">Missä käytät sovellusta?</legend>
+      <div className="space-y-2">
+        {vaihtoehdot.map(({ laite, teksti, Ikoni, selite }) => {
+          const valittu = arvo === laite;
+          return (
+            <label
+              key={laite}
+              className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
+                valittu ? 'border-accent bg-accent-soft' : 'border-line-strong hover:bg-sunken'
+              }`}
+            >
+              <input
+                type="radio"
+                name="laite"
+                className="sr-only"
+                checked={valittu}
+                onChange={() => onValitse(laite)}
+              />
+              <span
+                className={`mt-0.5 w-4 h-4 shrink-0 rounded border flex items-center justify-center ${
+                  valittu ? 'bg-accent border-accent text-white' : 'border-line-strong bg-surface'
+                }`}
+              >
+                {valittu && <Check size={12} strokeWidth={3} />}
+              </span>
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5 text-sm font-medium text-ink">
+                  <Ikoni size={14} className="text-ink-subtle" />
+                  {teksti}
+                </span>
+                <span className="block text-xs text-ink-muted mt-0.5">{selite}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
 export default function PasswordGate({ children, tuote = 'event' }: { children: ReactNode; tuote?: Tuote }) {
   const [session, setSession] = useState<SessionState>('loading');
   const [profile, setProfile] = useState<SessionProfile | null>(null);
@@ -178,6 +233,10 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
   // (admin painoi "Kirjaa käyttäjä ulos", käyttämättömyyskatkaisu ehti, tms.) —
   // ilman tätä käyttäjä näkisi vain tyhjän kirjautumislomakkeen selittämättä miksi.
   const [expiredNotice, setExpiredNotice] = useState(false);
+  // Laitevalinta on lomakkeen tilaa, ei istunnon: se ohjaa vain sen mille polulle
+  // kirjautuminen päättyy. Tallennettu valinta voittaa arvauksen, jotta laite ei
+  // vaihda versiota kesken vuoron sen takia että ikkunan kokoa muutettiin.
+  const [laite, setLaite] = useState<Laite>(() => lueLaitevalinta() ?? arvaaLaite());
   const totpInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -276,6 +335,17 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
         setTotpCode('');
         setError(res.ok ? '' : data.error || 'Väärä Authenticator-koodi.');
       } else if (res.ok && data.ok) {
+        // GUARD: valinta talteen ja oikealle polulle. Tässä ladataan sivu uudelleen,
+        // koska versio ratkeaa osoitteesta ennen ensimmäistä renderöintiä (main.tsx)
+        // — ja kirjautumisen jälkeen se on ainoa lataus joka siitä seuraa.
+        if (guard) {
+          tallennaLaitevalinta(laite);
+          const polku = laitteenPolku(laite);
+          if (window.location.pathname !== polku) {
+            window.location.assign(polku);
+            return;
+          }
+        }
         const p = await loadSessionProfile();
         setProfile(p);
         setSession(p ? 'authed' : 'anon');
@@ -333,6 +403,7 @@ export default function PasswordGate({ children, tuote = 'event' }: { children: 
                 error ? 'border-danger' : 'border-line-strong'
               }`}
             />
+            {guard && <LaiteValinta arvo={laite} onValitse={setLaite} />}
           </>
         ) : (
           <>

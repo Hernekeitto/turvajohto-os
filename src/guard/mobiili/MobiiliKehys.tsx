@@ -1,0 +1,277 @@
+// Mobiiliversion runko: yläpalkki, sivuvalikko ja pikavalikko.
+//
+// GUARD-puolen mobiiliversio on oma käyttöliittymänsä eikä kavennettu työpöytänäkymä.
+// Ero on siinä mitä kentällä tarvitaan: yksi peukalo, kirkas aurinko ja hansikkaat,
+// eikä yhtään näkymää joka olettaa hiirtä. Siksi tässä on oma palkkinsa eikä jaettu
+// Ylapalkki — sen kello, nimimerkki ja pudotusvalikot ovat työpöydän tarpeita.
+//
+// KUVASUHDE 20:9. Puhelimessa kehys täyttää ruudun (100dvh), mutta työpöytäselaimessa
+// se piirtyy puhelimen muotoisena kehyksenä. Se ei ole koriste: mobiilinäkymää
+// kehitetään ja katselmoidaan tietokoneella, ja ilman kiinteää kuvasuhdetta se näyttäisi
+// siellä aivan toiselta kuin laitteessa jolle se on tehty.
+import { useState, type ReactNode } from 'react';
+import { Bell, BellRing, Camera, ChevronRight, LogOut, Menu, Monitor, MoreVertical, Send, X } from 'lucide-react';
+
+export type MobiiliIlmoitus = {
+  id: string;
+  otsikko: string;
+  kuvaus?: string;
+  taso: 'kriittinen' | 'varoitus' | 'perus';
+};
+
+export type MobiiliLinkki = { id: string; label: string };
+
+type Props = {
+  otsikko: string;
+  // Vuoro näkyy sivuvalikossa. null = vuoroon ei ole kirjauduttu.
+  vuoro: { nimi: string; alkoi: string } | null;
+  ilmoitukset: MobiiliIlmoitus[];
+  onIlmoitus: (id: string) => void;
+  linkit: MobiiliLinkki[];
+  onLinkki: (id: string) => void;
+  mandown: boolean;
+  onMandown: (paalla: boolean) => void;
+  mandownMin: number;
+  onMandownMin: (minuutit: number) => void;
+  onKamera: () => void;
+  // null = tunnuksella ei ole oikeutta kirjata toimenpiteitä, jolloin riviä ei näytetä.
+  // Valikon rivi joka ei tee mitään on pahempi kuin puuttuva rivi.
+  onTilatieto: (() => void) | null;
+  onPaataVuoro: (() => void) | null;
+  onTyopoyta: () => void;
+  onLogout: () => void;
+  children: ReactNode;
+};
+
+const kellonaika = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+};
+
+export const MobiiliKehys = ({
+  otsikko, vuoro, ilmoitukset, onIlmoitus, linkit, onLinkki,
+  mandown, onMandown, mandownMin, onMandownMin,
+  onKamera, onTilatieto, onPaataVuoro, onTyopoyta, onLogout, children,
+}: Props) => {
+  // Yksi paneeli kerrallaan auki: kolme päällekkäistä paneelia puhelimen ruudulla
+  // tarkoittaisi että käyttäjä sulkee niitä sen sijaan että tekisi työtä.
+  const [auki, setAuki] = useState<'valikko' | 'pika' | 'ilmoitukset' | null>(null);
+  const kriittisia = ilmoitukset.some((i) => i.taso === 'kriittinen');
+
+  const vaihda = (mika: 'valikko' | 'pika' | 'ilmoitukset') =>
+    setAuki((edellinen) => (edellinen === mika ? null : mika));
+
+  return (
+    <div className="min-h-[100dvh] bg-sunken flex justify-center md:p-6">
+      <div className="relative flex flex-col w-full min-h-[100dvh] overflow-hidden bg-canvas text-ink md:w-auto md:min-h-0 md:h-[min(calc(100dvh-3rem),920px)] md:aspect-[9/20] md:rounded-[2rem] md:shadow-2xl">
+        {/* --- Yläpalkki --- */}
+        <header className="relative z-30 shrink-0 bg-surface-dark text-ink-on-dark flex items-center gap-2 px-3 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+          <button
+            type="button"
+            onClick={() => vaihda('valikko')}
+            aria-label="Valikko"
+            aria-expanded={auki === 'valikko'}
+            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors"
+          >
+            {auki === 'valikko' ? <X size={26} /> : <Menu size={26} />}
+          </button>
+          <p className="flex-1 min-w-0 truncate text-sm font-medium text-ink-on-dark-muted">{otsikko}</p>
+          <button
+            type="button"
+            onClick={() => vaihda('ilmoitukset')}
+            aria-label={ilmoitukset.length === 0 ? 'Ei ilmoituksia' : `${ilmoitukset.length} ilmoitusta`}
+            className="relative w-11 h-11 shrink-0 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors"
+          >
+            {ilmoitukset.length > 0
+              ? <BellRing size={24} className={kriittisia ? 'text-danger' : 'text-accent-on-dark'} />
+              : <Bell size={24} />}
+            {ilmoitukset.length > 0 && (
+              <span className="absolute top-1.5 right-1.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-danger text-white text-[11px] font-bold flex items-center justify-center">
+                {ilmoitukset.length > 9 ? '9+' : ilmoitukset.length}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => vaihda('pika')}
+            aria-label="Pikavalikko"
+            aria-expanded={auki === 'pika'}
+            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors"
+          >
+            <MoreVertical size={24} />
+          </button>
+        </header>
+
+        {/* --- Ilmoitukset --- */}
+        {auki === 'ilmoitukset' && (
+          <>
+            <button
+              type="button"
+              aria-label="Sulje ilmoitukset"
+              onClick={() => setAuki(null)}
+              className="absolute inset-0 z-20 bg-black/30"
+            />
+            <div className="absolute z-30 left-3 right-3 top-[calc(env(safe-area-inset-top)+3.75rem)] max-h-[60%] overflow-y-auto rounded-xl bg-surface border border-line shadow-xl">
+              <p className="px-4 py-3 text-sm font-bold text-ink border-b border-line-soft">Ilmoitukset</p>
+              {ilmoitukset.length === 0 ? (
+                <p className="px-4 py-6 text-sm text-ink-muted text-center">Ei uusia ilmoituksia.</p>
+              ) : (
+                <div className="divide-y divide-line-soft">
+                  {ilmoitukset.map((i) => (
+                    <button
+                      key={i.id}
+                      type="button"
+                      onClick={() => { setAuki(null); onIlmoitus(i.id); }}
+                      className="w-full text-left px-4 py-3 hover:bg-sunken transition-colors flex items-start gap-3"
+                    >
+                      <span
+                        className={`mt-1.5 w-2.5 h-2.5 shrink-0 rounded-full ${
+                          i.taso === 'kriittinen' ? 'bg-danger' : i.taso === 'varoitus' ? 'bg-warning' : 'bg-neutral'
+                        }`}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-ink">{i.otsikko}</span>
+                        {i.kuvaus && <span className="block text-xs text-ink-muted mt-0.5">{i.kuvaus}</span>}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* --- Pikavalikko (kolme pistettä) --- */}
+        {auki === 'pika' && (
+          <>
+            <button
+              type="button"
+              aria-label="Sulje pikavalikko"
+              onClick={() => setAuki(null)}
+              className="absolute inset-0 z-20 bg-black/30"
+            />
+            <div className="absolute z-30 right-0 top-[calc(env(safe-area-inset-top)+3.25rem)] w-64 bg-surface-dark text-ink-on-dark shadow-xl rounded-bl-xl overflow-hidden">
+              <PikaRivi ikoni={<Camera size={18} />} onClick={() => { setAuki(null); onKamera(); }}>
+                Avaa kamera
+              </PikaRivi>
+              {onTilatieto && (
+                <PikaRivi ikoni={<Send size={18} />} onClick={() => { setAuki(null); onTilatieto(); }}>
+                  Lähetä tilatieto
+                </PikaRivi>
+              )}
+              <PikaRivi ikoni={<LogOut size={18} />} onClick={() => { setAuki(null); onLogout(); }}>
+                Kirjaudu ulos
+              </PikaRivi>
+            </div>
+          </>
+        )}
+
+        {/* --- Sivuvalikko --- */}
+        {auki === 'valikko' && (
+          <div className="absolute inset-0 z-20 flex">
+            <div className="w-[72%] max-w-[19rem] bg-surface-dark text-ink-on-dark overflow-y-auto pt-[calc(env(safe-area-inset-top)+4.5rem)] pb-6 px-5">
+              {vuoro ? (
+                <div className="mb-6">
+                  <p className="text-sm text-ink-on-dark-muted">Olet kirjautuneena vuoroon:</p>
+                  <p className="text-base font-bold mt-0.5">{vuoro.nimi}</p>
+                  <p className="text-xs text-ink-on-dark-muted mt-0.5">Alkoi klo {kellonaika(vuoro.alkoi)}</p>
+                </div>
+              ) : (
+                <p className="mb-6 text-sm text-ink-on-dark-muted">Et ole kirjautuneena vuoroon.</p>
+              )}
+
+              {/* Man-down. Säätö ja kytkin ovat samassa: liikkumattomuuden raja ilman
+                  kytkintä olisi asetus toiminnolle joka ei ole päällä. */}
+              <div className="mb-6 border-t border-white/10 pt-5">
+                <label className="flex items-center justify-between gap-3 mb-3">
+                  <span className="text-sm font-medium">Man-down</span>
+                  <input
+                    type="checkbox"
+                    checked={mandown}
+                    onChange={(e) => onMandown(e.target.checked)}
+                    className="w-5 h-5 accent-accent"
+                  />
+                </label>
+                <p className="text-sm text-ink-on-dark-muted mb-2">Man-down ajastimen säätö 5 – 60 min:</p>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={5}
+                    max={60}
+                    step={5}
+                    value={mandownMin}
+                    onChange={(e) => onMandownMin(Number(e.target.value))}
+                    className="flex-1 accent-accent"
+                    aria-label="Man-down ajastin minuutteina"
+                  />
+                  <span className="w-14 shrink-0 text-right text-sm font-bold tabular-nums">{mandownMin} min</span>
+                </div>
+                <p className="text-xs text-ink-on-dark-muted mt-2 leading-relaxed">
+                  Kuinka kauan laite saa olla liikkumatta ennen kuin se kysyy oletko kunnossa.
+                  Isku ja sitä seuraava liikkumattomuus kysyvät aina.
+                </p>
+              </div>
+
+              <nav className="border-t border-white/10 pt-3">
+                {linkit.map((linkki) => (
+                  <button
+                    key={linkki.id}
+                    type="button"
+                    onClick={() => { setAuki(null); onLinkki(linkki.id); }}
+                    className="w-full flex items-center justify-between gap-2 py-3 text-left text-[15px] hover:text-accent-on-dark transition-colors"
+                  >
+                    {linkki.label}
+                    <ChevronRight size={16} className="text-ink-on-dark-muted shrink-0" />
+                  </button>
+                ))}
+              </nav>
+
+              <div className="border-t border-white/10 mt-3 pt-3">
+                {onPaataVuoro && (
+                  <button
+                    type="button"
+                    onClick={() => { setAuki(null); onPaataVuoro(); }}
+                    className="w-full py-3 text-left text-[15px] text-warning hover:brightness-110 transition-all"
+                  >
+                    Päätä vuoro
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { setAuki(null); onTyopoyta(); }}
+                  className="w-full flex items-center gap-2 py-3 text-left text-[15px] text-ink-on-dark-muted hover:text-ink-on-dark transition-colors"
+                >
+                  <Monitor size={16} />
+                  Vaihda työpöytäversioon
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              aria-label="Sulje valikko"
+              onClick={() => setAuki(null)}
+              className="flex-1 bg-black/40"
+            />
+          </div>
+        )}
+
+        <main className="flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+};
+
+const PikaRivi = ({ ikoni, onClick, children }: { ikoni: ReactNode; onClick: () => void; children: ReactNode }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="w-full flex items-center gap-3 px-4 py-3.5 text-left text-[15px] hover:bg-white/10 transition-colors"
+  >
+    <span className="text-ink-on-dark-muted shrink-0">{ikoni}</span>
+    {children}
+  </button>
+);

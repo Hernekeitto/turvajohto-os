@@ -3,6 +3,7 @@ import { ShieldCheck, Plus, Building2, Settings, QrCode, CloudOff, ChevronRight 
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
+import { paikallinenPaiva } from '../shared/ajat';
 import { Ylapalkki } from '../shared/komponentit/Ylapalkki';
 import { KohteenHallinta } from './KohteenHallinta';
 import { Tehtavat } from './Tehtavat';
@@ -21,7 +22,15 @@ import { Kohdenakyma } from './Kohdenakyma';
 import { kohteenToiminnot, type Toiminto } from './tilannekuva';
 import { Halytysvahti } from '../shared/komponentit/Halytysvahti';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
-import { haeHalytykset, type Halytys } from '../shared/halytykset';
+import { haeHalytykset, TYYPPI_LABEL, type Halytys } from '../shared/halytykset';
+import { LIIKKUMATON_MS } from '../shared/mandown';
+import { tallennaLaitevalinta, TYOPOYTAPOLKU } from '../shared/laitevalinta';
+import { MobiiliKehys, type MobiiliIlmoitus, type MobiiliLinkki } from './mobiili/MobiiliKehys';
+import { MobiiliEtusivu } from './mobiili/MobiiliEtusivu';
+import { Vuorovalinta } from './mobiili/Vuorovalinta';
+import { Skanneri } from './mobiili/Skanneri';
+import { Tilatieto } from './mobiili/Tilatieto';
+import { lueVuoro, tallennaVuoro, unohdaVuoro, type Vuoro } from './mobiili/vuoro';
 import { useKanava } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
@@ -60,6 +69,22 @@ const JUURINAKYMA = 'etusivu';
 // Kohteet-osiossa ilman että yhtäkään kohdetta on avattu.
 type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus';
 
+// Historiamerkinnän näkymätunniste -> kohteen toiminto. Mobiiliversion takaisin-nappi
+// tarvitsee tämän: siellä ei ole kohdevalikkoa johon palata, joten näkymä avataan
+// suoraan vuoron kohteelle. 'pohjat' ja 'raportit' puuttuvat tarkoituksella — molemmat
+// tunnisteet kattavat kaksi eri näkymää (ohjeet/skenaariot, toimenpide/ilmoitus), eikä
+// niistä voi päätellä kumpi oli auki. Niistä palataan etusivulle.
+const MOBIILIN_NAKYMAT: Record<string, Toiminto> = {
+  kierrokset: 'kierros',
+  tehtavat: 'tehtavat',
+  halytykset: 'halytykset',
+  tiedotteet: 'tiedotteet',
+  kalusto: 'kalusto',
+  'kohteen-tiedot': 'tiedot',
+  mittaristo: 'mittaristo',
+  jaksoraportit: 'jaksoraportit',
+};
+
 const tyhjaKohde = (): Kohde => ({
   id: '',
   name: '',
@@ -71,7 +96,11 @@ const tyhjaKohde = (): Kohde => ({
   tehtavat: [],
 });
 
-export default function GuardApp() {
+// mobiili = puhelimelle tehty kenttäversio (/guard/mobile). Sama data, samat oikeudet ja
+// samat näkymät kuin työpöytäversiossa; ero on kuoressa ja etusivussa (ks. mobiili/).
+// Yksi komponentti eikä kaksi, koska kaikki hakeminen, tallennus ja oikeuslogiikka ovat
+// yhteisiä — kaksi juurta tarkoittaisi kahta kopiota niistä.
+export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const session = useSession();
   const isAdmin = session?.role === 'admin';
   const perms = session?.permissions || {};
@@ -195,6 +224,16 @@ export default function GuardApp() {
   // Man-down päällä/pois säilyy laitteella: vartija kytkee sen kerran vuoron alussa,
   // eikä asetus saa nollautua sivun latauksesta kesken vuoron.
   const [mandown, setMandown] = useState(false);
+  // Man-down-ajastin minuutteina: kuinka kauan laite saa olla liikkumatta ennen kuin se
+  // kysyy oletko kunnossa. Säädetään mobiiliversion valikosta ja säilyy laitteella
+  // samasta syystä kuin man-downin päälläolo — kesken vuoron nollautuva asetus olisi
+  // pahempi kuin puuttuva asetus.
+  const [mandownMin, setMandownMin] = useState(LIIKKUMATON_MS / 60000);
+  // Vuoro (vain mobiiliversio): kohde jossa vartija on nyt töissä. Laitteen tilaa, ei
+  // palvelimen tietue — ks. mobiili/vuoro.ts.
+  const [vuoro, setVuoro] = useState<Vuoro | null>(null);
+  const [kameraAuki, setKameraAuki] = useState(false);
+  const [tilatietoAuki, setTilatietoAuki] = useState(false);
   // Skannauksen tulos: puhelimen kamera avasi /guard?piste=<token>, ja palvelin kertoo
   // mitä siitä seurasi. Näytetään bannerina, koska käyttäjä tuli sivulle kameran kautta
   // eikä hän tiedä mitä sovelluksessa tapahtui.
@@ -402,8 +441,12 @@ export default function GuardApp() {
   // Kohde jonka näkymässä ollaan. Sijainti liitetään siihen, koska vyöhykesäännöt ja
   // hälytysnumerot ovat kohteen omia — yhden kohteen vuorossa (tavallisin tapaus) se on
   // suoraan ainoa kohde.
+  // Vuoron kohde (mobiiliversio). Koko mobiilinäkymä on yhden kohteen näkymä: vartija
+  // on vuorossa yhdessä kohteessa kerrallaan, ja kaikki mitä hän kirjaa kohdistuu siihen.
+  const vuoroKohde = vuoro ? kohteet.find((k) => k.id === vuoro.kohdeId) || null : null;
+
   const aktiivinenKohde = kierrosKohde || halytysKohde || tehtavaKohde || tietoKohde
-    || raporttiKohde?.kohde || (kohteet.length === 1 ? kohteet[0] : null);
+    || raporttiKohde?.kohde || vuoroKohde || (kohteet.length === 1 ? kohteet[0] : null);
 
   // Sijainnin lähetys. Kytkin on palvelimella (SIJAINTISEURANTA), ja istunto kertoo sen
   // tilan — ilman tätä selain kysyisi paikannuslupaa toimintoon jota ei ole olemassa.
@@ -418,6 +461,15 @@ export default function GuardApp() {
     muunnos: luoMuunnos((aktiivinenKohde as { mapRef?: never[] } | null)?.mapRef),
   });
 
+  const vaihdaMandownMinuutit = (minuutit: number) => {
+    setMandownMin(minuutit);
+    try {
+      window.localStorage.setItem('turvajohto-mandown-min', String(minuutit));
+    } catch {
+      // Yksityinen selaustila: asetus jää voimaan vain tämän sivunlatauksen ajaksi.
+    }
+  };
+
   const vaihdaMandown = (paalla: boolean) => {
     setMandown(paalla);
     try {
@@ -430,10 +482,22 @@ export default function GuardApp() {
   useEffect(() => {
     try {
       setMandown(window.localStorage.getItem('turvajohto-mandown') === '1');
+      const min = Number(window.localStorage.getItem('turvajohto-mandown-min'));
+      // Rajat samat kuin valikon liukusäätimessä. Tallennetta ei uskota sellaisenaan:
+      // localStorage on käyttäjän muokattavissa, ja nollan minuutin raja tarkoittaisi
+      // hälytystä joka sekunnista jonka puhelin makaa taskussa.
+      if (Number.isFinite(min) && min >= 5 && min <= 60) setMandownMin(min);
     } catch {
       // Ei tallennettua asetusta.
     }
   }, []);
+
+  // Vuoro luetaan laitteelta käyttäjäkohtaisesti: jaetulla puhelimella edellisen
+  // vartijan vuoro ei saa jäädä seuraavan päälle.
+  useEffect(() => {
+    if (!mobiili) return;
+    setVuoro(lueVuoro(session?.username || ''));
+  }, [mobiili, session?.username]);
 
   const paivitaHalytys = (halytys: Halytys) => {
     setHalytykset((edelliset) => {
@@ -458,6 +522,45 @@ export default function GuardApp() {
       const tunnettu = edelliset.some((k) => k.id === kierros.id);
       return tunnettu ? edelliset.map((k) => (k.id === kierros.id ? kierros : k)) : [kierros, ...edelliset];
     });
+  };
+
+  // Kierrospisteen kuittaus tokenilla. Sama koodi palvelee kahta reittiä: puhelimen oma
+  // kamera avaa /guard?piste=<token> (efekti alla), ja mobiiliversion kameraskanneri lukee
+  // saman tarran poistumatta sovelluksesta (mobiili/Skanneri.tsx). Ilman tätä jaettuna
+  // skannauksen säännöt — sijainti todisteeksi, ehdotus aloittamattomasta kierroksesta —
+  // olisivat kahtena kappaleena, ja toinen jäisi ennen pitkää jälkeen.
+  const kuittaaPiste = async (token: string) => {
+    const gps = await new Promise<{ lat: number; lon: number } | null>((valmis) => {
+      if (!navigator.geolocation) return valmis(null);
+      navigator.geolocation.getCurrentPosition(
+        (s) => valmis({ lat: s.coords.latitude, lon: s.coords.longitude }),
+        () => valmis(null),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+      );
+    });
+    try {
+      const res = await fetch('/api/kierros/skannaus', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token, gps }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok) {
+        paivitaKierros(data.kierros);
+        setSkannaus({ tyyppi: 'ok', viesti: `Tarkistuspiste "${data.pisteNimi}" kuitattu.` });
+        const kohde = kohteet.find((k) => k.id === data.kierros.siteId);
+        if (kohde) setKierrosKohde(kohde);
+      } else {
+        setSkannaus({ tyyppi: 'virhe', viesti: data?.error || 'Kuittaus epäonnistui.' });
+        // Ehdotus tulee kun kierrosta ei ole vielä aloitettu: viedään käyttäjä sen
+        // kohteen kierrosnäkymään, jotta aloitus on yhden painalluksen päässä.
+        const kohde = data?.ehdotus && kohteet.find((k) => k.id === data.ehdotus.siteId);
+        if (kohde) setKierrosKohde(kohde);
+      }
+    } catch {
+      setSkannaus({ tyyppi: 'virhe', viesti: 'Kuittaus epäonnistui: ei yhteyttä palvelimeen.' });
+    }
   };
 
   // QR-tarran skannaus. Puhelimen oma kamera avaa /guard?piste=<token>, joten sovellus
@@ -488,40 +591,7 @@ export default function GuardApp() {
     // ainoan kuittauksen — piste kuitattiin palvelimella mutta käyttöliittymä ei
     // kertonut siitä mitään. Kertaluontoisuus tulee refistä, ja tämä komponentti on
     // sovelluksen juuri joka ei purkaudu kesken kaiken.
-    const kuittaa = async () => {
-      const gps = await new Promise<{ lat: number; lon: number } | null>((valmis) => {
-        if (!navigator.geolocation) return valmis(null);
-        navigator.geolocation.getCurrentPosition(
-          (s) => valmis({ lat: s.coords.latitude, lon: s.coords.longitude }),
-          () => valmis(null),
-          { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
-        );
-      });
-      try {
-        const res = await fetch('/api/kierros/skannaus', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ token, gps }),
-        });
-        const data = await res.json().catch(() => null);
-        if (res.ok && data?.ok) {
-          paivitaKierros(data.kierros);
-          setSkannaus({ tyyppi: 'ok', viesti: `Tarkistuspiste "${data.pisteNimi}" kuitattu.` });
-          const kohde = kohteet.find((k) => k.id === data.kierros.siteId);
-          if (kohde) setKierrosKohde(kohde);
-        } else {
-          setSkannaus({ tyyppi: 'virhe', viesti: data?.error || 'Kuittaus epäonnistui.' });
-          // Ehdotus tulee kun kierrosta ei ole vielä aloitettu: viedään käyttäjä sen
-          // kohteen kierrosnäkymään, jotta aloitus on yhden painalluksen päässä.
-          const kohde = data?.ehdotus && kohteet.find((k) => k.id === data.ehdotus.siteId);
-          if (kohde) setKierrosKohde(kohde);
-        }
-      } catch {
-        setSkannaus({ tyyppi: 'virhe', viesti: 'Kuittaus epäonnistui: ei yhteyttä palvelimeen.' });
-      }
-    };
-    kuittaa();
+    kuittaaPiste(token);
   }, [ladattu, saaKiertaa, kohteet]);
 
   // Raportti lisätään uutena tietueena samalla periaatteella kuin tehtäväsuoritus:
@@ -800,6 +870,15 @@ export default function GuardApp() {
   // sulkemista. Sen sijaan kohdelistaan (ja ylemmäs) palattaessa valinta on nollattava,
   // muuten lista näyttäisi listalta mutta seuraava takaisin veisi vanhaan kohteeseen.
   const siirry = (tunniste: string) => {
+    if (mobiili) {
+      // Mobiiliversiossa on kaksi tasoa: etusivu ja siitä avattu näkymä. Kohdelistaa ja
+      // kohteen valikkoa ei ole, joten purettava taso on aina sama.
+      nollaaNakymat();
+      setOsio('etusivu');
+      const toiminto = MOBIILIN_NAKYMAT[tunniste];
+      if (toiminto && vuoroKohde) avaaToiminto(toiminto, vuoroKohde);
+      return;
+    }
     if (tunniste === 'kohde') {
       nollaaAlanakymat();
       setOsio('kohteet');
@@ -853,6 +932,124 @@ export default function GuardApp() {
     pohjaSuoritukset, pohjat, jalkiraportit,
   ]);
 
+  // --- Mobiiliversion toiminnot ----------------------------------------------------
+
+  const aloitaVuoro = (kohde: Kohde) => {
+    const uusi: Vuoro = { kohdeId: kohde.id, kohdeNimi: kohde.name, alkoi: new Date().toISOString() };
+    tallennaVuoro(session?.username || '', uusi);
+    setVuoro(uusi);
+  };
+
+  const paataVuoro = () => {
+    unohdaVuoro();
+    setVuoro(null);
+    nollaaNakymat();
+    setOsio('etusivu');
+  };
+
+  // Työpöytäversioon vaihtaminen lataa sivun uudelleen: versio ratkeaa osoitteesta ennen
+  // ensimmäistä renderöintiä (main.tsx). Valinta tallennetaan, jotta asennettu sovellus
+  // avautuu jatkossa siihen versioon johon käyttäjä vaihtoi.
+  const vaihdaTyopoydalle = () => {
+    tallennaLaitevalinta('tyopoyta');
+    window.location.assign(TYOPOYTAPOLKU);
+  };
+
+  // Kameran lukema koodi. Kierrostarra on osoite jossa on ?piste=<token>; kaikki muu
+  // näytetään sellaisenaan, koska viivakoodin merkitys riippuu siitä mitä varten se on
+  // luettu — eikä sovellus saa arvata sitä.
+  const kasitteleSkannaus = (arvo: string) => {
+    setKameraAuki(false);
+    let token: string | null = null;
+    try {
+      token = new URL(arvo, window.location.origin).searchParams.get('piste');
+    } catch {
+      token = null;
+    }
+    if (token) {
+      kuittaaPiste(token);
+      return;
+    }
+    setSkannaus({ tyyppi: 'virhe', viesti: 'Luettu koodi ei ole kierrospisteen tarra: ' + arvo });
+  };
+
+  // Tilatieto kirjataan toimenpidekirjauksena (ks. mobiili/Tilatieto.tsx). Menee saman
+  // lähtevän jonon kautta kuin muutkin kenttäkirjaukset, joten se ei katoa katvealueella.
+  const lahetaTilatieto = async (teksti: string) => {
+    if (!vuoroKohde) return false;
+    const hetki = new Date();
+    return tallennaRaportti({
+      id: uusiId(),
+      siteId: vuoroKohde.id,
+      typeId: 'guard_action',
+      type: 'Tilatieto',
+      author: session?.nickname || '',
+      date: paikallinenPaiva(hetki),
+      time: hetki.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' }),
+      place: vuoroKohde.name,
+      summary: teksti,
+      description: teksti,
+      luotu: hetki.toISOString(),
+      // EI 'open'. Tilatieto ei ole avoin poikkeama jota joku sulkee myöhemmin, vaan
+      // merkintä siitä missä vartija on. Avoimena se kasvattaisi hälytyskeskuksen
+      // avointen listaa joka kerta kun joku sanoo olevansa kunnossa.
+      status: null,
+      severity: null,
+      zoneId: null,
+      assignedTo: null,
+      closedAt: null,
+      closedBy: null,
+      attachments: [],
+      corrections: [],
+    });
+  };
+
+  // Sivuvalikon linkit. Neljä ensimmäistä ovat luonnoksesta; loput ovat mukana siksi,
+  // että ilman niitä mobiiliversiossa ei pääsisi lainkaan hätäpainikkeeseen eikä
+  // raportointiin. Jokainen rivi on oikeuden takana: valikossa näkyy vain se mitä
+  // tunnuksella saa tehdä.
+  const mobiiliLinkit: MobiiliLinkki[] = vuoroKohde
+    ? [
+      ...(saaNahdaKalustoa ? [{ id: 'kalusto', label: 'Kalusto' }] : []),
+      ...(saaNahdaTiedotteet ? [{ id: 'tiedotteet', label: 'Tiedotteet' }] : []),
+      ...(saaNahdaOhjeet ? [{ id: 'ohjeet', label: 'Työvuoron ohjeet' }] : []),
+      ...(saaNahdaSkenaariot ? [{ id: 'skenaariot', label: 'Skenaariot' }] : []),
+      ...(saaNahdaHalytykset ? [{ id: 'halytykset', label: 'Hälytykset ja hätäpainike' }] : []),
+      ...(saaKirjataToimenpiteen ? [{ id: 'toimenpide', label: 'Kirjaa toimenpide' }] : []),
+      ...(saaKirjataIlmoituksen ? [{ id: 'ilmoitus', label: 'Tapahtumailmoitus' }] : []),
+      ...(saaNahdaTiedot ? [{ id: 'tiedot', label: 'Kohteen tiedot' }] : []),
+      { id: 'vaihda-kohde', label: 'Vaihda kohdetta' },
+    ]
+    : [];
+
+  const avaaMobiiliLinkki = (id: string) => {
+    if (id === 'vaihda-kohde') {
+      paataVuoro();
+      return;
+    }
+    if (vuoroKohde) avaaToiminto(id as Toiminto, vuoroKohde);
+  };
+
+  // Ilmoituskello: avoimet hälytykset. Oma hälytys näkyy myös toisesta kohteesta —
+  // vartija on voinut painaa hätäpainiketta ennen kuin vaihtoi vuoron kohdetta.
+  const mobiiliIlmoitukset: MobiiliIlmoitus[] = saaNahdaHalytykset
+    ? halytykset
+      .filter((h) => (h.tila === 'lauennut' || h.tila === 'kaynnissa')
+        && (h.eventId === vuoroKohde?.id || h.vartija === session?.username))
+      .map((h) => ({
+        id: h.id,
+        otsikko: TYYPPI_LABEL[h.tyyppi],
+        kuvaus: h.kuvaus || (h.tila === 'lauennut' ? 'Lauennut' : 'Käynnissä'),
+        taso: h.tila === 'lauennut' ? ('kriittinen' as const) : ('varoitus' as const),
+      }))
+    : [];
+
+  const avaaIlmoitus = (id: string) => {
+    const halytys = halytykset.find((h) => h.id === id);
+    const kohde = kohteet.find((k) => k.id === halytys?.eventId) || vuoroKohde;
+    if (kohde) avaaToiminto('halytykset', kohde);
+  };
+
   useHistorianavigointi(nakyma, siirry);
 
   // Poistovahvistus on modaali: takaisin peruu sen eikä vie kohdelistaan.
@@ -862,6 +1059,7 @@ export default function GuardApp() {
     // Laitteelle ei jää työtietoja uloskirjautumisen jälkeen. Jonoa EI tyhjennetä:
     // lähettämätön kirjaus on tehtyä työtä, ja se odottaa seuraavaa kirjautumista.
     unohdaVuorodata();
+    unohdaVuoro();
     unohdaIstunto();
     await fetch('/api/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
     window.location.reload();
@@ -901,368 +1099,442 @@ export default function GuardApp() {
     );
   }
 
+  // Näkymän nimi palkkiin. Sama järjestys kuin renderöintiketjussa alla — jos ne
+  // eroaisivat, palkissa lukisi eri näkymä kuin ruudulla on.
+  const nakymanNimi = asetuksissa ? 'Sovellusasetukset'
+    : osio === 'halytyskeskus' ? 'Hälytyskeskus'
+    : raporttiKohde ? 'Raportointi'
+    : tietoKohde ? 'Kohteen tiedot'
+    : halytysKohde ? 'Hälytykset'
+    : pohjaNakyma ? (pohjaNakyma.laji === 'guide' ? 'Ohjepankki' : 'Skenaariot')
+    : tiedoteKohde ? 'Tiedotteet'
+    : kalustoKohde ? 'Kalusto'
+    : mittariKohde ? 'Mittaristo'
+    : jaksoKohde ? 'Jaksoraportit'
+    : kierrosKohde ? 'Kierrokset'
+    : pohjaKohde ? 'Kierrospohjat'
+    : tehtavaKohde ? 'Työvuoron tehtävät'
+    : lomake ? (lomake.id ? 'Kohteen hallinta' : 'Uusi kohde')
+    : valittuKohde ? valittuKohde.name
+    : osio === 'kohteet' ? 'Kohdevalinta'
+    : 'Vartiointi';
+
+  // Näkymien sisältö omana muuttujanaan, koska se renderöidään kahteen eri kuoreen:
+  // työpöydän yläpalkin alle ja mobiiliversion puhelinkehykseen. Sisältö on molemmissa
+  // sama — ero on kuoressa ja etusivussa, ei siinä mitä näkymät näyttävät.
+  const runko = (
+    <>
+      {/* Hälytysvahti on ENSIMMÄISENÄ ja kaikissa näkymissä. Ajastimen laskuri,
+          man-down-kysely ja lauennut hälytys eivät saa olla yhden näkymän takana:
+          vartija ei ole hälytysnäkymässä silloin kun hälytys laukeaa. */}
+      {/* Tiedotekehote hälytysvahdin vieressä ja samasta syystä: kuittaamaton tiedote
+          on nostettava käyttäjän eteen kesken työn, ei odotettava että hän avaa
+          tiedotesivun. Aktiivinen kohde ratkaisee minkä kohteen tiedotteet näytetään. */}
+      {saaNahdaTiedotteet && (
+        <TiedoteKehote
+          ownerId={aktiivinenKohde?.id || null}
+          kayttaja={session?.username || ''}
+          tiedotteet={tiedotteet}
+          onMuutos={paivitaTiedote}
+        />
+      )}
+      {saaNahdaHalytykset && (
+        <Halytysvahti
+          eventId={aktiivinenKohde?.id || null}
+          kayttaja={session?.username || ''}
+          halytykset={halytykset}
+          onMuutos={paivitaHalytys}
+          onVirkista={paivitaHalytykset}
+          mandown={mandown}
+          liikkumatonMin={mandownMin}
+        />
+      )}
+
+      {virhe && (
+        <p className="mb-6 text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">
+          {virhe}
+        </p>
+      )}
+
+      {offlineTiedot && (
+        <div className="mb-6 flex items-start gap-3 rounded-lg border border-warning/30 bg-warning-soft px-4 py-3">
+          <CloudOff size={18} className="text-warning-ink shrink-0 mt-0.5" />
+          <p className="text-sm text-warning-ink">
+            <span className="font-medium">Ei yhteyttä palvelimeen.</span>{' '}
+            Näytössä ovat laitteelle tallennetut työtiedot{' '}
+            {new Date(offlineTiedot).toLocaleString('fi-FI')}. Kierroksen voi tehdä
+            normaalisti — kuittaukset lähtevät kun yhteys palaa.
+          </p>
+        </div>
+      )}
+
+      {/* Skannauksen tulos. Oma bannerinsa eikä `virhe`: käyttäjä tuli sivulle
+          puhelimen kameralla eikä tiedä mitä sovelluksessa tapahtui, joten myös
+          onnistuminen on kerrottava. */}
+      {skannaus && (
+        <div
+          className={`mb-6 flex items-start gap-3 rounded-lg px-4 py-3 border ${skannaus.tyyppi === 'ok' ? 'bg-success-soft border-success/30 text-success-ink' : 'bg-danger-soft border-danger/30 text-danger-ink'}`}
+        >
+          <QrCode size={18} className="shrink-0 mt-0.5" />
+          <p className="text-sm flex-1">{skannaus.viesti}</p>
+          <button
+            type="button"
+            onClick={() => setSkannaus(null)}
+            className="text-xs font-medium underline shrink-0"
+          >
+            Sulje
+          </button>
+        </div>
+      )}
+
+      {asetuksissa ? (
+        <Asetukset
+          raportit={raportit}
+          isAdmin={!!isAdmin}
+          onHavita={havitaVanhentuneet}
+          onTakaisin={() => setAsetuksissa(false)}
+        />
+      ) : osio === 'halytyskeskus' ? (
+        <Halytyskeskus
+          kohteet={kohteet}
+          lahteet={lahteet}
+          kayttaja={session?.username || ''}
+          saaKuitata={saaKuitataHalytyksia}
+          oikeudet={{
+            kierrokset: saaNahdaKierrokset,
+            kalusto: saaNahdaKalustoa,
+            tiedotteet: saaNahdaTiedotteet,
+          }}
+          yhteys={yhdistetty}
+          sijaintiseuranta={session?.sijaintiseuranta === true}
+          onMuutos={paivitaHalytys}
+          onVirkista={paivitaHalytykset}
+          // Kohderivistä pääsee kohteen valikkoon. Osio vaihtuu samalla kohteisiin,
+          // koska valikon paluulinkki vie kohdelistaan — ja siksi tämä vaatii
+          // oikeuden kohdelistaan, ettei linkki vie listaan jota ei saa nähdä.
+          onAvaaKohde={saaNahda
+            ? (kohde) => { setOsio('kohteet'); setValittuKohde(kohde); }
+            : null}
+          onTakaisin={paluuEtusivulle}
+        />
+      ) : raporttiKohde ? (
+        <Raportit
+          kohde={raporttiKohde.kohde}
+          tyyppi={raporttiKohde.tyyppi}
+          vartija={session?.nickname || ''}
+          onTallenna={tallennaRaportti}
+          onTakaisin={() => setRaporttiKohde(null)}
+        />
+      ) : tietoKohde ? (
+        <KohteenTiedot
+          kohde={tietoKohde}
+          tiedostot={tiedostot}
+          suoritukset={suoritukset}
+          raportit={raportit}
+          kierrokset={kierrokset}
+          onTakaisin={() => setTietoKohde(null)}
+        />
+      ) : kalustoKohde ? (
+        <div className="max-w-3xl">
+          <TakaisinLinkki onClick={() => setKalustoKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
+          <Kalusto
+            ownerId={kalustoKohde.id}
+            ownerNimi={kalustoKohde.name}
+            avaimet={avaimet}
+            poikkeamat={poikkeamat}
+            saaMuokataAvaimia={saaMuokataAvaimia}
+            saaKasitellaPoikkeamia={saaKasitellaPoikkeamia}
+            onAvaimetMuuttui={paivitaAvaimet}
+            onPoikkeamatMuuttui={paivitaPoikkeamat}
+            aloitusValilehti="avaimet"
+          />
+        </div>
+      ) : mittariKohde ? (
+        <div className="max-w-5xl">
+          <TakaisinLinkki onClick={() => setMittariKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
+          <Mittaristo ownerId={mittariKohde.id} ownerNimi={mittariKohde.name} onKohde />
+        </div>
+      ) : jaksoKohde ? (
+        <div className="max-w-5xl">
+          <TakaisinLinkki onClick={() => setJaksoKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
+          <Jalkiraportit
+            ownerId={jaksoKohde.id}
+            ownerNimi={jaksoKohde.name}
+            onKohde
+            raportit={jalkiraportit}
+            saaMuokata={saaLaatiaJaksoraportteja}
+            onMuuttui={paivitaJalkiraportit}
+          />
+        </div>
+      ) : tiedoteKohde ? (
+        <div className="max-w-3xl">
+          <TakaisinLinkki onClick={() => setTiedoteKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
+          <Tiedotteet
+            ownerId={tiedoteKohde.id}
+            ownerNimi={tiedoteKohde.name}
+            kayttaja={session?.username || ''}
+            tiedotteet={tiedotteet}
+            saaLahettaa={saaLahettaaTiedotteita}
+            onMuutos={paivitaTiedote}
+          />
+        </div>
+      ) : pohjaNakyma ? (
+        <div className="max-w-3xl">
+          <TakaisinLinkki onClick={() => setPohjaNakyma(null)}>Takaisin kohteeseen</TakaisinLinkki>
+          <p className="text-sm text-ink-muted mb-4">{pohjaNakyma.kohde.name}</p>
+          <Pohjanakyma
+            laji={pohjaNakyma.laji}
+            ownerId={pohjaNakyma.kohde.id}
+            ownerNimi={pohjaNakyma.kohde.name}
+            pohjat={pohjat as unknown as Pohja[]}
+            suoritukset={pohjaSuoritukset}
+            saaMuokata={pohjaNakyma.laji === 'guide' ? saaMuokataOhjeita : saaMuokataSkenaarioita}
+            onPohjatMuuttui={haePohjat}
+            onSuoritusMuuttui={paivitaPohjaSuoritus}
+          />
+        </div>
+      ) : halytysKohde ? (
+        <Halytykset
+          kohde={halytysKohde}
+          halytykset={halytykset}
+          kayttaja={session?.username || ''}
+          saaKuitata={saaKuitataHalytyksia}
+          mandown={mandown}
+          onMandown={vaihdaMandown}
+          onMuutos={paivitaHalytys}
+          onTakaisin={() => setHalytysKohde(null)}
+        />
+      ) : kierrosKohde ? (
+        <Kierros
+          kohde={kierrosKohde}
+          pohjat={pohjat}
+          kierrokset={kierrokset}
+          saaKiertaa={saaKiertaa}
+          onPaivita={paivitaKierros}
+          onTakaisin={() => setKierrosKohde(null)}
+        />
+      ) : pohjaKohde ? (
+        <Kierrospohjat
+          kohde={pohjaKohde}
+          pohjat={pohjat}
+          saaMuokata={saaMuokataPohjia}
+          onTallennettu={haePohjat}
+          onTakaisin={() => setPohjaKohde(null)}
+        />
+      ) : tehtavaKohde ? (
+        <Tehtavat
+          kohde={tehtavaKohde}
+          suoritukset={suoritukset}
+          vartija={session?.nickname || ''}
+          saaKuitata={saaKuitata}
+          onSuorita={suoritaTehtava}
+          onTakaisin={() => setTehtavaKohde(null)}
+        />
+      ) : lomake ? (
+        <KohteenHallinta
+          kohde={lomake}
+          onChange={setLomake}
+          onTallenna={tallennaLomake}
+          onPeruuta={() => setLomake(null)}
+          tallentaa={tallentaa}
+          tyontekijat={tyontekijat}
+          tiedostot={tiedostot.filter((t) => t.siteId === lomake.id)}
+          onLisaaTiedosto={lisaaTiedosto}
+          onPoistaTiedosto={poistaTiedosto}
+          onLataaKartta={lataaKartta}
+          saaMuokata={saaMuokata}
+        />
+      ) : valittuKohde ? (
+        <Kohdenakyma
+          kohde={valittuKohde}
+          tiivistelmat={kohteenToiminnot(valittuKohde.id, lahteet, {
+            tehtaviaMaaritelty: valittuKohde.tehtavat?.length || 0,
+            kayttaja: session?.username || '',
+          })}
+          sallitut={{
+            tehtavat: saaNahdaTehtavat && (valittuKohde.tehtavat?.length || 0) > 0,
+            kierros: saaNahdaKierrokset,
+            kierrospohjat: saaNahdaPohjat,
+            kalusto: saaNahdaKalustoa,
+            mittaristo: saaNahdaMittarit,
+            jaksoraportit: saaNahdaJaksoraportit,
+            tiedotteet: saaNahdaTiedotteet,
+            ohjeet: saaNahdaOhjeet,
+            skenaariot: saaNahdaSkenaariot,
+            halytykset: saaNahdaHalytykset,
+            toimenpide: saaKirjataToimenpiteen,
+            ilmoitus: saaKirjataIlmoituksen,
+            tiedot: saaNahdaTiedot,
+          }}
+          saaMuokata={saaMuokata}
+          onValitse={(toiminto) => avaaToiminto(toiminto, valittuKohde)}
+          onHallitse={() => setLomake({
+            ...valittuKohde,
+            perehdytykset: [...(valittuKohde.perehdytykset || [])],
+            tehtavat: (valittuKohde.tehtavat || []).map((t) => ({ ...t, kohdat: [...t.kohdat] })),
+          })}
+          onPoista={() => setPoistettava(valittuKohde)}
+          onTakaisin={() => setValittuKohde(null)}
+        />
+      ) : osio === 'etusivu' && mobiili ? (
+        /* Mobiiliversion etusivu on vuoron työ, ei osiovalinta: kentällä ei valita
+           työpöydän ja hälytyskeskuksen väliltä vaan tehdään se mitä vuoroon
+           kuuluu. Ilman vuoroa kysytään ensin kohde — arvattu kohde tarkoittaisi
+           että hätäpainike hälyttää väärän kohteen numeroihin. */
+        vuoroKohde ? (
+          <MobiiliEtusivu
+            kohde={vuoroKohde}
+            pohjat={pohjat}
+            kierrokset={kierrokset}
+            halytykset={halytykset}
+            suoritukset={suoritukset}
+            sallitut={{
+              kierrokset: saaNahdaKierrokset,
+              tehtavat: saaNahdaTehtavat,
+              halytykset: saaNahdaHalytykset,
+            }}
+            onKierros={() => setKierrosKohde(vuoroKohde)}
+            onTehtavat={() => setTehtavaKohde(vuoroKohde)}
+            onHalytykset={() => setHalytysKohde(vuoroKohde)}
+          />
+        ) : (
+          <Vuorovalinta kohteet={kohteet} ladattu={ladattu} onValitse={aloitaVuoro} />
+        )
+      ) : osio === 'etusivu' ? (
+        <Etusivu
+          saaNahdaKohteet={saaNahda}
+          saaNahdaHalytyskeskus={saaNahdaHalytyskeskus}
+          saaNahdaAsetukset={saaNahdaAsetukset}
+          kohteita={kohteet.length}
+          lauenneita={halytykset.filter((h) => h.tila === 'lauennut').length}
+          ajastimia={halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa').length}
+          kierroksiaKesken={kierrokset.filter((k) => k.tila === 'kesken').length}
+          onKohteet={() => setOsio('kohteet')}
+          onHalytyskeskus={() => setOsio('halytyskeskus')}
+          onAsetukset={() => setAsetuksissa(true)}
+        />
+      ) : (
+        <>
+          <TakaisinLinkki onClick={paluuEtusivulle}>Takaisin etusivulle</TakaisinLinkki>
+          <div className="flex items-start justify-between gap-4 mb-8">
+            <div>
+              <h2 className="text-2xl font-bold text-ink-strong mb-1">Kohteet</h2>
+              <p className="text-sm text-ink-muted">
+                Vartiointikohteet ja niiden perustiedot. Kierrokset, vuorot ja poikkeamat
+                kirjataan aina kohteelle.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {saaNahdaAsetukset && (
+                <button
+                  type="button"
+                  onClick={() => setAsetuksissa(true)}
+                  className="inline-flex items-center gap-2 bg-surface hover:bg-sunken text-ink-body border border-line text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
+                >
+                  <Settings size={16} />
+                  Sovellusasetukset
+                </button>
+              )}
+              {saaMuokata && (
+                <button
+                  type="button"
+                  onClick={() => setLomake(tyhjaKohde())}
+                  className="inline-flex items-center gap-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
+                >
+                  <Plus size={16} />
+                  Uusi kohde
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Kohdelistalla on VAIN kohteet ja niiden perustiedot. Toiminnot ovat
+              kohteen omalla sivulla (Kohdenakyma), koska kortin alareunaan ladottuna
+              ne olivat kymmenen sanan rivi jossa jokainen sana oli eri työ — ja lista
+              oli sitä sekavampi mitä enemmän oikeuksia käyttäjällä oli. */}
+          {kohteet.length === 0 ? (
+            <div className="bg-surface border border-line rounded-xl p-10 text-center">
+              <Building2 className="w-10 h-10 text-ink-subtle mx-auto mb-4" strokeWidth={1.5} />
+              <p className="text-sm text-ink-muted">
+                {ladattu ? 'Yhtään kohdetta ei ole vielä lisätty.' : 'Ladataan kohteita…'}
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {kohteet.map((kohde) => (
+                <button
+                  key={kohde.id}
+                  type="button"
+                  onClick={() => setValittuKohde(kohde)}
+                  className="text-left bg-surface border border-line hover:bg-sunken hover:border-line-strong rounded-xl p-5 transition-colors flex items-start gap-3"
+                >
+                  <ShieldCheck className="w-5 h-5 text-accent shrink-0 mt-0.5" strokeWidth={1.75} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-bold text-ink-strong">{kohde.name}</span>
+                    {(kohde.contactName || kohde.contactPhone) && (
+                      <span className="block text-sm text-ink-body mt-1">
+                        {[kohde.contactName, kohde.contactPhone].filter(Boolean).join(' · ')}
+                      </span>
+                    )}
+                    {kohde.address && (
+                      <span className="block text-sm text-ink-muted mt-0.5">{kohde.address}</span>
+                    )}
+                  </span>
+                  <ChevronRight size={18} className="text-ink-subtle shrink-0 mt-0.5" />
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+
+  // Mobiiliversio (/guard/mobile). Kehys tuo oman palkkinsa, sivuvalikkonsa ja
+  // pikavalikkonsa. Kamera ja tilatieto ovat kehyksen sisällä, koska ne peittävät koko
+  // puhelimen ruudun — ne eivät ole näkymiä joihin navigoidaan vaan päällekkäisiä
+  // työkaluja jotka suljetaan siihen mistä ne avattiin.
+  if (mobiili) {
+    return (
+      <MobiiliKehys
+        otsikko={nakymanNimi}
+        vuoro={vuoro ? { nimi: vuoroKohde?.name || vuoro.kohdeNimi, alkoi: vuoro.alkoi } : null}
+        ilmoitukset={mobiiliIlmoitukset}
+        onIlmoitus={avaaIlmoitus}
+        linkit={mobiiliLinkit}
+        onLinkki={avaaMobiiliLinkki}
+        mandown={mandown}
+        onMandown={vaihdaMandown}
+        mandownMin={mandownMin}
+        onMandownMin={vaihdaMandownMinuutit}
+        onKamera={() => setKameraAuki(true)}
+        onTilatieto={saaKirjataToimenpiteen && vuoroKohde ? () => setTilatietoAuki(true) : null}
+        onPaataVuoro={vuoro ? paataVuoro : null}
+        onTyopoyta={vaihdaTyopoydalle}
+        onLogout={kirjauduUlos}
+      >
+        {runko}
+        {kameraAuki && (
+          <Skanneri onLoytyi={kasitteleSkannaus} onSulje={() => setKameraAuki(false)} />
+        )}
+        {tilatietoAuki && vuoroKohde && (
+          <Tilatieto
+            kohdeNimi={vuoroKohde.name}
+            onLaheta={lahetaTilatieto}
+            onSulje={() => setTilatietoAuki(false)}
+          />
+        )}
+      </MobiiliKehys>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-canvas text-ink flex flex-col">
-      {ylapalkki(
-        asetuksissa ? 'Sovellusasetukset'
-          : osio === 'halytyskeskus' ? 'Hälytyskeskus'
-          : raporttiKohde ? 'Raportointi'
-          : tietoKohde ? 'Kohteen tiedot'
-          : halytysKohde ? 'Hälytykset'
-          : pohjaNakyma ? (pohjaNakyma.laji === 'guide' ? 'Ohjepankki' : 'Skenaariot')
-          : tiedoteKohde ? 'Tiedotteet'
-          : kalustoKohde ? 'Kalusto'
-          : mittariKohde ? 'Mittaristo'
-          : jaksoKohde ? 'Jaksoraportit'
-          : kierrosKohde ? 'Kierrokset'
-          : pohjaKohde ? 'Kierrospohjat'
-          : tehtavaKohde ? 'Työvuoron tehtävät'
-          : lomake ? (lomake.id ? 'Kohteen hallinta' : 'Uusi kohde')
-          : valittuKohde ? valittuKohde.name
-          : osio === 'kohteet' ? 'Kohdevalinta'
-          : 'Vartiointi'
-      )}
+      {ylapalkki(nakymanNimi)}
 
       <main className="flex-1 p-6 md:p-10">
         <div className="max-w-5xl mx-auto">
-          {/* Hälytysvahti on ENSIMMÄISENÄ ja kaikissa näkymissä. Ajastimen laskuri,
-              man-down-kysely ja lauennut hälytys eivät saa olla yhden näkymän takana:
-              vartija ei ole hälytysnäkymässä silloin kun hälytys laukeaa. */}
-          {/* Tiedotekehote hälytysvahdin vieressä ja samasta syystä: kuittaamaton tiedote
-              on nostettava käyttäjän eteen kesken työn, ei odotettava että hän avaa
-              tiedotesivun. Aktiivinen kohde ratkaisee minkä kohteen tiedotteet näytetään. */}
-          {saaNahdaTiedotteet && (
-            <TiedoteKehote
-              ownerId={aktiivinenKohde?.id || null}
-              kayttaja={session?.username || ''}
-              tiedotteet={tiedotteet}
-              onMuutos={paivitaTiedote}
-            />
-          )}
-          {saaNahdaHalytykset && (
-            <Halytysvahti
-              eventId={aktiivinenKohde?.id || null}
-              kayttaja={session?.username || ''}
-              halytykset={halytykset}
-              onMuutos={paivitaHalytys}
-              onVirkista={paivitaHalytykset}
-              mandown={mandown}
-            />
-          )}
-
-          {virhe && (
-            <p className="mb-6 text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">
-              {virhe}
-            </p>
-          )}
-
-          {offlineTiedot && (
-            <div className="mb-6 flex items-start gap-3 rounded-lg border border-warning/30 bg-warning-soft px-4 py-3">
-              <CloudOff size={18} className="text-warning-ink shrink-0 mt-0.5" />
-              <p className="text-sm text-warning-ink">
-                <span className="font-medium">Ei yhteyttä palvelimeen.</span>{' '}
-                Näytössä ovat laitteelle tallennetut työtiedot{' '}
-                {new Date(offlineTiedot).toLocaleString('fi-FI')}. Kierroksen voi tehdä
-                normaalisti — kuittaukset lähtevät kun yhteys palaa.
-              </p>
-            </div>
-          )}
-
-          {/* Skannauksen tulos. Oma bannerinsa eikä `virhe`: käyttäjä tuli sivulle
-              puhelimen kameralla eikä tiedä mitä sovelluksessa tapahtui, joten myös
-              onnistuminen on kerrottava. */}
-          {skannaus && (
-            <div
-              className={`mb-6 flex items-start gap-3 rounded-lg px-4 py-3 border ${skannaus.tyyppi === 'ok' ? 'bg-success-soft border-success/30 text-success-ink' : 'bg-danger-soft border-danger/30 text-danger-ink'}`}
-            >
-              <QrCode size={18} className="shrink-0 mt-0.5" />
-              <p className="text-sm flex-1">{skannaus.viesti}</p>
-              <button
-                type="button"
-                onClick={() => setSkannaus(null)}
-                className="text-xs font-medium underline shrink-0"
-              >
-                Sulje
-              </button>
-            </div>
-          )}
-
-          {asetuksissa ? (
-            <Asetukset
-              raportit={raportit}
-              isAdmin={!!isAdmin}
-              onHavita={havitaVanhentuneet}
-              onTakaisin={() => setAsetuksissa(false)}
-            />
-          ) : osio === 'halytyskeskus' ? (
-            <Halytyskeskus
-              kohteet={kohteet}
-              lahteet={lahteet}
-              kayttaja={session?.username || ''}
-              saaKuitata={saaKuitataHalytyksia}
-              oikeudet={{
-                kierrokset: saaNahdaKierrokset,
-                kalusto: saaNahdaKalustoa,
-                tiedotteet: saaNahdaTiedotteet,
-              }}
-              yhteys={yhdistetty}
-              sijaintiseuranta={session?.sijaintiseuranta === true}
-              onMuutos={paivitaHalytys}
-              onVirkista={paivitaHalytykset}
-              // Kohderivistä pääsee kohteen valikkoon. Osio vaihtuu samalla kohteisiin,
-              // koska valikon paluulinkki vie kohdelistaan — ja siksi tämä vaatii
-              // oikeuden kohdelistaan, ettei linkki vie listaan jota ei saa nähdä.
-              onAvaaKohde={saaNahda
-                ? (kohde) => { setOsio('kohteet'); setValittuKohde(kohde); }
-                : null}
-              onTakaisin={paluuEtusivulle}
-            />
-          ) : raporttiKohde ? (
-            <Raportit
-              kohde={raporttiKohde.kohde}
-              tyyppi={raporttiKohde.tyyppi}
-              vartija={session?.nickname || ''}
-              onTallenna={tallennaRaportti}
-              onTakaisin={() => setRaporttiKohde(null)}
-            />
-          ) : tietoKohde ? (
-            <KohteenTiedot
-              kohde={tietoKohde}
-              tiedostot={tiedostot}
-              suoritukset={suoritukset}
-              raportit={raportit}
-              kierrokset={kierrokset}
-              onTakaisin={() => setTietoKohde(null)}
-            />
-          ) : kalustoKohde ? (
-            <div className="max-w-3xl">
-              <TakaisinLinkki onClick={() => setKalustoKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
-              <Kalusto
-                ownerId={kalustoKohde.id}
-                ownerNimi={kalustoKohde.name}
-                avaimet={avaimet}
-                poikkeamat={poikkeamat}
-                saaMuokataAvaimia={saaMuokataAvaimia}
-                saaKasitellaPoikkeamia={saaKasitellaPoikkeamia}
-                onAvaimetMuuttui={paivitaAvaimet}
-                onPoikkeamatMuuttui={paivitaPoikkeamat}
-                aloitusValilehti="avaimet"
-              />
-            </div>
-          ) : mittariKohde ? (
-            <div className="max-w-5xl">
-              <TakaisinLinkki onClick={() => setMittariKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
-              <Mittaristo ownerId={mittariKohde.id} ownerNimi={mittariKohde.name} onKohde />
-            </div>
-          ) : jaksoKohde ? (
-            <div className="max-w-5xl">
-              <TakaisinLinkki onClick={() => setJaksoKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
-              <Jalkiraportit
-                ownerId={jaksoKohde.id}
-                ownerNimi={jaksoKohde.name}
-                onKohde
-                raportit={jalkiraportit}
-                saaMuokata={saaLaatiaJaksoraportteja}
-                onMuuttui={paivitaJalkiraportit}
-              />
-            </div>
-          ) : tiedoteKohde ? (
-            <div className="max-w-3xl">
-              <TakaisinLinkki onClick={() => setTiedoteKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
-              <Tiedotteet
-                ownerId={tiedoteKohde.id}
-                ownerNimi={tiedoteKohde.name}
-                kayttaja={session?.username || ''}
-                tiedotteet={tiedotteet}
-                saaLahettaa={saaLahettaaTiedotteita}
-                onMuutos={paivitaTiedote}
-              />
-            </div>
-          ) : pohjaNakyma ? (
-            <div className="max-w-3xl">
-              <TakaisinLinkki onClick={() => setPohjaNakyma(null)}>Takaisin kohteeseen</TakaisinLinkki>
-              <p className="text-sm text-ink-muted mb-4">{pohjaNakyma.kohde.name}</p>
-              <Pohjanakyma
-                laji={pohjaNakyma.laji}
-                ownerId={pohjaNakyma.kohde.id}
-                ownerNimi={pohjaNakyma.kohde.name}
-                pohjat={pohjat as unknown as Pohja[]}
-                suoritukset={pohjaSuoritukset}
-                saaMuokata={pohjaNakyma.laji === 'guide' ? saaMuokataOhjeita : saaMuokataSkenaarioita}
-                onPohjatMuuttui={haePohjat}
-                onSuoritusMuuttui={paivitaPohjaSuoritus}
-              />
-            </div>
-          ) : halytysKohde ? (
-            <Halytykset
-              kohde={halytysKohde}
-              halytykset={halytykset}
-              kayttaja={session?.username || ''}
-              saaKuitata={saaKuitataHalytyksia}
-              mandown={mandown}
-              onMandown={vaihdaMandown}
-              onMuutos={paivitaHalytys}
-              onTakaisin={() => setHalytysKohde(null)}
-            />
-          ) : kierrosKohde ? (
-            <Kierros
-              kohde={kierrosKohde}
-              pohjat={pohjat}
-              kierrokset={kierrokset}
-              saaKiertaa={saaKiertaa}
-              onPaivita={paivitaKierros}
-              onTakaisin={() => setKierrosKohde(null)}
-            />
-          ) : pohjaKohde ? (
-            <Kierrospohjat
-              kohde={pohjaKohde}
-              pohjat={pohjat}
-              saaMuokata={saaMuokataPohjia}
-              onTallennettu={haePohjat}
-              onTakaisin={() => setPohjaKohde(null)}
-            />
-          ) : tehtavaKohde ? (
-            <Tehtavat
-              kohde={tehtavaKohde}
-              suoritukset={suoritukset}
-              vartija={session?.nickname || ''}
-              saaKuitata={saaKuitata}
-              onSuorita={suoritaTehtava}
-              onTakaisin={() => setTehtavaKohde(null)}
-            />
-          ) : lomake ? (
-            <KohteenHallinta
-              kohde={lomake}
-              onChange={setLomake}
-              onTallenna={tallennaLomake}
-              onPeruuta={() => setLomake(null)}
-              tallentaa={tallentaa}
-              tyontekijat={tyontekijat}
-              tiedostot={tiedostot.filter((t) => t.siteId === lomake.id)}
-              onLisaaTiedosto={lisaaTiedosto}
-              onPoistaTiedosto={poistaTiedosto}
-              onLataaKartta={lataaKartta}
-              saaMuokata={saaMuokata}
-            />
-          ) : valittuKohde ? (
-            <Kohdenakyma
-              kohde={valittuKohde}
-              tiivistelmat={kohteenToiminnot(valittuKohde.id, lahteet, {
-                tehtaviaMaaritelty: valittuKohde.tehtavat?.length || 0,
-                kayttaja: session?.username || '',
-              })}
-              sallitut={{
-                tehtavat: saaNahdaTehtavat && (valittuKohde.tehtavat?.length || 0) > 0,
-                kierros: saaNahdaKierrokset,
-                kierrospohjat: saaNahdaPohjat,
-                kalusto: saaNahdaKalustoa,
-                mittaristo: saaNahdaMittarit,
-                jaksoraportit: saaNahdaJaksoraportit,
-                tiedotteet: saaNahdaTiedotteet,
-                ohjeet: saaNahdaOhjeet,
-                skenaariot: saaNahdaSkenaariot,
-                halytykset: saaNahdaHalytykset,
-                toimenpide: saaKirjataToimenpiteen,
-                ilmoitus: saaKirjataIlmoituksen,
-                tiedot: saaNahdaTiedot,
-              }}
-              saaMuokata={saaMuokata}
-              onValitse={(toiminto) => avaaToiminto(toiminto, valittuKohde)}
-              onHallitse={() => setLomake({
-                ...valittuKohde,
-                perehdytykset: [...(valittuKohde.perehdytykset || [])],
-                tehtavat: (valittuKohde.tehtavat || []).map((t) => ({ ...t, kohdat: [...t.kohdat] })),
-              })}
-              onPoista={() => setPoistettava(valittuKohde)}
-              onTakaisin={() => setValittuKohde(null)}
-            />
-          ) : osio === 'etusivu' ? (
-            <Etusivu
-              saaNahdaKohteet={saaNahda}
-              saaNahdaHalytyskeskus={saaNahdaHalytyskeskus}
-              saaNahdaAsetukset={saaNahdaAsetukset}
-              kohteita={kohteet.length}
-              lauenneita={halytykset.filter((h) => h.tila === 'lauennut').length}
-              ajastimia={halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa').length}
-              kierroksiaKesken={kierrokset.filter((k) => k.tila === 'kesken').length}
-              onKohteet={() => setOsio('kohteet')}
-              onHalytyskeskus={() => setOsio('halytyskeskus')}
-              onAsetukset={() => setAsetuksissa(true)}
-            />
-          ) : (
-            <>
-              <TakaisinLinkki onClick={paluuEtusivulle}>Takaisin etusivulle</TakaisinLinkki>
-              <div className="flex items-start justify-between gap-4 mb-8">
-                <div>
-                  <h2 className="text-2xl font-bold text-ink-strong mb-1">Kohteet</h2>
-                  <p className="text-sm text-ink-muted">
-                    Vartiointikohteet ja niiden perustiedot. Kierrokset, vuorot ja poikkeamat
-                    kirjataan aina kohteelle.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {saaNahdaAsetukset && (
-                    <button
-                      type="button"
-                      onClick={() => setAsetuksissa(true)}
-                      className="inline-flex items-center gap-2 bg-surface hover:bg-sunken text-ink-body border border-line text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
-                    >
-                      <Settings size={16} />
-                      Sovellusasetukset
-                    </button>
-                  )}
-                  {saaMuokata && (
-                    <button
-                      type="button"
-                      onClick={() => setLomake(tyhjaKohde())}
-                      className="inline-flex items-center gap-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
-                    >
-                      <Plus size={16} />
-                      Uusi kohde
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Kohdelistalla on VAIN kohteet ja niiden perustiedot. Toiminnot ovat
-                  kohteen omalla sivulla (Kohdenakyma), koska kortin alareunaan ladottuna
-                  ne olivat kymmenen sanan rivi jossa jokainen sana oli eri työ — ja lista
-                  oli sitä sekavampi mitä enemmän oikeuksia käyttäjällä oli. */}
-              {kohteet.length === 0 ? (
-                <div className="bg-surface border border-line rounded-xl p-10 text-center">
-                  <Building2 className="w-10 h-10 text-ink-subtle mx-auto mb-4" strokeWidth={1.5} />
-                  <p className="text-sm text-ink-muted">
-                    {ladattu ? 'Yhtään kohdetta ei ole vielä lisätty.' : 'Ladataan kohteita…'}
-                  </p>
-                </div>
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {kohteet.map((kohde) => (
-                    <button
-                      key={kohde.id}
-                      type="button"
-                      onClick={() => setValittuKohde(kohde)}
-                      className="text-left bg-surface border border-line hover:bg-sunken hover:border-line-strong rounded-xl p-5 transition-colors flex items-start gap-3"
-                    >
-                      <ShieldCheck className="w-5 h-5 text-accent shrink-0 mt-0.5" strokeWidth={1.75} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block font-bold text-ink-strong">{kohde.name}</span>
-                        {(kohde.contactName || kohde.contactPhone) && (
-                          <span className="block text-sm text-ink-body mt-1">
-                            {[kohde.contactName, kohde.contactPhone].filter(Boolean).join(' · ')}
-                          </span>
-                        )}
-                        {kohde.address && (
-                          <span className="block text-sm text-ink-muted mt-0.5">{kohde.address}</span>
-                        )}
-                      </span>
-                      <ChevronRight size={18} className="text-ink-subtle shrink-0 mt-0.5" />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
+          {runko}
         </div>
       </main>
 
