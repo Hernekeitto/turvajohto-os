@@ -84,6 +84,10 @@ export function aloitaKierros({ pohja, siteId, vartija, id, nyt = new Date() }) 
           pisteId: p.id,
           nimi: p.nimi,
           odotettuGps: p.gps || null,
+          // Koodipakko kopioidaan kuten nimi ja sijainti: kesken kierroksen tehty
+          // pohjan muokkaus ei saa muuttaa sitä, millä ehdoilla tätä kierrosta
+          // kuitataan.
+          vaadiKoodi: p.vaadiKoodi === true,
           kuitattu: null,
           tapa: null,
           gps: null,
@@ -123,6 +127,16 @@ export function kuittaaPiste({
     return { ok: false, error: `Tarkistuspiste "${kohta.nimi}" on jo kuitattu.` };
   }
 
+  // Koodipakko. Palvelimella eikä käyttöliittymässä samasta syystä kuin muutkin
+  // kierroksen säännöt: painikkeen piilottaminen on kohteliaisuus jonka curl ohittaa,
+  // ja koko pakon tarkoitus on että kuittaus todistaa käynnin paikan päällä.
+  if (kohta.vaadiKoodi && tapa === 'kasin') {
+    return {
+      ok: false,
+      error: `Tarkistuspiste "${kohta.nimi}" kuitataan lukemalla sen koodi. Käsin kuittausta ei ole sallittu tällä pisteellä.`,
+    };
+  }
+
   const etaisyys = etaisyysMetreina(kohta.odotettuGps, gps);
   if (pakotaSijainti && kohta.odotettuGps) {
     if (etaisyys === null) {
@@ -140,7 +154,7 @@ export function kuittaaPiste({
     ? {
       ...p,
       kuitattu: nyt.toISOString(),
-      tapa: tapa === 'qr' ? 'qr' : 'kasin',
+      tapa: tapa === 'qr' || tapa === 'viivakoodi' ? tapa : 'kasin',
       gps: gps || null,
       etaisyysM: etaisyys,
       huomio: String(huomio ?? '').slice(0, HUOMION_MAX_PITUUS),

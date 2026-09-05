@@ -7,13 +7,45 @@
 // koko kokoelma tallennettaisiin täältä, tokenit menisivät tyhjiksi ja jokainen
 // seinässä oleva tarra lakkaisi toimimasta.
 import { useState } from 'react';
-import { Plus, Trash2, Printer, Pencil, ArrowUp, ArrowDown, MapPin, Archive } from 'lucide-react';
+import {
+  Plus, Trash2, Printer, Pencil, ArrowUp, ArrowDown, MapPin, Archive, QrCode, ScanBarcode,
+} from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { haeQrKoodi } from '../shared/komponentit/QrKoodi';
-import { tarraDokumentti, tulostaDokumentti } from '../shared/tuloste';
+import { Viivakoodi } from '../shared/komponentit/Viivakoodi';
+import { kelpaaViivakoodiksi, viivakoodiSvg } from '../shared/viivakoodi';
+import { tarraDokumentti, tulostaDokumentti, type TulostettavaTarra } from '../shared/tuloste';
+import { TarraEsikatselu, type EsikatselunTarra } from './TarraEsikatselu';
 import { Kentta } from './Kentta';
 import { uusiId, type Kohde, type Kierrospohja, type Tarkistuspiste } from './tyypit';
+import type { ReactNode } from 'react';
+
+// Koodilajin valinta. Painike eikä radiopainike: vaihtoehtoja on kaksi ja valinta on
+// tehtävä yhdellä osumalla myös kosketusnäytöllä, jossa radiopainikkeen ympyrä on
+// kymmenen pikselin kokoinen maali.
+const KoodiNappi = ({
+  valittu, onClick, ikoni, children,
+}: {
+  valittu: boolean;
+  onClick: () => void;
+  ikoni: ReactNode;
+  children: ReactNode;
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-pressed={valittu}
+    className={`inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-3 py-2 border transition-colors ${
+      valittu
+        ? 'bg-accent-soft border-accent text-accent-ink'
+        : 'bg-surface border-line text-ink-body hover:bg-sunken'
+    }`}
+  >
+    {ikoni}
+    {children}
+  </button>
+);
 
 type Props = {
   kohde: Kohde;
@@ -57,6 +89,13 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
   const [virhe, setVirhe] = useState<string | null>(null);
   const [tallentaa, setTallentaa] = useState(false);
   const [tulostaa, setTulostaa] = useState<string | null>(null);
+  // Avoinna oleva tarra-esikatselu. Sisältää valmiit koodit, koska QR haetaan
+  // palvelimelta: esikatselun ja tulostuksen on näytettävä täsmälleen sama arkki.
+  const [esikatselu, setEsikatselu] = useState<{ pohjaNimi: string; tarrat: EsikatselunTarra[] } | null>(null);
+  // Minkä pisteen koodiasetukset ovat auki muokkaimessa. Yksi kerrallaan: rivit ovat
+  // kapeita, ja kaikki auki yhtä aikaa tekisi listasta lomakepinon jossa järjestystä ei
+  // enää hahmota.
+  const [avoinKoodi, setAvoinKoodi] = useState<string | null>(null);
 
   const omat = pohjat.filter((p) => p.ownerId === kohde.id && p.kind === 'patrol');
   const kaytossa = omat.filter((p) => !p.arkistoitu);
@@ -67,9 +106,24 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
     if (!nimi || !luonnos) return;
     setLuonnos({
       ...luonnos,
-      pisteet: [...luonnos.pisteet, { id: uusiId(), nimi, jarjestys: luonnos.pisteet.length, gps: null }],
+      pisteet: [
+        ...luonnos.pisteet,
+        // Koodilaji on oletuksena QR, koska se toimii ilman erillistä lukijaa: puhelimen
+        // oma kamera avaa tarran. Viivakoodi valitaan silloin kun kohteessa on jo
+        // viivakoodilukija tai kun tarrat teetetään samasta tarrapainosta muiden kanssa.
+        { id: uusiId(), nimi, jarjestys: luonnos.pisteet.length, gps: null, koodi: 'qr', vaadiKoodi: false },
+      ],
     });
     setUusiPiste('');
+  };
+
+  // Yhden pisteen kentän muutos. Ilman tätä sama map-lauseke toistuisi jokaisessa
+  // koodiasetuksessa, ja yksikin unohtunut `...p` pyyhkisi pisteeltä tokenin.
+  const paivitaPiste = (pisteId: string, muutos: Partial<Tarkistuspiste>) => {
+    setLuonnos((edellinen) => (edellinen ? {
+      ...edellinen,
+      pisteet: edellinen.pisteet.map((p) => (p.id === pisteId ? { ...p, ...muutos } : p)),
+    } : edellinen));
   };
 
   const siirra = (indeksi: number, suunta: -1 | 1) => {
@@ -154,10 +208,14 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
     }
   };
 
-  // Tarrat: tokenit haetaan erikseen ja QR-koodit muodostetaan palvelimella. Koodi
-  // sisältää osoitteen /guard?piste=<token>, jonka puhelimen oma kamera avaa — selaimeen
-  // ei tarvita QR-lukijaa eikä kameralupaa.
-  const tulostaTarrat = async (pohja: Kierrospohja) => {
+  // Tarrat: tokenit haetaan erikseen, koska ne eivät tule listahaussa. QR-koodit
+  // muodostetaan palvelimella ja niiden sisältö on osoite /guard?piste=<token>, jonka
+  // puhelimen oma kamera avaa. Viivakoodit muodostetaan selaimessa pisteen omasta
+  // koodista (shared/viivakoodi.ts) — palvelinkutsua ei tarvita.
+  //
+  // Tarrat avataan ESIKATSELUUN eikä suoraan tulostimeen. Tarra on fyysinen esine joka
+  // liimataan seinään: virhe koodissa huomataan muuten vasta liimauksen jälkeen.
+  const avaaTarrat = async (pohja: Kierrospohja) => {
     setVirhe(null);
     setTulostaa(pohja.id);
     try {
@@ -167,22 +225,49 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
         setVirhe(data?.error || 'Tarrojen haku epäonnistui.');
         return;
       }
-      const tarrat = [];
+      const tarrat: EsikatselunTarra[] = [];
       for (const piste of data.pisteet) {
-        const url = `${window.location.origin}${import.meta.env.BASE_URL}guard?piste=${encodeURIComponent(piste.token)}`;
-        const qr = await haeQrKoodi(url);
-        if (!qr) {
-          setVirhe('QR-koodia ei saatu muodostettua, joten tarroja ei voi tulostaa.');
-          return;
-        }
-        tarrat.push({ nimi: piste.nimi, qrDataUri: qr });
+        const koodi: 'qr' | 'code128' = piste.koodi === 'code128' ? 'code128' : 'qr';
+        // QR haetaan vain niille pisteille jotka sitä käyttävät: turha kutsu jokaiselle
+        // viivakoodipisteelle hidastaisi esikatselua ilman mitään hyötyä.
+        const qrDataUri = koodi === 'qr'
+          ? await haeQrKoodi(`${window.location.origin}${import.meta.env.BASE_URL}guard?piste=${encodeURIComponent(piste.token)}`)
+          : null;
+        tarrat.push({
+          id: piste.id,
+          nimi: piste.nimi,
+          koodi,
+          qrDataUri,
+          viivakoodi: piste.viivakoodi || '',
+          vaadiKoodi: piste.vaadiKoodi === true,
+        });
       }
-      tulostaDokumentti(tarraDokumentti({ kohdeNimi: kohde.name, pohjaNimi: pohja.nimi, tarrat }));
+      setEsikatselu({ pohjaNimi: pohja.nimi, tarrat });
     } catch {
       setVirhe('Tarrojen haku epäonnistui: ei yhteyttä palvelimeen.');
     } finally {
       setTulostaa(null);
     }
+  };
+
+  const tulostaTarrat = () => {
+    if (!esikatselu) return;
+    const tarrat: TulostettavaTarra[] = esikatselu.tarrat.map((tarra) => (tarra.koodi === 'code128'
+      ? {
+        nimi: tarra.nimi,
+        // Pystyasento ja luettava tunniste koodin vieressä: tarra on kapea ja korkea,
+        // ja koodin pituus mahtuu vain korkeussuuntaan (ks. shared/viivakoodi.ts).
+        viivakoodiSvg: viivakoodiSvg(tarra.viivakoodi || '', {
+          moduuli: 2, korkeus: 70, naytaTeksti: true, pysty: true,
+        }),
+        vaadiKoodi: tarra.vaadiKoodi,
+      }
+      : {
+        nimi: tarra.nimi,
+        qrDataUri: tarra.qrDataUri || '',
+        vaadiKoodi: tarra.vaadiKoodi,
+      }));
+    tulostaDokumentti(tarraDokumentti({ kohdeNimi: kohde.name, pohjaNimi: esikatselu.pohjaNimi, tarrat }));
   };
 
   if (luonnos) {
@@ -233,18 +318,33 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
                   {luonnos.pisteet.map((piste, i) => (
                     <li
                       key={piste.id}
-                      className="flex items-center gap-2 bg-sunken border border-line-soft rounded-lg px-3 py-2"
+                      className="bg-sunken border border-line-soft rounded-lg px-3 py-2"
                     >
+                      <div className="flex items-center gap-2">
                       <span className="text-xs font-mono text-ink-subtle w-5 shrink-0">{i + 1}.</span>
                       <input
                         type="text"
                         value={piste.nimi}
-                        onChange={(e) => setLuonnos({
-                          ...luonnos,
-                          pisteet: luonnos.pisteet.map((p) => (p.id === piste.id ? { ...p, nimi: e.target.value } : p)),
-                        })}
+                        onChange={(e) => paivitaPiste(piste.id, { nimi: e.target.value })}
                         className="flex-1 min-w-0 bg-surface border border-line rounded-md px-2 py-1.5 text-sm text-ink"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setAvoinKoodi(avoinKoodi === piste.id ? null : piste.id)}
+                        title={piste.koodi === 'code128'
+                          ? `Viivakoodi${piste.viivakoodi ? `: ${piste.viivakoodi}` : ' (luodaan tallennuksessa)'}`
+                          : 'QR-koodi'}
+                        aria-expanded={avoinKoodi === piste.id}
+                        className={`p-1.5 rounded-md transition-colors shrink-0 ${
+                          avoinKoodi === piste.id
+                            ? 'text-accent bg-surface'
+                            : piste.vaadiKoodi
+                              ? 'text-warning-ink bg-warning-soft'
+                              : 'text-ink-subtle hover:text-accent hover:bg-surface'
+                        }`}
+                      >
+                        {piste.koodi === 'code128' ? <ScanBarcode size={15} /> : <QrCode size={15} />}
+                      </button>
                       <button
                         type="button"
                         onClick={() => merkitseSijainti(piste.id)}
@@ -284,6 +384,80 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
                       >
                         <Trash2 size={15} />
                       </button>
+                      </div>
+
+                      {avoinKoodi === piste.id && (
+                        <div className="mt-3 pt-3 pl-7 border-t border-line space-y-3">
+                          <div className="flex flex-wrap gap-2">
+                            <KoodiNappi
+                              valittu={piste.koodi !== 'code128'}
+                              onClick={() => paivitaPiste(piste.id, { koodi: 'qr' })}
+                              ikoni={<QrCode size={14} />}
+                            >
+                              QR-koodi
+                            </KoodiNappi>
+                            <KoodiNappi
+                              valittu={piste.koodi === 'code128'}
+                              onClick={() => paivitaPiste(piste.id, { koodi: 'code128' })}
+                              ikoni={<ScanBarcode size={14} />}
+                            >
+                              Viivakoodi (Code-128)
+                            </KoodiNappi>
+                          </div>
+
+                          {piste.koodi === 'code128' ? (
+                            <div>
+                              <label className="block text-xs font-medium text-ink-body mb-1">
+                                Viivakoodin sisältö
+                              </label>
+                              <input
+                                type="text"
+                                value={piste.viivakoodi || ''}
+                                onChange={(e) => paivitaPiste(piste.id, { viivakoodi: e.target.value })}
+                                placeholder="Tyhjä = järjestelmä luo koodin tallennuksessa"
+                                className="w-full bg-surface border border-line rounded-md px-2 py-1.5 text-sm text-ink font-mono"
+                              />
+                              <p className="text-xs text-ink-subtle mt-1 leading-relaxed">
+                                Kirjoita tähän kohteessa jo olevan tarran sisältö, jos pisteellä on
+                                valmis viivakoodi. Muuten jätä tyhjäksi — järjestelmä luo koodin ja
+                                tarran voi tulostaa listasta.
+                              </p>
+                              {piste.viivakoodi && (
+                                <div className="mt-2 bg-white border border-line rounded-md p-2 inline-block">
+                                  {kelpaaViivakoodiksi(piste.viivakoodi)
+                                    ? <Viivakoodi teksti={piste.viivakoodi} moduuli={1.5} korkeus={44} />
+                                    : (
+                                      <p className="text-xs text-danger-ink">
+                                        Koodissa on merkkejä joita Code-128 ei koodaa. Ääkköset eivät kelpaa.
+                                      </p>
+                                    )}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-ink-subtle leading-relaxed">
+                              QR-koodin sisältö on pisteen oma tunniste, jonka palvelin muodostaa.
+                              Tarran voi tulostaa kierrospohjan listasta.
+                            </p>
+                          )}
+
+                          <label className="flex items-start gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={piste.vaadiKoodi === true}
+                              onChange={(e) => paivitaPiste(piste.id, { vaadiKoodi: e.target.checked })}
+                              className="w-4 h-4 mt-0.5 shrink-0"
+                            />
+                            <span className="text-xs text-ink-body leading-relaxed">
+                              <span className="font-medium text-ink-strong">Koodi on luettava</span>
+                              <span className="block text-ink-muted mt-0.5">
+                                Piste kuitataan vain lukemalla koodi — käsin kuittaus estetään myös
+                                palvelimella. Käytä tätä pisteissä joissa käynti on todistettava.
+                              </span>
+                            </span>
+                          </label>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ol>
@@ -418,6 +592,12 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
                         <span className="text-ink-subtle">{i + 1}.</span>
                         {p.nimi}
                         {p.gps && <MapPin size={11} className="text-success-ink" />}
+                        {p.koodi === 'code128' && <ScanBarcode size={11} className="text-ink-subtle" />}
+                        {p.vaadiKoodi && (
+                          <span className="text-[10px] font-bold text-warning-ink" title="Kuitataan vain lukemalla koodi">
+                            KOODI
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ol>
@@ -436,12 +616,12 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
                   </button>
                   <button
                     type="button"
-                    onClick={() => tulostaTarrat(pohja)}
+                    onClick={() => avaaTarrat(pohja)}
                     disabled={tulostaa === pohja.id}
                     className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover disabled:opacity-60 transition-colors"
                   >
                     <Printer size={14} />
-                    {tulostaa === pohja.id ? 'Haetaan tarroja…' : 'Tulosta tarrat'}
+                    {tulostaa === pohja.id ? 'Haetaan koodeja…' : 'Näytä ja tulosta tarrat'}
                   </button>
                   <button
                     type="button"
@@ -456,6 +636,17 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
             </div>
           ))}
         </div>
+      )}
+
+      {esikatselu && (
+        <TarraEsikatselu
+          kohdeNimi={kohde.name}
+          pohjaNimi={esikatselu.pohjaNimi}
+          tarrat={esikatselu.tarrat}
+          lataa={false}
+          onTulosta={tulostaTarrat}
+          onSulje={() => setEsikatselu(null)}
+        />
       )}
 
       {arkistoidut.length > 0 && (

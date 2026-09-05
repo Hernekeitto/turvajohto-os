@@ -169,14 +169,27 @@ const TARRA_TYYLIT = `
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     color: #000; margin: 0; }
-  .arkki { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
-  .tarra { border: 1px dashed #999; padding: 5mm; text-align: center; page-break-inside: avoid;
-    display: flex; flex-direction: column; align-items: center; }
-  .tarra .kohde { font-size: 8pt; letter-spacing: .12em; text-transform: uppercase; color: #444; }
-  .tarra h2 { font-size: 17pt; margin: 2mm 0 3mm; line-height: 1.15; }
-  .tarra img { display: block; width: 45mm; height: 45mm; }
-  .tarra .pohja { font-size: 8pt; color: #444; margin-top: 3mm; }
-  .tarra .ohje { font-size: 8pt; color: #444; margin-top: 1mm; }
+  /* Kolme saraketta, kaksi riviä: kuusi tarraa arkille. Sarakkeita voisi olla neljä,
+     mutta silloin tarran korkeus ei riitä pystyviivakoodille luettavalla moduulilla —
+     ja lukukelvoton tarra on kalliimpi kuin ylimääräinen arkki. */
+  .arkki { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; }
+  .tarra { border: 1mm solid #000; border-radius: 6mm; padding: 4mm 3mm; text-align: center;
+    page-break-inside: avoid; height: 128mm; display: flex; flex-direction: column;
+    align-items: center; }
+  .tarra .kilpi { display: block; width: 20mm; height: 20mm; margin: 1mm 0 2mm; }
+  .tarra .kohde { font-size: 7pt; letter-spacing: .12em; text-transform: uppercase; color: #444; }
+  .tarra h2 { font-size: 13pt; margin: 1mm 0 2mm; line-height: 1.15; }
+  /* Koodialue vie kaiken jäljelle jäävän korkeuden. min-height: 0 on pakollinen:
+     ilman sitä flex-lapsi ei suostu kutistumaan ja tarra venyy yli sivun. */
+  .tarra .koodi { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  .tarra img { display: block; width: 38mm; height: 38mm; }
+  /* Pystyviivakoodi skaalataan KORKEUDEN mukaan: koodin pituus on tarran korkeus, ja
+     juuri se ratkaisee moduulin leveyden. Vaakaan käännettynä sama koodi jäisi 55 mm:iin
+     eli 0,27 mm:n moduuliin, joka on lasertulosteessa rajatapaus. */
+  .tarra .viivakoodi { height: 100%; display: flex; }
+  .tarra .viivakoodi svg { display: block; height: 100%; width: auto; }
+  .tarra .pohja { font-size: 7pt; color: #444; margin-top: 2mm; }
+  .tarra .ohje { font-size: 7pt; color: #444; margin-top: 1mm; line-height: 1.3; }
   .otsikko { grid-column: 1 / -1; border-bottom: 2px solid #000; padding-bottom: 3mm; margin-bottom: 2mm; }
   .otsikko h1 { font-size: 14pt; margin: 0; }
   .otsikko p { font-size: 9pt; color: #444; margin: 1mm 0 0; }
@@ -188,11 +201,46 @@ const TARRA_TYYLIT = `
   @media print { .otsikko { border-bottom-color: #000; } }
 `;
 
+// Turvajohto-kilpi tarran ylälaidassa. Sama kuvio kuin sovelluksen ShieldCheck-ikoni
+// (lucide), kirjoitettuna tähän auki: tulostedokumentti on merkkijono iframen sisällä
+// eikä voi tuoda komponenttia. Väri on GUARD-ohjeiston turvavihreä — mustavalkoisena
+// tulostettuna se on tummaa harmaata eikä katoa.
+const KILPI_SVG = '<svg class="kilpi" viewBox="0 0 24 24" fill="none" stroke="#019765"'
+  + ' stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1'
+  + 'c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>'
+  + '<path d="m9 12 2 2 4-4"/></svg>';
+
+export type TulostettavaTarra = {
+  nimi: string;
+  // Täsmälleen toinen näistä on annettu. QR tulee palvelimelta data-URI:na, viivakoodi
+  // muodostetaan selaimessa SVG-merkkijonoksi (shared/viivakoodi.ts).
+  qrDataUri?: string;
+  viivakoodiSvg?: string;
+  // Kertoo tarrassa, ettei pistettä voi kuitata käsin. Ilman tätä vartija seisoo
+  // pisteellä eikä ymmärrä miksi kuittausnappi puuttuu sovelluksesta.
+  vaadiKoodi?: boolean;
+};
+
 type TarraOsat = {
   kohdeNimi: string;
   pohjaNimi: string;
-  tarrat: { nimi: string; qrDataUri: string }[];
+  tarrat: TulostettavaTarra[];
 };
+
+// Tarran koodialue. Viivakoodin SVG upotetaan sellaisenaan eikä kuvana: se on tässä
+// dokumentissa itse muodostettu merkkijono, ei käyttäjän syötettä, ja kuvaksi
+// muuntaminen (data-URI) sumentaisi sen tulostuksessa.
+const tarranKoodi = (tarra: TulostettavaTarra) => (tarra.qrDataUri
+  ? `<img src="${htmlTeksti(tarra.qrDataUri)}" alt="">`
+  : `<div class="viivakoodi">${tarra.viivakoodiSvg || ''}</div>`);
+
+// Tarran sisältö. Järjestys on luonnoksen mukainen: kilpi, kohde, pisteen nimi ja koodi
+// — nimi ON tarrassa, vaikka luonnoksessa sitä ei ollut, koska vartijan on nähtävä
+// yhdellä silmäyksellä onko hän oikean tarran äärellä.
+//
+// Viivakoodin luettava tunniste on koodin vieressä pystyssä (ks. shared/viivakoodi.ts),
+// joten sitä ei tulosteta erikseen tarran alalaitaan.
 
 export const tarraDokumentti = ({ kohdeNimi, pohjaNimi, tarrat }: TarraOsat) => `<!doctype html>
 <html lang="fi"><head><meta charset="utf-8"><title>${htmlTeksti(`Tarkistuspisteet – ${pohjaNimi}`)}</title>
@@ -200,14 +248,17 @@ export const tarraDokumentti = ({ kohdeNimi, pohjaNimi, tarrat }: TarraOsat) => 
 <div class="arkki">
   <div class="otsikko">
     <h1>${htmlTeksti(pohjaNimi)}</h1>
-    <p>${htmlTeksti(kohdeNimi)} · ${tarrat.length} tarkistuspistettä · leikkaa katkoviivoja pitkin</p>
+    <p>${htmlTeksti(kohdeNimi)} · ${tarrat.length} tarkistuspistettä · leikkaa reunaviivoja pitkin</p>
   </div>
   ${tarrat.map((t) => `<div class="tarra">
+    ${KILPI_SVG}
     <div class="kohde">${htmlTeksti(kohdeNimi)}</div>
     <h2>${htmlTeksti(t.nimi)}</h2>
-    <img src="${htmlTeksti(t.qrDataUri)}" alt="">
+    <div class="koodi">${tarranKoodi(t)}</div>
     <div class="pohja">${htmlTeksti(pohjaNimi)}</div>
-    <div class="ohje">Skannaa puhelimen kameralla</div>
+    <div class="ohje">${t.qrDataUri
+      ? 'Skannaa puhelimen kameralla'
+      : 'Lue sovelluksen kameralla tai viivakoodilukijalla'}${t.vaadiKoodi ? '<br>Kuitataan vain lukemalla' : ''}</div>
   </div>`).join('')}
 </div></body></html>`;
 

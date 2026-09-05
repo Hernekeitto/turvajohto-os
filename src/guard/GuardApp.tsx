@@ -955,22 +955,26 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     window.location.assign(TYOPOYTAPOLKU);
   };
 
-  // Kameran lukema koodi. Kierrostarra on osoite jossa on ?piste=<token>; kaikki muu
-  // näytetään sellaisenaan, koska viivakoodin merkitys riippuu siitä mitä varten se on
-  // luettu — eikä sovellus saa arvata sitä.
+  // Kameran lukema koodi. Kaksi tarralajia, yksi reitti:
+  //
+  //   QR-tarra    sisältää osoitteen /guard?piste=<token>, josta token luetaan.
+  //   viivakoodi  on pisteen koodi sellaisenaan (Code-128 ei mahduta 43 merkin tokenia
+  //               luettavan levyiseen tarraan, ks. server/pohjat.js).
+  //
+  // Kumpaakaan ei tulkita täällä sen pidemmälle: palvelin tietää mikä koodi kuuluu
+  // mihinkin pisteeseen, ja se myös kertoo jos luettu koodi ei kuulu mihinkään. Selain
+  // ei voi tuota tietää — se näkee vain ne pohjat jotka se on hakenut.
   const kasitteleSkannaus = (arvo: string) => {
     setKameraAuki(false);
-    let token: string | null = null;
+    let koodi = arvo.trim();
     try {
-      token = new URL(arvo, window.location.origin).searchParams.get('piste');
+      const token = new URL(arvo, window.location.origin).searchParams.get('piste');
+      if (token) koodi = token;
     } catch {
-      token = null;
+      // Ei osoite vaan pelkkä koodi. Se on viivakoodin tavallisin muoto.
     }
-    if (token) {
-      kuittaaPiste(token);
-      return;
-    }
-    setSkannaus({ tyyppi: 'virhe', viesti: 'Luettu koodi ei ole kierrospisteen tarra: ' + arvo });
+    if (!koodi) return;
+    kuittaaPiste(koodi);
   };
 
   // Tilatieto kirjataan toimenpidekirjauksena (ks. mobiili/Tilatieto.tsx). Menee saman

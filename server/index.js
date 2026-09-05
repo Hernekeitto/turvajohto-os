@@ -67,7 +67,8 @@ import {
 } from './julkinen.js';
 import {
   onTunnettuLaji, tarkistaNimi, puhdistaKuvaus, tarkistaPisteet, tarkistaGps,
-  sisaltoMuuttui, julkinenPohja, etsiPisteTokenilla, tarkistaKohdat, lajinSolmu, LAJIT,
+  sisaltoMuuttui, julkinenPohja, etsiPisteKoodilla, kaytetytViivakoodit,
+  tarkistaKohdat, lajinSolmu, LAJIT,
 } from './pohjat.js';
 import { aloitaKierros, kuittaaPiste, paataKierros, etaisyysMetreina, OLETUS_SIETORAJA_M } from './kierros.js';
 import { aloitaSuoritus, kuittaaKohta, paataSuoritus } from './suoritus.js';
@@ -1315,7 +1316,7 @@ app.post('/api/pohjat', requireAuth, (req, res) => {
   };
 
   if (kind === 'patrol') {
-    const pisteTulos = tarkistaPisteet(pisteet, []);
+    const pisteTulos = tarkistaPisteet(pisteet, [], kaytetytViivakoodit(readCollection('templates') || []));
     if (!pisteTulos.ok) return res.status(400).json({ ok: false, error: pisteTulos.error });
     pohja.pisteet = pisteTulos.pisteet;
     // Sijaintipakotus on pohjakohtainen asetus joka on OLETUKSENA POIS (päätös V2 = a):
@@ -1357,7 +1358,11 @@ app.put('/api/pohjat/:id', requireAuth, (req, res) => {
   };
 
   if (vanha.kind === 'patrol') {
-    const pisteTulos = tarkistaPisteet(req.body?.pisteet ?? vanha.pisteet, vanha.pisteet);
+    const pisteTulos = tarkistaPisteet(
+      req.body?.pisteet ?? vanha.pisteet,
+      vanha.pisteet,
+      kaytetytViivakoodit(pohjat, vanha.id)
+    );
     if (!pisteTulos.ok) return res.status(400).json({ ok: false, error: pisteTulos.error });
     paivitetty.pisteet = pisteTulos.pisteet;
     paivitetty.sijaintiPakotus = req.body?.sijaintiPakotus === undefined
@@ -1528,7 +1533,14 @@ app.get('/api/pohjat/:id/tarrat', requireAuth, guardPortti, (req, res) => {
   res.json({
     ok: true,
     nimi: pohja.nimi,
-    pisteet: (pohja.pisteet || []).map((p) => ({ id: p.id, nimi: p.nimi, token: p.token })),
+    pisteet: (pohja.pisteet || []).map((p) => ({
+      id: p.id,
+      nimi: p.nimi,
+      token: p.token,
+      koodi: p.koodi === 'code128' ? 'code128' : 'qr',
+      viivakoodi: p.viivakoodi || '',
+      vaadiKoodi: p.vaadiKoodi === true,
+    })),
   });
 });
 
@@ -1596,9 +1608,9 @@ function kerroKierroksesta(kierros, action) {
 // myös vanhoilla puhelimilla, joissa selaimen BarcodeDetector puuttuu.
 app.post('/api/kierros/skannaus', requireAuth, guardPortti, (req, res) => {
   const pohjat = readCollection('templates') || [];
-  const osuma = etsiPisteTokenilla(pohjat, req.body?.token);
+  const osuma = etsiPisteKoodilla(pohjat, req.body?.token);
   if (!osuma) {
-    return res.status(404).json({ ok: false, error: 'Tuntematon QR-koodi. Tarra ei kuulu yhteenkään kierrospohjaan.' });
+    return res.status(404).json({ ok: false, error: 'Tuntematon koodi. Se ei kuulu yhteenkään kierrospohjaan.' });
   }
   const { pohja, piste } = osuma;
   if (!saaKiertaa(req, pohja.ownerId)) {
@@ -1623,7 +1635,7 @@ app.post('/api/kierros/skannaus', requireAuth, guardPortti, (req, res) => {
   const tulos = kuittaaPiste({
     kierros: auki,
     pisteId: piste.id,
-    tapa: 'qr',
+    tapa: osuma.tapa,
     gps: tarkistaGps(req.body?.gps),
     huomio: req.body?.huomio,
     pakotaSijainti: pohja.sijaintiPakotus === true,

@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 
 import {
   tarkistaPisteet, tarkistaNimi, puhdistaKuvaus, tarkistaGps, sisaltoMuuttui,
-  julkinenPohja, etsiPisteTokenilla, onTunnettuLaji, RAJAT,
+  julkinenPohja, etsiPisteTokenilla, etsiPisteKoodilla, luoViivakoodi, kaytetytViivakoodit,
+  onTunnettuLaji, RAJAT,
   tarkistaKohdat, tarkistaKellonaika, lajinSolmu, lajinSisalto, LAJIT, KAIKKI_SOLMUT,
 } from './pohjat.js';
 
@@ -211,4 +212,121 @@ test('kohtien muuttuminen kasvattaa versiota, myös kuvauksen', () => {
 
   const muuttunut = { kind: 'play', kohdat: vanha.kohdat.map((k) => ({ ...k, kuvaus: 'Vain päävportti' })) };
   assert.equal(sisaltoMuuttui(vanha, muuttunut), true);
+});
+
+// --- Viivakoodit (Code-128) --------------------------------------------------------
+
+test('code128-piste saa koodin automaattisesti, qr-piste ei', () => {
+  const tulos = tarkistaPisteet([
+    { nimi: 'Pääovi', koodi: 'code128' },
+    { nimi: 'Takaovi' },
+  ]);
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.pisteet[0].koodi, 'code128');
+  assert.match(tulos.pisteet[0].viivakoodi, /^TJ[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{10}$/);
+  assert.equal(tulos.pisteet[1].koodi, 'qr');
+  assert.equal(tulos.pisteet[1].viivakoodi, '');
+});
+
+test('annettu viivakoodi säilyy sellaisenaan — myös pienet kirjaimet', () => {
+  // Kenttään kirjoitetaan sen tarran sisältö joka on JO seinässä. Isoiksi kirjaimiksi
+  // muuttaminen tarkoittaisi, ettei koodi osu koskaan.
+  const tulos = tarkistaPisteet([{ nimi: 'Kellari', koodi: 'code128', viivakoodi: '  ovi-12a  ' }]);
+  assert.equal(tulos.pisteet[0].viivakoodi, 'ovi-12a');
+});
+
+test('viivakoodi säilyy muokkauksessa vaikka laji vaihdettaisiin takaisin QR:ään', () => {
+  const eka = tarkistaPisteet([{ nimi: 'Pääovi', koodi: 'code128' }]).pisteet;
+  const koodi = eka[0].viivakoodi;
+  const toka = tarkistaPisteet([{ id: eka[0].id, nimi: 'Pääovi', koodi: 'qr' }], eka);
+  // Seinässä oleva tarra ei katoa siitä että selaimessa vaihdetaan asetusta.
+  assert.equal(toka.pisteet[0].viivakoodi, koodi);
+  assert.equal(toka.pisteet[0].koodi, 'qr');
+});
+
+test('sama viivakoodi kahdella pisteellä hylätään', () => {
+  const tulos = tarkistaPisteet([
+    { nimi: 'Pääovi', koodi: 'code128', viivakoodi: 'OVI-1' },
+    { nimi: 'Takaovi', koodi: 'code128', viivakoodi: 'OVI-1' },
+  ]);
+  assert.equal(tulos.ok, false);
+  assert.match(tulos.error, /jo toisella tarkistuspisteell/);
+});
+
+test('toisen pohjan viivakoodi hylätään', () => {
+  const tulos = tarkistaPisteet(
+    [{ nimi: 'Pääovi', koodi: 'code128', viivakoodi: 'OVI-1' }],
+    [],
+    new Set(['OVI-1'])
+  );
+  assert.equal(tulos.ok, false);
+});
+
+test('ääkkönen viivakoodissa hylätään eikä pudoteta', () => {
+  const tulos = tarkistaPisteet([{ nimi: 'Pääovi', koodi: 'code128', viivakoodi: 'KÄYTÄVÄ' }]);
+  assert.equal(tulos.ok, false);
+  assert.match(tulos.error, /Code-128/);
+});
+
+test('luodut koodit eivät törmää jo käytettyihin', () => {
+  const kaytetyt = new Set();
+  for (let i = 0; i < 30; i += 1) {
+    const koodi = luoViivakoodi(kaytetyt);
+    assert.ok(koodi, 'koodia ei saatu muodostettua');
+    assert.equal(kaytetyt.has(koodi), false);
+    kaytetyt.add(koodi);
+  }
+});
+
+test('kaytetytViivakoodit jättää oman pohjan pois', () => {
+  const pohjat = [
+    { id: 'a', pisteet: [{ viivakoodi: 'AAA' }, { viivakoodi: '' }] },
+    { id: 'b', pisteet: [{ viivakoodi: 'BBB' }] },
+  ];
+  assert.deepEqual([...kaytetytViivakoodit(pohjat)], ['AAA', 'BBB']);
+  assert.deepEqual([...kaytetytViivakoodit(pohjat, 'a')], ['BBB']);
+});
+
+test('skannaus löytää pisteen sekä tokenilla että viivakoodilla', () => {
+  const pohjat = [{
+    id: 'pohja-1',
+    pisteet: [
+      { id: 'p1', nimi: 'Pääovi', token: 'token-aaa', viivakoodi: '' },
+      { id: 'p2', nimi: 'Takaovi', token: 'token-bbb', viivakoodi: 'TJABC' },
+    ],
+  }];
+  assert.equal(etsiPisteKoodilla(pohjat, 'token-aaa').piste.id, 'p1');
+  assert.equal(etsiPisteKoodilla(pohjat, 'token-aaa').tapa, 'qr');
+  assert.equal(etsiPisteKoodilla(pohjat, 'TJABC').piste.id, 'p2');
+  assert.equal(etsiPisteKoodilla(pohjat, 'TJABC').tapa, 'viivakoodi');
+  assert.equal(etsiPisteKoodilla(pohjat, 'tjabc'), null);
+  assert.equal(etsiPisteKoodilla(pohjat, ''), null);
+  // Tyhjä viivakoodi ei saa osua tyhjään kenttään — muuten jokainen tuntematon koodi
+  // kuittaisi ensimmäisen QR-pisteen.
+  assert.equal(etsiPisteKoodilla(pohjat, 'jotain-muuta'), null);
+});
+
+test('koodipakko tallentuu pisteelle', () => {
+  const tulos = tarkistaPisteet([
+    { nimi: 'Pääovi', koodi: 'code128', vaadiKoodi: true },
+    { nimi: 'Takaovi' },
+  ]);
+  assert.equal(tulos.pisteet[0].vaadiKoodi, true);
+  assert.equal(tulos.pisteet[1].vaadiKoodi, false);
+});
+
+// Versio kertoo MITÄ kierrettiin, ei miltä tarra näytti. Koodilajin vaihtaminen tai
+// koodin uusiminen ei siis kasvata versiota: reitti on sama, ja versionumeron
+// kasvattaminen tekisi jokaisesta tarran uusimisesta uuden pohjaversion johon vanhoja
+// suorituksia ei voi verrata.
+test('koodin vaihtaminen ei kasvata versiota, pisteen lisääminen kasvattaa', () => {
+  const vanhat = tarkistaPisteet([{ nimi: 'Pääovi' }]).pisteet;
+  const koodilla = tarkistaPisteet(
+    [{ id: vanhat[0].id, nimi: 'Pääovi', koodi: 'code128', vaadiKoodi: true }],
+    vanhat
+  ).pisteet;
+  assert.equal(sisaltoMuuttui({ pisteet: vanhat }, { pisteet: koodilla }), false);
+
+  const lisatty = tarkistaPisteet([{ id: vanhat[0].id, nimi: 'Pääovi' }, { nimi: 'Takaovi' }], vanhat).pisteet;
+  assert.equal(sisaltoMuuttui({ pisteet: vanhat }, { pisteet: lisatty }), true);
 });

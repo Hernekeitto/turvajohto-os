@@ -143,6 +143,21 @@ export type Tarkistuspiste = {
   nimi: string;
   kuvaus?: string;
   jarjestys: number;
+  // Kumpi tarra pisteelle tulostetaan. Oletus 'qr' — se oli ainoa vaihtoehto ennen, ja
+  // oletuksen muuttaminen vaihtaisi vanhojen pohjien tarrat lajista toiseen.
+  //
+  // QR sisältää osoitteen /guard?piste=<token>, jonka puhelimen oma kamera avaa.
+  // Code-128 sisältää viivakoodin, joka luetaan sovelluksen skannerilla tai talon
+  // käsiskannerilla. Token on 43 merkkiä eikä mahdu viivakoodiin luettavan levyisenä,
+  // joten viivakoodilla on oma lyhyt tunnisteensa.
+  koodi?: 'qr' | 'code128';
+  // Viivakoodin sisältö. Palvelin luo sen (TJ + 10 merkkiä) tai käyttäjä kirjoittaa
+  // kohteessa jo olevan tarran sisällön. EI salaisuus toisin kuin token: se näkyy
+  // pohjan hallinnassa ja tulostuu tarraan.
+  viivakoodi?: string;
+  // true = piste kuitataan VAIN lukemalla koodi, käsin kuittaus on estetty. Sääntö
+  // tarkistetaan palvelimella (server/kierros.js), ei pelkästään piilottamalla painike.
+  vaadiKoodi?: boolean;
   // Pisteen tiedetty sijainti. Käytetään vain jos sijaintipakotus on päällä; muuten se
   // on vertailuluku jolla skannauksen etäisyys lasketaan todisteeksi.
   gps?: { lat: number; lon: number } | null;
@@ -174,8 +189,11 @@ export type KierroksenPiste = {
   pisteId: string;
   nimi: string;
   odotettuGps?: { lat: number; lon: number } | null;
+  // Kopioidaan pohjasta kierroksen alkaessa: kesken kierroksen tehty pohjan muokkaus ei
+  // saa muuttaa sitä millä ehdoilla tätä kierrosta kuitataan.
+  vaadiKoodi?: boolean;
   kuitattu: string | null;
-  tapa: 'qr' | 'kasin' | null;
+  tapa: 'qr' | 'viivakoodi' | 'kasin' | null;
   gps?: { lat: number; lon: number } | null;
   etaisyysM?: number | null;
   huomio?: string;

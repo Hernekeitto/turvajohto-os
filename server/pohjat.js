@@ -115,6 +115,71 @@ export const RAJAT = { nimi: 120, kuvaus: 2000, pisteita: 100, teksti: 200, koht
 // oikeaan pisteeseen ja tehdä väärään paikkaan viedystä tarrasta peruutettava.
 export const luoPisteToken = () => crypto.randomBytes(32).toString('base64url');
 
+// --- Viivakoodit (Code-128) -------------------------------------------------------
+//
+// Tarkistuspisteen tarra voi olla QR-koodi tai Code-128-viivakoodi. Ero ei ole makuasia
+// vaan lukutapa: QR:n sisältö on osoite jonka puhelimen oma kamera avaa, viivakoodi
+// luetaan sovelluksen omalla skannerilla tai talon käsiskannerilla.
+//
+// VIIVAKOODI EI VOI OLLA TOKEN. Token on 43 merkkiä, ja Code-128:na se olisi puolen
+// metrin levyinen tarra. Siksi viivakoodilla on oma lyhyt tunnisteensa.
+//
+// Se on silti arvattavissa selvästi vaikeammin kuin juokseva numero: 10 merkkiä 31
+// merkin aakkostosta on noin 10^15 vaihtoehtoa. Lyhyempi olisi mahtunut kapeampaan
+// tarraan mutta tehnyt kuittauksen arvattavaksi kotisohvalta. HUOM: koodin pituus ei
+// korvaa sijaintipakotusta — tarran voi yhä valokuvata ja lukea muualta.
+//
+// Aakkostossa ei ole merkkejä 0/O eikä 1/I/L: koodi luetaan ääneen puhelimessa ja
+// kirjoitetaan käsin silloin kun lukija ei suostu lukemaan.
+const KOODIAAKKOSET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+export const VIIVAKOODIN_ETULIITE = 'TJ';
+
+export function luoViivakoodi(kaytetyt = new Set()) {
+  // Viisikymmentä yritystä on paljon enemmän kuin koskaan tarvitaan (10^15 vaihtoehtoa),
+  // mutta silmukka on rajattu: rajaton olisi palvelimen jumi siinä tapauksessa jota ei
+  // ole osattu kuvitella.
+  for (let yritys = 0; yritys < 50; yritys += 1) {
+    let koodi = VIIVAKOODIN_ETULIITE;
+    for (let i = 0; i < 10; i += 1) koodi += KOODIAAKKOSET[crypto.randomInt(0, KOODIAAKKOSET.length)];
+    if (!kaytetyt.has(koodi)) return koodi;
+  }
+  return null;
+}
+
+// Käyttäjän itse antama viivakoodi. EI muuteta isoiksi kirjaimiksi eikä siistitä muuten
+// kuin poistamalla reunavälit: kenttään kirjoitetaan sen tarran sisältö joka on JO
+// seinässä (laitetunnus, ovikilpi, kiinteistön oma tarra), ja siitä poikkeava arvo ei
+// osu koskaan. Sallitut merkit ovat Code-128:n koodisarja B eli väli...tilde.
+export function puhdistaViivakoodi(arvo) {
+  const teksti = String(arvo ?? '').trim();
+  if (teksti === '') return '';
+  return teksti.slice(0, 48);
+}
+
+export const kelpaaViivakoodi = (arvo) => {
+  if (typeof arvo !== 'string' || arvo.length === 0 || arvo.length > 48) return false;
+  for (const merkki of arvo) {
+    const koodi = merkki.charCodeAt(0);
+    if (koodi < 32 || koodi > 126) return false;
+  }
+  return true;
+};
+
+// Kaikki käytössä olevat viivakoodit. Koodin on oltava yksikäsitteinen KOKO
+// asennuksessa eikä vain pohjan sisällä: skannaus tulee kentältä ilman tietoa siitä
+// mihin pohjaan sen pitäisi kuulua, joten kaksi samannimistä koodia tarkoittaisi että
+// kuittaus osuu sattumanvaraisesti jompaankumpaan.
+export function kaytetytViivakoodit(pohjat, paitsiPohjaId = null) {
+  const koodit = new Set();
+  for (const pohja of Array.isArray(pohjat) ? pohjat : []) {
+    if (paitsiPohjaId && pohja?.id === paitsiPohjaId) continue;
+    for (const piste of pohja?.pisteet || []) {
+      if (piste?.viivakoodi) koodit.add(String(piste.viivakoodi));
+    }
+  }
+  return koodit;
+}
+
 // Ohjausmerkit pois. Suodatus tehdään merkkikoodeilla eikä säännöllisellä lausekkeella
 // samasta syystä kuin julkinen.js:ssä: merkkiluokka vaatisi escape-jonoja, ja raakana
 // kirjoitettuna ohjausmerkit tekevät lähdetiedostosta binaarin jota ei voi lukea eikä
@@ -151,7 +216,7 @@ export function tarkistaGps(gps) {
 // `vanhat` on aiempi pistelista: jo olemassa olevan pisteen token SÄILYTETÄÄN, jottei
 // pohjan nimen korjaaminen mitätöi jokaista seinässä olevaa tarraa. Uusi piste saa uuden
 // tokenin, poistettu piste vie omansa mukanaan.
-export function tarkistaPisteet(syote, vanhat = []) {
+export function tarkistaPisteet(syote, vanhat = [], kaytetytKoodit = new Set()) {
   if (!Array.isArray(syote) || syote.length === 0) {
     return { ok: false, error: 'Kierrospohjassa on oltava vähintään yksi tarkistuspiste.' };
   }
@@ -160,6 +225,9 @@ export function tarkistaPisteet(syote, vanhat = []) {
   }
   const vanhatById = new Map((Array.isArray(vanhat) ? vanhat : []).map((p) => [String(p?.id ?? ''), p]));
   const nahdyt = new Set();
+  // Tässä erässä nähdyt viivakoodit. Erillinen joukko kuin kaytetytKoodit, koska sama
+  // koodi kahdella pisteellä SAMASSA pohjassa on yhtä rikki kuin kahdessa eri pohjassa.
+  const nahdytKoodit = new Set();
   const pisteet = [];
   for (const [i, p] of syote.entries()) {
     const nimi = siivoa(p?.nimi, RAJAT.nimi);
@@ -172,10 +240,50 @@ export function tarkistaPisteet(syote, vanhat = []) {
     }
     nahdyt.add(id);
     const vanha = vanhatById.get(id);
+
+    // Kumpi tarra pisteelle tulostetaan. Oletus on QR: se on ollut ainoa vaihtoehto
+    // tähän asti, eikä oletuksen muuttaminen saa vaihtaa jo seinässä olevien tarrojen
+    // lajia vanhoissa pohjissa.
+    const koodilaji = p?.koodi === 'code128' ? 'code128' : 'qr';
+
+    // Viivakoodi säilyy vaikka piste vaihdettaisiin takaisin QR:ään. Se on tahallista:
+    // seinässä oleva tarra ei katoa siitä että joku vaihtaa asetusta selaimessa, ja
+    // kuittauksen on toimittava niin kauan kuin tarra on paikallaan. Koodin voi vaihtaa
+    // kirjoittamalla kenttään uuden.
+    const annettuKoodi = puhdistaViivakoodi(p?.viivakoodi);
+    if (annettuKoodi && !kelpaaViivakoodi(annettuKoodi)) {
+      return {
+        ok: false,
+        error: `Viivakoodi "${annettuKoodi}" sisältää merkkejä joita Code-128 ei koodaa. Käytä kirjaimia, numeroita ja välimerkkejä ilman ääkkösiä.`,
+      };
+    }
+    let viivakoodi = annettuKoodi || String(vanha?.viivakoodi ?? '');
+    if (koodilaji === 'code128' && !viivakoodi) {
+      viivakoodi = luoViivakoodi(new Set([...kaytetytKoodit, ...nahdytKoodit]));
+      if (!viivakoodi) {
+        return { ok: false, error: 'Viivakoodia ei saatu muodostettua. Yritä uudelleen.' };
+      }
+    }
+    if (viivakoodi) {
+      if (nahdytKoodit.has(viivakoodi) || kaytetytKoodit.has(viivakoodi)) {
+        return {
+          ok: false,
+          error: `Viivakoodi "${viivakoodi}" on jo toisella tarkistuspisteellä. Sama koodi kahdessa paikassa kuittaisi väärän pisteen.`,
+        };
+      }
+      nahdytKoodit.add(viivakoodi);
+    }
+
     pisteet.push({
       id,
       nimi,
       kuvaus: siivoa(p?.kuvaus, RAJAT.kuvaus),
+      koodi: koodilaji,
+      viivakoodi,
+      // Koodipakko: piste kuitataan VAIN lukemalla. Tämä on pohjan laatijan päätös eikä
+      // asetus jonka vartija voi ohittaa, ja siksi se tarkistetaan palvelimella
+      // (kierros.js: kuittaaPiste) eikä pelkästään piilottamalla painike.
+      vaadiKoodi: p?.vaadiKoodi === true,
       // Järjestys talletetaan eksplisiittisesti eikä jätetä taulukon varaan: kierroksen
       // suorituksessa pisteet näytetään tässä järjestyksessä, ja järjestys on osa
       // kierroksen sisältöä (sulkukierros kulkee ulkoa sisään, ei sattumanvaraisesti).
@@ -294,6 +402,28 @@ export function tarkistaKohdat(syote, kind) {
 export function julkinenPohja(pohja) {
   if (!pohja || typeof pohja !== 'object') return pohja;
   return { ...pohja, pisteet: (pohja.pisteet || []).map(({ token: _token, ...rest }) => rest) };
+}
+
+// Etsii tarkistuspisteen luetulla koodilla: ensin tokenilla (QR-tarra), sitten
+// viivakoodilla. Palauttaa myös kuittaustavan, jotta kierrokselle kirjautuu se mitä
+// oikeasti luettiin — "QR" viivakoodista luetusta kuittauksesta olisi väärää historiaa.
+//
+// Viivakoodi vertaillaan tavallisella yhtäsuuruudella eikä vakioaikaisesti. Se ei ole
+// epäjohdonmukaisuus vaan seuraus siitä mitä koodi on: viivakoodi näkyy kierrospohjan
+// hallinnassa jokaiselle jolla on lukuoikeus pohjiin, joten sen salaaminen
+// vastausajasta olisi teatteria.
+export function etsiPisteKoodilla(pohjat, arvo) {
+  const tokenilla = etsiPisteTokenilla(pohjat, arvo);
+  if (tokenilla) return { ...tokenilla, tapa: 'qr' };
+  if (typeof arvo !== 'string' || arvo.length === 0) return null;
+  for (const pohja of Array.isArray(pohjat) ? pohjat : []) {
+    for (const piste of pohja?.pisteet || []) {
+      if (piste?.viivakoodi && String(piste.viivakoodi) === arvo) {
+        return { pohja, piste, tapa: 'viivakoodi' };
+      }
+    }
+  }
+  return null;
 }
 
 // Etsii tarkistuspisteen tokenilla kaikista pohjista. Vakioaikainen vertailu jokaista

@@ -10,7 +10,7 @@
 // tallennuspainikkeet muualla sovelluksessa: painikkeen katoaminen ei kerro käyttäjälle
 // mitään, virheteksti kertoo.
 import { useEffect, useState } from 'react';
-import { Play, Check, MapPin, CircleAlert, Flag, Ban, QrCode } from 'lucide-react';
+import { Play, Check, MapPin, CircleAlert, Flag, Ban, QrCode, ScanBarcode } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { kuunteleJonoa, lisaaJonoon } from '../shared/jono';
@@ -60,6 +60,11 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
   const [keskeytys, setKeskeytys] = useState(false);
   const [syy, setSyy] = useState('');
   const [huomiot, setHuomiot] = useState('');
+  // Käsin luettu tai kirjoitettu koodi. Kaksi käyttäjää: talon oma viivakoodilukija,
+  // joka näppäilee koodin kenttään ja painaa rivinvaihdon, sekä vartija jonka puhelimen
+  // kamera ei suostu lukemaan likaista tarraa — koodi lukee tarrassa myös selväkielisenä
+  // juuri tätä tilannetta varten.
+  const [koodi, setKoodi] = useState('');
   const [jono, setJono] = useState<{ tunniste?: string }[]>([]);
 
   useEffect(() => kuunteleJonoa(setJono), []);
@@ -137,6 +142,40 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
     );
   };
 
+  // Koodilla kuittaus menee SAMALLE reitille kuin kameralla luettu koodi: palvelin
+  // tietää mikä koodi kuuluu mihinkin pisteeseen, eikä selain saa päätellä sitä. Reitti
+  // hyväksyy sekä QR-tarran tokenin että viivakoodin sisällön.
+  //
+  // EI lähtevän jonon kautta, toisin kuin pisteen kuittaus: jono tarvitsee pisteen id:n
+  // tunnisteeseensa, ja koodista se selviää vasta palvelimella. Katkolla koodikuittaus
+  // siis epäonnistuu — silloin piste kuitataan listasta, ellei sillä ole koodipakkoa.
+  const kuittaaKoodilla = async () => {
+    const arvo = koodi.trim();
+    if (!arvo || !kesken) return;
+    setVirhe(null);
+    setTyoskentelee(true);
+    try {
+      const gps = await haeSijainti();
+      const res = await fetch('/api/kierros/skannaus', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token: arvo, gps }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok && data.kierros) {
+        onPaivita(data.kierros);
+        setKoodi('');
+      } else {
+        setVirhe(data?.error || 'Koodin kuittaus epäonnistui.');
+      }
+    } catch {
+      setVirhe('Koodin kuittaus vaatii verkkoyhteyden.');
+    } finally {
+      setTyoskentelee(false);
+    }
+  };
+
   const paata = async (tila: 'valmis' | 'keskeytetty') => {
     const onnistui = await kutsu(
       `/api/kierros/${encodeURIComponent(kesken!.id)}/paata`,
@@ -205,6 +244,9 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
                       {piste.tapa === 'qr' && (
                         <span className="inline-flex items-center gap-1"><QrCode size={11} />QR</span>
                       )}
+                      {piste.tapa === 'viivakoodi' && (
+                        <span className="inline-flex items-center gap-1"><ScanBarcode size={11} />Viivakoodi</span>
+                      )}
                       {typeof piste.etaisyysM === 'number' && (
                         <span className="inline-flex items-center gap-1">
                           <MapPin size={11} />
@@ -218,6 +260,14 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
                   <Check size={18} className="text-success-ink shrink-0" />
                 ) : odottavat.has(piste.pisteId) ? (
                   <span className="text-xs text-ink-muted shrink-0">odottaa lähetystä</span>
+                ) : piste.vaadiKoodi ? (
+                  <span
+                    className="shrink-0 inline-flex items-center gap-1.5 text-xs font-bold text-warning-ink bg-warning-soft border border-warning/30 rounded-lg px-2.5 py-2"
+                    title="Tämä piste kuitataan vain lukemalla sen koodi."
+                  >
+                    <ScanBarcode size={13} />
+                    Lue koodi
+                  </span>
                 ) : saaKiertaa ? (
                   <button
                     type="button"
@@ -233,12 +283,40 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
             ))}
           </ol>
 
+          {/* Koodikenttä. Viivakoodilukija näppäilee koodin tähän ja painaa
+              rivinvaihdon, joten kenttä on lomake — ilman sitä lukijan lähettämä
+              rivinvaihto ei tekisi mitään. */}
+          {saaKiertaa && (
+            <form
+              onSubmit={(e) => { e.preventDefault(); kuittaaKoodilla(); }}
+              className="flex gap-2 mt-4"
+            >
+              <input
+                type="text"
+                value={koodi}
+                onChange={(e) => setKoodi(e.target.value)}
+                placeholder="Lue viivakoodi lukijalla tai kirjoita koodi"
+                aria-label="Tarkistuspisteen koodi"
+                className="flex-1 min-w-0 bg-surface border border-line rounded-lg px-3 py-2 text-sm text-ink font-mono"
+              />
+              <button
+                type="submit"
+                disabled={tyoskentelee || !koodi.trim()}
+                className="shrink-0 inline-flex items-center gap-1.5 bg-action hover:bg-action-hover disabled:opacity-60 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
+              >
+                <ScanBarcode size={15} />
+                Kuittaa koodilla
+              </button>
+            </form>
+          )}
+
           {/* Skannausohje: tämä on se tapa jolla kierros oikeasti tehdään. Käsin
               kuittaus yllä on varakeino silloin kun tarra on irronnut tai likaantunut. */}
           <p className="text-xs text-ink-muted mt-3 flex items-start gap-2">
             <QrCode size={13} className="shrink-0 mt-0.5" />
-            Kuittaa pisteet skannaamalla tarra puhelimen kameralla. Käsin kuittausta käytetään
-            vain jos tarra on irronnut tai vahingoittunut.
+            Kuittaa pisteet lukemalla tarran koodi puhelimen kameralla. Käsin kuittausta
+            käytetään vain jos tarra on irronnut tai vahingoittunut — pisteillä joissa lukee
+            "Lue koodi" sitä ei sallita lainkaan.
           </p>
 
           {saaKiertaa && (

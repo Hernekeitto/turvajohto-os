@@ -256,3 +256,48 @@ test('toisto EI avaa päättynyttä kierrosta toiseen tilaan', () => {
   const tulos = paataKierros({ kierros: keskeytetty, tila: 'valmis', toisto: true });
   assert.equal(tulos.ok, false);
 });
+
+// --- Koodipakko --------------------------------------------------------------------
+//
+// Piste jolle on merkitty "koodi on luettava" ei saa kuitattua käsin. Sääntö on tässä
+// eikä käyttöliittymässä samasta syystä kuin muutkin kierroksen säännöt: painikkeen
+// piilottaminen on kohteliaisuus, jonka curl ohittaa.
+
+const KOODIPOHJA = {
+  ...POHJA,
+  pisteet: POHJA.pisteet.map((p) => (p.id === 'p1' ? { ...p, vaadiKoodi: true, viivakoodi: 'TJABC' } : p)),
+};
+
+const aloitaKoodilla = () => aloitaKierros({
+  pohja: KOODIPOHJA, siteId: 'kohde-1', vartija: 'vartija1', id: 'k-2',
+  nyt: new Date('2026-09-02T22:00:00Z'),
+}).kierros;
+
+test('koodipakko kopioituu kierrokselle', () => {
+  const k = aloitaKoodilla();
+  assert.equal(k.pisteet.find((p) => p.pisteId === 'p1').vaadiKoodi, true);
+  assert.equal(k.pisteet.find((p) => p.pisteId === 'p2').vaadiKoodi, false);
+});
+
+test('koodia vaativaa pistettä ei voi kuitata käsin', () => {
+  const tulos = kuittaaPiste({ kierros: aloitaKoodilla(), pisteId: 'p1', tapa: 'kasin' });
+  assert.equal(tulos.ok, false);
+  assert.match(tulos.error, /lukemalla sen koodi/);
+});
+
+test('koodia vaativa piste kuittautuu luetulla koodilla', () => {
+  const tulos = kuittaaPiste({ kierros: aloitaKoodilla(), pisteId: 'p1', tapa: 'viivakoodi' });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.kierros.pisteet.find((p) => p.pisteId === 'p1').tapa, 'viivakoodi');
+});
+
+test('muut pisteet kuittautuvat yhä käsin', () => {
+  const tulos = kuittaaPiste({ kierros: aloitaKoodilla(), pisteId: 'p2', tapa: 'kasin' });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.kierros.pisteet.find((p) => p.pisteId === 'p2').tapa, 'kasin');
+});
+
+test('tuntematon kuittaustapa kirjautuu käsin tehdyksi', () => {
+  const tulos = kuittaaPiste({ kierros: aloita(), pisteId: 'p2', tapa: 'taikuus' });
+  assert.equal(tulos.kierros.pisteet.find((p) => p.pisteId === 'p2').tapa, 'kasin');
+});
