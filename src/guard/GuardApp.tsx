@@ -15,6 +15,8 @@ import { unohdaIstunto } from '../shared/istunto';
 import { Kierrospohjat } from './Kierrospohjat';
 import { Kierros } from './Kierros';
 import { Halytykset } from './Halytykset';
+import { Etusivu } from './Etusivu';
+import { Halytyskeskus } from './Halytyskeskus';
 import { Halytysvahti } from '../shared/komponentit/Halytysvahti';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { haeHalytykset, type Halytys } from '../shared/halytykset';
@@ -44,9 +46,17 @@ import {
 // oikeusavaimena kuin tapahtuman id EVENT-puolella, joten käyttäjän rajaus tiettyihin
 // kohteisiin toimii samalla eventAccess-listalla.
 
-// Kohdelista on GUARDin juurinäkymä: sinne palataan jokaisesta näkymästä ja sieltä
-// takaisin-nappi sulkee sovelluksen.
-const JUURINAKYMA = 'kohdevalinta';
+// GUARDin juurinäkymä on etusivu, jolta valitaan osio: Kohteet (vartijan työ) tai
+// Hälytyskeskus (päivystäjän valvomonäkymä). Kohdelista EI ole enää juuri, koska nämä
+// kaksi ovat eri työtä eri ihmiselle — kohdelista päivystäjän etusivuna tarkoittaisi
+// että hälytystilanne pitää etsiä kohde kerrallaan.
+//
+// Juurinäkymässä takaisin-nappi poistuu sovelluksesta (ks. shared/navigointi.ts).
+const JUURINAKYMA = 'etusivu';
+
+// Etusivun osiot. Erillinen tila eikä johdettu jostain muusta: käyttäjä voi olla
+// Kohteet-osiossa ilman että yhtäkään kohdetta on avattu.
+type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus';
 
 const tyhjaKohde = (): Kohde => ({
   id: '',
@@ -85,6 +95,11 @@ export default function GuardApp() {
   // hälytyksensä saa kuitata aina.
   const saaNahdaHalytykset = isAdmin || canView(perms, null, 'guard_alarms');
   const saaKuitataHalytyksia = isAdmin || canEdit(perms, null, 'guard_alarms');
+  // Hälytyskeskus on OMA solmunsa eikä guard_alarms. Ero on olennainen: hälytysten
+  // näkeminen on jokaisen kentällä olevan oikeus (ilman sitä ei voi hälyttää), kun taas
+  // hälytyskeskus näyttää kaikkien kohteiden tilanteen yhtä aikaa. Jos ne olisivat sama
+  // oikeus, jokainen vartija näkisi koko yrityksen valvomonäkymän.
+  const saaNahdaHalytyskeskus = isAdmin || canView(perms, null, 'guard_dispatch');
   // Ohjepankki ja skenaariot (erä 8). Näkeminen riittää käyttöön: ohjekortin lukeminen ja
   // skenaarion käynnistäminen ovat saman tietueen lukemista. Muokkausoikeus ratkaisee kuka
   // laatii pohjat — se on esimiehen työtä samalla tavalla kuin kierrospohjat.
@@ -119,6 +134,10 @@ export default function GuardApp() {
     || canView(perms, null, 'guard_site_info')
     || canView(perms, null, 'guard_report_action')
     || canView(perms, null, 'guard_report_jv');
+
+  // Avoinna oleva osio. Etusivulta mennään joko kohteisiin tai hälytyskeskukseen; kaikki
+  // muut näkymät avautuvat näiden sisältä.
+  const [osio, setOsio] = useState<Osio>('etusivu');
 
   const [kohteet, setKohteet] = useState<Kohde[]>([]);
   // Ladattu vasta onnistuneen haun jälkeen. Tallennus on estetty siihen asti: ilman tätä
@@ -185,8 +204,14 @@ export default function GuardApp() {
     kaynnistaAutomatiikka();
   }, [session?.username]);
 
+  // Kohdelista haetaan myös pelkälle päivystäjälle. Hälytyskeskus näyttää kohteiden nimet,
+  // osoitteet ja hälytysnumerot — ilman niitä lauennut hälytys kertoisi vain tunnisteen
+  // eikä sitä minne pitää soittaa. Palvelin sallii tämän saman solmun nojalla
+  // (server/permissions.js: guardSites.view sisältää guard_dispatchin).
+  const saaHakeaKohteet = saaNahda || saaNahdaHalytyskeskus;
+
   useEffect(() => {
-    if (!saaNahda) return;
+    if (!saaHakeaKohteet) return;
     // Paluu tallenteeseen tehdään MILLE TAHANSA epäonnistuneelle haulle eikä vain
     // fetchin hylkäykselle. Kentällä katkos näkyy yhtä usein 502:na tai 504:na
     // (nginx pystyssä, backend nurin) tai kirjautumissivuna (kytäköverkko) kuin
@@ -221,7 +246,7 @@ export default function GuardApp() {
         // oikein — kohteita hallitaan valvomossa.
         paluuTallenteeseen();
       });
-  }, [saaNahda, session?.username]);
+  }, [saaHakeaKohteet, session?.username]);
 
   useEffect(() => {
     if (!saaNahda) return;
@@ -354,7 +379,7 @@ export default function GuardApp() {
   // näytettävä vartijalle heti, ja valvomon kuittaus on näytettävä hänelle heti.
   //
   // Sama yhteys kuljettaa myös sijainnin kentältä palvelimelle (erä 3).
-  const { laheta: lahetaKanavalle } = useKanava({
+  const { laheta: lahetaKanavalle, yhdistetty } = useKanava({
     onMuutos: (kokoelma) => {
       if (kokoelma === 'alerts') paivitaHalytykset();
       if (kokoelma === 'patrolRuns') haeKierrokset();
@@ -698,10 +723,10 @@ export default function GuardApp() {
 
   // --- Näkymät ja takaisin-painike --------------------------------------------------
   //
-  // GUARDin näkymät ovat kaikki YHDEN tason syvyydellä kohdelistasta: jokainen aukeaa
-  // kohderivin painikkeesta ja jokaisen paluulinkki sanoo "Takaisin kohdelistaan".
-  // Siksi näkymän sulkeminen on aina sama toimenpide — kaikkien nollaus — eikä
-  // näkymäkohtaista paluuta tarvita.
+  // Rakenne on kaksitasoinen: etusivulta mennään osioon (Kohteet tai Hälytyskeskus) ja
+  // Kohteet-osiosta yksittäisen kohteen näkymään. Kohteen näkymät ovat keskenään yhden
+  // tason syvyydellä — jokainen aukeaa kohderivin painikkeesta ja jokaisen paluulinkki
+  // sanoo "Takaisin kohdelistaan" — joten niiden sulkeminen on aina sama toimenpide.
   const nollaaNakymat = () => {
     setLomake(null);
     setPoistettava(null);
@@ -724,6 +749,7 @@ export default function GuardApp() {
   // ruudulla on.
   const nakyma =
     asetuksissa ? 'asetukset'
+      : osio === 'halytyskeskus' ? 'halytyskeskus'
       : raporttiKohde ? 'raportit'
       : tietoKohde ? 'kohteen-tiedot'
       : kalustoKohde ? 'kalusto'
@@ -736,13 +762,25 @@ export default function GuardApp() {
       : pohjaKohde ? 'kierrospohjat'
       : tehtavaKohde ? 'tehtavat'
       : lomake ? 'kohteen-hallinta'
+      : osio === 'kohteet' ? 'kohdevalinta'
       : JUURINAKYMA;
 
-  // Takaisin-nappi vie kohdelistaan. Jos merkintä osoittaa johonkin muuhun näkymään,
-  // sinne ei yritetä palata: näkymä tarvitsisi kohteen jota historiamerkinnässä ei ole,
-  // ja Androidin asennetussa sovelluksessa ei ole eteenpäin-nappia jolla sellaiseen
-  // merkintään ylipäätään päätyisi.
-  useHistorianavigointi(nakyma, nollaaNakymat);
+  // Takaisin-nappi purkaa yhden tason: kohteen näkymästä kohdelistaan, kohdelistasta ja
+  // hälytyskeskuksesta etusivulle, etusivulta ulos sovelluksesta. Osio luetaan
+  // historiamerkinnästä, koska se on ainoa tieto jonka merkintä kuljettaa — yksittäisen
+  // näkymän palauttamiseen tarvittaisiin kohde, jota merkinnässä ei ole.
+  const siirry = (tunniste: string) => {
+    nollaaNakymat();
+    setOsio(tunniste === 'halytyskeskus' ? 'halytyskeskus' : tunniste === JUURINAKYMA ? 'etusivu' : 'kohteet');
+  };
+
+  // Yläpalkin logo vie etusivulle. Se on koko sovelluksen juuri, ei enää kohdelista.
+  const paluuEtusivulle = () => {
+    nollaaNakymat();
+    setOsio('etusivu');
+  };
+
+  useHistorianavigointi(nakyma, siirry);
 
   // Poistovahvistus on modaali: takaisin peruu sen eikä vie kohdelistaan.
   useTakaisinEste(!!poistettava, () => setPoistettava(null));
@@ -760,7 +798,7 @@ export default function GuardApp() {
     <Ylapalkki
       tuoteNimi="Turvajohto GUARD"
       alaotsikko={alaotsikko}
-      onLogo={nollaaNakymat}
+      onLogo={paluuEtusivulle}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}
@@ -771,16 +809,18 @@ export default function GuardApp() {
     />
   );
 
-  if (!saaNahda) {
+  // Sovellukseen pääsee jos edes toinen etusivun osio on käytettävissä. Pelkkä
+  // hälytyskeskusoikeus riittää: päivystäjä ei välttämättä saa nähdä kohteiden hallintaa.
+  if (!saaNahda && !saaNahdaHalytyskeskus) {
     return (
       <div className="min-h-screen bg-canvas text-ink flex flex-col">
         {ylapalkki('Vartiointi')}
         <main className="flex-1 flex items-center justify-center px-6 py-16">
           <div className="w-full max-w-md bg-surface border border-line rounded-xl p-6 text-center">
-            <h2 className="font-bold mb-2 text-ink-strong">Ei näkyvyysoikeutta kohteisiin</h2>
+            <h2 className="font-bold mb-2 text-ink-strong">Ei näkyvyysoikeutta</h2>
             <p className="text-sm text-ink-muted leading-relaxed">
-              Käyttäjätasollasi ei ole oikeutta Kohdevalintaan. Pääkäyttäjä voi lisätä sen
-              Sovellusasetusten Käyttäjätasot-osiosta.
+              Käyttäjätasollasi ei ole oikeutta Kohdevalintaan eikä Hälytyskeskukseen.
+              Pääkäyttäjä voi lisätä ne Sovellusasetusten Käyttäjätasot-osiosta.
             </p>
           </div>
         </main>
@@ -792,6 +832,7 @@ export default function GuardApp() {
     <div className="min-h-screen bg-canvas text-ink flex flex-col">
       {ylapalkki(
         asetuksissa ? 'Sovellusasetukset'
+          : osio === 'halytyskeskus' ? 'Hälytyskeskus'
           : raporttiKohde ? 'Raportointi'
           : tietoKohde ? 'Kohteen tiedot'
           : halytysKohde ? 'Hälytykset'
@@ -804,7 +845,8 @@ export default function GuardApp() {
           : pohjaKohde ? 'Kierrospohjat'
           : tehtavaKohde ? 'Työvuoron tehtävät'
           : lomake ? (lomake.id ? 'Kohteen hallinta' : 'Uusi kohde')
-          : 'Kohdevalinta'
+          : osio === 'kohteet' ? 'Kohdevalinta'
+          : 'Vartiointi'
       )}
 
       <main className="flex-1 p-6 md:p-10">
@@ -877,6 +919,38 @@ export default function GuardApp() {
               isAdmin={!!isAdmin}
               onHavita={havitaVanhentuneet}
               onTakaisin={() => setAsetuksissa(false)}
+            />
+          ) : osio === 'halytyskeskus' ? (
+            <Halytyskeskus
+              kohteet={kohteet}
+              lahteet={{
+                halytykset,
+                kierrokset,
+                tehtavat: suoritukset,
+                raportit,
+                avaimet,
+                poikkeamat,
+                tiedotteet,
+                skenaariot: pohjaSuoritukset,
+              }}
+              kayttaja={session?.username || ''}
+              saaKuitata={saaKuitataHalytyksia}
+              oikeudet={{
+                kierrokset: saaNahdaKierrokset,
+                kalusto: saaNahdaKalustoa,
+                tiedotteet: saaNahdaTiedotteet,
+              }}
+              yhteys={yhdistetty}
+              sijaintiseuranta={session?.sijaintiseuranta === true}
+              onMuutos={paivitaHalytys}
+              onVirkista={paivitaHalytykset}
+              // Kohderivistä pääsee kohteen tietoihin. Osio vaihtuu samalla kohteisiin,
+              // koska sieltä avautuvan näkymän paluulinkki vie kohdelistaan — ja
+              // molemmat oikeudet vaaditaan, ettei linkki vie listaan jota ei saa nähdä.
+              onAvaaKohde={saaNahda && saaNahdaTiedot
+                ? (kohde) => { setOsio('kohteet'); setTietoKohde(kohde); }
+                : null}
+              onTakaisin={paluuEtusivulle}
             />
           ) : raporttiKohde ? (
             <Raportit
@@ -1005,8 +1079,22 @@ export default function GuardApp() {
               onLataaKartta={lataaKartta}
               saaMuokata={saaMuokata}
             />
+          ) : osio === 'etusivu' ? (
+            <Etusivu
+              saaNahdaKohteet={saaNahda}
+              saaNahdaHalytyskeskus={saaNahdaHalytyskeskus}
+              saaNahdaAsetukset={saaNahdaAsetukset}
+              kohteita={kohteet.length}
+              lauenneita={halytykset.filter((h) => h.tila === 'lauennut').length}
+              ajastimia={halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa').length}
+              kierroksiaKesken={kierrokset.filter((k) => k.tila === 'kesken').length}
+              onKohteet={() => setOsio('kohteet')}
+              onHalytyskeskus={() => setOsio('halytyskeskus')}
+              onAsetukset={() => setAsetuksissa(true)}
+            />
           ) : (
             <>
+              <TakaisinLinkki onClick={paluuEtusivulle}>Takaisin etusivulle</TakaisinLinkki>
               <div className="flex items-start justify-between gap-4 mb-8">
                 <div>
                   <h2 className="text-2xl font-bold text-ink-strong mb-1">Kohteet</h2>

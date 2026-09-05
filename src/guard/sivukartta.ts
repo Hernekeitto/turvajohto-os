@@ -36,6 +36,21 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // hälyttämään, muokkaus tarvitaan vain toisen hälytyksen kuittaamiseen. Vartijalle tämä
   // on erän tärkein solmu — yksin työskentelevän ajastin ja hätäpainike ovat sen takana.
   { id: 'guard_alarms', label: 'Hälytykset (näkeminen oikeuttaa myös hälyttämään)' },
+  // Hälytyskeskus: päivystäjän (HÄLKE) näkymä kaikkiin kohteisiin yhtä aikaa. OMA
+  // solmunsa eikä guard_alarms, ja ero on koko oikeuden pointti: hälytysten näkeminen on
+  // jokaisen kentällä olevan oikeus, koska ilman sitä ei voi hälyttää. Jos hälytyskeskus
+  // olisi saman solmun takana, jokainen vartija näkisi koko yrityksen valvomonäkymän —
+  // kaikkien kohteiden tilanteen, kaikkien vartijoiden kirjaukset ja sen kuka on missäkin.
+  //
+  // Palvelimella tämä solmu oikeuttaa kahden kokoelman lukemiseen (server/permissions.js):
+  // guardSites, koska ilman kohteen nimeä ja hälytysnumeroa hälytys ei kerro minne
+  // soitetaan, ja alerts, koska ilman sitä koko näkymä on tyhjä. Kaikki muu — kierrokset,
+  // kalusto, tiedotteet — vaatii oman solmunsa: hälytyskeskus KOKOAA sen mitä käyttäjä
+  // saa muutenkin nähdä eikä avaa mitään uutta.
+  //
+  // Muokkausoikeutta ei käytetä: hälytyksen kuittaus on guard_alarmsin muokkausoikeus,
+  // eikä sitä pidä voida antaa kahdesta paikasta.
+  { id: 'guard_dispatch', label: 'Hälytyskeskus (kaikkien kohteiden tilannekuva)' },
   // Pohjamoottorin lajit (erä 8). Omat solmunsa EVENT-puolen vastaavista samasta syystä
   // kuin muutkin GUARD-solmut: oikeudet tallennetaan yhteiseen olioon, joten sama nimi
   // molemmilla puolilla jakaisi vahingossa saman oikeuden.

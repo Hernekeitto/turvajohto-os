@@ -40,6 +40,11 @@ const GLOBAL_NODES = new Set([
   // GUARD-puolen sovellusasetukset. Sama globaali luonne kuin 'settings': asetukset eivät
   // liity yhteenkään yksittäiseen kohteeseen.
   'guard_settings',
+  // Hälytyskeskus on määritelmällisesti kohteiden yli menevä näkymä: päivystäjä katsoo
+  // kaikkia kohteita yhtä aikaa. Kohdekohtainen "saa päivystää vain kohdetta X" ei
+  // tarkoittaisi mitään — se rajaus tehdään eventAccess-listalla, joka rajaa myös tämän
+  // solmun tuomat rivit (ks. guardSites ja alerts alempana).
+  'guard_dispatch',
   'global_reports',
   'global_archived_events',
   'global_employee_bank',
@@ -240,7 +245,12 @@ const COLLECTIONS = {
   guardSites: {
     // Kohteen tiedot -näkymä lukee samat kohteet kuin kohdevalinta, joten sillä on
     // lukuoikeus tänne — muokkaus on silti vain kohdevalinnan takana.
-    view: ['guard_sites', 'guard_site_info'],
+    //
+    // Hälytyskeskus (guard_dispatch) lukee kohteet samasta syystä: lauennut hälytys
+    // kertoo kohteen id:n, ja päivystäjä tarvitsee siitä nimen, osoitteen ja
+    // hälytysnumerot. Ilman niitä näkymä kertoisi että jossain on hätä muttei missä eikä
+    // minne soitetaan. Muokkaus on tälläkin solmulla poissa (touch alla).
+    view: ['guard_sites', 'guard_site_info', 'guard_dispatch'],
     touch: () => ['guard_sites'],
     eventScoped: true,
     eventIdOf: (item) => item?.id,
@@ -376,8 +386,13 @@ const COLLECTIONS = {
   // Kirjoitus tapahtuu VAIN palvelimen omilla reiteillä (index.js: PALVELIMEN_YLLAPITAMAT).
   // Tyhjä touch on tässä olennainen osa toimintoa eikä muotoseikka: hälytys jonka selain
   // voisi kirjoittaa olisi hälytys jonka selain voisi myös hiljaa poistaa.
+  //
+  // Kolmas solmu on GUARD-puolen hälytyskeskus: päivystäjä näkee kaikkien kohteidensa
+  // hälytykset olematta itse kentällä. Se on globaali solmu, joten se toimii tässä
+  // ohituksena kaikkiin kohteisiin — eventAccess rajaa silti sen mitkä kohteet hänelle
+  // ylipäätään kuuluvat.
   alerts: {
-    view: ['alarms', 'guard_alarms'],
+    view: ['alarms', 'guard_alarms', 'guard_dispatch'],
     touch: () => [],
     eventScoped: true,
     eventIdOf: (item) => item?.eventId,

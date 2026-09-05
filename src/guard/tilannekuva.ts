@@ -1,0 +1,398 @@
+// Hälytyskeskuksen johdettu tilannekuva: mitä kohteissa on menossa juuri nyt.
+//
+// Tämä moduuli EI hae mitään eikä päätä mistään. Se kokoaa jo haetuista kokoelmista ne
+// luvut ja listat joita päivystäjä katsoo — omana tiedostonaan siksi, että kokoaminen on
+// sovelluksen ainoaa oikeaa logiikkaa hälytyskeskuksessa ja se on voitava testata ilman
+// selainta (tilannekuva.test.ts).
+//
+// TÄRKEÄ RAJAUS: nämä funktiot näkevät vain sen datan jonka palvelin on jo antanut
+// käyttäjälle. Jos päivystäjällä ei ole oikeutta kierroksiin, kierroslista tulee tänne
+// tyhjänä eikä tilannekuva väitä kohteessa olevan hiljaista — kutsuja tietää oikeutensa ja
+// kertoo eron käyttäjälle. Puuttuva oikeus ja rauhallinen tilanne EIVÄT saa näyttää
+// samalta valvomon ruudulla.
+
+import { onAvoin, type Halytys } from '../shared/halytykset.ts';
+import type { Avain, Poikkeama } from '../shared/kalusto';
+import { onVoimassa, type Tiedote } from '../shared/tiedotteet.ts';
+import type { Suoritus } from '../shared/pohjat';
+import type { GuardRaportti, Kierros, TehtavaSuoritus } from './tyypit';
+
+// Kaikki kokoelmat joista tilannekuva kootaan. Yksi olio eikä kymmenen parametria: lista
+// kasvaa sitä mukaa kuin GUARD-puolelle tulee kirjattavaa, eikä jokaisen kutsupaikan pidä
+// muuttua sen mukana.
+export type Lahteet = {
+  halytykset: Halytys[];
+  kierrokset: Kierros[];
+  tehtavat: TehtavaSuoritus[];
+  raportit: GuardRaportti[];
+  avaimet: Avain[];
+  poikkeamat: Poikkeama[];
+  tiedotteet: Tiedote[];
+  skenaariot: Suoritus[];
+};
+
+export const tyhjatLahteet = (): Lahteet => ({
+  halytykset: [], kierrokset: [], tehtavat: [], raportit: [],
+  avaimet: [], poikkeamat: [], tiedotteet: [], skenaariot: [],
+});
+
+// Kiireysjärjestys on kolmiportainen tarkoituksella. Viisi tasoa näyttäisi tarkemmalta
+// mutta pakottaisi päivystäjän vertailemaan sävyjä; kolme kertoo sen mitä ruudulta pitää
+// nähdä yhdellä silmäyksellä: onko jossain hätä, onko jossain jotain kesken, vai ei.
+export type Kiireys = 'kriittinen' | 'varoitus' | 'rauhallinen';
+
+export type KohteenTilanne = {
+  kohdeId: string;
+  lauenneet: number;
+  ajastimet: number;
+  // Ajastin jonka määräaika on lähimpänä. Päivystäjän on nähtävä kohderivistä kuka on
+  // seuraavaksi vastaamassa, ei vain montako ajastinta on käynnissä.
+  seuraavaEraantyy: number | null;
+  kierroksetKesken: number;
+  skenaariotKesken: number;
+  kadonneetAvaimet: number;
+  avoimetPoikkeamat: number;
+  kriittisetPoikkeamat: number;
+  tiedotteetVoimassa: number;
+  // Viimeisin merkki elämästä kohteesta: kuittaus, kirjaus, kierrospiste. Hiljaisuus on
+  // päivystäjälle tieto siinä missä tapahtumakin — kohde jossa ei ole kuulunut mitään
+  // koko vuoron aikana on tarkistamisen arvoinen.
+  viimeksi: string | null;
+  kiireys: Kiireys;
+};
+
+const uusin = (a: string | null, b: string | null | undefined) => {
+  if (!b) return a;
+  if (!a) return b;
+  return b > a ? b : a;
+};
+
+// Raportin aikaleima. `luotu` on tallennushetki ja `date`+`time` se hetki jonka kirjaaja
+// itse ilmoitti — tilannekuvassa käytetään tallennushetkeä, koska se kertoo milloin
+// kohteesta viimeksi kuului jotain. Vanhalta kirjaukselta luotu voi puuttua.
+const raportinAika = (r: GuardRaportti) =>
+  r.luotu || (r.date ? `${r.date}T${r.time || '00:00'}` : null);
+
+export function kohteenTilanne(kohdeId: string, lahteet: Lahteet): KohteenTilanne {
+  const halytykset = lahteet.halytykset.filter((h) => h.eventId === kohdeId);
+  const lauenneet = halytykset.filter((h) => h.tila === 'lauennut');
+  const ajastimet = halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa');
+  const kierroksetKesken = lahteet.kierrokset.filter((k) => k.siteId === kohdeId && k.tila === 'kesken');
+  const skenaariotKesken = lahteet.skenaariot.filter((s) => s.ownerId === kohdeId && s.tila === 'kesken');
+  const kadonneet = lahteet.avaimet.filter((a) => a.ownerId === kohdeId && a.tila === 'kadonnut');
+  const avoimet = lahteet.poikkeamat.filter((p) => p.ownerId === kohdeId && p.tila === 'avoin');
+  const tiedotteet = lahteet.tiedotteet.filter((t) => t.ownerId === kohdeId && onVoimassa(t));
+
+  let viimeksi: string | null = null;
+  for (const h of halytykset) viimeksi = uusin(viimeksi, h.paattyi || h.laukesi || h.alkoi);
+  for (const k of kierroksetKesken) {
+    viimeksi = uusin(viimeksi, k.alkoi);
+    for (const piste of k.pisteet || []) viimeksi = uusin(viimeksi, piste.kuitattu);
+  }
+  for (const k of lahteet.kierrokset) {
+    if (k.siteId === kohdeId) viimeksi = uusin(viimeksi, k.paattyi);
+  }
+  for (const t of lahteet.tehtavat) {
+    if (t.siteId === kohdeId) viimeksi = uusin(viimeksi, t.aika);
+  }
+  for (const r of lahteet.raportit) {
+    if (r.siteId === kohdeId) viimeksi = uusin(viimeksi, raportinAika(r));
+  }
+
+  const kriittisetPoikkeamat = avoimet.filter((p) => p.vakavuus === 'kriittinen').length;
+  const kiireys: Kiireys =
+    lauenneet.length > 0 || kriittisetPoikkeamat > 0
+      ? 'kriittinen'
+      : ajastimet.length > 0 || kadonneet.length > 0 || avoimet.length > 0
+        ? 'varoitus'
+        : 'rauhallinen';
+
+  return {
+    kohdeId,
+    lauenneet: lauenneet.length,
+    ajastimet: ajastimet.length,
+    seuraavaEraantyy: ajastimet.reduce<number | null>(
+      (pienin, h) => (h.eraantyy && (pienin === null || h.eraantyy < pienin) ? h.eraantyy : pienin),
+      null
+    ),
+    kierroksetKesken: kierroksetKesken.length,
+    skenaariotKesken: skenaariotKesken.length,
+    kadonneetAvaimet: kadonneet.length,
+    avoimetPoikkeamat: avoimet.length,
+    kriittisetPoikkeamat,
+    tiedotteetVoimassa: tiedotteet.length,
+    viimeksi,
+    kiireys,
+  };
+}
+
+// --- Kentällä juuri nyt -------------------------------------------------------------
+//
+// Vartiointiliikkeessä ei ole erillistä työvuorokirjausta (se on tapahtumapuolen
+// checkins), joten "kuka on töissä" johdetaan siitä mitä järjestelmään on tehty. Se on
+// arvio eikä totuus, ja se sanotaan käyttöliittymässä ääneen: nimen perässä lukee mistä
+// merkintä on ja koska. Vartija joka ei ole koskenut sovellukseen ei näy tässä listassa —
+// päivystäjän on tiedettävä se, ei luultava listaa vuorolistaksi.
+
+export type Kentalla = {
+  vartija: string;
+  kohteet: string[];
+  viimeksi: string;
+  mita: string;
+  // Käynnissä oleva ajastin, jos on. Päivystäjä katsoo tästä kuka on yksin ja milloin
+  // hänen on määrä kuitata itsensä kunnossa olevaksi.
+  ajastin: Halytys | null;
+};
+
+// Kuinka vanha merkintä lasketaan vielä "kentällä olevaksi". Kahdeksan tuntia on tavallisen
+// vartiovuoron pituus: sitä lyhyempi ikkuna pudottaisi listalta sen joka aloitti vuoronsa
+// kuittaamalla tehtävät ja on sen jälkeen kiertänyt ilman kirjattavaa.
+export const KENTALLA_IKKUNA_MS = 8 * 60 * 60 * 1000;
+
+export function kentalla(lahteet: Lahteet, nyt = Date.now(), ikkunaMs = KENTALLA_IKKUNA_MS): Kentalla[] {
+  const raja = nyt - ikkunaMs;
+  const lista = new Map<string, Kentalla>();
+
+  const merkitse = (vartija: string, kohdeId: string | null, ts: string | null | undefined, mita: string) => {
+    if (!vartija || !ts) return;
+    const hetki = Date.parse(ts);
+    if (!Number.isFinite(hetki) || hetki < raja || hetki > nyt + 60_000) return;
+    const entinen = lista.get(vartija);
+    if (!entinen) {
+      lista.set(vartija, {
+        vartija,
+        kohteet: kohdeId ? [kohdeId] : [],
+        viimeksi: ts,
+        mita,
+        ajastin: null,
+      });
+      return;
+    }
+    if (kohdeId && !entinen.kohteet.includes(kohdeId)) entinen.kohteet.push(kohdeId);
+    // Uusin merkintä kertoo mitä henkilö oli viimeksi tekemässä. Vanhempi ei korvaa sitä.
+    if (ts > entinen.viimeksi) {
+      entinen.viimeksi = ts;
+      entinen.mita = mita;
+    }
+  };
+
+  for (const k of lahteet.kierrokset) {
+    const viimeisinPiste = (k.pisteet || [])
+      .map((p) => p.kuitattu)
+      .filter((p): p is string => !!p)
+      .sort()
+      .pop();
+    merkitse(
+      k.vartija,
+      k.siteId,
+      viimeisinPiste || k.paattyi || k.alkoi,
+      k.tila === 'kesken' ? `Kierros kesken: ${k.templateNimi}` : `Kierros ${k.templateNimi}`
+    );
+  }
+  for (const t of lahteet.tehtavat) merkitse(t.vartija, t.siteId, t.aika, `Tehtävä: ${t.tehtavaNimi}`);
+  for (const r of lahteet.raportit) {
+    merkitse(r.author, r.siteId, raportinAika(r), r.typeId === 'guard_jvreport' ? 'Tapahtumailmoitus' : 'Toimenpidekirjaus');
+  }
+  for (const s of lahteet.skenaariot) {
+    merkitse(s.tekija, s.ownerId, s.paattyi || s.alkoi, `Skenaario: ${s.templateNimi}`);
+  }
+  for (const p of lahteet.poikkeamat) merkitse(p.ilmoittaja, p.ownerId, p.ilmoitettu, `Varustepoikkeama: ${p.varuste}`);
+  for (const h of lahteet.halytykset) {
+    merkitse(h.vartija, h.eventId, h.laukesi || h.alkoi, h.tyyppi === 'ajastin' ? 'Ajastin' : 'Hälytys');
+  }
+
+  // Avoin hälytys ja käynnissä oleva ajastin nostavat henkilön listalle vaikka merkintä
+  // olisi ikkunaa vanhempi: kahdeksan tuntia sitten alkanut ajastin on nimenomaan se
+  // tapaus jota päivystäjän on katsottava.
+  for (const h of lahteet.halytykset) {
+    if (!onAvoin(h) || !h.vartija) continue;
+    const entinen = lista.get(h.vartija);
+    if (!entinen) {
+      lista.set(h.vartija, {
+        vartija: h.vartija,
+        kohteet: h.eventId ? [h.eventId] : [],
+        viimeksi: h.laukesi || h.alkoi,
+        mita: h.tyyppi === 'ajastin' ? 'Ajastin käynnissä' : 'Hälytys avoinna',
+        ajastin: h.tyyppi === 'ajastin' && h.tila === 'kaynnissa' ? h : null,
+      });
+      continue;
+    }
+    if (h.eventId && !entinen.kohteet.includes(h.eventId)) entinen.kohteet.push(h.eventId);
+    if (h.tyyppi === 'ajastin' && h.tila === 'kaynnissa') entinen.ajastin = h;
+  }
+
+  return [...lista.values()].sort((a, b) => b.viimeksi.localeCompare(a.viimeksi));
+}
+
+// --- Tapahtumavirta -----------------------------------------------------------------
+//
+// Yksi aikajärjestyksessä oleva lista kaikesta mitä kohteissa on tapahtunut. Päivystäjän
+// työn ydin: hälytys kertoo mitä tapahtui juuri nyt, virta kertoo mitä sitä ennen
+// tapahtui — ja juuri sitä kysytään ensimmäisenä kun jotain sattuu.
+
+export type Tapahtuma = {
+  id: string;
+  ts: string;
+  kohdeId: string | null;
+  taso: Kiireys;
+  otsikko: string;
+  teksti: string;
+  kuka: string | null;
+};
+
+// Hälytyshistorian merkintöjen käyttöliittymänimet. Palvelin tallentaa tapahtuman
+// tunnuksen (server/halytys.js: merkinta()), ei ihmiselle näytettävää nimeä. Tuntematon
+// tunnus on uusi merkintätyyppi eikä virhe: se näytetään yleisnimellä eikä pudoteta pois.
+const TAPAHTUMAN_NIMI: Record<string, string> = {
+  luotu: 'Hälytys luotu',
+  laukesi: 'HÄLYTYS LAUKESI',
+  kuittaus: 'Kuittaus ajallaan',
+  kuitattu: 'Hälytys kuitattu',
+  peruttu: 'Ajastin lopetettu',
+  eskalointi: 'Tekstiviestieskalointi',
+};
+
+// Merkinnän vakavuus virrassa. Laukeaminen on aina kriittinen. Hälytyksen LUOMINEN on
+// kriittinen kaikilla muilla lajeilla paitsi ajastimella: hätäpainikkeen painallus on
+// tapahtuma sinänsä, kun taas ajastimen käynnistäminen on vuoron rutiinia.
+const merkinnanTaso = (tapahtuma: string, halytys: Halytys): Kiireys => {
+  if (tapahtuma === 'laukesi') return 'kriittinen';
+  if (tapahtuma === 'luotu') return halytys.tyyppi === 'ajastin' ? 'rauhallinen' : 'kriittinen';
+  return 'rauhallinen';
+};
+
+export function tapahtumavirta(lahteet: Lahteet, raja = 40): Tapahtuma[] {
+  const virta: Tapahtuma[] = [];
+
+  for (const h of lahteet.halytykset) {
+    for (const [i, merkinta] of (h.historia || []).entries()) {
+      virta.push({
+        id: `halytys-${h.id}-${i}`,
+        ts: merkinta.ts,
+        kohdeId: h.eventId,
+        taso: merkinnanTaso(merkinta.tapahtuma, h),
+        otsikko: `${TAPAHTUMAN_NIMI[merkinta.tapahtuma] || 'Hälytys'} · ${h.vartija}`,
+        teksti: merkinta.teksti || '',
+        kuka: merkinta.user || h.vartija || null,
+      });
+    }
+  }
+
+  for (const k of lahteet.kierrokset) {
+    virta.push({
+      id: `kierros-alku-${k.id}`,
+      ts: k.alkoi,
+      kohdeId: k.siteId,
+      taso: 'rauhallinen',
+      otsikko: 'Kierros aloitettu',
+      teksti: k.templateNimi,
+      kuka: k.vartija,
+    });
+    if (k.paattyi) {
+      virta.push({
+        id: `kierros-loppu-${k.id}`,
+        ts: k.paattyi,
+        kohdeId: k.siteId,
+        taso: k.tila === 'keskeytetty' ? 'varoitus' : 'rauhallinen',
+        otsikko: k.tila === 'keskeytetty' ? 'Kierros keskeytetty' : 'Kierros valmis',
+        teksti: k.tila === 'keskeytetty' ? k.keskeytysSyy || k.templateNimi : k.templateNimi,
+        kuka: k.vartija,
+      });
+    }
+  }
+
+  for (const t of lahteet.tehtavat) {
+    virta.push({
+      id: `tehtava-${t.id}`,
+      ts: t.aika,
+      kohdeId: t.siteId,
+      taso: 'rauhallinen',
+      otsikko: 'Tehtävä kuitattu',
+      teksti: t.tehtavaNimi,
+      kuka: t.vartija,
+    });
+  }
+
+  for (const r of lahteet.raportit) {
+    const ts = raportinAika(r);
+    if (!ts) continue;
+    virta.push({
+      id: `raportti-${r.id}`,
+      ts,
+      kohdeId: r.siteId,
+      // Tapahtumailmoitus on aina vähintään varoitus: se kirjoitetaan silloin kun
+      // kohteessa on puututtu johonkin, ja päivystäjän on tiedettävä siitä samana iltana
+      // eikä vasta kuukausiraportissa.
+      taso: r.typeId === 'guard_jvreport' ? 'varoitus' : 'rauhallinen',
+      otsikko: r.typeId === 'guard_jvreport' ? 'Tapahtumailmoitus' : 'Toimenpide kirjattu',
+      teksti: r.summary || r.type || '',
+      kuka: r.author,
+    });
+  }
+
+  for (const p of lahteet.poikkeamat) {
+    virta.push({
+      id: `poikkeama-${p.id}`,
+      ts: p.ilmoitettu,
+      kohdeId: p.ownerId,
+      taso: p.vakavuus === 'kriittinen' ? 'kriittinen' : 'varoitus',
+      otsikko: p.vakavuus === 'kriittinen' ? 'Kriittinen varustepoikkeama' : 'Varustepoikkeama',
+      teksti: `${p.varuste}${p.kuvaus ? ` — ${p.kuvaus}` : ''}`,
+      kuka: p.ilmoittaja,
+    });
+    if (p.kasitelty) {
+      virta.push({
+        id: `poikkeama-kasitelty-${p.id}`,
+        ts: p.kasitelty,
+        kohdeId: p.ownerId,
+        taso: 'rauhallinen',
+        otsikko: 'Varustepoikkeama käsitelty',
+        teksti: `${p.varuste}${p.kasittelyHuomio ? ` — ${p.kasittelyHuomio}` : ''}`,
+        kuka: p.kasittelija,
+      });
+    }
+  }
+
+  for (const a of lahteet.avaimet) {
+    for (const [i, merkinta] of (a.historia || []).entries()) {
+      virta.push({
+        id: `avain-${a.id}-${i}`,
+        ts: merkinta.ts,
+        kohdeId: a.ownerId,
+        taso: merkinta.tapahtuma === 'kadonnut' ? 'varoitus' : 'rauhallinen',
+        otsikko: `Avain ${a.tunnus}`,
+        teksti: merkinta.teksti || '',
+        kuka: merkinta.user || merkinta.haltija || null,
+      });
+    }
+  }
+
+  for (const t of lahteet.tiedotteet) {
+    virta.push({
+      id: `tiedote-${t.id}`,
+      ts: t.luotu,
+      kohdeId: t.ownerId,
+      taso: 'rauhallinen',
+      otsikko: 'Tiedote lähetetty',
+      teksti: t.otsikko,
+      kuka: t.laatija,
+    });
+  }
+
+  for (const s of lahteet.skenaariot) {
+    virta.push({
+      id: `skenaario-${s.id}`,
+      ts: s.alkoi,
+      kohdeId: s.ownerId,
+      taso: 'varoitus',
+      otsikko: 'Skenaario käynnistetty',
+      teksti: s.templateNimi,
+      kuka: s.tekija,
+    });
+  }
+
+  return virta
+    .filter((t) => !!t.ts)
+    .sort((a, b) => b.ts.localeCompare(a.ts))
+    .slice(0, raja);
+}
