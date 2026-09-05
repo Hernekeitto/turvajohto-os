@@ -25,6 +25,10 @@ export type KayttajaRivi = {
   roleName?: string | null;
   tuotteet?: Tuote[];
   must_change_password?: boolean;
+  // Puuttuva tai true = kirjautuminen vaatii Authenticator-koodin. Vain nimenomainen
+  // false ohittaa sen (server/index.js: `user.totp_required !== false`), joten
+  // vertailut tehdään tässäkin falseen eikä totuusarvoon.
+  totp_required?: boolean;
   last_login_at?: string | null;
 };
 
@@ -176,6 +180,36 @@ export const Kayttajat = ({ kayttajat, roles, isAdmin, puoli, onMuuttui }: Props
       onMuuttui();
     } catch (e) {
       setVirhe(e instanceof Error ? e.message : 'Nollaus epäonnistui.');
+    } finally {
+      setKesken(null);
+    }
+  };
+
+  // Authenticator-vaatimuksen kytkeminen pois. Tarpeen kahdessa tilanteessa: tunnus
+  // jota käytetään ilman puhelinta (esim. sovelluskaupan arvioija, joka ei voi syöttää
+  // kertakoodia), ja tilapäinen apu kun käyttäjän puhelin on rikki.
+  //
+  // POISKYTKENTÄ HEIKENTÄÄ TUNNUKSEN SUOJAA olennaisesti: sen jälkeen pelkkä salasana
+  // riittää sisäänpääsyyn. Siksi siitä kysytään erikseen ja päälle kytkeminen menee
+  // läpi ilman kysymystä.
+  const vaihdaTotpVaatimus = async (k: KayttajaRivi) => {
+    const vaaditaanNyt = k.totp_required !== false;
+    if (vaaditaanNyt && !window.confirm(
+      `Poistetaanko Authenticator-vaatimus käyttäjältä ${k.username}?\n\n`
+      + 'Sen jälkeen tunnukselle pääsee sisään pelkällä salasanalla. Käytä vain '
+      + 'tunnuksiin joiden on toimittava ilman puhelinta.',
+    )) return;
+    setKesken(`${k.username}:vaatimus`);
+    setVirhe('');
+    try {
+      await pyynto(`/api/users/${encodeURIComponent(k.username)}/totp`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ required: !vaaditaanNyt }),
+      });
+      onMuuttui();
+    } catch (e) {
+      setVirhe(e instanceof Error ? e.message : 'Muutos epäonnistui.');
     } finally {
       setKesken(null);
     }
@@ -410,6 +444,22 @@ export const Kayttajat = ({ kayttajat, roles, isAdmin, puoli, onMuuttui }: Props
                       palvelin torjuu molemmat 400:lla, joten nappeja ei näytetä. */}
                   {!admin && (
                     <>
+                      {/* Authenticator-vaatimus tekstinä eikä ikonina: tila on
+                          turvallisuuden kannalta merkittävä, eikä sitä saa joutua
+                          arvaamaan ikonin väristä. */}
+                      <button
+                        type="button"
+                        onClick={() => vaihdaTotpVaatimus(k)}
+                        disabled={kesken === `${k.username}:vaatimus`}
+                        title="Vaaditaanko Authenticator-koodi kirjautumisessa"
+                        className={`px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                          k.totp_required === false
+                            ? 'border-warning/40 bg-warning-soft text-warning-ink'
+                            : 'border-line text-ink-muted hover:border-line-strong'
+                        }`}
+                      >
+                        {k.totp_required === false ? 'Authenticator pois' : 'Authenticator'}
+                      </button>
                       <button
                         type="button"
                         onClick={() => nollaaTotp(k.username)}
