@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { Kayttajatasot } from '../shared/asetukset/Kayttajatasot';
+import { Kayttajat } from '../shared/asetukset/Kayttajat';
 import { Tallennustila } from '../shared/asetukset/Tallennustila';
 import { Sailytysajat } from '../shared/asetukset/Sailytysajat';
 import { ASETUSTEN_SIVUKARTAT } from '../asetusten-sivukartat';
@@ -67,8 +68,16 @@ export const Asetukset = ({ raportit, isAdmin, onHavita, onTakaisin }: Props) =>
 
       <h2 className="text-2xl font-bold text-ink-strong mb-1">Sovellusasetukset</h2>
       <p className="text-sm text-ink-muted mb-8">
-        Käyttäjätasot, palvelimen tallennustila ja lakisääteiset säilytysajat.
+        Käyttäjätunnukset ja -tasot, palvelimen tallennustila ja lakisääteiset säilytysajat.
       </p>
+
+      <Kayttajat
+        kayttajat={kayttajat}
+        roles={roles}
+        isAdmin={isAdmin}
+        puoli="guard"
+        onMuuttui={haeKayttajat}
+      />
 
       <Kayttajatasot
         roles={roles}
