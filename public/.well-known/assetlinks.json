@@ -7,7 +7,8 @@
       "namespace": "android_app",
       "package_name": "fi.turvajohto_os.guard",
       "sha256_cert_fingerprints": [
-        "55:3B:1A:54:B9:96:04:8C:A9:93:39:F2:B2:C9:FC:E2:F9:E6:0A:91:DB:A9:53:6A:F3:52:DF:35:B2:F5:B5:94"
+        "55:3B:1A:54:B9:96:04:8C:A9:93:39:F2:B2:C9:FC:E2:F9:E6:0A:91:DB:A9:53:6A:F3:52:DF:35:B2:F5:B5:94",
+        "37:F1:F6:C2:82:54:62:44:8A:39:85:80:7F:39:4D:DB:F3:E8:D8:A1:F3:75:F3:D4:6C:18:7C:39:A9:50:8A:78"
       ]
     }
   }
