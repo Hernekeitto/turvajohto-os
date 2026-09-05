@@ -64,7 +64,7 @@ export const Asetukset = ({ raportit, isAdmin, onHavita, onTakaisin }: Props) =>
 
   return (
     <div>
-      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohdelistaan</TakaisinLinkki>
+      <TakaisinLinkki onClick={onTakaisin}>Takaisin</TakaisinLinkki>
 
       <h2 className="text-2xl font-bold text-ink-strong mb-1">Sovellusasetukset</h2>
       <p className="text-sm text-ink-muted mb-8">

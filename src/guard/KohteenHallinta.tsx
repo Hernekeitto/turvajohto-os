@@ -171,7 +171,7 @@ export const KohteenHallinta = ({
 
   return (
     <div className="bg-surface rounded-xl shadow-sm border border-line-soft p-6 md:p-8 max-w-3xl">
-      <TakaisinLinkki onClick={onPeruuta}>Takaisin kohdelistaan</TakaisinLinkki>
+      <TakaisinLinkki onClick={onPeruuta}>{kohde.id ? 'Takaisin kohteeseen' : 'Takaisin kohdelistaan'}</TakaisinLinkki>
       <h2 className="text-xl font-bold text-ink-strong mb-1">
         {kohde.id ? kohde.name || 'Kohde' : 'Uusi kohde'}
       </h2>

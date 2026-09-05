@@ -11,7 +11,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  kentalla, kohteenTilanne, tapahtumavirta, tyhjatLahteet, type Lahteet,
+  kentalla, kohteenTilanne, kohteenToiminnot, lyhytAika, tapahtumavirta, tyhjatLahteet,
+  type Lahteet,
 } from './tilannekuva.ts';
 import type { Halytys } from '../shared/halytykset.ts';
 import type { Kierros, TehtavaSuoritus } from './tyypit.ts';
@@ -160,4 +161,82 @@ test('hätäpainikkeen painallus on virrassa kriittinen jo luontimerkinnästä',
 test('tapahtumavirta rajataan pyydettyyn pituuteen', () => {
   const tehtavat = Array.from({ length: 60 }, (_, i) => tehtava({ id: `t${i}`, aika: hetki(i + 1) }));
   assert.equal(tapahtumavirta(lahteilla({ tehtavat }), 25).length, 25);
+});
+
+// --- Kohteen valikon tiivistelmät ---------------------------------------------------
+
+const toiminnot = (lahteet: Lahteet, osat: Partial<{ tehtaviaMaaritelty: number; kayttaja: string }> = {}) =>
+  kohteenToiminnot('kohde1', lahteet, {
+    tehtaviaMaaritelty: osat.tehtaviaMaaritelty ?? 0,
+    kayttaja: osat.kayttaja ?? 'vartija1',
+    nyt: NYT,
+  });
+
+test('kierrospainike kertoo tehdyt kierrokset eikä kaikkia kierroksia', () => {
+  const t = toiminnot(lahteilla({
+    kierrokset: [
+      kierros({ id: 'k1', tila: 'valmis', paattyi: hetki(120) }),
+      kierros({ id: 'k2', tila: 'valmis', paattyi: hetki(60) }),
+      kierros({ id: 'k3', tila: 'kesken' }),
+      // Toisen kohteen kierros ei saa näkyä tämän kohteen luvussa.
+      kierros({ id: 'k4', siteId: 'kohde2', tila: 'valmis', paattyi: hetki(10) }),
+    ],
+  }));
+  assert.match(t.kierros.teksti, /^2 kierrosta tehty/);
+  assert.deepEqual(t.kierros.huomio, { teksti: 'kesken', taso: 'varoitus' });
+});
+
+test('tyhjä kohde saa tekstin eikä nollaa', () => {
+  const t = toiminnot(tyhjatLahteet());
+  assert.equal(t.kierros.teksti, 'Ei vielä kierroksia');
+  assert.equal(t.toimenpide.teksti, 'Ei toimenpidekirjauksia');
+  assert.equal(t.tehtavat.teksti, 'Kohteelle ei ole määritelty tehtäviä');
+  // Puuttuva kierrospohja on huomio: ilman pohjaa kierrosta ei voi aloittaa lainkaan.
+  assert.deepEqual(t.kierrospohjat.huomio, { teksti: 'puuttuu', taso: 'varoitus' });
+  assert.equal(t.halytykset.huomio, null);
+});
+
+test('kadonnut avain menee kaluston huomiossa poikkeaman edelle', () => {
+  const t = toiminnot(lahteilla({
+    avaimet: [
+      { id: 'a1', ownerId: 'kohde1', omistaja: 'kohde', tunnus: 'A-1', kuvaus: '', tila: 'kadonnut', haltija: null, otettu: null, luotu: hetki(500), historia: [] },
+      { id: 'a2', ownerId: 'kohde1', omistaja: 'kohde', tunnus: 'A-2', kuvaus: '', tila: 'ulkona', haltija: 'vartija1', otettu: hetki(60), luotu: hetki(500), historia: [] },
+      // Käytöstä poistettua avainta ei lasketa mukaan.
+      { id: 'a3', ownerId: 'kohde1', omistaja: 'kohde', tunnus: 'A-3', kuvaus: '', tila: 'poistettu', haltija: null, otettu: null, luotu: hetki(500), historia: [] },
+    ],
+    poikkeamat: [
+      { id: 'p1', ownerId: 'kohde1', omistaja: 'kohde', varuste: 'Valaisin', kuvaus: '', vakavuus: 'kriittinen', tila: 'avoin', ilmoittaja: 'vartija1', ilmoitettu: hetki(30), kasittelija: null, kasitelty: null, kasittelyHuomio: '', halytysId: null },
+    ],
+  }));
+  assert.match(t.kalusto.teksti, /^2 avainta, 1 luovutettuna · 1 poikkeama avoinna$/);
+  assert.deepEqual(t.kalusto.huomio, { teksti: 'avain kadonnut', taso: 'kriittinen' });
+});
+
+test('tiedotteen kuittaamattomuus katsotaan katsojan omalta kohdalta', () => {
+  const tiedote = {
+    id: 'b1', ownerId: 'kohde1', omistaja: 'kohde' as const, otsikko: 'Portti kiinni',
+    viesti: '', laatija: 'esimies', luotu: hetki(60),
+    vanhenee: new Date(NYT + 3600_000).toISOString(), voimassaTuntia: 8,
+    kuittaukset: [{ user: 'vartija1', ts: hetki(50) }], peruttu: null,
+  };
+  assert.equal(toiminnot(lahteilla({ tiedotteet: [tiedote] }), { kayttaja: 'vartija1' }).tiedotteet.huomio, null);
+  assert.deepEqual(
+    toiminnot(lahteilla({ tiedotteet: [tiedote] }), { kayttaja: 'vartija2' }).tiedotteet.huomio,
+    { teksti: 'kuittaamatta', taso: 'varoitus' }
+  );
+});
+
+test('lauennut hälytys ohittaa ajastimen hälytyspainikkeen huomiossa', () => {
+  const vain = toiminnot(lahteilla({ halytykset: [halytys({})] }));
+  assert.deepEqual(vain.halytykset.huomio, { teksti: 'ajastin', taso: 'varoitus' });
+  const molemmat = toiminnot(lahteilla({
+    halytykset: [halytys({}), halytys({ id: 'h2', tyyppi: 'panic', tila: 'lauennut', laukesi: hetki(3) })],
+  }));
+  assert.deepEqual(molemmat.halytykset.huomio, { teksti: 'lauennut', taso: 'kriittinen' });
+});
+
+test('lyhytAika näyttää päivän vain jos se ei ole tänään', () => {
+  assert.match(lyhytAika(hetki(30), NYT), /^klo \d\d\.\d\d$/);
+  assert.match(lyhytAika(hetki(60 * 30), NYT), /^\d+\.\d+\. klo \d\d\.\d\d$/);
+  assert.equal(lyhytAika(null, NYT), '');
 });

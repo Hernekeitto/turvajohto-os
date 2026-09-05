@@ -13,8 +13,9 @@
 
 import { onAvoin, type Halytys } from '../shared/halytykset.ts';
 import type { Avain, Poikkeama } from '../shared/kalusto';
-import { onVoimassa, type Tiedote } from '../shared/tiedotteet.ts';
-import type { Suoritus } from '../shared/pohjat';
+import { onKuitannut, onVoimassa, type Tiedote } from '../shared/tiedotteet.ts';
+import type { Pohja, Suoritus } from '../shared/pohjat';
+import type { Jalkiraportti } from '../shared/jalkiraportit';
 import type { GuardRaportti, Kierros, TehtavaSuoritus } from './tyypit';
 
 // Kaikki kokoelmat joista tilannekuva kootaan. Yksi olio eikä kymmenen parametria: lista
@@ -29,11 +30,17 @@ export type Lahteet = {
   poikkeamat: Poikkeama[];
   tiedotteet: Tiedote[];
   skenaariot: Suoritus[];
+  // Pohjat ovat yksi kokoelma jossa on kolme lajia (patrol = kierrospohja, guide =
+  // ohjekortti, play = skenaario), ks. shared/pohjat.ts. Kohteen valikko laskee niistä
+  // painikkeiden tiivistelmät; hälytyskeskus ei käytä näitä.
+  pohjat: Pohja[];
+  jaksoraportit: Jalkiraportti[];
 };
 
 export const tyhjatLahteet = (): Lahteet => ({
   halytykset: [], kierrokset: [], tehtavat: [], raportit: [],
   avaimet: [], poikkeamat: [], tiedotteet: [], skenaariot: [],
+  pohjat: [], jaksoraportit: [],
 });
 
 // Kiireysjärjestys on kolmiportainen tarkoituksella. Viisi tasoa näyttäisi tarkemmalta
@@ -395,4 +402,188 @@ export function tapahtumavirta(lahteet: Lahteet, raja = 40): Tapahtuma[] {
     .filter((t) => !!t.ts)
     .sort((a, b) => b.ts.localeCompare(a.ts))
     .slice(0, raja);
+}
+
+// --- Kohteen valikko ----------------------------------------------------------------
+//
+// Kohdetta painettaessa aukeaa valikko, jossa jokainen toiminto on oma painikkeensa ja
+// jokaisen painikkeen alla lukee mitä kohteessa on sen osalta tehty. Tiivistelmät
+// lasketaan täällä eikä näkymässä, jotta ne voi testata — ja koska sama sääntö toistuu
+// joka painikkeessa: LUKU KERTOO TEHDYN TYÖN, huomio kertoo sen mikä on kesken.
+//
+// Tyhjä kohde saa oman tekstinsä ("Ei vielä kierroksia") eikä nollaa: nolla näyttää
+// mittarilta, ja "0 kierrosta" luetaan helposti niin että jotain on mennyt pieleen.
+
+export type Toiminto =
+  | 'tehtavat' | 'kierros' | 'kierrospohjat' | 'kalusto' | 'mittaristo' | 'jaksoraportit'
+  | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'halytykset' | 'toimenpide' | 'ilmoitus'
+  | 'tiedot';
+
+export type Tiivistelma = {
+  // Painikkeen alle tuleva rivi: mitä kohteessa on tämän toiminnon osalta tehty.
+  teksti: string;
+  // Merkki joka nostetaan painikkeeseen värillisenä. null kun kaikki on kunnossa —
+  // merkki jokaisessa painikkeessa ei kertoisi mitään.
+  huomio: { teksti: string; taso: Kiireys } | null;
+};
+
+// Aikaleima painikkeen riville. Tänään pelkkä kello, muuten myös päivä: "viimeisin
+// 3.9. klo 23.40" on eri tieto kuin "viimeisin klo 23.40", ja vuorossa se ero ratkaisee.
+export const lyhytAika = (iso: string | null | undefined, nyt = Date.now()) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const kello = `klo ${String(d.getHours()).padStart(2, '0')}.${String(d.getMinutes()).padStart(2, '0')}`;
+  const tanaan = new Date(nyt);
+  const samaPaiva = d.getFullYear() === tanaan.getFullYear()
+    && d.getMonth() === tanaan.getMonth()
+    && d.getDate() === tanaan.getDate();
+  return samaPaiva ? kello : `${d.getDate()}.${d.getMonth() + 1}. ${kello}`;
+};
+
+const uusinAika = (aikaleimat: (string | null | undefined)[]) =>
+  aikaleimat.filter((a): a is string => !!a).sort().pop() || null;
+
+const monikko = (maara: number, yksikko: string, monikkomuoto: string) =>
+  `${maara} ${maara === 1 ? yksikko : monikkomuoto}`;
+
+type Konteksti = {
+  // Kohteelle määritellyt tehtävät. Ne ovat kohteen omassa tietueessa eivätkä
+  // kokoelmassa, joten ne annetaan erikseen.
+  tehtaviaMaaritelty: number;
+  kayttaja: string;
+  nyt?: number;
+};
+
+export function kohteenToiminnot(
+  kohdeId: string,
+  lahteet: Lahteet,
+  { tehtaviaMaaritelty, kayttaja, nyt = Date.now() }: Konteksti
+): Record<Toiminto, Tiivistelma> {
+  const kierrokset = lahteet.kierrokset.filter((k) => k.siteId === kohdeId);
+  const valmiit = kierrokset.filter((k) => k.tila === 'valmis');
+  const kesken = kierrokset.filter((k) => k.tila === 'kesken');
+  const tehtavat = lahteet.tehtavat.filter((t) => t.siteId === kohdeId);
+  const toimenpiteet = lahteet.raportit.filter((r) => r.siteId === kohdeId && r.typeId === 'guard_action');
+  const ilmoitukset = lahteet.raportit.filter((r) => r.siteId === kohdeId && r.typeId === 'guard_jvreport');
+  const avaimet = lahteet.avaimet.filter((a) => a.ownerId === kohdeId && a.tila !== 'poistettu');
+  const ulkona = avaimet.filter((a) => a.tila === 'ulkona');
+  const kadonneet = avaimet.filter((a) => a.tila === 'kadonnut');
+  const poikkeamat = lahteet.poikkeamat.filter((p) => p.ownerId === kohdeId && p.tila === 'avoin');
+  const tiedotteet = lahteet.tiedotteet.filter((t) => t.ownerId === kohdeId && onVoimassa(t, nyt));
+  const kuittaamatta = tiedotteet.filter((t) => !onKuitannut(t, kayttaja));
+  const jaksoraportit = lahteet.jaksoraportit.filter((r) => r.ownerId === kohdeId);
+  const luonnokset = jaksoraportit.filter((r) => r.tila === 'luonnos');
+  const pohjat = (laji: Pohja['kind']) =>
+    lahteet.pohjat.filter((p) => p.ownerId === kohdeId && p.kind === laji && !p.arkistoitu);
+  const kierrospohjat = pohjat('patrol');
+  const skenaariopohjat = pohjat('play');
+  const ohjeet = pohjat('guide');
+  const skenaariotKesken = lahteet.skenaariot.filter((s) => s.ownerId === kohdeId && s.tila === 'kesken');
+  const halytykset = lahteet.halytykset.filter((h) => h.eventId === kohdeId);
+  const lauenneet = halytykset.filter((h) => h.tila === 'lauennut');
+  const ajastimet = halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa');
+
+  // Tarkistuspisteitä yhteensä. Kierrospohjan pisteet ovat `pisteet`-kentässä, jota
+  // pohjien yhteinen tyyppi ei tunne — se on kierrospohjan oma laajennus (guard/tyypit.ts).
+  const pisteita = kierrospohjat.reduce(
+    (summa, p) => summa + ((p as { pisteet?: unknown[] }).pisteet?.length || 0),
+    0
+  );
+
+  const viimeisinKierros = uusinAika(kierrokset.map((k) => k.paattyi || k.alkoi));
+  const viimeisinToimenpide = uusinAika(toimenpiteet.map((r) => r.luotu || r.date));
+  const viimeisinIlmoitus = uusinAika(ilmoitukset.map((r) => r.luotu || r.date));
+  const viimeisinTehtava = uusinAika(tehtavat.map((t) => t.aika));
+
+  return {
+    tehtavat: {
+      teksti: tehtaviaMaaritelty === 0
+        ? 'Kohteelle ei ole määritelty tehtäviä'
+        : `${monikko(tehtaviaMaaritelty, 'tehtävä', 'tehtävää')} · ${
+          viimeisinTehtava ? `viimeisin kuittaus ${lyhytAika(viimeisinTehtava, nyt)}` : 'ei kuittauksia'}`,
+      huomio: null,
+    },
+    kierros: {
+      teksti: kierrokset.length === 0
+        ? 'Ei vielä kierroksia'
+        : `${monikko(valmiit.length, 'kierros tehty', 'kierrosta tehty')}${
+          viimeisinKierros ? ` · viimeisin ${lyhytAika(viimeisinKierros, nyt)}` : ''}`,
+      huomio: kesken.length > 0 ? { teksti: 'kesken', taso: 'varoitus' } : null,
+    },
+    kierrospohjat: {
+      teksti: kierrospohjat.length === 0
+        ? 'Ei kierrospohjia — kierrosta ei voi aloittaa'
+        : `${monikko(kierrospohjat.length, 'pohja', 'pohjaa')} · ${monikko(pisteita, 'tarkistuspiste', 'tarkistuspistettä')}`,
+      // Ilman pohjaa kierrosta ei voi kulkea, joten tyhjä on tässä huomio eikä neutraali tila.
+      huomio: kierrospohjat.length === 0 ? { teksti: 'puuttuu', taso: 'varoitus' } : null,
+    },
+    kalusto: {
+      teksti: avaimet.length === 0 && poikkeamat.length === 0
+        ? 'Ei avaimia eikä poikkeamia'
+        : `${monikko(avaimet.length, 'avain', 'avainta')}, ${ulkona.length} luovutettuna${
+          poikkeamat.length > 0 ? ` · ${monikko(poikkeamat.length, 'poikkeama', 'poikkeamaa')} avoinna` : ''}`,
+      huomio: kadonneet.length > 0
+        ? { teksti: 'avain kadonnut', taso: 'kriittinen' }
+        : poikkeamat.some((p) => p.vakavuus === 'kriittinen')
+          ? { teksti: 'kriittinen poikkeama', taso: 'kriittinen' }
+          : poikkeamat.length > 0
+            ? { teksti: 'poikkeama', taso: 'varoitus' }
+            : null,
+    },
+    mittaristo: {
+      // Mittaristo hakee lukunsa palvelimelta valitulta aikaväliltä (/api/analytiikka),
+      // joten tähän ei lasketa lukua: se olisi eri luku kuin se jonka näkymä näyttää.
+      teksti: 'Kirjaukset, kierrokset ja hälytykset lukuina',
+      huomio: null,
+    },
+    jaksoraportit: {
+      teksti: jaksoraportit.length === 0
+        ? 'Ei jaksoraportteja'
+        : monikko(jaksoraportit.length, 'raportti', 'raporttia'),
+      huomio: luonnokset.length > 0 ? { teksti: 'luonnos', taso: 'varoitus' } : null,
+    },
+    tiedotteet: {
+      teksti: tiedotteet.length === 0
+        ? 'Ei voimassa olevia tiedotteita'
+        : `${monikko(tiedotteet.length, 'tiedote', 'tiedotetta')} voimassa`,
+      huomio: kuittaamatta.length > 0 ? { teksti: 'kuittaamatta', taso: 'varoitus' } : null,
+    },
+    ohjeet: {
+      teksti: ohjeet.length === 0 ? 'Ei ohjekortteja' : monikko(ohjeet.length, 'ohjekortti', 'ohjekorttia'),
+      huomio: null,
+    },
+    skenaariot: {
+      teksti: skenaariopohjat.length === 0
+        ? 'Ei skenaariopohjia'
+        : monikko(skenaariopohjat.length, 'skenaario', 'skenaariota'),
+      huomio: skenaariotKesken.length > 0 ? { teksti: 'kesken', taso: 'varoitus' } : null,
+    },
+    halytykset: {
+      teksti: halytykset.length === 0
+        ? 'Ei hälytyksiä tässä kohteessa'
+        : `${monikko(halytykset.length, 'hälytys', 'hälytystä')} kaikkiaan`,
+      huomio: lauenneet.length > 0
+        ? { teksti: 'lauennut', taso: 'kriittinen' }
+        : ajastimet.length > 0
+          ? { teksti: 'ajastin', taso: 'varoitus' }
+          : null,
+    },
+    toimenpide: {
+      teksti: toimenpiteet.length === 0
+        ? 'Ei toimenpidekirjauksia'
+        : `${monikko(toimenpiteet.length, 'kirjaus', 'kirjausta')} · viimeisin ${lyhytAika(viimeisinToimenpide, nyt)}`,
+      huomio: null,
+    },
+    ilmoitus: {
+      teksti: ilmoitukset.length === 0
+        ? 'Ei tapahtumailmoituksia'
+        : `${monikko(ilmoitukset.length, 'ilmoitus', 'ilmoitusta')} · viimeisin ${lyhytAika(viimeisinIlmoitus, nyt)}`,
+      huomio: null,
+    },
+    tiedot: {
+      teksti: 'Kooste kohteen tapahtumista ja tiedostoista',
+      huomio: null,
+    },
+  };
 }

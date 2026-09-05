@@ -116,7 +116,7 @@ export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, kierrok
 
   return (
     <div className="max-w-4xl">
-      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohdelistaan</TakaisinLinkki>
+      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohteeseen</TakaisinLinkki>
       <h2 className="text-2xl font-bold text-ink-strong mb-1">{kohde.name}</h2>
       <div className="flex flex-wrap gap-4 text-sm text-ink-muted mb-8">
         {kohde.address && (

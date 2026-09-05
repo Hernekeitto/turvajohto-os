@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ShieldCheck, Plus, Pencil, Trash2, MapPin, Phone, Building2, GraduationCap, ClipboardList, FileText, ShieldAlert, Info, Settings, Route, QrCode, CloudOff, Siren, BookOpen, ListChecks, Megaphone, KeyRound, BarChart3 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ShieldCheck, Plus, Building2, Settings, QrCode, CloudOff, ChevronRight } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
@@ -17,6 +17,8 @@ import { Kierros } from './Kierros';
 import { Halytykset } from './Halytykset';
 import { Etusivu } from './Etusivu';
 import { Halytyskeskus } from './Halytyskeskus';
+import { Kohdenakyma } from './Kohdenakyma';
+import { kohteenToiminnot, type Toiminto } from './tilannekuva';
 import { Halytysvahti } from '../shared/komponentit/Halytysvahti';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { haeHalytykset, type Halytys } from '../shared/halytykset';
@@ -26,7 +28,7 @@ import { luoMuunnos } from '../shared/georeferointi';
 import { Pohjanakyma } from '../shared/komponentit/Pohjanakyma';
 import { haeSuoritukset, type Pohja, type Suoritus } from '../shared/pohjat';
 import { Tiedotteet, TiedoteKehote } from '../shared/komponentit/Tiedotteet';
-import { haeTiedotteet, onKuitannut, onVoimassa, type Tiedote } from '../shared/tiedotteet';
+import { haeTiedotteet, type Tiedote } from '../shared/tiedotteet';
 import { Kalusto } from '../shared/komponentit/Kalusto';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from '../shared/kalusto';
 import { Mittaristo } from '../shared/komponentit/Mittaristo';
@@ -138,6 +140,11 @@ export default function GuardApp() {
   // Avoinna oleva osio. Etusivulta mennään joko kohteisiin tai hälytyskeskukseen; kaikki
   // muut näkymät avautuvat näiden sisältä.
   const [osio, setOsio] = useState<Osio>('etusivu');
+  // Kohde jonka valikko on auki. Kohdelistan ja yksittäisten näkymien VÄLISSÄ oleva taso:
+  // täältä valitaan mitä kohteessa tehdään, ja tänne palataan kun näkymä suljetaan.
+  // Erillinen kaikista `*Kohde`-tiloista, koska ne kertovat MIKÄ näkymä on auki — tämä
+  // kertoo minkä kohteen valikossa ollaan silloinkin kun yhtään näkymää ei ole auki.
+  const [valittuKohde, setValittuKohde] = useState<Kohde | null>(null);
 
   const [kohteet, setKohteet] = useState<Kohde[]>([]);
   // Ladattu vasta onnistuneen haun jälkeen. Tallennus on estetty siihen asti: ilman tätä
@@ -667,13 +674,20 @@ export default function GuardApp() {
     const uudet = uusi
       ? [...kohteet, kohde]
       : kohteet.map((k) => (k.id === kohde.id ? kohde : k));
-    if (await tallenna(uudet)) setLomake(null);
+    if (!(await tallenna(uudet))) return;
+    setLomake(null);
+    // Valikko jää auki muokatulle kohteelle, joten sen kopio on päivitettävä: muuten
+    // otsikossa ja tiedoissa lukisi vanha nimi kunnes listaan palataan.
+    setValittuKohde((edellinen) => (edellinen && edellinen.id === kohde.id ? kohde : edellinen));
   };
 
   const poista = async () => {
     if (!poistettava) return;
     const jaljelle = kohteet.filter((k) => k.id !== poistettava.id);
-    if (await tallenna(jaljelle, { salliTyhja: jaljelle.length === 0 })) setPoistettava(null);
+    if (!(await tallenna(jaljelle, { salliTyhja: jaljelle.length === 0 }))) return;
+    setPoistettava(null);
+    // Poistetun kohteen valikkoa ei jätetä auki — se näyttäisi kohteelta joka on olemassa.
+    setValittuKohde((edellinen) => (edellinen && edellinen.id === poistettava.id ? null : edellinen));
   };
 
   // Vanhentuneiden raporttien havitys. Sama kaksivaiheinen vahvistus kuin
@@ -723,11 +737,14 @@ export default function GuardApp() {
 
   // --- Näkymät ja takaisin-painike --------------------------------------------------
   //
-  // Rakenne on kaksitasoinen: etusivulta mennään osioon (Kohteet tai Hälytyskeskus) ja
-  // Kohteet-osiosta yksittäisen kohteen näkymään. Kohteen näkymät ovat keskenään yhden
-  // tason syvyydellä — jokainen aukeaa kohderivin painikkeesta ja jokaisen paluulinkki
-  // sanoo "Takaisin kohdelistaan" — joten niiden sulkeminen on aina sama toimenpide.
-  const nollaaNakymat = () => {
+  // Rakenne on kolmitasoinen: etusivu → osio (Kohteet tai Hälytyskeskus) → kohteen
+  // valikko → yksittäinen näkymä. Kohteen näkymät ovat keskenään yhden tason syvyydellä
+  // — jokainen aukeaa valikon painikkeesta ja jokaisen paluulinkki vie samaan valikkoon —
+  // joten niiden sulkeminen on aina sama toimenpide.
+  //
+  // Tämä nollaa VAIN näkymät, ei valittua kohdetta: näkymän sulkeminen palaa kohteen
+  // valikkoon eikä kohdelistaan.
+  const nollaaAlanakymat = () => {
     setLomake(null);
     setPoistettava(null);
     setTehtavaKohde(null);
@@ -742,6 +759,13 @@ export default function GuardApp() {
     setKalustoKohde(null);
     setMittariKohde(null);
     setJaksoKohde(null);
+  };
+
+  // Nollaa myös valitun kohteen: käytetään silloin kun poistutaan koko kohteesta
+  // (kohdelistaan, etusivulle tai hälytyskeskukseen).
+  const nollaaNakymat = () => {
+    nollaaAlanakymat();
+    setValittuKohde(null);
   };
 
   // Nykyisen näkymän tunniste historiaa varten. Järjestys on SAMA kuin alla olevassa
@@ -762,14 +786,25 @@ export default function GuardApp() {
       : pohjaKohde ? 'kierrospohjat'
       : tehtavaKohde ? 'tehtavat'
       : lomake ? 'kohteen-hallinta'
+      : valittuKohde ? 'kohde'
       : osio === 'kohteet' ? 'kohdevalinta'
       : JUURINAKYMA;
 
-  // Takaisin-nappi purkaa yhden tason: kohteen näkymästä kohdelistaan, kohdelistasta ja
-  // hälytyskeskuksesta etusivulle, etusivulta ulos sovelluksesta. Osio luetaan
-  // historiamerkinnästä, koska se on ainoa tieto jonka merkintä kuljettaa — yksittäisen
-  // näkymän palauttamiseen tarvittaisiin kohde, jota merkinnässä ei ole.
+  // Takaisin-nappi purkaa yhden tason: näkymästä kohteen valikkoon, valikosta
+  // kohdelistaan, kohdelistasta ja hälytyskeskuksesta etusivulle, etusivulta ulos
+  // sovelluksesta. Taso luetaan historiamerkinnästä, koska se on ainoa tieto jonka
+  // merkintä kuljettaa.
+  //
+  // 'kohde' on tässä poikkeus: merkinnässä ei ole kohteen id:tä, mutta sitä ei tarvitakaan
+  // — valittu kohde on yhä tilassa, ja tason purkaminen tarkoittaa vain avoimen näkymän
+  // sulkemista. Sen sijaan kohdelistaan (ja ylemmäs) palattaessa valinta on nollattava,
+  // muuten lista näyttäisi listalta mutta seuraava takaisin veisi vanhaan kohteeseen.
   const siirry = (tunniste: string) => {
+    if (tunniste === 'kohde') {
+      nollaaAlanakymat();
+      setOsio('kohteet');
+      return;
+    }
     nollaaNakymat();
     setOsio(tunniste === 'halytyskeskus' ? 'halytyskeskus' : tunniste === JUURINAKYMA ? 'etusivu' : 'kohteet');
   };
@@ -779,6 +814,44 @@ export default function GuardApp() {
     nollaaNakymat();
     setOsio('etusivu');
   };
+
+  // Kohteen valikon painike avaa oikean näkymän. Yksi kytkin eikä kolmetoista propsia:
+  // valikko kertoo MITÄ käyttäjä valitsi, ja näkymätilat ovat tämän komponentin asia.
+  const avaaToiminto = (toiminto: Toiminto, kohde: Kohde) => {
+    if (toiminto === 'tehtavat') setTehtavaKohde(kohde);
+    else if (toiminto === 'kierros') setKierrosKohde(kohde);
+    else if (toiminto === 'kierrospohjat') setPohjaKohde(kohde);
+    else if (toiminto === 'kalusto') setKalustoKohde(kohde);
+    else if (toiminto === 'mittaristo') setMittariKohde(kohde);
+    else if (toiminto === 'jaksoraportit') setJaksoKohde(kohde);
+    else if (toiminto === 'tiedotteet') setTiedoteKohde(kohde);
+    else if (toiminto === 'ohjeet') setPohjaNakyma({ kohde, laji: 'guide' });
+    else if (toiminto === 'skenaariot') setPohjaNakyma({ kohde, laji: 'play' });
+    else if (toiminto === 'halytykset') setHalytysKohde(kohde);
+    else if (toiminto === 'toimenpide') setRaporttiKohde({ kohde, tyyppi: 'guard_action' });
+    else if (toiminto === 'ilmoitus') setRaporttiKohde({ kohde, tyyppi: 'guard_jvreport' });
+    else if (toiminto === 'tiedot') setTietoKohde(kohde);
+  };
+
+  // Kaikki kokoelmat yhtenä oliona tilannekuvan laskentaa varten (ks. tilannekuva.ts).
+  // useMemo eikä pelkkä olioliteraali: hälytyskeskuksessa juoksee sekuntikello, ja uusi
+  // olio joka renderöinnillä laskisi tapahtumavirran ja kohdetilanteet uudelleen kerran
+  // sekunnissa.
+  const lahteet = useMemo(() => ({
+    halytykset,
+    kierrokset,
+    tehtavat: suoritukset,
+    raportit,
+    avaimet,
+    poikkeamat,
+    tiedotteet,
+    skenaariot: pohjaSuoritukset,
+    pohjat: pohjat as unknown as Pohja[],
+    jaksoraportit: jalkiraportit,
+  }), [
+    halytykset, kierrokset, suoritukset, raportit, avaimet, poikkeamat, tiedotteet,
+    pohjaSuoritukset, pohjat, jalkiraportit,
+  ]);
 
   useHistorianavigointi(nakyma, siirry);
 
@@ -845,6 +918,7 @@ export default function GuardApp() {
           : pohjaKohde ? 'Kierrospohjat'
           : tehtavaKohde ? 'Työvuoron tehtävät'
           : lomake ? (lomake.id ? 'Kohteen hallinta' : 'Uusi kohde')
+          : valittuKohde ? valittuKohde.name
           : osio === 'kohteet' ? 'Kohdevalinta'
           : 'Vartiointi'
       )}
@@ -923,16 +997,7 @@ export default function GuardApp() {
           ) : osio === 'halytyskeskus' ? (
             <Halytyskeskus
               kohteet={kohteet}
-              lahteet={{
-                halytykset,
-                kierrokset,
-                tehtavat: suoritukset,
-                raportit,
-                avaimet,
-                poikkeamat,
-                tiedotteet,
-                skenaariot: pohjaSuoritukset,
-              }}
+              lahteet={lahteet}
               kayttaja={session?.username || ''}
               saaKuitata={saaKuitataHalytyksia}
               oikeudet={{
@@ -944,11 +1009,11 @@ export default function GuardApp() {
               sijaintiseuranta={session?.sijaintiseuranta === true}
               onMuutos={paivitaHalytys}
               onVirkista={paivitaHalytykset}
-              // Kohderivistä pääsee kohteen tietoihin. Osio vaihtuu samalla kohteisiin,
-              // koska sieltä avautuvan näkymän paluulinkki vie kohdelistaan — ja
-              // molemmat oikeudet vaaditaan, ettei linkki vie listaan jota ei saa nähdä.
-              onAvaaKohde={saaNahda && saaNahdaTiedot
-                ? (kohde) => { setOsio('kohteet'); setTietoKohde(kohde); }
+              // Kohderivistä pääsee kohteen valikkoon. Osio vaihtuu samalla kohteisiin,
+              // koska valikon paluulinkki vie kohdelistaan — ja siksi tämä vaatii
+              // oikeuden kohdelistaan, ettei linkki vie listaan jota ei saa nähdä.
+              onAvaaKohde={saaNahda
+                ? (kohde) => { setOsio('kohteet'); setValittuKohde(kohde); }
                 : null}
               onTakaisin={paluuEtusivulle}
             />
@@ -971,7 +1036,7 @@ export default function GuardApp() {
             />
           ) : kalustoKohde ? (
             <div className="max-w-3xl">
-              <TakaisinLinkki onClick={() => setKalustoKohde(null)}>Takaisin kohdelistaan</TakaisinLinkki>
+              <TakaisinLinkki onClick={() => setKalustoKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
               <Kalusto
                 ownerId={kalustoKohde.id}
                 ownerNimi={kalustoKohde.name}
@@ -986,12 +1051,12 @@ export default function GuardApp() {
             </div>
           ) : mittariKohde ? (
             <div className="max-w-5xl">
-              <TakaisinLinkki onClick={() => setMittariKohde(null)}>Takaisin kohdelistaan</TakaisinLinkki>
+              <TakaisinLinkki onClick={() => setMittariKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
               <Mittaristo ownerId={mittariKohde.id} ownerNimi={mittariKohde.name} onKohde />
             </div>
           ) : jaksoKohde ? (
             <div className="max-w-5xl">
-              <TakaisinLinkki onClick={() => setJaksoKohde(null)}>Takaisin kohdelistaan</TakaisinLinkki>
+              <TakaisinLinkki onClick={() => setJaksoKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
               <Jalkiraportit
                 ownerId={jaksoKohde.id}
                 ownerNimi={jaksoKohde.name}
@@ -1003,7 +1068,7 @@ export default function GuardApp() {
             </div>
           ) : tiedoteKohde ? (
             <div className="max-w-3xl">
-              <TakaisinLinkki onClick={() => setTiedoteKohde(null)}>Takaisin kohdelistaan</TakaisinLinkki>
+              <TakaisinLinkki onClick={() => setTiedoteKohde(null)}>Takaisin kohteeseen</TakaisinLinkki>
               <Tiedotteet
                 ownerId={tiedoteKohde.id}
                 ownerNimi={tiedoteKohde.name}
@@ -1015,7 +1080,7 @@ export default function GuardApp() {
             </div>
           ) : pohjaNakyma ? (
             <div className="max-w-3xl">
-              <TakaisinLinkki onClick={() => setPohjaNakyma(null)}>Takaisin kohdelistaan</TakaisinLinkki>
+              <TakaisinLinkki onClick={() => setPohjaNakyma(null)}>Takaisin kohteeseen</TakaisinLinkki>
               <p className="text-sm text-ink-muted mb-4">{pohjaNakyma.kohde.name}</p>
               <Pohjanakyma
                 laji={pohjaNakyma.laji}
@@ -1079,6 +1144,38 @@ export default function GuardApp() {
               onLataaKartta={lataaKartta}
               saaMuokata={saaMuokata}
             />
+          ) : valittuKohde ? (
+            <Kohdenakyma
+              kohde={valittuKohde}
+              tiivistelmat={kohteenToiminnot(valittuKohde.id, lahteet, {
+                tehtaviaMaaritelty: valittuKohde.tehtavat?.length || 0,
+                kayttaja: session?.username || '',
+              })}
+              sallitut={{
+                tehtavat: saaNahdaTehtavat && (valittuKohde.tehtavat?.length || 0) > 0,
+                kierros: saaNahdaKierrokset,
+                kierrospohjat: saaNahdaPohjat,
+                kalusto: saaNahdaKalustoa,
+                mittaristo: saaNahdaMittarit,
+                jaksoraportit: saaNahdaJaksoraportit,
+                tiedotteet: saaNahdaTiedotteet,
+                ohjeet: saaNahdaOhjeet,
+                skenaariot: saaNahdaSkenaariot,
+                halytykset: saaNahdaHalytykset,
+                toimenpide: saaKirjataToimenpiteen,
+                ilmoitus: saaKirjataIlmoituksen,
+                tiedot: saaNahdaTiedot,
+              }}
+              saaMuokata={saaMuokata}
+              onValitse={(toiminto) => avaaToiminto(toiminto, valittuKohde)}
+              onHallitse={() => setLomake({
+                ...valittuKohde,
+                perehdytykset: [...(valittuKohde.perehdytykset || [])],
+                tehtavat: (valittuKohde.tehtavat || []).map((t) => ({ ...t, kohdat: [...t.kohdat] })),
+              })}
+              onPoista={() => setPoistettava(valittuKohde)}
+              onTakaisin={() => setValittuKohde(null)}
+            />
           ) : osio === 'etusivu' ? (
             <Etusivu
               saaNahdaKohteet={saaNahda}
@@ -1127,6 +1224,10 @@ export default function GuardApp() {
                 </div>
               </div>
 
+              {/* Kohdelistalla on VAIN kohteet ja niiden perustiedot. Toiminnot ovat
+                  kohteen omalla sivulla (Kohdenakyma), koska kortin alareunaan ladottuna
+                  ne olivat kymmenen sanan rivi jossa jokainen sana oli eri työ — ja lista
+                  oli sitä sekavampi mitä enemmän oikeuksia käyttäjällä oli. */}
               {kohteet.length === 0 ? (
                 <div className="bg-surface border border-line rounded-xl p-10 text-center">
                   <Building2 className="w-10 h-10 text-ink-subtle mx-auto mb-4" strokeWidth={1.5} />
@@ -1135,261 +1236,28 @@ export default function GuardApp() {
                   </p>
                 </div>
               ) : (
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-3 sm:grid-cols-2">
                   {kohteet.map((kohde) => (
-                    <div
+                    <button
                       key={kohde.id}
-                      className="bg-surface border border-line rounded-xl p-5 flex flex-col"
+                      type="button"
+                      onClick={() => setValittuKohde(kohde)}
+                      className="text-left bg-surface border border-line hover:bg-sunken hover:border-line-strong rounded-xl p-5 transition-colors flex items-start gap-3"
                     >
-                      <div className="flex items-start gap-3 mb-3">
-                        <ShieldCheck className="w-5 h-5 text-accent shrink-0 mt-0.5" strokeWidth={1.75} />
-                        <h3 className="font-bold text-ink-strong flex-1">{kohde.name}</h3>
-                      </div>
-                      <div className="space-y-1.5 text-sm text-ink-muted flex-1">
-                        {kohde.address && (
-                          <p className="flex items-start gap-2">
-                            <MapPin size={14} className="shrink-0 mt-0.5" />
-                            {kohde.address}
-                          </p>
-                        )}
+                      <ShieldCheck className="w-5 h-5 text-accent shrink-0 mt-0.5" strokeWidth={1.75} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-bold text-ink-strong">{kohde.name}</span>
                         {(kohde.contactName || kohde.contactPhone) && (
-                          <p className="flex items-start gap-2">
-                            <Phone size={14} className="shrink-0 mt-0.5" />
+                          <span className="block text-sm text-ink-body mt-1">
                             {[kohde.contactName, kohde.contactPhone].filter(Boolean).join(' · ')}
-                          </p>
+                          </span>
                         )}
-                        {kohde.notes && (
-                          <p className="text-xs text-ink-subtle pt-1 leading-relaxed">{kohde.notes}</p>
+                        {kohde.address && (
+                          <span className="block text-sm text-ink-muted mt-0.5">{kohde.address}</span>
                         )}
-                      </div>
-
-                      {/* Kohteen sisältö lukuina: kertoo yhdellä silmäyksellä onko kohde
-                          valmis vartioitavaksi vai vasta perustettu. */}
-                      {((kohde.perehdytykset?.length || 0) > 0 || (kohde.tehtavat?.length || 0) > 0) && (
-                        <div className="flex flex-wrap gap-3 pt-3 text-xs text-ink-muted">
-                          {(kohde.perehdytykset?.length || 0) > 0 && (
-                            <span className="inline-flex items-center gap-1.5">
-                              <GraduationCap size={13} />
-                              {kohde.perehdytykset?.length} perehdytetty
-                            </span>
-                          )}
-                          {(kohde.tehtavat?.length || 0) > 0 && (
-                            <span className="inline-flex items-center gap-1.5">
-                              <ClipboardList size={13} />
-                              {kohde.tehtavat?.length} tehtävää
-                            </span>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Vartijan päivittäiset toiminnot. Jokainen on oman oikeutensa
-                          takana, joten kortti näyttää vain sen mitä käyttäjä voi tehdä. */}
-                      <div className="flex flex-wrap gap-x-4 gap-y-2 pt-4 mt-3 border-t border-line-soft">
-                        {saaNahdaTehtavat && (kohde.tehtavat?.length || 0) > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setTehtavaKohde(kohde)}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
-                          >
-                            <ClipboardList size={14} />
-                            Tehtävät
-                          </button>
-                        )}
-                        {saaNahdaKierrokset && (
-                          <button
-                            type="button"
-                            onClick={() => setKierrosKohde(kohde)}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
-                          >
-                            <Route size={14} />
-                            Kierros
-                            {/* Kesken oleva kierros näkyy kortissa: unohtunut avoin kierros
-                                on yleisin tapa saada vuoro näyttämään tekemättömältä. */}
-                            {kierrokset.some((k) => k.siteId === kohde.id && k.tila === 'kesken') && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
-                                kesken
-                              </span>
-                            )}
-                          </button>
-                        )}
-                        {saaNahdaKalustoa && (
-                          <button
-                            type="button"
-                            onClick={() => setKalustoKohde(kohde)}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
-                          >
-                            <KeyRound size={14} />
-                            Kalusto
-                            {avaimet.some((a) => a.ownerId === kohde.id && a.tila === 'kadonnut') && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-danger-soft text-danger-ink border border-danger/30">
-                                avain kadonnut
-                              </span>
-                            )}
-                            {poikkeamat.some((p) => p.ownerId === kohde.id && p.tila === 'avoin') && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
-                                poikkeama
-                              </span>
-                            )}
-                          </button>
-                        )}
-                        {saaNahdaMittarit && (
-                          <button
-                            type="button"
-                            onClick={() => setMittariKohde(kohde)}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
-                          >
-                            <BarChart3 size={14} />
-                            Mittaristo
-                          </button>
-                        )}
-                        {saaNahdaJaksoraportit && (
-                          <button
-                            type="button"
-                            onClick={() => setJaksoKohde(kohde)}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
-                          >
-                            <ClipboardList size={14} />
-                            Jaksoraportit
-                            {jalkiraportit.some((r) => r.ownerId === kohde.id && r.tila === 'luonnos') && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
-                                luonnos
-                              </span>
-                            )}
-                          </button>
-                        )}
-                        {saaNahdaTiedotteet && (
-                          <button
-                            type="button"
-                            onClick={() => setTiedoteKohde(kohde)}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
-                          >
-                            <Megaphone size={14} />
-                            Tiedotteet
-                            {tiedotteet.some((t) => t.ownerId === kohde.id && onVoimassa(t) && !onKuitannut(t, session?.username || '')) && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
-                                kuittaamatta
-                              </span>
-                            )}
-                          </button>
-                        )}
-                        {saaNahdaOhjeet && (
-                          <button
-                            type="button"
-                            onClick={() => setPohjaNakyma({ kohde, laji: 'guide' })}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
-                          >
-                            <BookOpen size={14} />
-                            Ohjeet
-                          </button>
-                        )}
-                        {saaNahdaSkenaariot && (
-                          <button
-                            type="button"
-                            onClick={() => setPohjaNakyma({ kohde, laji: 'play' })}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
-                          >
-                            <ListChecks size={14} />
-                            Skenaariot
-                            {pohjaSuoritukset.some((s) => s.ownerId === kohde.id && s.tila === 'kesken') && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
-                                kesken
-                              </span>
-                            )}
-                          </button>
-                        )}
-                        {saaNahdaHalytykset && (
-                          <button
-                            type="button"
-                            onClick={() => setHalytysKohde(kohde)}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
-                          >
-                            <Siren size={14} />
-                            Hälytykset
-                            {/* Lauennut hälytys näkyy kortissa: sitä ei saa joutua
-                                etsimään näkymän sisältä. */}
-                            {halytykset.some((h) => h.eventId === kohde.id && h.tila === 'lauennut') && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-danger-soft text-danger-ink border border-danger/30">
-                                lauennut
-                              </span>
-                            )}
-                            {halytykset.some((h) => h.eventId === kohde.id && h.tila === 'kaynnissa') && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
-                                ajastin
-                              </span>
-                            )}
-                          </button>
-                        )}
-                        {saaKirjataToimenpiteen && (
-                          <button
-                            type="button"
-                            onClick={() => setRaporttiKohde({ kohde, tyyppi: 'guard_action' })}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
-                          >
-                            <FileText size={14} />
-                            Toimenpide
-                          </button>
-                        )}
-                        {saaKirjataIlmoituksen && (
-                          <button
-                            type="button"
-                            onClick={() => setRaporttiKohde({ kohde, tyyppi: 'guard_jvreport' })}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover transition-colors"
-                          >
-                            <ShieldAlert size={14} />
-                            Tapahtumailmoitus
-                          </button>
-                        )}
-                        {saaNahdaTiedot && (
-                          <button
-                            type="button"
-                            onClick={() => setTietoKohde(kohde)}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-body hover:text-accent transition-colors ml-auto"
-                          >
-                            <Info size={14} />
-                            Kohteen tiedot
-                          </button>
-                        )}
-                      </div>
-
-                      {(saaMuokata || saaNahdaPohjat) && (
-                        <div className="flex gap-2 pt-3 border-t border-line-soft">
-                          {saaNahdaPohjat && (
-                            <button
-                              type="button"
-                              onClick={() => setPohjaKohde(kohde)}
-                              className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-body hover:text-accent transition-colors"
-                            >
-                              <QrCode size={14} />
-                              Kierrospohjat
-                            </button>
-                          )}
-                          {saaMuokata && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => setLomake({
-                                  ...kohde,
-                                  perehdytykset: [...(kohde.perehdytykset || [])],
-                                  tehtavat: (kohde.tehtavat || []).map((t) => ({ ...t, kohdat: [...t.kohdat] })),
-                                })}
-                                className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-body hover:text-accent transition-colors"
-                              >
-                                <Pencil size={14} />
-                                Hallitse
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setPoistettava(kohde)}
-                                className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-muted hover:text-danger transition-colors ml-auto"
-                              >
-                                <Trash2 size={14} />
-                                Poista
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                      </span>
+                      <ChevronRight size={18} className="text-ink-subtle shrink-0 mt-0.5" />
+                    </button>
                   ))}
                 </div>
               )}

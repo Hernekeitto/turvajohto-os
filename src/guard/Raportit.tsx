@@ -157,7 +157,7 @@ export const Raportit = ({ kohde, tyyppi, vartija, onTallenna, onTakaisin }: Pro
 
   return (
     <div className="max-w-3xl">
-      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohdelistaan</TakaisinLinkki>
+      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohteeseen</TakaisinLinkki>
 
       <div className="bg-surface rounded-xl shadow-sm border border-line-soft p-6 md:p-8">
         <div className="flex items-start gap-3 mb-6">

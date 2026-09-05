@@ -160,7 +160,7 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
 
   return (
     <div className="max-w-3xl">
-      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohdelistaan</TakaisinLinkki>
+      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohteeseen</TakaisinLinkki>
 
       <div className="mb-6">
         <h2 className="text-xl font-bold text-ink-strong mb-1">Kierrokset</h2>

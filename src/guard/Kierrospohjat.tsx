@@ -366,7 +366,7 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
 
   return (
     <div className="max-w-3xl">
-      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohdelistaan</TakaisinLinkki>
+      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohteeseen</TakaisinLinkki>
 
       <div className="flex items-start justify-between gap-4 mb-6">
         <div>

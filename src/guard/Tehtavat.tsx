@@ -79,7 +79,7 @@ export const Tehtavat = ({
 
   return (
     <div className="max-w-3xl">
-      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohdelistaan</TakaisinLinkki>
+      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohteeseen</TakaisinLinkki>
       <h2 className="text-2xl font-bold text-ink-strong mb-1">{kohde.name}</h2>
       <p className="text-sm text-ink-muted mb-8">
         Työvuoron tehtävät. Kuittaus tallentuu heti ja jää kohteen lokiin.
