@@ -2387,7 +2387,6 @@ export default function App() {
   const resetNewUserForm = () => {
     setNewUserUsername('');
     setNewUserNickname('');
-    setNewUserPassword('');
     setNewUserError('');
   };
 
@@ -2418,7 +2417,6 @@ export default function App() {
         setUusiSalasanaNaytto({ username: newUserUsername.trim(), password: data.password });
         setNewUserUsername('');
         setNewUserNickname('');
-        setNewUserPassword('');
       } else {
         setNewUserError(data.error || 'Käyttäjän luonti epäonnistui.');
       }
