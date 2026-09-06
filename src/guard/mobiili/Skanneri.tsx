@@ -105,7 +105,7 @@ export const Skanneri = ({ onLoytyi, onSulje }: Props) => {
   return (
     <div className="absolute inset-0 z-50 bg-black flex flex-col">
       <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-white">
-        <p className="text-sm font-medium">Lue QR- tai viivakoodi</p>
+        <p className="text-base font-medium">Lue QR- tai viivakoodi</p>
         <button
           type="button"
           onClick={onSulje}
@@ -120,7 +120,7 @@ export const Skanneri = ({ onLoytyi, onSulje }: Props) => {
         {virhe ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
             <CameraOff className="w-10 h-10 text-white/60 mb-4" strokeWidth={1.5} />
-            <p className="text-sm text-white/80 leading-relaxed">{virhe}</p>
+            <p className="text-base text-white/80 leading-relaxed">{virhe}</p>
           </div>
         ) : (
           <>
@@ -139,7 +139,7 @@ export const Skanneri = ({ onLoytyi, onSulje }: Props) => {
         )}
       </div>
 
-      <p className="shrink-0 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-center text-xs text-white/60">
+      <p className="shrink-0 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-center text-sm text-white/60">
         Kierrospisteen tarra kuitataan heti kun koodi on luettu.
       </p>
     </div>

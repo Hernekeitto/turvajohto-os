@@ -62,7 +62,7 @@ export const Tilatieto = ({ kohdeNimi, onLaheta, onSulje }: Props) => {
             <X size={20} />
           </button>
         </div>
-        <p className="text-sm text-ink-muted mb-4">
+        <p className="text-base text-ink-muted mb-4">
           Kirjataan kohteelle {kohdeNimi} ja näkyy hälytyskeskuksessa heti.
         </p>
 
@@ -73,7 +73,7 @@ export const Tilatieto = ({ kohdeNimi, onLaheta, onSulje }: Props) => {
               type="button"
               disabled={lahettaa}
               onClick={() => laheta(teksti)}
-              className="w-full text-left rounded-lg border border-line bg-surface hover:bg-sunken px-4 py-3.5 text-[15px] font-medium text-ink transition-colors disabled:opacity-60"
+              className="w-full text-left rounded-lg border border-line bg-surface hover:bg-sunken px-4 py-3.5 text-base font-medium text-ink transition-colors disabled:opacity-60"
             >
               {teksti}
             </button>
@@ -81,20 +81,20 @@ export const Tilatieto = ({ kohdeNimi, onLaheta, onSulje }: Props) => {
         </div>
 
         <label className="block">
-          <span className="block text-sm font-medium text-ink-body mb-1">Oma tilatieto</span>
+          <span className="block text-base font-medium text-ink-body mb-1">Oma tilatieto</span>
           <textarea
             value={oma}
             onChange={(e) => setOma(e.target.value)}
             rows={2}
             placeholder="Esim. ovi 3 jäänyt auki, ilmoitettu kiinteistöhuoltoon"
-            className="w-full rounded-lg border border-line-strong p-2.5 text-sm outline-none focus:ring-2 focus:ring-accent"
+            className="w-full rounded-lg border border-line-strong p-3 text-base outline-none focus:ring-2 focus:ring-accent"
           />
         </label>
         <button
           type="button"
           disabled={lahettaa || !oma.trim()}
           onClick={() => laheta(oma)}
-          className="mt-3 w-full inline-flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg py-3 transition-colors disabled:opacity-60"
+          className="mt-3 w-full inline-flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover text-white text-base font-medium rounded-lg py-3.5 transition-colors disabled:opacity-60"
         >
           <Send size={16} />
           {lahettaa ? 'Lähetetään…' : 'Lähetä'}

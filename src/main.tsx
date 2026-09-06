@@ -83,6 +83,16 @@ normalisoiPolku(tuote, guardMobiili)
 // väärän puolen väreissä. Mainossivu on oma teemansa: se on ainoa tumma näkymä.
 document.documentElement.dataset.tuote = tuote === 'landing' ? 'os' : tuote
 
+// Kenttäversion perustekstikoko on isompi kuin työpöytäversion, ja se asetetaan JUUREEN
+// eikä komponentteihin: Tailwindin mitat ovat rem-yksiköitä, joten yksi juuren arvo
+// suurentaa tekstin, painikkeet ja välit samassa suhteessa — myös niissä näkymissä
+// (kierros, hälytykset, raportointi) jotka ovat yhteisiä työpöytäversion kanssa eikä
+// niitä siksi voi kirjoittaa mobiilia varten uudelleen.
+//
+// Ilman tätä puhelimessa luki 14 pikselin leipätekstiä: koko joka on tietokoneen
+// näytöllä oikea ja kädessä liian pieni.
+if (guardMobiili) document.documentElement.dataset.laite = 'mobiili'
+
 // Kuvake, otsikko, teemaväri ja manifesti ovat samalla tavalla tuotekohtaisia kuin
 // väritokenit, ja ne asetetaan tässä samasta syystä: index.html on yhteinen kaikille
 // kolmelle polulle, joten tuotteen tunnus ratkeaa vasta kun polku on tulkittu. Ilman

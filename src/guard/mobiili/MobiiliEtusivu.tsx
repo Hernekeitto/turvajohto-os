@@ -106,14 +106,14 @@ export const MobiiliEtusivu = ({
                 <Route size={18} className="text-accent shrink-0" />
                 <span className="min-w-0 break-words">{pohja.nimi}</span>
               </span>
-              <span className="block text-sm text-ink-body mt-2">
+              <span className="block text-base text-ink-body mt-2">
                 {kesken
                   ? `Aloitettu klo ${kello(kesken.alkoi)}`
                   : viimeisin && samaPaiva(viimeisin.paattyi)
                     ? `Tehty tänään klo ${kello(viimeisin.paattyi)}`
                     : 'Ei aloitettu'}
               </span>
-              <span className="block text-sm text-ink-body mt-1.5">
+              <span className="block text-base text-ink-body mt-1.5">
                 {kuitattu}/{pisteita} pistettä tarkastettu
               </span>
             </span>
@@ -137,7 +137,7 @@ export const MobiiliEtusivu = ({
               <ClipboardCheck size={18} className="text-accent shrink-0" />
               Työvuoron tehtävät
             </span>
-            <span className="block text-sm text-ink-body mt-2">
+            <span className="block text-base text-ink-body mt-2">
               {kuitatutTanaan.size}/{tehtavat.length} tehtävää kuitattu tänään
             </span>
           </span>
@@ -152,7 +152,7 @@ export const MobiiliEtusivu = ({
       {tyhja && (
         <div className="rounded-xl border border-line bg-surface p-8 text-center">
           <ClipboardCheck className="w-8 h-8 text-ink-subtle mx-auto mb-3" strokeWidth={1.5} />
-          <p className="text-sm text-ink-muted leading-relaxed">
+          <p className="text-base text-ink-muted leading-relaxed">
             Vuorolle ei ole kirjattu kierroksia eikä tehtäviä. Muut toiminnot löytyvät
             vasemman yläkulman valikosta.
           </p>
@@ -170,8 +170,8 @@ const Luku = ({ arvo, selite, korostus = false }: { arvo: number; selite: string
       korostus ? 'bg-surface text-accent-ink' : 'bg-sunken text-ink-strong'
     }`}
   >
-    <span className="text-xl font-bold tabular-nums">{arvo}</span>
-    <span className="text-[10px] font-medium text-ink-muted mt-0.5">{selite}</span>
+    <span className="text-2xl font-bold tabular-nums">{arvo}</span>
+    <span className="text-xs font-medium text-ink-muted mt-0.5">{selite}</span>
   </span>
 );
 
@@ -196,12 +196,12 @@ const HalytysKortti = ({
       {kriittinen ? <Siren size={18} className="shrink-0" /> : <Timer size={18} className="shrink-0" />}
       {TYYPPI_LABEL[halytys.tyyppi].toUpperCase()}
     </span>
-    <span className="block text-sm text-ink-body mt-2">Kohde: {kohde.name}</span>
-    <span className="block text-sm text-ink-body mt-1.5">
+    <span className="block text-base text-ink-body mt-2">Kohde: {kohde.name}</span>
+    <span className="block text-base text-ink-body mt-1.5">
       Tehtävälle menossa: {halytys.vartija || '—'}
     </span>
     {kriittinen && (
-      <span className="mt-3 flex items-center gap-1.5 text-xs font-bold text-danger-ink">
+      <span className="mt-3 flex items-center gap-1.5 text-sm font-bold text-danger-ink">
         <AlertTriangle size={13} />
         Avaa hälytys
       </span>

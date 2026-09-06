@@ -1026,12 +1026,19 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     ]
     : [];
 
+  // Sivuvalikosta siirrytään suoraan näkymästä toiseen, ja siksi edellinen on
+  // suljettava ensin. Työpöytäversiossa tätä ei tarvita, koska siellä näkymään mennään
+  // aina kohteen valikon kautta ja valikkoon paluu nollaa tilat. Ilman nollausta kaksi
+  // näkymätilaa oli yhtä aikaa päällä: ruudulla oli Kalusto mutta palkissa luki
+  // "Hälytykset", koska otsikko ja renderöintiketju lukevat tiloja eri järjestyksessä.
   const avaaMobiiliLinkki = (id: string) => {
     if (id === 'vaihda-kohde') {
       paataVuoro();
       return;
     }
-    if (vuoroKohde) avaaToiminto(id as Toiminto, vuoroKohde);
+    if (!vuoroKohde) return;
+    nollaaAlanakymat();
+    avaaToiminto(id as Toiminto, vuoroKohde);
   };
 
   // Ilmoituskello: avoimet hälytykset. Oma hälytys näkyy myös toisesta kohteesta —
@@ -1051,7 +1058,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const avaaIlmoitus = (id: string) => {
     const halytys = halytykset.find((h) => h.id === id);
     const kohde = kohteet.find((k) => k.id === halytys?.eventId) || vuoroKohde;
-    if (kohde) avaaToiminto('halytykset', kohde);
+    if (!kohde) return;
+    // Sama nollaus kuin valikossa: ilmoituksesta hypätään suoraan avoimen näkymän päälle.
+    nollaaAlanakymat();
+    avaaToiminto('halytykset', kohde);
   };
 
   useHistorianavigointi(nakyma, siirry);

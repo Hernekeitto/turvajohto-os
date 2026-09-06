@@ -200,6 +200,19 @@ body {
   color: var(--color-ink);
 }
 
+/* Kenttäversion perustekstikoko. 18 px eikä selaimen oletus 16: Tailwindin `text-sm`
+   (0,875rem) on sovelluksen leipätekstikoko, ja se on oletusjuurella 14 px — oikea koko
+   tietokoneen näytöllä, liian pieni puhelimessa kädessä. 18 px:n juurella siitä tulee
+   noin 16 px eli sama kuin Androidin oma leipäteksti, ja samalla suurenevat myös
+   painikkeiden koot ja välit, koska nekin ovat rem-yksiköitä.
+
+   Juuressa eikä komponenteissa: mobiiliversio näyttää samoja näkymiä kuin työpöytä
+   (kierros, hälytykset, raportointi), eikä niitä voi kirjoittaa toiseen kertaan eri
+   kokoisina. Attribuutin asettaa main.tsx vain /guard/mobile-polulla. */
+[data-laite="mobiili"] {
+  font-size: 18px;
+}
+
 /* Selaimen oma tekstin suurennus pois. Chrome kasvattaa leveäksi ilmoittautuvassa
    näkymässä osan tekstistä omin päin ("font boosting"), jolloin sama näkymä on
    puhelimessa eri kokoinen kuin missään muualla — ja mitoitus jota ei voi todentaa

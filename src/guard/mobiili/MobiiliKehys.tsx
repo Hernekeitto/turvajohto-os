@@ -105,7 +105,7 @@ export const MobiiliKehys = ({
           >
             {auki === 'valikko' ? <X size={26} /> : <Menu size={26} />}
           </button>
-          <p className="flex-1 min-w-0 truncate text-sm font-medium text-ink-on-dark-muted">{otsikko}</p>
+          <p className="flex-1 min-w-0 truncate text-base font-medium text-ink-on-dark-muted">{otsikko}</p>
           <button
             type="button"
             onClick={() => vaihda('ilmoitukset')}
@@ -116,7 +116,7 @@ export const MobiiliKehys = ({
               ? <BellRing size={24} className={kriittisia ? 'text-danger' : 'text-accent-on-dark'} />
               : <Bell size={24} />}
             {ilmoitukset.length > 0 && (
-              <span className="absolute top-1.5 right-1.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-danger text-white text-[11px] font-bold flex items-center justify-center">
+              <span className="absolute top-1.5 right-1.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-danger text-white text-xs font-bold flex items-center justify-center">
                 {ilmoitukset.length > 9 ? '9+' : ilmoitukset.length}
               </span>
             )}
@@ -160,8 +160,8 @@ export const MobiiliKehys = ({
                         }`}
                       />
                       <span className="min-w-0">
-                        <span className="block text-sm font-medium text-ink">{i.otsikko}</span>
-                        {i.kuvaus && <span className="block text-xs text-ink-muted mt-0.5">{i.kuvaus}</span>}
+                        <span className="block text-base font-medium text-ink">{i.otsikko}</span>
+                        {i.kuvaus && <span className="block text-sm text-ink-muted mt-0.5">{i.kuvaus}</span>}
                       </span>
                     </button>
                   ))}
@@ -202,27 +202,27 @@ export const MobiiliKehys = ({
             <div className="w-[72%] max-w-[19rem] bg-surface-dark text-ink-on-dark overflow-y-auto pt-[calc(env(safe-area-inset-top)+4.5rem)] pb-6 px-5">
               {vuoro ? (
                 <div className="mb-6">
-                  <p className="text-sm text-ink-on-dark-muted">Olet kirjautuneena vuoroon:</p>
-                  <p className="text-base font-bold mt-0.5">{vuoro.nimi}</p>
-                  <p className="text-xs text-ink-on-dark-muted mt-0.5">Alkoi klo {kellonaika(vuoro.alkoi)}</p>
+                  <p className="text-base text-ink-on-dark-muted">Olet kirjautuneena vuoroon:</p>
+                  <p className="text-lg font-bold mt-0.5">{vuoro.nimi}</p>
+                  <p className="text-sm text-ink-on-dark-muted mt-0.5">Alkoi klo {kellonaika(vuoro.alkoi)}</p>
                 </div>
               ) : (
-                <p className="mb-6 text-sm text-ink-on-dark-muted">Et ole kirjautuneena vuoroon.</p>
+                <p className="mb-6 text-base text-ink-on-dark-muted">Et ole kirjautuneena vuoroon.</p>
               )}
 
               {/* Man-down. Säätö ja kytkin ovat samassa: liikkumattomuuden raja ilman
                   kytkintä olisi asetus toiminnolle joka ei ole päällä. */}
               <div className="mb-6 border-t border-white/10 pt-5">
                 <label className="flex items-center justify-between gap-3 mb-3">
-                  <span className="text-sm font-medium">Man-down</span>
+                  <span className="text-base font-medium">Man-down</span>
                   <input
                     type="checkbox"
                     checked={mandown}
                     onChange={(e) => onMandown(e.target.checked)}
-                    className="w-5 h-5 accent-accent"
+                    className="w-6 h-6 accent-accent"
                   />
                 </label>
-                <p className="text-sm text-ink-on-dark-muted mb-2">Man-down ajastimen säätö 5 – 60 min:</p>
+                <p className="text-base text-ink-on-dark-muted mb-2">Man-down ajastimen säätö 5 – 60 min:</p>
                 <div className="flex items-center gap-3">
                   <input
                     type="range"
@@ -234,7 +234,7 @@ export const MobiiliKehys = ({
                     className="flex-1 accent-accent"
                     aria-label="Man-down ajastin minuutteina"
                   />
-                  <span className="w-14 shrink-0 text-right text-sm font-bold tabular-nums">{mandownMin} min</span>
+                  <span className="w-16 shrink-0 text-right text-base font-bold tabular-nums">{mandownMin} min</span>
                 </div>
                 <p className="text-xs text-ink-on-dark-muted mt-2 leading-relaxed">
                   Kuinka kauan laite saa olla liikkumatta ennen kuin se kysyy oletko kunnossa.
@@ -248,7 +248,7 @@ export const MobiiliKehys = ({
                     key={linkki.id}
                     type="button"
                     onClick={() => { setAuki(null); onLinkki(linkki.id); }}
-                    className="w-full flex items-center justify-between gap-2 py-3 text-left text-[15px] hover:text-accent-on-dark transition-colors"
+                    className="w-full flex items-center justify-between gap-2 py-3 text-left text-base hover:text-accent-on-dark transition-colors"
                   >
                     {linkki.label}
                     <ChevronRight size={16} className="text-ink-on-dark-muted shrink-0" />
@@ -261,7 +261,7 @@ export const MobiiliKehys = ({
                   <button
                     type="button"
                     onClick={() => { setAuki(null); onPaataVuoro(); }}
-                    className="w-full py-3 text-left text-[15px] text-warning hover:brightness-110 transition-all"
+                    className="w-full py-3 text-left text-base text-warning hover:brightness-110 transition-all"
                   >
                     Päätä vuoro
                   </button>
@@ -269,7 +269,7 @@ export const MobiiliKehys = ({
                 <button
                   type="button"
                   onClick={() => { setAuki(null); onTyopoyta(); }}
-                  className="w-full flex items-center gap-2 py-3 text-left text-[15px] text-ink-on-dark-muted hover:text-ink-on-dark transition-colors"
+                  className="w-full flex items-center gap-2 py-3 text-left text-base text-ink-on-dark-muted hover:text-ink-on-dark transition-colors"
                 >
                   <Monitor size={16} />
                   Vaihda työpöytäversioon
@@ -288,7 +288,7 @@ export const MobiiliKehys = ({
         {tyopoytatila && !vihjePiilotettu && (
           <div className="shrink-0 flex items-start gap-2 bg-warning-soft border-b border-warning/30 px-4 py-2.5">
             <TriangleAlert size={16} className="text-warning-ink shrink-0 mt-0.5" />
-            <p className="flex-1 text-xs text-warning-ink leading-relaxed">
+            <p className="flex-1 text-sm text-warning-ink leading-relaxed">
               Selain näyttää sivua työpöytätilassa, joten kaikki on pientä. Poista
               selaimen valikosta valinta <span className="font-bold">Työpöytäsivusto</span>.
             </p>
@@ -315,7 +315,7 @@ const PikaRivi = ({ ikoni, onClick, children }: { ikoni: ReactNode; onClick: () 
   <button
     type="button"
     onClick={onClick}
-    className="w-full flex items-center gap-3 px-4 py-3.5 text-left text-[15px] hover:bg-white/10 transition-colors"
+    className="w-full flex items-center gap-3 px-4 py-3.5 text-left text-base hover:bg-white/10 transition-colors"
   >
     <span className="text-ink-on-dark-muted shrink-0">{ikoni}</span>
     {children}
