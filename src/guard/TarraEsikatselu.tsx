@@ -2,9 +2,14 @@
 //
 // Esikatselu on tässä siksi, että tarra on FYYSINEN esine: se liimataan seinään ja sen
 // on toimittava vuosia. Ennen kuin arkki lähtee tulostimeen, on voitava tarkistaa että
-// koodi on oikea, että pisteen nimi on luettavissa ja että viivakoodin vieressä lukeva
-// tunniste vastaa sitä mitä pohjaan on kirjattu. Suoraan tulostimeen lähtevä nappi
-// tarkoitti käytännössä sitä, että virhe huomattiin vasta liimauksen jälkeen.
+// koodi on oikea ja että sen vieressä lukeva tunniste vastaa sitä mitä pohjaan on
+// kirjattu. Suoraan tulostimeen lähtevä nappi tarkoitti käytännössä sitä, että virhe
+// huomattiin vasta liimauksen jälkeen.
+//
+// TARRASSA EI OLE TEKSTIÄ, ja esikatselu näyttää sen sellaisena. Tarra jää asiakkaan
+// tiloihin kenen tahansa luettavaksi, joten siinä ei ole kohteen, pisteen eikä
+// kierroksen nimeä. Pisteen nimi näkyy tarran ULKOPUOLELLA — tulosteessa se jää
+// leikkuujätteeseen, ja täällä se kertoo mitä pistettä kortti esittää.
 //
 // Näkymä piirtää saman sisällön kuin tulostedokumentti (shared/tuloste.ts) mutta ei jaa
 // sen kanssa koodia: tuloste on merkkijono iframen sisään ja tämä on React-puu. Sama
@@ -74,44 +79,40 @@ export const TarraEsikatselu = ({
             <p className="text-sm text-ink-muted text-center py-10">Pohjassa ei ole tarkistuspisteitä.</p>
           ) : (
             /* Tarrat piirtyvät samassa muodossa kuin tulosteessa: kapea pystytarra,
-               kilpi ylhäällä ja koodi pystyssä. Esikatselu jonka mittasuhteet eroavat
-               tulosteesta ei kerro sitä mitä sen pitäisi kertoa. */
-            <div className="grid gap-3 grid-cols-2 sm:grid-cols-3">
-              {tarrat.map((tarra) => (
-                <div
-                  key={tarra.id}
-                  className="bg-white border-2 border-ink-strong rounded-2xl p-3 text-center flex flex-col items-center h-[22rem]"
-                >
-                  <ShieldCheck className="w-10 h-10 text-accent shrink-0 mt-1 mb-1.5" strokeWidth={1.9} />
-                  <span className="text-[9px] tracking-[0.12em] uppercase text-ink-muted leading-tight">
-                    {kohdeNimi}
-                  </span>
-                  <span className="block text-sm font-bold text-ink-strong leading-tight mt-0.5 mb-2">
-                    {tarra.nimi}
-                  </span>
-
-                  <div className="flex-1 min-h-0 flex items-center justify-center w-full">
-                    {tarra.koodi === 'code128' ? (
-                      tarra.viivakoodi
-                        ? <Viivakoodi teksti={tarra.viivakoodi} moduuli={2} korkeus={70} pysty />
-                        : <p className="text-xs text-ink-muted">Koodi muodostetaan tallennuksessa.</p>
-                    ) : tarra.qrDataUri ? (
-                      <img src={tarra.qrDataUri} alt="" className="max-h-full w-auto" />
-                    ) : (
-                      <p className="text-xs text-danger-ink">QR-koodia ei saatu palvelimelta.</p>
-                    )}
+               kilpi ylhäällä ja koodi pystyssä, ei muuta. Esikatselu jonka sisältö tai
+               mittasuhteet eroavat tulosteesta ei kerro sitä mitä sen pitäisi kertoa. */
+            <div className="grid gap-4 grid-cols-2 sm:grid-cols-3">
+              {tarrat.map((tarra, i) => (
+                <div key={tarra.id}>
+                  <div className="bg-white border-2 border-ink-strong rounded-2xl px-3 py-5 flex flex-col items-center h-[22rem]">
+                    <ShieldCheck className="w-12 h-12 text-[#4f46e5] shrink-0 mb-4" strokeWidth={1.9} />
+                    <div className="flex-1 min-h-0 flex items-center justify-center w-full">
+                      {tarra.koodi === 'code128' ? (
+                        tarra.viivakoodi
+                          ? <Viivakoodi teksti={tarra.viivakoodi} moduuli={2} korkeus={70} pysty />
+                          : <p className="text-xs text-ink-muted">Koodi muodostetaan tallennuksessa.</p>
+                      ) : tarra.qrDataUri ? (
+                        <img src={tarra.qrDataUri} alt="" className="max-h-full w-auto" />
+                      ) : (
+                        <p className="text-xs text-danger-ink">QR-koodia ei saatu palvelimelta.</p>
+                      )}
+                    </div>
                   </div>
 
-                  <span className="text-[9px] text-ink-muted mt-2">{pohjaNimi}</span>
-                  <span className="inline-flex items-center gap-1 text-[9px] text-ink-muted mt-0.5 leading-tight">
+                  {/* Tarran ulkopuolella: asennusohje, joka jää tulosteessa
+                      leikkuujätteeseen. */}
+                  <p className="text-xs text-ink-body text-center mt-1.5 leading-tight">
+                    {i + 1}. {tarra.nimi}
+                  </p>
+                  <p className="inline-flex w-full justify-center items-center gap-1 text-[10px] text-ink-muted mt-0.5">
                     {tarra.koodi === 'code128'
-                      ? <><ScanBarcode size={10} className="shrink-0" /> Kameralla tai lukijalla</>
-                      : <><QrCode size={10} className="shrink-0" /> Puhelimen kameralla</>}
-                  </span>
+                      ? <><ScanBarcode size={10} className="shrink-0" /> Viivakoodi</>
+                      : <><QrCode size={10} className="shrink-0" /> QR-koodi</>}
+                  </p>
                   {tarra.vaadiKoodi && (
-                    <span className="text-[9px] font-bold text-warning-ink mt-0.5">
+                    <p className="text-[10px] font-bold text-warning-ink text-center mt-0.5">
                       Kuitataan vain lukemalla
-                    </span>
+                    </p>
                   )}
                 </div>
               ))}
