@@ -89,6 +89,18 @@ document.documentElement.dataset.tuote = tuote === 'landing' ? 'os' : tuote
 // manifestia sovellusta ei voi asentaa laitteelle lainkaan (ks. asennus/LUEMINUT.md).
 asetaKuvakkeetJaManifesti(tuote)
 
+// Kenttäversio piirretään ruudun reunasta reunaan, myös lovien ja pyöristettyjen
+// kulmien alle. Ilman viewport-fit=cover selaimen env(safe-area-inset-*) on aina nolla,
+// jolloin mobiilikuoren yläpalkki jäisi asennetussa sovelluksessa kellon ja akun alle —
+// eli juuri se turvaväli jota varten insetit ovat olemassa jäisi laskematta.
+//
+// VAIN mobiiliversiolle: sama index.html palvelee mainossivua ja EVENT-puolta, jotka
+// eivät varaa turvaväliä eivätkä siksi saa piirtyä lovien alle.
+if (guardMobiili) {
+  document.querySelector('meta[name="viewport"]')
+    ?.setAttribute('content', 'width=device-width, initial-scale=1.0, viewport-fit=cover')
+}
+
 // Näytetään latauksen ajaksi tyhjä sivu eikä pyörivää indikaattoria: nippu tulee
 // samalta palvelimelta millisekunneissa, ja välähtävä spinneri näyttäisi virheeltä.
 const Latautuu = <div className="min-h-screen bg-canvas" />

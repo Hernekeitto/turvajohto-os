@@ -9,8 +9,13 @@
 // se piirtyy puhelimen muotoisena kehyksenä. Se ei ole koriste: mobiilinäkymää
 // kehitetään ja katselmoidaan tietokoneella, ja ilman kiinteää kuvasuhdetta se näyttäisi
 // siellä aivan toiselta kuin laitteessa jolle se on tehty.
-import { useState, type ReactNode } from 'react';
-import { Bell, BellRing, Camera, ChevronRight, LogOut, Menu, Monitor, MoreVertical, Send, X } from 'lucide-react';
+//
+// Kehyksen ehto on index.css:ssä (.mobiili-kehys) eikä Tailwindin md:-luokissa, koska
+// se ei ole pelkkä leveysehto: kehys vaatii MYÖS hiiren (pointer: fine). Puhelin
+// vaaka-asennossa on 915 px leveä, ja silloin leveyteen sidottu kehys puristi sovelluksen
+// 164 pikselin levyiseksi malliksi keskelle ruutua. Ks. index.css.
+import { useEffect, useState, type ReactNode } from 'react';
+import { Bell, BellRing, Camera, ChevronRight, LogOut, Menu, Monitor, MoreVertical, Send, TriangleAlert, X } from 'lucide-react';
 
 export type MobiiliIlmoitus = {
   id: string;
@@ -58,14 +63,37 @@ export const MobiiliKehys = ({
   // Yksi paneeli kerrallaan auki: kolme päällekkäistä paneelia puhelimen ruudulla
   // tarkoittaisi että käyttäjä sulkee niitä sen sijaan että tekisi työtä.
   const [auki, setAuki] = useState<'valikko' | 'pika' | 'ilmoitukset' | null>(null);
+  // Selaimen "työpöytäsivusto"-tila. Silloin selain valehtelee leveydestään (ilmoittaa
+  // esimerkiksi 980 px vaikka ruutu on 412 px) ja skaalaa koko sivun mahtumaan, jolloin
+  // teksti on kolmasosan kokoista ja kaikkea joutuu zoomaamaan.
+  //
+  // TÄTÄ EI VOI KORJATA TYYLEILLÄ: asetus ohittaa sivun viewport-määrittelyn, eikä sivu
+  // voi kytkeä sitä pois. Ainoa mitä sovellus voi tehdä on kertoa mistä on kyse — muuten
+  // vika näyttää sovelluksen viasta ja vartija zoomaa koko vuoron.
+  const [tyopoytatila, setTyopoytatila] = useState(false);
+  const [vihjePiilotettu, setVihjePiilotettu] = useState(false);
   const kriittisia = ilmoitukset.some((i) => i.taso === 'kriittinen');
 
   const vaihda = (mika: 'valikko' | 'pika' | 'ilmoitukset') =>
     setAuki((edellinen) => (edellinen === mika ? null : mika));
 
+  useEffect(() => {
+    try {
+      // Kosketuslaite jonka ilmoittama leveys on selvästi ruutua suurempi. Kerroin on
+      // väljä (1,4) tarkoituksella: vaaka-asennossa molemmat luvut kasvavat yhtä matkaa,
+      // joten se ei laukea siitä että puhelin käännetään.
+      const kosketus = window.matchMedia('(pointer: coarse)').matches;
+      const ruutu = window.screen?.width || 0;
+      setTyopoytatila(kosketus && ruutu > 0 && window.innerWidth > ruutu * 1.4);
+    } catch {
+      // Jos selain ei kerro ruudun kokoa, vihjettä ei näytetä. Arvaus olisi tässä
+      // pahempi kuin vaikeneminen.
+    }
+  }, []);
+
   return (
-    <div className="min-h-[100dvh] bg-sunken flex justify-center md:p-6">
-      <div className="relative flex flex-col w-full min-h-[100dvh] overflow-hidden bg-canvas text-ink md:w-auto md:min-h-0 md:h-[min(calc(100dvh-3rem),920px)] md:aspect-[9/20] md:rounded-[2rem] md:shadow-2xl">
+    <div className="mobiili-tausta">
+      <div className="mobiili-kehys text-ink">
         {/* --- Yläpalkki --- */}
         <header className="relative z-30 shrink-0 bg-surface-dark text-ink-on-dark flex items-center gap-2 px-3 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
           <button
@@ -254,6 +282,24 @@ export const MobiiliKehys = ({
               onClick={() => setAuki(null)}
               className="flex-1 bg-black/40"
             />
+          </div>
+        )}
+
+        {tyopoytatila && !vihjePiilotettu && (
+          <div className="shrink-0 flex items-start gap-2 bg-warning-soft border-b border-warning/30 px-4 py-2.5">
+            <TriangleAlert size={16} className="text-warning-ink shrink-0 mt-0.5" />
+            <p className="flex-1 text-xs text-warning-ink leading-relaxed">
+              Selain näyttää sivua työpöytätilassa, joten kaikki on pientä. Poista
+              selaimen valikosta valinta <span className="font-bold">Työpöytäsivusto</span>.
+            </p>
+            <button
+              type="button"
+              onClick={() => setVihjePiilotettu(true)}
+              aria-label="Piilota ilmoitus"
+              className="shrink-0 -mt-0.5 -mr-1 w-7 h-7 flex items-center justify-center rounded-md text-warning-ink hover:bg-warning/10 transition-colors"
+            >
+              <X size={15} />
+            </button>
           </div>
         )}
 

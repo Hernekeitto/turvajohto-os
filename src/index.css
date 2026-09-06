@@ -199,3 +199,77 @@ body {
   background-color: var(--color-canvas);
   color: var(--color-ink);
 }
+
+/* Selaimen oma tekstin suurennus pois. Chrome kasvattaa leveäksi ilmoittautuvassa
+   näkymässä osan tekstistä omin päin ("font boosting"), jolloin sama näkymä on
+   puhelimessa eri kokoinen kuin missään muualla — ja mitoitus jota ei voi todentaa
+   kehityksessä on mitoitus jota ei ole. Käyttäjän oma zoomaus toimii normaalisti. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* ---------------------------------------------------------------------------
+   GUARD-MOBIILIVERSION KEHYS (/guard/mobile)
+
+   Kenttäversio täyttää puhelimen ruudun. Työpöytäselaimessa se piirtyy puhelimen
+   muotoisena kehyksenä (20:9), jotta näkymän voi katselmoida oikean kokoisena
+   silloin kun sitä kehitetään tietokoneella.
+
+   KEHYS EI SAA KOSKAAN NÄKYÄ PUHELIMESSA, ja siksi ehtona on `pointer: fine`
+   eikä pelkkä leveys. Pelkkä leveysehto (`md:` = 768 px) oli virhe joka näkyi
+   vasta oikealla laitteella: puhelin VAAKA-ASENNOSSA on noin 915 px leveä, ja
+   samoin selain jonka käyttäjä on asettanut "työpöytäsivusto"-tilaan. Silloin
+   sovellus piirsi itsensä 164 pikselin levyiseksi puhelinmalliksi keskelle
+   ruutua, ja käyttäjän piti zoomata nähdäkseen mitään.
+
+   Kosketuslaite saa siis aina koko ruudun riippumatta siitä mitä se leveydekseen
+   ilmoittaa. Kosketusnäytöllinen kannettava ilmoittaa osoittimekseen hiiren
+   (fine), joten se saa kehyksen kuten muutkin tietokoneet.
+   --------------------------------------------------------------------------- */
+.mobiili-tausta {
+  min-height: 100dvh;
+  display: flex;
+  justify-content: center;
+  background-color: var(--color-sunken);
+}
+
+.mobiili-kehys {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 100dvh;
+  overflow: hidden;
+  background-color: var(--color-canvas);
+}
+
+@media (min-width: 48rem) and (pointer: fine) {
+  .mobiili-tausta { padding: 1.5rem; }
+
+  .mobiili-kehys {
+    width: auto;
+    min-height: 0;
+    /* Korkeus ratkaisee koon ja kuvasuhde leveyden: 20:9 on nykyisten
+       Android-puhelimien keskiverto. */
+    height: min(calc(100dvh - 3rem), 920px);
+    aspect-ratio: 9 / 20;
+    border-radius: 2rem;
+    box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+  }
+}
+
+/* Vaakasuuntaiset turvavälit. Pystysuunnassa ne ovat komponentin omissa luokissa
+   (yläpalkin yläreuna, sisällön alareuna), mutta vaaka-asennossa puhelimen lovi on
+   ruudun SIVULLA — ja viewport-fit=cover päästää sisällön sen alle. Ilman näitä
+   valikkopainike jäisi loven taakse juuri siinä asennossa jossa sitä eniten tarvitaan.
+   Pystyasennossa insetit ovat nollia, jolloin max() antaa saman arvon kuin ennen. */
+.mobiili-kehys > header {
+  padding-left: max(0.75rem, env(safe-area-inset-left));
+  padding-right: max(0.75rem, env(safe-area-inset-right));
+}
+
+.mobiili-kehys > main {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
