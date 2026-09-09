@@ -6,6 +6,7 @@
 // tarkoittaisi, että hätäpainike hälyttää väärän kohteen numeroihin.
 import { Building2, ChevronRight } from 'lucide-react';
 
+import { LaiteSidonta } from '../../shared/komponentit/LaiteSidonta';
 import type { Kohde } from '../tyypit';
 
 type Props = {
@@ -50,5 +51,12 @@ export const Vuorovalinta = ({ kohteet, ladattu, onValitse }: Props) => (
         ))}
       </div>
     )}
+
+    {/* Laitteen sidonta on kertaluonteinen käyttöönotto, ja se kuuluu tähän näkymään
+        kahdesta syystä: vartijalla ei ole asetusoikeuksia, ja puhelimen käyttöönotto ja
+        vuoroon kirjautuminen ovat ihmiselle sama hetki. Sidottunakin kortti jää näkyviin
+        ja kertoo laitteen mallin: väärä malli on ainoa tapa huomata että sidonta on
+        vanhassa puhelimessa. */}
+    <LaiteSidonta />
   </div>
 );

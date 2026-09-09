@@ -22,7 +22,11 @@ import {
 import { readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage } from './store.js';
 import { isAllowedFile, saveUpload, getUploadPath, deleteUpload, collectGarbage } from './uploads.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
-import { istunnonKesto } from './istunto.js';
+import { istunnonKesto, SOVELLUS_VUOROKAUDET } from './istunto.js';
+import {
+  KOODI_VOIMASSA_MS, LAITTEITA_TUNNUSTA_KOHDEN,
+  kelpaakoKoodi, laitteenTietue, lueAvain, luoKoodi, luoNonceMuisti, tarkistaAllekirjoitus,
+} from './laite.js';
 import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
 import {
   luoToken,
@@ -133,6 +137,13 @@ app.use(express.json({
   // kaikilla muilla reiteillä, joilla tätä ei tarvita.
   verify: (req, res, buf) => {
     if (req.url && req.url.startsWith('/api/webhooks/')) req.rawBody = buf.toString('utf8');
+    // Sidotun laitteen pyyntö allekirjoitetaan runkoineen (laite.js: kanoninenViesti).
+    // Tarkistus on tehtävä TÄSMÄLLEEN siitä tavujonosta jonka laite allekirjoitti:
+    // JSON.parse ja uudelleenserialisointi voisivat muuttaa välilyöntejä, kenttien
+    // järjestystä tai lukujen esitystä, ja allekirjoitus hajoaisi näkymättömästä syystä.
+    if (req.headers && req.headers['x-turvajohto-allekirjoitus']) {
+      req.rawBody = buf.toString('utf8');
+    }
   },
 }));
 
@@ -242,9 +253,67 @@ function onSovellusIstunto(req) {
   return lueIstuntoToken(req)?.sovellus === true;
 }
 
+// Nähdyt noncet aikaikkunan ajan. Muistissa eikä levyllä — ks. laite.js:n perustelu.
+const nonceMuisti = luoNonceMuisti();
+
+// Sidotun laitteen tunnistus allekirjoituksesta.
+//
+// EI EVÄSTETTÄ EIKÄ TOKENIA. Laitteella ei ole levyllä mitään salaista: se allekirjoittaa
+// jokaisen pyynnön Keystoressa olevalla avaimellaan, ja tässä tarkistetaan että
+// allekirjoitus täsmää tallennettuun julkiseen avaimeen. Ks. laite.js.
+//
+// Tulos välimuistitetaan pyyntöön, ja se on VÄLTTÄMÄTÖNTÄ eikä optimointi: nonce
+// merkitään nähdyksi onnistuneen tarkistuksen jälkeen, joten toinen kutsu samassa
+// pyynnössä hylkäisi oman pyyntönsä toistona.
+function laiteIstunto(req) {
+  if (req._laite !== undefined) return req._laite;
+  req._laite = null;
+
+  const laiteId = req.headers?.['x-turvajohto-laite'];
+  const allekirjoitus = req.headers?.['x-turvajohto-allekirjoitus'];
+  const nonce = req.headers?.['x-turvajohto-nonce'];
+  if (!laiteId || !allekirjoitus) return null;
+
+  const laite = (readCollection('devices') || []).find((l) => l.id === laiteId) || null;
+  const user = laite ? findUser(laite.kayttaja) : null;
+  if (!user) return null;
+
+  const tulos = tarkistaAllekirjoitus({
+    laite,
+    metodi: req.method,
+    // Sama polku kuin laite allekirjoitti, kyselymerkkijono mukaan lukien. `originalUrl`
+    // Expressissä, `url` kanavan kättelyssä — kanava ei kulje Expressin läpi.
+    polku: req.originalUrl || req.url,
+    aika: req.headers['x-turvajohto-aika'],
+    nonce,
+    allekirjoitus,
+    runko: req.rawBody || '',
+    mitatoityMs: user.session_invalidated_at || null,
+    ylarajaMs: SOVELLUS_VUOROKAUDET * 24 * 60 * 60 * 1000,
+    onkoNahty: (n) => nonceMuisti.onkoNahty(n),
+  });
+
+  if (!tulos.ok) {
+    // Hylätty allekirjoitus on tietoturvatapahtuma eikä tavallinen 401: se tarkoittaa
+    // joko rikkinäistä laitetta tai yritystä esiintyä sellaisena. Syy talteen, jotta
+    // "miksi vartijan puhelin ei pääse sisään" on selvitettävissä jälkikäteen.
+    logAudit({ user: laite.kayttaja, action: 'laite_hylatty', laite: laite.id, syy: tulos.syy, ip: req.ip });
+    return null;
+  }
+
+  nonceMuisti.merkitse(String(nonce));
+  req._laite = laite;
+  return laite;
+}
+
 function getSessionUser(req) {
   const payload = lueIstuntoToken(req);
-  if (!payload) return null;
+  // Ei evästettä: pyyntö voi silti olla sidotulta laitteelta. Sovellus ei saa evästettä
+  // koskaan, koska se ei kirjaudu itse — sen pääsy on sidonta ja allekirjoitus.
+  if (!payload) {
+    const laite = laiteIstunto(req);
+    return laite ? laite.kayttaja : null;
+  }
   const user = findUser(payload.sub);
   if (!user) return null;
   // Admin on painanut "Kirjaa käyttäjä ulos" -painiketta — kaikki ennen sitä hetkeä
@@ -332,7 +401,7 @@ app.get('/api/session', (req, res) => {
   // (hiiri/näppäimistö) — tämä pitää ei-adminin liukuvan istunnon voimassa niin kauan
   // kuin sovellusta oikeasti käytetään. Uusinta saa SAMAN keston kuin kirjautuminen
   // antoi, ks. setSessionCookie.
-  if (user.role !== 'admin') {
+  if (user.role !== 'admin' && !laiteIstunto(req)) {
     setSessionCookie(res, user.username, user.role, onSovellusIstunto(req));
   }
   res.json({
@@ -406,7 +475,10 @@ function requireAuth(req, res, next) {
   // evästeen voimassaoloa uudelleen alkuperäisen keston verran eteenpäin (selaimessa
   // tunnin, sovelluksessa rajoittamattoman ajan — ks. istunto.js). Admin pysyy
   // kiinteässä istunnossa, jota automaattinen käyttämättömyyskatkaisu ei koske.
-  if (user.role !== 'admin') {
+  // Sidotulla laitteella ei ole evästettä eikä sille anneta sellaista: sen pääsy on
+  // sidonta ja allekirjoitus, ja evästeen myöntäminen loisi rinnakkaisen istunnon jota
+  // pakkouloskirjaus ei enää koskisi samalla säännöllä.
+  if (user.role !== 'admin' && !laiteIstunto(req)) {
     setSessionCookie(res, user.username, user.role, onSovellusIstunto(req));
   }
   next();
@@ -443,7 +515,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -987,6 +1059,154 @@ app.post('/api/change-password', requireAuth, loginLimiter, (req, res) => {
 // käytössä — datahakemiston tiedostojärjestelmä on sama levy jolla koko palvelin on.
 // Käytetään fs.statfsSync:iä eikä ulkoista komentoa (df), jotta reitti ei riipu
 // shellistä eikä sen tulosteen muodosta.
+// ====================== LAITESIDONTA (erä 10) ======================
+//
+// Sovellus ei kirjaudu itse: vartija kirjautuu selaimessa normaalisti, pyytää
+// sidontakoodin, ja selain antaa sen sovellukselle intentin kautta. Sovellus vaihtaa
+// koodin laitetunnukseksi ja allekirjoittaa sen jälkeen jokaisen pyyntönsä Keystoressa
+// olevalla avaimellaan. Säännöt: server/laite.js.
+//
+// Päätökset 9.9.2026: vartija sitoo itse, yksi laite tunnusta kohden, ja laitteen vaihto
+// tapahtuu hälytyskeskuksen tekemällä nollauksella.
+
+// Sidonta ja rekisteröinti ovat molemmat harvinaisia toimintoja, ja rekisteröinti on
+// lisäksi kirjautumaton — sama tiukka raja kuin kirjautumisella.
+const laiteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Liikaa sidontayrityksiä. Yritä hetken kuluttua uudelleen.' },
+});
+
+// Kuka saa nollata sidonnan. Hälytyskeskus eikä vain pääkäyttäjä, koska laite vaihdetaan
+// keskellä yötä vuoron alussa ja silloin päivystäjä on se joka on paikalla.
+// `guard_dispatch` on GLOBAL_NODES-solmu (permissions.js), joten tarkistus ei ole
+// kohdekohtainen — päivystys on määritelmällisesti kohteiden yli menevä tehtävä.
+const saaHallitaLaitteita = (req) =>
+  req.role === 'admin' || canEdit(req.permissions, null, 'guard_dispatch');
+
+// Vartija pyytää sidontakoodin omalle tunnukselleen.
+app.post('/api/laite/sido', requireAuth, laiteLimiter, (req, res) => {
+  const laitteet = readCollection('devices') || [];
+  if (laitteet.filter((l) => l.kayttaja === req.username).length >= LAITTEITA_TUNNUSTA_KOHDEN) {
+    return res.status(409).json({
+      ok: false,
+      error: 'Tunnuksella on jo sidottu laite. Hälytyskeskus voi nollata sidonnan, jos laite on vaihtunut.',
+    });
+  }
+
+  const nyt = Date.now();
+  const koodit = readCollection('deviceCodes') || [];
+  // Vanhentuneet pois ja käyttäjän oma edellinen koodi kumoutuu: uusi pyyntö tarkoittaa
+  // että edellinen ei mennyt perille, eikä kahta voimassa olevaa koodia samalle
+  // tunnukselle ole mitään syytä olla olemassa.
+  const jaljelle = koodit.filter((k) => k.eraantyy > nyt && k.kayttaja !== req.username);
+  const { koodi, tietue } = luoKoodi({ kayttaja: req.username, nyt });
+  writeCollection('deviceCodes', [...jaljelle, tietue]);
+
+  logAudit({ user: req.username, action: 'laite_sidontakoodi', ip: req.ip });
+  res.json({ ok: true, koodi, voimassaMs: KOODI_VOIMASSA_MS });
+});
+
+// Sovellus vaihtaa koodin laitetunnukseksi. EI requireAuth: sovelluksella ei ole
+// istuntoa ennen tätä hetkeä — koodi ON tässä se todiste, ja se on kertakäyttöinen,
+// lyhytikäinen ja syntynyt kirjautuneelle istunnolle.
+app.post('/api/laite/rekisteroi', laiteLimiter, (req, res) => {
+  const { koodi, julkinenAvain, malli } = req.body || {};
+  const nyt = Date.now();
+  const koodit = readCollection('deviceCodes') || [];
+
+  const osuma = koodit.find((k) => kelpaakoKoodi(k, koodi, nyt).ok) || null;
+  if (!osuma) {
+    logAudit({ action: 'laite_rekisterointi_hylatty', syy: 'koodi', ip: req.ip });
+    return res.status(400).json({ ok: false, error: 'Sidontakoodi on virheellinen tai vanhentunut.' });
+  }
+
+  // Kelvoton avain hylätään TÄSSÄ eikä vasta ensimmäisessä allekirjoitetussa pyynnössä:
+  // muuten sidonta näyttäisi onnistuvan ja laite olisi käyttökelvoton vasta kentällä.
+  if (!lueAvain(julkinenAvain)) {
+    logAudit({ user: osuma.kayttaja, action: 'laite_rekisterointi_hylatty', syy: 'avain', ip: req.ip });
+    return res.status(400).json({ ok: false, error: 'Laitteen avain on kelvoton.' });
+  }
+
+  const laitteet = readCollection('devices') || [];
+  if (laitteet.filter((l) => l.kayttaja === osuma.kayttaja).length >= LAITTEITA_TUNNUSTA_KOHDEN) {
+    return res.status(409).json({ ok: false, error: 'Tunnuksella on jo sidottu laite.' });
+  }
+
+  const laite = laitteenTietue({ kayttaja: osuma.kayttaja, julkinenAvain, malli, nyt });
+  writeCollection('devices', [...laitteet, laite]);
+  // Koodi pois heti: kertakäyttöisyys ei saa nojata pelkkään kaytetty-lippuun, koska
+  // koodia ei tarvita enää mihinkään.
+  writeCollection('deviceCodes', koodit.filter((k) => k !== osuma));
+
+  logAudit({ user: osuma.kayttaja, action: 'laite_sidottu', laite: laite.id, malli: laite.malli, ip: req.ip });
+  res.json({ ok: true, laiteId: laite.id, kayttaja: osuma.kayttaja });
+});
+
+// Oman tunnuksen sidontatilanne SELAIMELLE. Eri reitti kuin /api/laite/oma, koska kysyjä
+// on eri: selain kysyy "onko tunnuksellani laite", sovellus kysyy "kelpaanko minä".
+//
+// Malli ja sidonta-aika kerrotaan, ja se on tarkoitus: jos vartija näkee tässä jonkun
+// toisen puhelimen mallin, hän tietää sidonnan olevan vanhassa laitteessa ja osaa pyytää
+// hälytyskeskukselta nollausta.
+app.get('/api/laite/tila', requireAuth, (req, res) => {
+  const laite = (readCollection('devices') || []).find((l) => l.kayttaja === req.username) || null;
+  res.json({
+    ok: true,
+    sidottu: !!laite,
+    laite: laite ? { id: laite.id, malli: laite.malli, sidottu: laite.sidottu } : null,
+  });
+});
+
+// Sovellus tarkistaa oman sidontansa. Vastaa myös silloin kun sidonta on nollattu —
+// juuri se on tieto jonka sovellus tarvitsee tietääkseen että on aika sitoa uudelleen.
+app.get('/api/laite/oma', (req, res) => {
+  const laite = laiteIstunto(req);
+  if (!laite) return res.status(401).json({ ok: false, sidottu: false });
+  res.json({ ok: true, sidottu: true, laiteId: laite.id, kayttaja: laite.kayttaja });
+});
+
+// Laitelista hälytyskeskukselle ja pääkäyttäjälle. Julkinen avain EI ole mukana: se ei
+// ole salaisuus, mutta se ei myöskään kuulu listanäkymään jonka tehtävä on kertoa kenellä
+// on laite ja mikä se on.
+app.get('/api/laitteet', requireAuth, (req, res) => {
+  if (!saaHallitaLaitteita(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta laitteiden hallintaan.' });
+  }
+  const laitteet = (readCollection('devices') || []).map((l) => ({
+    id: l.id,
+    kayttaja: l.kayttaja,
+    malli: l.malli,
+    sidottu: l.sidottu,
+  }));
+  res.json({ ok: true, laitteet });
+});
+
+// Sidonnan nollaus. Tämä on PURKU eikä uuden laitteen hyväksyntä: hälytyskeskus poistaa
+// vanhan sidonnan ja jättää tilan auki, eikä näe tai valitse uutta laitetta. Siksi
+// väärin käytettynä tämä pahimmillaan pakottaa vartijan sitomaan laitteensa uudelleen
+// eikä anna kenellekään pääsyä mihinkään.
+app.post('/api/laite/:id/nollaa', requireAuth, (req, res) => {
+  if (!saaHallitaLaitteita(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta laitteiden hallintaan.' });
+  }
+  const laitteet = readCollection('devices') || [];
+  const laite = laitteet.find((l) => l.id === req.params.id);
+  if (!laite) return res.status(404).json({ ok: false, error: 'Laitetta ei löydy.' });
+
+  writeCollection('devices', laitteet.filter((l) => l.id !== laite.id));
+  logAudit({
+    user: req.username,
+    action: 'laite_nollattu',
+    laite: laite.id,
+    kohdeKayttaja: laite.kayttaja,
+    ip: req.ip,
+  });
+  res.json({ ok: true });
+});
+
 // ====================== KÄYTTÄJÄTASOT ======================
 // Tasot määräävät sivukartta-oikeudet (ks. roles.js). Vain pääkäyttäjä hallinnoi niitä.
 app.get('/api/roles', requireAuth, requireAdmin, (req, res) => {

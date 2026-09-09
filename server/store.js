@@ -106,6 +106,15 @@ const COLLECTIONS = {
   // ownerId on tapahtuman TAI kohteen id, ja rakenne on identtinen. Tapahtuman purku ja
   // vartiointikohteen jaksoraportti eroavat vain aikaikkunassa.
   debriefs: 'debriefs.json',
+  // --- Laitesidonta (erä 10) ---
+  // Sidotut laitteet: tunnus, käyttäjä, julkinen avain ja sidonta-aika. EI salaisuuksia —
+  // yksityinen avain on laitteen Keystoressa eikä poistu sieltä, ja julkinen avain on
+  // määritelmällisesti julkinen. Yksi laite tunnusta kohden; vaihto tapahtuu
+  // hälytyskeskuksen tekemällä nollauksella.
+  devices: 'devices.json',
+  // Lyhytikäiset sidontakoodit. Koodi itse on TIIVISTEENÄ samasta syystä kuin salasanat:
+  // se on viiden minuutin ajan pääsy tunnukseen. Kokoelma on lähes aina tyhjä.
+  deviceCodes: 'deviceCodes.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain

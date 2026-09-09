@@ -293,10 +293,20 @@ tärkein lisäarvo olisi juuri se että hälytys tavoittaa taskussa olevan puhel
 ilman pushia sovellus on sama kuin selain, omalla kuvakkeella. Oma eränsä
 (Web Push tai FCM, tilausten hallinta, kytkentä erän 7 hälytysketjuun).
 
+Ratkaistu määrittelyssä `NATIIVI.md`: vuoron aikana ilmoitukset kulkevat sitä samaa
+`/api/kanava`-yhteyttä, jonka natiivi taustapalvelu pitää auki — eli ilman FCM:ää ja
+ilman VAPID-avaimia. FCM jää vain siihen tapaukseen, jossa vartijan vuoro **ei** ole
+käynnissä.
+
 **8. Sijaintiseurannan juridiikka.** Natiivisovellus tekee taustasijainnista teknisesti
 mahdollisen ja Play Store kysyy siitä erikseen
 (`ACCESS_BACKGROUND_LOCATION` on tiukimmin valvottuja oikeuksia). Panokset nousevat:
 selaimessa seuranta loppuu kun välilehti suljetaan.
+
+Tekninen osa pienenee kuitenkin siitä mitä tässä arvioitiin: etualalta käynnistetty
+`location`-tyyppinen foreground service riittää, joten `ACCESS_BACKGROUND_LOCATION`-lupaa
+ei tarvita lainkaan (`NATIIVI.md`, perusta 2). Juridinen osa ei pienene — YT-menettely,
+selosteen päivitys ja DPIA ovat yhä auki, ks. `NATIIVI.md`:n juridiikkakohta.
 
 ## Tietosuojaselosteen avoimet kohdat
 

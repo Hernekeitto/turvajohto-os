@@ -391,6 +391,22 @@ const COLLECTIONS = {
   // hälytykset olematta itse kentällä. Se on globaali solmu, joten se toimii tässä
   // ohituksena kaikkiin kohteisiin — eventAccess rajaa silti sen mitkä kohteet hänelle
   // ylipäätään kuuluvat.
+  // Laitesidonta (erä 10). Molemmat ovat PALVELIMEN_YLLAPITAMAT-kokoelmia, eikä niitä
+  // lueta yleisellä /api/data-reitillä lainkaan: laitelista on omalla reitillään
+  // (/api/laitteet), jossa oikeus on pääkäyttäjä tai hälytyskeskus, ja sidontakoodit ovat
+  // tiivisteitä joita ei näytetä kenellekään. Tyhjä `view` tarkoittaa siis "ei tätä
+  // kautta kenellekään" — se on päätös eikä unohdus, ja käynnistysvahti pakottaa
+  // kirjaamaan sen tänne näkyviin.
+  devices: {
+    view: [],
+    touch: () => [],
+    eventScoped: false,
+  },
+  deviceCodes: {
+    view: [],
+    touch: () => [],
+    eventScoped: false,
+  },
   alerts: {
     view: ['alarms', 'guard_alarms', 'guard_dispatch'],
     touch: () => [],

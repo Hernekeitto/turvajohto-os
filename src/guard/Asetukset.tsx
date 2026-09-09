@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { Kayttajatasot } from '../shared/asetukset/Kayttajatasot';
 import { Kayttajat } from '../shared/asetukset/Kayttajat';
+import { Laitteet } from '../shared/asetukset/Laitteet';
 import { Tallennustila } from '../shared/asetukset/Tallennustila';
 import { Sailytysajat } from '../shared/asetukset/Sailytysajat';
 import { ASETUSTEN_SIVUKARTAT } from '../asetusten-sivukartat';
@@ -87,6 +88,10 @@ export const Asetukset = ({ raportit, isAdmin, onHavita, onTakaisin }: Props) =>
         isAdmin={isAdmin}
         onMuuttui={() => { haeTasot(); haeKayttajat(); }}
       />
+
+      {/* Laitesidonnat GUARD-puolella eikä EVENTissä: sovellus on vartijan työkalu, ja
+          nollausoikeus on hälytyskeskuksella joka on tämän puolen käsite. */}
+      <Laitteet />
 
       <Tallennustila isAdmin={isAdmin} />
 
