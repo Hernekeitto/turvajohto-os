@@ -4,31 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tietosuojaseloste – Turvajohto OS</title>
-    <!--
-      TIETOSUOJASELOSTE. Julkinen sivu, johon Google Play viittaa sovelluksen
-      tietosuojaselosteena (pakollinen kenttä Play Consolessa).
+    <!-- Oma staattinen sivu eikä sovelluksen näkymä: selosteen on oltava
+         luettavissa ilman kirjautumista. -->
 
-      OMA STAATTINEN SIVU eikä sovelluksen näkymä, koska selosteen on oltava luettavissa
-      ILMAN KIRJAUTUMISTA: Play-arvioija, sovelluskaupan kävijä ja rekisteröity eivät
-      pääse sovellukseen sisään. Sama syy kuin jako.html:llä ja ilmoitus.html:llä.
-
-      Toisin kuin ne, tämä sivu EI ole noindex: selosteen kuuluu löytyä.
-
-      --- MITÄ TÄSSÄ ON JA MITÄ EI ---
-
-      Sisältö on johdettu siitä mitä koodi oikeasti tekee (kenttäsalaus store.js,
-      säilytysajat shared/sailytysaika.ts, sijainti server/sijainti.js, tekstiviestit
-      server/bulksms.js). Se on siis paikkansapitävä kuvaus järjestelmästä.
-
-      Se EI ole oikeudellinen tarkistus. Käsittelyperusteet ja säilytysajat muiden kuin
-      tapahtumailmoitusten osalta on vahvistettava ennen kuin sovellukseen viedään
-      ensimmäinenkään oikea henkilötieto.
-
-      Ne kohdat ovat HTML-kommentteina siellä minne ne kuuluvat (kohdat 4 ja 7) eivätkä
-      näkyvänä tekstinä: julkisessa asiakirjassa oleva "nämä perusteet pitäisi vielä
-      tarkistaa" heikentää juuri sitä mitä asiakirjan on tarkoitus osoittaa. Sama lista
-      on asennus/LUEMINUT.md:ssä.
-    -->
     <style>
       :root { color-scheme: light; }
       * { box-sizing: border-box; }
@@ -73,8 +51,8 @@
 
         <h2>1. Rekisterinpitäjä</h2>
         <p>
-          <strong>Arttu Pääkkö</strong><br />
-          Sähköposti: <a href="mailto:paakko.arttu@gmail.com">paakko.arttu@gmail.com</a>
+          <strong>Turvajohto OS</strong><br />
+          Sähköposti: <a href="mailto:tietosuoja@turvajohto-os.fi">tietosuoja@turvajohto-os.fi</a>
         </p>
         <p class="vaimea">
           Rekisterinpitäjä vastaa tässä selosteessa kuvatusta henkilötietojen
@@ -184,20 +162,6 @@
           Käyttäjätunnusten ja käytön lokin osalta perusteena on järjestelmän
           tietoturvasta huolehtiminen.
         </p>
-        <!--
-          SISÄINEN MUISTUTUS — ei näy sivulla, eikä saa näkyä.
-
-          Käsittelyperusteet on käytävä läpi asiantuntijan kanssa ennen kuin sovellukseen
-          viedään ensimmäinen oikea henkilötieto. Erityisesti henkilötunnuksen käsittelyn
-          peruste, toimenpiteiden kohteena olleiden henkilöiden tietojen käsittely
-          (rikosasioihin liittyvä tieto) ja mahdollinen sijaintiseuranta ovat kohtia
-          joita ei ratkaista ohjelmistolla.
-
-          Tämä oli aiemmin näkyvänä varoituslaatikkona. Se poistettiin näkyvistä kun
-          seloste julkaistiin: julkisessa asiakirjassa oleva "nämä perusteet pitäisi
-          vielä tarkistaa" heikentää juuri sitä mitä asiakirjan on tarkoitus osoittaa.
-          Muistutus ei silti saa kadota, joten se on tässä ja asennus/LUEMINUT.md:ssä.
-        -->
 
         <h2>5. Säilytysaika</h2>
         <p>
@@ -242,12 +206,6 @@
           tällä hetkellä <strong>pois käytöstä eikä viestejä lähetetä</strong>. Tämä
           seloste päivitetään ennen toiminnon käyttöönottoa.
         </div>
-        <!--
-          SISÄINEN MUISTUTUS: ennen hätäviestien käyttöönottoa on selvitettävä
-          BulkSMS:n palvelinsijainti ja siirron peruste (vakiolausekkeet tai muu
-          GDPR 46 artiklan mekanismi), ja kirjattava se yllä olevaan kohtaan
-          täsmällisesti. Ks. myös Traficom-tunnus, joka on erikseen auki.
-        -->
 
         <h2>8. Miten tiedot on suojattu</h2>
         <ul>

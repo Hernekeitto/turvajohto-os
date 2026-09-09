@@ -5,6 +5,12 @@ import { ShieldCheck, CalendarDays, ArrowRight } from 'lucide-react';
 // dataa ei saa hakea täällä. Tehtävä on kertoa lyhyesti mistä on kyse ja ohjata
 // kirjautumaan joko tapahtuma- tai vartiointipuolelle — ei muuta.
 
+// Tekijänoikeusvuosi on KIINTEÄ eikä new Date().getFullYear(). Sivusta otetaan
+// tallenne Internet Archiveen osoittamaan milloin palvelu on ollut olemassa, ja
+// juokseva vuosiluku näyttäisi tallenteessa sen vuoden jona tallennetta katsotaan
+// — eli juuri sen tiedon jota merkinnän on tarkoitus todistaa. Päivitetään käsin.
+const JULKAISUVUOSI = 2026;
+
 type Tuote = {
   polku: string;
   nimi: string;
@@ -24,8 +30,9 @@ const TUOTTEET: Tuote[] = [
     nimi: 'Turvajohto EVENT',
     alaotsikko: 'Tapahtumaturvallisuus',
     kuvaus:
-      'Tilannekuva, TIKE-raportointi ja järjestyksenvalvojan tapahtumailmoitukset, ' +
-      'avausvalmius sekä tapahtuman työntekijät ja tiedostot.',
+      'Turvajohto EVENT on luotu massatapahtumien ja järjestyksenvalvonnan ' +
+      'dynaamiseen johtamiseen! Lopeta monien eri järjestelmien yhteiskäyttö ja ' +
+      'ota kaikki turvallisuuden osa-alueet digitaalisesti haltuun yhdestä paikasta!',
     Ikoni: CalendarDays,
     korostus: 'bg-event-accent',
     korostusHover: 'hover:brightness-110',
@@ -36,8 +43,10 @@ const TUOTTEET: Tuote[] = [
     nimi: 'Turvajohto GUARD',
     alaotsikko: 'Vartiointi',
     kuvaus:
-      'Kohdekierrokset, vartiovuorot ja kohdekohtaiset poikkeamat — ' +
-      'sama raportointi ja työntekijärekisteri kuin tapahtumapuolella.',
+      'Perinteinen liikkuva vartiointi ja kohdevartiointi vaativat oikeat työkalut. Siksi ' +
+      'loimme Turvajohto GUARDin – ammattilaisten ohjelmiston, joka on rakennettu ' +
+      'vaativaan kenttätyöhön! Turvajohto GUARD ei ole vain ohjelmisto. ' +
+      'Se on sinun digitaalinen työpari.',
     Ikoni: ShieldCheck,
     korostus: 'bg-guard-accent',
     korostusHover: 'hover:brightness-110',
@@ -50,15 +59,33 @@ export default function Landing() {
     <div className="min-h-screen bg-canvas text-ink-strong flex flex-col">
       <main className="flex-1 flex flex-col items-center justify-center px-6 py-16">
         <div className="w-full max-w-4xl">
-          <header className="text-center mb-12">
-            <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-3">
-              Turvajohto <span className="text-guard-accent-bright">OS</span>
+          <header className="mb-12">
+            {/* "OS" on kattonimen tunnus, ei kummankaan tuotteen. Se käyttää EVENTin
+                indigoa eikä GUARDin turvavihreää: vihreä sitoi otsikon visuaalisesti
+                vartiointipuoleen, vaikka OS kattaa molemmat. */}
+            <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-6 text-center">
+              Turvajohto <span className="text-event-accent-bright">OS</span>
             </h1>
-            <p className="text-lg text-ink max-w-2xl mx-auto leading-relaxed">
-              Turvallisuuden johtamisen työkalut tapahtumiin ja vartiointiin.
-              Sama tilannekuva, raportointi ja työntekijärekisteri — kaksi puolta,
-              jotka on tehty oman alansa arkeen.
-            </p>
+            {/* Leipäteksti on vasemmalle tasattua vaikka otsikko on keskitetty:
+                keskitetty kappale on tämän mittaisena raskas lukea. */}
+            <div className="max-w-3xl mx-auto space-y-4">
+              <p className="text-base sm:text-lg text-ink leading-relaxed">
+                Turvajohto OS on suomalainen, koko turvallisuusalalle suunniteltu
+                edistyksellinen ohjelmistoalusta, joka yhdistää tapahtumaturvallisuuden,
+                järjestyksenvalvonnan ja perinteisen vartioinnin tietohallinnan
+                saumattomaksi kokonaisuudeksi. Tämä moderni ja käyttäjien tarpeeseen
+                kehitetty SaaS-palvelu tarjoaa turvallisuusjohdolle reaaliaikaisen ja
+                keskitetyn tilannekuvan, jonka ytimessä on dynaaminen valvomokojelauta
+                aktiivisine hälytyksineen, lokikirjauksineen ja poikkeamaseurantoineen.
+                Järjestelmä on digitaalinen sydän, joka poistaa paperilomakkeet ja pitää
+                osa-alueiden langat tiukasti yksissä käsissä.
+              </p>
+              <p className="text-base sm:text-lg text-ink-strong font-medium leading-relaxed">
+                Turvajohto OS on koko turvallisuusalan käyttöjärjestelmä. Se korvaa useat
+                irralliset ohjelmistot yhdellä älykkäällä ja skaalautuvalla ratkaisulla,
+                jollaista ei löydy muualta.
+              </p>
+            </div>
           </header>
 
           <div className="grid gap-5 sm:grid-cols-2">
@@ -89,7 +116,7 @@ export default function Landing() {
           sovelluksen sisään hän ei pääse. Tavallinen <a>, ei reititystä: sivu on
           staattinen HTML (public/tietosuoja.html) eikä osa sovellusnippua. */}
       <footer className="text-center text-xs text-ink-subtle pb-8 px-6">
-        Turvajohto OS · Kirjautuminen vaaditaan molemmille puolille
+        © {JULKAISUVUOSI} Turvajohto OS. Kaikki oikeudet pidätetään.
         <span className="mx-2" aria-hidden="true">·</span>
         <a href="/tietosuoja.html" className="underline hover:text-ink-muted transition-colors">
           Tietosuojaseloste

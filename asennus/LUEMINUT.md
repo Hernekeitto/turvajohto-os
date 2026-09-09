@@ -180,9 +180,9 @@ https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=http
 
 ### 4. Play Consolen paperit (ei koodia)
 
-- **Tietosuojaseloste julkisesti saatavilla** — pakollinen, ja **sitä ei ole vielä
-  olemassa** (tarkistettu 4.9.2026: sivustolla on vain `jako.html` ja `ilmoitus.html`).
-  Tämä on kohdan 3 ohella toinen kova este julkaisulle. Sovellus käsittelee
+- **Tietosuojaseloste julkisesti saatavilla** — pakollinen. Kirjoitettu 5.9.2026:
+  `public/tietosuoja.html`, linkitetty mainossivun alareunasta. Sisällön avoimet
+  kohdat: ks. "Tietosuojaselosteen avoimet kohdat" alempana. Sovellus käsittelee
   henkilötunnuksia ja sijaintia, joten se ei ole muotoseikka vaan asiakirja jonka
   sisällön on vastattava sitä mitä sovellus oikeasti tekee.
 - **Data safety -lomake**: mitä kerätään, mihin, kenelle jaetaan, salataanko siirrossa.
@@ -297,6 +297,41 @@ ilman pushia sovellus on sama kuin selain, omalla kuvakkeella. Oma eränsä
 mahdollisen ja Play Store kysyy siitä erikseen
 (`ACCESS_BACKGROUND_LOCATION` on tiukimmin valvottuja oikeuksia). Panokset nousevat:
 selaimessa seuranta loppuu kun välilehti suljetaan.
+
+## Tietosuojaselosteen avoimet kohdat
+
+`public/tietosuoja.html` on **paikkansapitävä kuvaus järjestelmästä**: sisältö on
+johdettu siitä mitä koodi oikeasti tekee (kenttäsalaus `server/store.js`, säilytysajat
+`src/shared/sailytysaika.ts`, sijainti `server/sijainti.js`, tekstiviestit
+`server/bulksms.js`).
+
+Se **ei ole oikeudellinen tarkistus.** Alla olevat kohdat olivat aiemmin
+HTML-kommentteina itse selostetiedostossa. Ne siirrettiin tänne 9.9.2026, koska
+HTML-kommentti lähtee selaimelle sellaisenaan: se näkyy kenelle tahansa joka avaa
+sivun lähdekoodin, ja päätyy myös Internet Archiven tallenteeseen pysyvästi. Julkisessa
+asiakirjassa oleva "nämä perusteet pitäisi vielä tarkistaa" heikentää juuri sitä mitä
+asiakirjan on tarkoitus osoittaa — myös kommenttina.
+
+**Käsittelyperusteet (seloste kohta 4).** Käytävä läpi asiantuntijan kanssa ennen kuin
+sovellukseen viedään ensimmäinen oikea henkilötieto. Erityisesti:
+
+- henkilötunnuksen käsittelyn peruste
+- toimenpiteiden kohteena olleiden henkilöiden tietojen käsittely (rikosasioihin
+  liittyvä tieto)
+- mahdollinen sijaintiseuranta
+
+Nämä eivät ratkea ohjelmistolla.
+
+**Hätäviestien siirto EU:n ulkopuolelle (seloste kohta 7).** Ennen hätäviestien
+käyttöönottoa on selvitettävä BulkSMS:n palvelinsijainti ja siirron peruste
+(vakiolausekkeet tai muu GDPR 46 artiklan mekanismi), ja kirjattava se selosteen
+kohtaan 7 täsmällisesti. Ks. myös Traficom-tunnus, joka on erikseen auki.
+
+**Rekisterinpitäjän yhteystieto (seloste kohta 1).** Selosteessa lukee
+`tietosuoja@turvajohto-os.fi`. **Osoite ei ole vielä toiminnassa** — se on aktivoitava
+ennen kuin sovellukseen viedään ensimmäinen oikea henkilötieto tai seloste annetaan
+Play Consolelle. Rekisteröidyn pyyntö saapuu juuri tähän osoitteeseen, ja
+toimimattomaan osoitteeseen lähetetty pyyntö on selosteen lupauksen rikkomus.
 
 ## Testaus omalla puhelimella ilman Play Storea
 
