@@ -76,6 +76,10 @@ const COLLECTIONS = {
   // kirjoittaa olisi vuoro jonka perehdytysehdon voisi ohittaa kirjoittamalla tietueen
   // suoraan, ja koko perehdytysrajaus olisi silloin pelkkä käyttöliittymän este.
   guardShifts: 'guardShifts.json',
+  // Tehtävänsiirrot ja pakotukset (erät 18–19). Yksi kokoelma molemmille, koska ne ovat
+  // sama tapahtuma eri oikeudella: joku antaa jollekin tehtävän. Ero on `tapa`-kentässä
+  // ja siinä mitä saaja voi tehdä. Palvelimen ylläpitämä kuten guardShifts.
+  guardAssignments: 'guardAssignments.json',
   // Hälytykset (erä 7): ajastin, man-down, hätäpainike ja vyöhykepoikkeama. YKSI kokoelma
   // kaikille tyypeille samasta syystä kuin templates: tilamalli, kuittaus, eskalointi ja
   // valvomonäkymä ovat samat riippumatta siitä mikä hälytyksen laukaisi. Palvelimen

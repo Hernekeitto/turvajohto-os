@@ -391,6 +391,17 @@ const COLLECTIONS = {
     eventIdOf: (item) => item?.siteId,
     tuote: 'guard',
   },
+  // Tehtävänsiirrot (erä 18). eventScoped kohteen mukaan kuten vuorotkin, mutta huomaa
+  // ero: siirron SAAJA ei välttämättä pääse siihen kohteeseen mistä siirto tulee — juuri
+  // se on ominaisuuden tarkoitus. Siksi saajan oma näkymä kulkee /api/siirrot/omat
+  // -reitin kautta eikä tämän kokoelman listahaun, joka rajaisi hänet ulos.
+  guardAssignments: {
+    view: ['guard_patrols', 'guard_site_info', 'guard_dispatch'],
+    touch: () => ['guard_patrols'],
+    eventScoped: true,
+    eventIdOf: (item) => item?.siteId,
+    tuote: 'guard',
+  },
   // Hälytykset (erä 7). Kokoelma on molempien puolien yhteinen, joten `tuote`-rajausta EI
   // ole: sama tietue voi kuulua tapahtumaan tai vartiointikohteeseen, ja eventScoped +
   // eventAccess hoitaa rajauksen kummassakin tapauksessa. Kaksi solmua lukuoikeudessa

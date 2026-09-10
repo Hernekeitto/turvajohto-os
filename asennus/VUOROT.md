@@ -429,7 +429,54 @@ pyytää, palvelimella on tietue alku- ja loppuaikoineen, perehdyttämätön vuo
 kertalupa avaa sen ja jää lokiin — ja sovelluksen valvonta käynnistyy samalla
 (`valvontaElossa: true`, ks. `NATIIVI.md` päivätesti 10.9.).
 
-### Erä 18 — Tehtävän siirto vartijalta vartijalle
+### Erä 18 — Tehtävän siirto vartijalta vartijalle 🟡 PALVELIN VALMIS 10.9.2026
+
+**Määrittely muuttui toteutettaessa, ja muutos oli käyttäjän eikä minun.** Alkuperäinen
+suunnitelma lisäsi siirretyn tehtävän saajan vuoroon. Se ei toimi: piirivartija on omassa
+vuorossaan **toisessa kohteessa**, eikä siirretty kierros mahdu sinne ilman että vuoron
+tietue lakkaa vastaamasta kysymykseen missä vartija oli töissä.
+
+Päätös 10.9.2026: **työlista on VARTIJAN, ei vuoron.** Vuoro vain kylvää sen. Listaan
+yhdistetään kolme lähdettä, ja niillä on prioriteettijärjestys:
+
+1. Hälytystehtävät
+2. Kohteen kierrokset ja tehtävät suoritusaikojensa mukaan
+3. Suoritetut tehtävät
+
+Siirto on siksi **oma tietueensa** (`guardAssignments`) eikä rivi saajan vuorossa.
+
+**Avoin kohta: tehtävillä ei ole suoritusaikoja.** Vuorotyypillä on kellonajat, mutta
+yksittäisellä kierroksella tai tehtävällä ei. Kohta 2 järjestetään toistaiseksi vuoron
+määrittelemään järjestykseen. Aikakenttä on lisättävä ennen kuin järjestys voi vastata
+sitä mitä se lupaa.
+
+| Osa | Tila |
+|---|---|
+| Siirron säännöt (`server/siirto.js`) | valmis, 18 testiä |
+| `guardAssignments`-kokoelma, palvelimen ylläpitämä | valmis |
+| `GET /api/siirrot/omat` (saapuvat, hyväksytyt, lähtevät) | valmis |
+| `POST /api/siirto` · `/:id/vastaa` · `/:id/peru` | valmis |
+| Hyväksytty siirto avaa kohteen saajalle | valmis |
+| Siirtopainike antajalle | **tekemättä** |
+| Hyväksy/hylkää saajan ilmoituksissa | **tekemättä** |
+| Yhdistetty prioriteettilista etusivulla | **tekemättä** |
+
+**Siirtää voi vain vuorossa olevalle** (päätös 10.9.2026). Perustelu on ihmisen eikä
+koneen: vapaapäivää viettävälle vartijalle ei kuulu lähettää hyväksymispyyntöä keskellä
+yötä. Pakotus (erä 19) ei tunne tätä ehtoa — määräys ei ole pyyntö, eikä sen ehtona voi
+olla että saaja on sattumalta kirjautunut vuoroon.
+
+**Hyväksytty siirto avaa kohteen saajalle**, samoin kuin kesken oleva vuoro. Ilman tätä
+siirto olisi lupaus jota ei voi lunastaa: työ ilman kohteen ohjeita, yhteystietoja ja
+vyöhykkeitä ei ole tehtävissä — ja juuri siirron käyttötapaus on vartija jolla EI ole
+perehdytystä siihen kohteeseen. Todennettu päästä päähän: saaja ei näe kohdetta ennen
+siirtoa ja näkee sen hyväksynnän jälkeen.
+
+**Hylkäys jättää tehtävän antajalle** ja hyväksyntä siirtää sen. Hyväksyttyä ei voi perua:
+se on jo toisen työtä, ja pois ottaminen ilman että saaja tietää olisi juuri se tilanne
+jossa kierros jää ajamatta kummaltakin.
+
+#### Alkuperäinen suunnitelma
 
 `guardAssignments`, hyväksyntäilmoitus, `lahde`-kentän kulku vuoron tietueeseen.
 

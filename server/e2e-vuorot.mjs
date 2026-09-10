@@ -298,6 +298,73 @@ try {
 
   await post(`/api/vuoro/${luvitettu.data.vuoro.id}/paata`, {});
   vaita((await kohteet(vartijanEvaste)).length === 0, 'vuoron päätyttyä kohde katoaa taas');
+
+  console.log('\n16. Tehtävän siirto vartijalta vartijalle (erä 18)');
+  // Asetelma on ominaisuuden koko tarkoitus: antaja on vuorossa kohteessa A, saaja
+  // kohteessa B, eikä saajalla ole perehdytystä kumpaankaan. Siirto ylittää kohderajan.
+  const antajanVuoro = await post('/api/vuoro', { siteId: 'kohde-perehdytetty', vuorotyyppiId: 'v-lisa' });
+  vaita(antajanVuoro.status === 200, 'antaja on vuorossa kohteessa A');
+
+  const saajanVuoro = await post('/api/vuoro', {
+    siteId: 'kohde-tyhja-lista', vuorotyyppiId: 'v-aamu2',
+    vartija: 'vartija1', poikkeusSyy: 'Piirivartijan vuoro toisessa kohteessa',
+  });
+  vaita(saajanVuoro.status === 200, 'saaja on vuorossa kohteessa B');
+
+  const kohteetNyt = async (evasteet) => {
+    const v = await fetch(`${PALVELIN}/api/data/guardSites`, { headers: { Cookie: evasteet } });
+    return ((await v.json().catch(() => null))?.data || []).map((k) => k.id);
+  };
+  vaita(!(await kohteetNyt(vartijanEvaste)).includes('kohde-perehdytetty'),
+    'saaja ei näe kohdetta A ennen siirtoa');
+
+  // Vartija ei voi siirtää työtä jota hänellä itsellään ei ole.
+  const eiOmassa = await post('/api/siirto', { saaja: 'vartija1', laji: 'kierros', kohdeId: 'pohja-2' });
+  vaita(eiOmassa.status === 404, `vain oman vuoron tehtävän voi siirtää (${eiOmassa.status})`);
+  const omalleTunnukselle = await post('/api/siirto', { saaja: 'testiadmin', laji: 'kierros', kohdeId: 'pohja-1' });
+  vaita(omalleTunnukselle.status === 400, `itselle ei voi siirtää (${omalleTunnukselle.status})`);
+
+  const luotu = await post('/api/siirto', {
+    saaja: 'vartija1', laji: 'kierros', kohdeId: 'pohja-1', viesti: 'Ehditkö ajaa tämän?',
+  });
+  vaita(luotu.status === 200 && luotu.data.siirto.tila === 'odottaa', `siirto luotu (${luotu.status})`);
+  vaita(luotu.data.siirto.siteNimi === 'Kauppakeskus Hansa', 'siirto kertoo mistä kohteesta työ on');
+  vaita(luotu.data.siirto.vuoroId === saajanVuoro.data.vuoro.id, 'saajan vuoro kirjattiin siirtohetkellä');
+
+  const kahdesti = await post('/api/siirto', { saaja: 'vartija1', laji: 'kierros', kohdeId: 'pohja-1' });
+  vaita(kahdesti.status === 409, `samaa ei siirretä kahdesti odottamaan (${kahdesti.status})`);
+
+  const omatV = await (await fetch(`${PALVELIN}/api/siirrot/omat`, { headers: { Cookie: vartijanEvaste } })).json();
+  vaita(omatV.saapuvat?.length === 1, 'saaja näkee saapuvan siirron');
+  const omatA = await (await fetch(`${PALVELIN}/api/siirrot/omat`, { headers: { Cookie: evaste } })).json();
+  vaita(omatA.lahtevat?.length === 1, 'antaja näkee että pyyntö odottaa vastausta');
+
+  // Vain saaja vastaa.
+  const vaaraVastaaja = await post(`/api/siirto/${luotu.data.siirto.id}/vastaa`, { hyvaksy: true });
+  vaita(vaaraVastaaja.status === 400, `antaja ei voi hyväksyä omaa siirtoaan (${vaaraVastaaja.status})`);
+
+  const hyvaksynta = await post(`/api/siirto/${luotu.data.siirto.id}/vastaa`, { hyvaksy: true }, vartijanEvaste);
+  vaita(hyvaksynta.data?.siirto?.tila === 'hyvaksytty', 'saaja hyväksyi');
+  vaita((await kohteetNyt(vartijanEvaste)).includes('kohde-perehdytetty'),
+    'hyväksytty siirto avaa kohteen A ilman perehdytystä');
+
+  const toinenVastaus = await post(`/api/siirto/${luotu.data.siirto.id}/vastaa`, { hyvaksy: false }, vartijanEvaste);
+  vaita(toinenVastaus.status === 400, 'samaan siirtoon ei vastata kahdesti');
+
+  const peruttavaksi = await post(`/api/siirto/${luotu.data.siirto.id}/peru`, {});
+  vaita(peruttavaksi.status === 400, 'hyväksyttyä siirtoa ei voi perua');
+
+  // Hylkäys jättää työn antajalle.
+  const toinenSiirto = await post('/api/siirto', { saaja: 'vartija1', laji: 'tehtava', kohdeId: 't1' });
+  vaita(toinenSiirto.status === 200, 'toinen siirto luotu');
+  const hylkays = await post(`/api/siirto/${toinenSiirto.data.siirto.id}/vastaa`, { hyvaksy: false }, vartijanEvaste);
+  vaita(hylkays.data?.siirto?.tila === 'hylatty', 'saaja hylkäsi');
+  const antajanVuoroNyt = await (await fetch(`${PALVELIN}/api/vuoro/oma`, { headers: { Cookie: evaste } })).json();
+  vaita(antajanVuoroNyt.vuoro.tehtavat.some((t) => t.id === 't1'),
+    'hylätty siirto jättää tehtävän antajalle');
+
+  await post(`/api/vuoro/${antajanVuoro.data.vuoro.id}/paata`, {});
+  await post(`/api/vuoro/${saajanVuoro.data.vuoro.id}/paata`, {});
 } finally {
   palvelin.kill();
   fs.rmSync(DATA, { recursive: true, force: true });

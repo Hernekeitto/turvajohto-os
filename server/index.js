@@ -32,6 +32,9 @@ import {
   JOUSTO_MIN, aloitaVuoro, keskenOlevaVuoro, kohteetPerehdytyksenMukaan, lisaaVuoroon,
   paataVuoro, vuorovaihtoehdot,
 } from './vuorot.js';
+import {
+  joSiirrossa, luoSiirto, omatSiirrot, peruSiirto, siirtojenAvaamatKohteet, vastaaSiirtoon,
+} from './siirto.js';
 import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
 import {
   luoToken,
@@ -548,7 +551,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -632,11 +635,18 @@ app.get('/api/data/:name', requireAuth, (req, res) => {
   //
   // Molemmat solmut ovat GLOBAL_NODES-solmuja (permissions.js), joten eventId on null.
   if (name === 'guardSites' && vainPerehdytetytKohteet(req)) {
-    data = kohteetPerehdytyksenMukaan({
+    // Hyväksytty siirto avaa kohteen samasta syystä kuin kesken oleva vuoro: työ ilman
+    // kohteen ohjeita, yhteystietoja ja vyöhykkeitä ei ole tehtävissä. Ilman tätä siirto
+    // olisi lupaus jota ei voi lunastaa — ja juuri siirron käyttötapaus on vartija jolla
+    // EI ole perehdytystä siihen kohteeseen.
+    const avatut = siirtojenAvaamatKohteet(readCollection('guardAssignments') || [], req.username);
+    const perehdytetyt = kohteetPerehdytyksenMukaan({
       kohteet: data || [],
       username: req.username,
       vuorot: readCollection('guardShifts') || [],
     });
+    const nakyvat = new Set(perehdytetyt.map((k) => k.id));
+    data = (data || []).filter((k) => nakyvat.has(k?.id) || avatut.has(k?.id));
   }
   res.json({ ok: true, data });
 });
@@ -1791,6 +1801,118 @@ app.post('/api/vuoro/:id/lisaa', requireAuth, guardPortti, (req, res) => {
   });
   kerroVuorosta(tulos.vuoro, 'update');
   res.json({ ok: true, vuoro: tulos.vuoro });
+});
+
+// --- Tehtävän siirto vartijalta vartijalle (erä 18) ---------------------------------
+//
+// Siirto on OMA TIETUEENSA eikä rivi saajan vuorossa. Käyttötapaus on piirivartija, joka
+// tulee ajamaan kauppakeskusvartijan kierroksen: hän on omassa vuorossaan toisessa
+// kohteessa, eikä siirretty kierros mahdu sinne ilman että vuoro lakkaa vastaamasta
+// kysymykseen missä vartija oli töissä. Vartijan työlista syntyy yhdistämällä vuoron omat
+// tehtävät, hyväksytyt siirrot ja hälytykset — lista on vartijan, vuoro vain kylvää sen.
+
+function kerroSiirrosta(siirto, action) {
+  lahetaKanavalle('guardAssignments', [{ action, id: siirto.id, eventId: siirto.siteId }], {
+    saaNahda: (istunto, siteId) =>
+      istunto?.role === 'admin'
+      || (eventAllowed(istunto?.eventAccess, siteId)
+        && canView(rolePermissions(istunto?.roleId), siteId, 'guard_patrols')),
+  });
+}
+
+// Omat siirrot molempiin suuntiin.
+//
+// OMA REITTI eikä kokoelman listahaku, ja syy on ominaisuuden ydin: saaja ei välttämättä
+// pääse siihen kohteeseen josta siirto tulee, joten kohdesidonnainen listahaku rajaisi
+// hänet ulos juuri siitä tiedosta jonka takia koko siirto tehtiin.
+app.get('/api/siirrot/omat', requireAuth, guardPortti, (req, res) => {
+  res.json({ ok: true, ...omatSiirrot(readCollection('guardAssignments') || [], req.username) });
+});
+
+// Uusi siirto. Antaja antaa OMAN tehtävänsä, joten se haetaan hänen kesken olevasta
+// vuorostaan — vartija ei voi siirtää työtä jota hänellä itsellään ei ole.
+app.post('/api/siirto', requireAuth, guardPortti, (req, res) => {
+  const { saaja, laji, kohdeId, viesti } = req.body || {};
+  const vuorot = readCollection('guardShifts') || [];
+
+  const omaVuoro = keskenOlevaVuoro(vuorot, req.username);
+  if (!omaVuoro) {
+    return res.status(409).json({ ok: false, error: 'Et ole vuorossa. Siirtää voi vain omasta vuorostaan.' });
+  }
+  const lista = laji === 'kierros' ? omaVuoro.pohjat : omaVuoro.tehtavat;
+  const osuma = (lista || []).find((x) => x?.id === kohdeId);
+  if (!osuma) {
+    return res.status(404).json({ ok: false, error: 'Tehtävää ei ole omassa vuorossasi.' });
+  }
+  if (!findUser(saaja)) {
+    return res.status(404).json({ ok: false, error: 'Vartijaa ei löytynyt.' });
+  }
+
+  const siirrot = readCollection('guardAssignments') || [];
+  if (joSiirrossa(siirrot, { saaja, kohdeId, laji })) {
+    return res.status(409).json({ ok: false, error: 'Tämä tehtävä odottaa jo kyseisen vartijan vastausta.' });
+  }
+
+  const tulos = luoSiirto({
+    antaja: req.username,
+    saaja,
+    laji,
+    kohdeId,
+    nimi: osuma.nimi,
+    siteId: omaVuoro.siteId,
+    siteNimi: omaVuoro.siteNimi,
+    saajanVuoro: keskenOlevaVuoro(vuorot, saaja),
+    viesti,
+    id: crypto.randomUUID(),
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('guardAssignments', [tulos.siirto, ...siirrot]);
+  // Molemmat nimet lokiin. Siirto ei tarkista perehdytystä, joten jälkikäteen on voitava
+  // nähdä kuka antoi työn kenelle — vastuun ottaa antaja, joka on perehdytetty.
+  logAudit({
+    user: req.username, action: 'tehtava_siirretty', collection: 'guardAssignments',
+    recordId: tulos.siirto.id, eventId: omaVuoro.siteId, saaja, laji,
+  });
+  kerroSiirrosta(tulos.siirto, 'create');
+  res.json({ ok: true, siirto: tulos.siirto });
+});
+
+// Saajan vastaus. Hylkäys ei vaadi syytä: vaadittu syy tuottaa keksittyjä syitä.
+app.post('/api/siirto/:id/vastaa', requireAuth, guardPortti, (req, res) => {
+  const siirrot = readCollection('guardAssignments') || [];
+  const siirto = siirrot.find((x) => x?.id === req.params.id);
+  const tulos = vastaaSiirtoon({ siirto, kayttaja: req.username, hyvaksy: req.body?.hyvaksy === true });
+  if (!tulos.ok) {
+    return res.status(siirto ? 400 : 404).json({ ok: false, error: tulos.error });
+  }
+
+  writeCollection('guardAssignments', siirrot.map((x) => (x.id === siirto.id ? tulos.siirto : x)));
+  logAudit({
+    user: req.username,
+    action: tulos.siirto.tila === 'hyvaksytty' ? 'tehtava_siirto_hyvaksytty' : 'tehtava_siirto_hylatty',
+    collection: 'guardAssignments', recordId: siirto.id, eventId: siirto.siteId, antaja: siirto.antaja,
+  });
+  kerroSiirrosta(tulos.siirto, 'update');
+  res.json({ ok: true, siirto: tulos.siirto });
+});
+
+// Antaja peruu odottavan siirron.
+app.post('/api/siirto/:id/peru', requireAuth, guardPortti, (req, res) => {
+  const siirrot = readCollection('guardAssignments') || [];
+  const siirto = siirrot.find((x) => x?.id === req.params.id);
+  const tulos = peruSiirto({ siirto, kayttaja: req.username });
+  if (!tulos.ok) {
+    return res.status(siirto ? 400 : 404).json({ ok: false, error: tulos.error });
+  }
+
+  writeCollection('guardAssignments', siirrot.map((x) => (x.id === siirto.id ? tulos.siirto : x)));
+  logAudit({
+    user: req.username, action: 'tehtava_siirto_peruttu', collection: 'guardAssignments',
+    recordId: siirto.id, eventId: siirto.siteId, saaja: siirto.saaja,
+  });
+  kerroSiirrosta(tulos.siirto, 'update');
+  res.json({ ok: true, siirto: tulos.siirto });
 });
 
 
