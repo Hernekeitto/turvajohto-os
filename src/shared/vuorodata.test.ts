@@ -46,8 +46,11 @@ const KOHDE: any = {
   tehtavat: [{ id: 't1', nimi: 'Sulkukierros', tyyppi: 'kuittaus', kohdat: [] }],
   zones: [{ id: 'z1', nimi: 'Piha' }],
   mapUploadId: 'kartta.png',
+  vuorotyypit: [
+    { id: 'v1', nimi: 'Aamuvuoro', alkaa: '07:00', paattyy: '15:00', tehtavaIdt: ['t1'], pohjaIdt: [] },
+  ],
   perehdytykset: [
-    { id: 'p1', nimi: 'Virtanen Matti', employeeId: 'e1', pvm: '2026-08-01' },
+    { id: 'p1', nimi: 'Virtanen Matti', employeeId: 'e1', username: 'vartija1', pvm: '2026-08-01', vuorotyyppiIdt: ['v1'] },
   ],
 };
 
@@ -64,6 +67,18 @@ test('perehdytykset EIVÄT päädy laitteelle', () => {
   assert.equal(riisuttu.perehdytykset, undefined);
   // Ja varmistetaan koko serialisoidusta muodosta, ettei nimi vuoda mitään kautta.
   assert.equal(JSON.stringify(riisuttu).includes('Virtanen'), false);
+  // Erässä 16 perehdytykseen tuli KÄYTTÄJÄTUNNUS. Se on tunniste siinä missä nimikin,
+  // eikä kohteen perehdytyslista muutu vähemmän henkilötiedoksi sen takia että
+  // tunnisteen muoto vaihtui.
+  assert.equal(JSON.stringify(riisuttu).includes('vartija1'), false);
+});
+
+test('vuorotyypit päätyvät laitteelle, koska ne eivät kerro ihmisistä', () => {
+  // Vuorotyyppi kertoo mitä vuoroon kuuluu, ei kuka siinä on. Ilman sitä offline-tilassa
+  // ei tiedettäisi mitä kesken olevaan vuoroon kuului.
+  const riisuttu = riisuKohde(KOHDE);
+  assert.equal(riisuttu.vuorotyypit?.length, 1);
+  assert.equal(riisuttu.vuorotyypit?.[0].nimi, 'Aamuvuoro');
 });
 
 test('kohteen ohjeet, tehtävät ja yhteystiedot säilyvät', () => {
@@ -86,7 +101,7 @@ test('tallenne ei sisällä raportteja eikä työntekijöitä missään muodossa
   alusta();
   tallennaVuorodata('vartija1', { kohteet: [KOHDE], pohjat: [POHJA], kierrokset: [KESKEN] });
   const raaka = varasto.get('turvajohto-vuoro:vartija1') || '';
-  for (const kielletty of ['Virtanen', 'perehdytykset', 'subjectPersonalId', 'employees']) {
+  for (const kielletty of ['Virtanen', 'perehdytykset', 'vartija1', 'subjectPersonalId', 'employees']) {
     assert.equal(raaka.includes(kielletty), false, `"${kielletty}" ei saa olla tallenteessa`);
   }
 });

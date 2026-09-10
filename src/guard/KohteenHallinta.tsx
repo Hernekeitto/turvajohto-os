@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Plus, Trash2, ClipboardList, GraduationCap, Building2, CheckSquare, ListChecks, FolderOpen, MapPin } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Plus, Trash2, ClipboardList, GraduationCap, Building2, CheckSquare, ListChecks, FolderOpen, MapPin, CalendarClock, AlertTriangle, Route } from 'lucide-react';
 import { Kentta } from './Kentta';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { Kartta } from '../shared/komponentit/Kartta';
@@ -10,20 +10,46 @@ import { luoMuunnos } from '../shared/georeferointi';
 import { paikallinenPaiva } from '../shared/ajat';
 import { muotoileTunniste } from '../shared/tunnisteet';
 import { KohteenTiedostot } from './KohteenTiedostot';
-import { uusiId, type Kohde, type KohteenTiedosto, type Perehdytys, type Tehtava } from './tyypit';
+import { haePerehdytettavat, type Perehdytettava } from './vuorot';
+import { uusiId, type Kierrospohja, type Kohde, type KohteenTiedosto, type Perehdytys, type Tehtava, type Vuorotyyppi } from './tyypit';
 
-// Kohteen hallinta: perustiedot, perehdytykset ja työvuoron tehtävät omilla välilehdillään.
-// Kaikki kolme ovat kohteen omia kenttiä, joten ne tallennetaan yhtenä kokonaisuutena —
-// käyttäjän kannalta "tallenna kohde" tallentaa sen mitä hän on juuri muokannut.
+// Kohteen hallinta: perustiedot, perehdytykset, vuorot ja työvuoron tehtävät omilla
+// välilehdillään. Kaikki ovat kohteen omia kenttiä, joten ne tallennetaan yhtenä
+// kokonaisuutena — käyttäjän kannalta "tallenna kohde" tallentaa sen mitä hän on juuri
+// muokannut.
+//
+// --- Vuorot ja perehdytys kuuluvat yhteen (erä 16) --------------------------------
+//
+// Perehdytys ei ole enää pelkkä dokumentti vaan pääsy: se ratkaisee mihin vuoroihin
+// vartija voi kirjautua. Siksi perehdytysmerkintään valitaan KÄYTTÄJÄTUNNUS eikä
+// pelkkää nimeä, ja siihen rastitaan ne vuorot joihin perehdytys pätee.
+//
+// Kytkemätön merkintä (ei tunnusta) näytetään erikseen merkittynä. Se on yhä pätevä
+// dokumentti siitä että perehdytys on pidetty, mutta se ei avaa mitään — ja jos sitä ei
+// sanota, se näyttää täsmälleen samalta kuin toimiva.
 
-type Valilehti = 'perustiedot' | 'tiedostot' | 'perehdytys' | 'tehtavat';
+type Valilehti = 'perustiedot' | 'tiedostot' | 'perehdytys' | 'vuorot' | 'tehtavat';
 
 const VALILEHDET: { id: Valilehti; label: string; Ikoni: typeof Building2 }[] = [
   { id: 'perustiedot', label: 'Perustiedot', Ikoni: Building2 },
   { id: 'tiedostot', label: 'Tiedostot', Ikoni: FolderOpen },
+  { id: 'vuorot', label: 'Vuorot', Ikoni: CalendarClock },
   { id: 'perehdytys', label: 'Perehdytykset', Ikoni: GraduationCap },
   { id: 'tehtavat', label: 'Työvuoron tehtävät', Ikoni: ClipboardList },
 ];
+
+// Tyhjä vuorotyyppi. Kellonajat ovat tyhjiä eivätkä oletuksellisia: arvattu 07–15
+// näyttäisi määritellyltä ja alkaisi rajoittaa kirjautumista ilman että kukaan on
+// päättänyt niin.
+// Lukumäärä oikein taivutettuna: yksi on nominatiivi, kaikki muut partitiivi.
+// "1 tehtävää" on virhe joka näkyy juuri silloin kun vuorossa on tasan yksi tehtävä —
+// eli useammin kuin harvoin.
+const lkm = (maara: number, yksikko: string, monikko: string) =>
+  `${maara} ${maara === 1 ? yksikko : monikko}`;
+
+const tyhjaVuoro = (): Vuorotyyppi => ({
+  id: uusiId(), nimi: '', alkaa: '', paattyy: '', tehtavaIdt: [], pohjaIdt: [],
+});
 
 type Props = {
   kohde: Kohde;
@@ -35,6 +61,9 @@ type Props = {
   // tyhjää rekisteriä tai puuttuvaa oikeutta — kummassakin tapauksessa perehdytettävän
   // nimi kirjoitetaan käsin, eikä käyttäjälle valehdella että rekisteri olisi tyhjä.
   tyontekijat: { id?: string; name?: string; displayId?: number | null }[];
+  // Kohteen kierrospohjat. Vuorotyyppi viittaa niihin id:llä, joten lista tarvitaan
+  // valintaa varten — vuoro ilman kierroksiaan olisi puolikas vuoro.
+  pohjat: Kierrospohja[];
   // Tiedostot ovat omassa kokoelmassaan (guardFiles) ja tallentuvat heti, joten ne
   // kulkevat omien käsittelijöidensä kautta eivätkä kohteen onChange-ketjussa.
   tiedostot: KohteenTiedosto[];
@@ -53,6 +82,7 @@ export const KohteenHallinta = ({
   onPeruuta,
   tallentaa,
   tyontekijat,
+  pohjat,
   tiedostot,
   onLisaaTiedosto,
   onPoistaTiedosto,
@@ -121,28 +151,101 @@ export const KohteenHallinta = ({
     setPiirrettava([]);
     setUusiNimi('');
   };
-  const [uusiPerehdytys, setUusiPerehdytys] = useState({ nimi: '', employeeId: '', pvm: paikallinenPaiva(), perehdyttaja: '' });
+  const [uusiPerehdytys, setUusiPerehdytys] = useState({
+    nimi: '', employeeId: '', username: '', pvm: paikallinenPaiva(), perehdyttaja: '',
+    vuorotyyppiIdt: [] as string[],
+  });
   const [muokattavaTehtava, setMuokattavaTehtava] = useState<Tehtava | null>(null);
+  const [muokattavaVuoro, setMuokattavaVuoro] = useState<Vuorotyyppi | null>(null);
+  // Ketkä voidaan perehdyttää. Haetaan kapealta reitiltä eikä /api/users:ista, joka on
+  // pääkäyttäjän takana — kohteita voi hallita ilman pääkäyttäjyyttä.
+  const [perehdytettavat, setPerehdytettavat] = useState<Perehdytettava[]>([]);
 
   const perehdytykset = kohde.perehdytykset || [];
   const tehtavat = kohde.tehtavat || [];
+  const vuorotyypit = kohde.vuorotyypit || [];
+
+  useEffect(() => {
+    let voimassa = true;
+    if (!kohde.id) { setPerehdytettavat([]); return undefined; }
+    haePerehdytettavat(kohde.id)
+      .then((lista) => { if (voimassa) setPerehdytettavat(lista); })
+      .catch(() => { if (voimassa) setPerehdytettavat([]); });
+    return () => { voimassa = false; };
+  }, [kohde.id]);
 
   const lisaaPerehdytys = () => {
-    // Valittu työntekijä voittaa käsin kirjoitetun nimen: valinta on täsmällisempi ja tuo
-    // mukanaan tunnistenumeron, jolla henkilö yksilöidään myös nimikaimojen kesken.
+    // Tunnus voittaa työntekijävalinnan ja työntekijä käsin kirjoitetun nimen. Järjestys
+    // on tarkoituksellinen: tunnus on ainoa näistä joka myöntää pääsyn, joten sen on
+    // ratkaistava myös se mikä nimi merkintään jää.
+    const kayttaja = perehdytettavat.find((k) => k.username === uusiPerehdytys.username);
     const valittu = tyontekijat.find((t) => t.id === uusiPerehdytys.employeeId);
-    const nimi = (valittu?.name || uusiPerehdytys.nimi).trim();
+    const nimi = (kayttaja?.nimi || valittu?.name || uusiPerehdytys.nimi).trim();
     if (!nimi) return;
     const merkinta: Perehdytys = {
       id: uusiId(),
       nimi,
+      username: kayttaja?.username,
       employeeId: valittu?.id,
-      displayId: valittu?.displayId ?? null,
+      displayId: kayttaja?.displayId ?? valittu?.displayId ?? null,
       pvm: uusiPerehdytys.pvm || paikallinenPaiva(),
       perehdyttaja: uusiPerehdytys.perehdyttaja.trim() || undefined,
+      // Vain olemassa olevat vuorot: poistettu vuoro jättäisi listalle id:n joka ei
+      // vastaa mitään, ja se näyttäisi perehdytykseltä johonkin.
+      vuorotyyppiIdt: uusiPerehdytys.vuorotyyppiIdt.filter((id) => vuorotyypit.some((v) => v.id === id)),
     };
     onChange({ ...kohde, perehdytykset: [...perehdytykset, merkinta] });
-    setUusiPerehdytys({ nimi: '', employeeId: '', pvm: paikallinenPaiva(), perehdyttaja: '' });
+    setUusiPerehdytys({
+      nimi: '', employeeId: '', username: '', pvm: paikallinenPaiva(), perehdyttaja: '',
+      vuorotyyppiIdt: [],
+    });
+  };
+
+  const tallennaVuoro = () => {
+    if (!muokattavaVuoro) return;
+    const nimi = muokattavaVuoro.nimi.trim();
+    if (!nimi) return;
+    const puhdas: Vuorotyyppi = {
+      ...muokattavaVuoro,
+      nimi,
+      // Tyhjä kellonaika tallennetaan puuttuvana eikä tyhjänä merkkijonona: palvelin
+      // tulkitsee puuttuvan ajan "ei rajoitetta", ja tyhjä merkkijono on sama asia jonka
+      // pitää näyttää samalta myös levyllä.
+      alkaa: muokattavaVuoro.alkaa?.trim() || undefined,
+      paattyy: muokattavaVuoro.paattyy?.trim() || undefined,
+      kuvaus: muokattavaVuoro.kuvaus?.trim() || undefined,
+    };
+    const uudet = vuorotyypit.some((v) => v.id === puhdas.id)
+      ? vuorotyypit.map((v) => (v.id === puhdas.id ? puhdas : v))
+      : [...vuorotyypit, puhdas];
+    onChange({ ...kohde, vuorotyypit: uudet });
+    setMuokattavaVuoro(null);
+  };
+
+  // Vuoron poisto siivoaa viittaukset perehdytyksistä. Ilman tätä perehdytys jäisi
+  // osoittamaan olemattomaan vuoroon, eikä kukaan huomaisi ennen kuin joku ihmettelee
+  // miksei pääse kirjautumaan.
+  const poistaVuoro = (id: string) => {
+    onChange({
+      ...kohde,
+      vuorotyypit: vuorotyypit.filter((v) => v.id !== id),
+      perehdytykset: perehdytykset.map((pe) => ({
+        ...pe,
+        vuorotyyppiIdt: (pe.vuorotyyppiIdt || []).filter((x) => x !== id),
+      })),
+    });
+  };
+
+  const vaihdaVuoroValinta = (idt: string[], id: string) =>
+    (idt.includes(id) ? idt.filter((x) => x !== id) : [...idt, id]);
+
+  const vaihdaPerehdytyksenVuoro = (perehdytysId: string, vuoroId: string) => {
+    onChange({
+      ...kohde,
+      perehdytykset: perehdytykset.map((pe) => (pe.id === perehdytysId
+        ? { ...pe, vuorotyyppiIdt: vaihdaVuoroValinta(pe.vuorotyyppiIdt || [], vuoroId) }
+        : pe)),
+    });
   };
 
   const poistaPerehdytys = (id: string) => {
@@ -176,7 +279,7 @@ export const KohteenHallinta = ({
         {kohde.id ? kohde.name || 'Kohde' : 'Uusi kohde'}
       </h2>
       <p className="text-sm text-ink-muted mb-6">
-        Kohteen perustiedot, sille perehdytetyt henkilöt ja työvuoron tehtävät.
+        Kohteen perustiedot, vuorot, niihin perehdytetyt henkilöt ja työvuoron tehtävät.
       </p>
 
       <div className="flex gap-1 border-b border-line mb-6 -mx-1 overflow-x-auto">
@@ -195,6 +298,9 @@ export const KohteenHallinta = ({
             {label}
             {id === 'tiedostot' && tiedostot.length > 0 && (
               <span className="text-xs text-ink-subtle">({tiedostot.length})</span>
+            )}
+            {id === 'vuorot' && vuorotyypit.length > 0 && (
+              <span className="text-xs text-ink-subtle">({vuorotyypit.length})</span>
             )}
             {id === 'perehdytys' && perehdytykset.length > 0 && (
               <span className="text-xs text-ink-subtle">({perehdytykset.length})</span>
@@ -561,11 +667,198 @@ export const KohteenHallinta = ({
         />
       )}
 
+      {valilehti === 'vuorot' && (
+        <div>
+          <p className="text-sm text-ink-muted mb-4">
+            Vuorot joihin vartija voi kirjautua tässä kohteessa. Vuoro määrää mitkä tehtävät
+            ja kierrokset vartijalle tulevat — hänen ei tarvitse tietää niitä itse.
+            Perehdytys ratkaisee kuka mihinkin vuoroon pääsee.
+          </p>
+
+          {vuorotyypit.length > 0 && (
+            <div className="border border-line rounded-lg divide-y divide-line-soft mb-6">
+              {vuorotyypit.map((v) => (
+                <div key={v.id} className="flex items-start gap-3 px-4 py-3">
+                  <CalendarClock size={16} className="text-accent shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-ink">
+                      {v.nimi}
+                      {v.alkaa && v.paattyy ? (
+                        <span className="text-ink-muted font-normal"> · {v.alkaa}–{v.paattyy}</span>
+                      ) : (
+                        <span className="text-ink-subtle font-normal"> · ei kellonaikaa</span>
+                      )}
+                    </p>
+                    <p className="text-xs text-ink-muted">
+                      {lkm((v.tehtavaIdt || []).length, 'tehtävä', 'tehtävää')}
+                      {' · '}
+                      {lkm((v.pohjaIdt || []).length, 'kierros', 'kierrosta')}
+                      {' · '}
+                      {lkm(
+                        perehdytykset.filter((pe) => (pe.vuorotyyppiIdt || []).includes(v.id) && pe.username).length,
+                        'perehdytetty',
+                        'perehdytettyä'
+                      )}
+                    </p>
+                  </div>
+                  {saaMuokata && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setMuokattavaVuoro({
+                          ...v,
+                          alkaa: v.alkaa || '',
+                          paattyy: v.paattyy || '',
+                          tehtavaIdt: [...(v.tehtavaIdt || [])],
+                          pohjaIdt: [...(v.pohjaIdt || [])],
+                        })}
+                        className="shrink-0 text-xs font-medium text-ink-body hover:text-accent transition-colors"
+                      >
+                        Muokkaa
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => poistaVuoro(v.id)}
+                        className="shrink-0 text-ink-subtle hover:text-danger transition-colors"
+                        title={'Poista vuoro ' + v.nimi}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {muokattavaVuoro ? (
+            <div className="bg-sunken border border-line rounded-lg p-4 space-y-3">
+              <Kentta
+                label="Vuoron nimi"
+                arvo={muokattavaVuoro.nimi}
+                onChange={(v) => setMuokattavaVuoro({ ...muokattavaVuoro, nimi: v })}
+                placeholder="esim. Aamuvuoro"
+              />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Kentta
+                  label="Alkaa"
+                  arvo={muokattavaVuoro.alkaa || ''}
+                  onChange={(v) => setMuokattavaVuoro({ ...muokattavaVuoro, alkaa: v })}
+                  tyyppi="time"
+                />
+                <Kentta
+                  label="Päättyy"
+                  arvo={muokattavaVuoro.paattyy || ''}
+                  onChange={(v) => setMuokattavaVuoro({ ...muokattavaVuoro, paattyy: v })}
+                  tyyppi="time"
+                />
+              </div>
+              <p className="text-xs text-ink-muted">
+                Vuoroon voi kirjautua kaksi tuntia ennen alkua ja kaksi tuntia päättymisen
+                jälkeen. Jätä ajat tyhjiksi jos vuoro ei ole sidottu kellonaikaan — tyhjä
+                aika ei rajoita mitään.
+              </p>
+
+              <div>
+                <span className="block text-sm font-medium text-ink-body mb-2">Vuoron tehtävät</span>
+                {tehtavat.length === 0 ? (
+                  <p className="text-xs text-ink-muted">
+                    Kohteelle ei ole vielä määritelty tehtäviä. Lisää ne Työvuoron tehtävät
+                    -välilehdellä.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {tehtavat.map((t) => (
+                      <label key={t.id} className="flex items-center gap-2 text-sm text-ink-body">
+                        <input
+                          type="checkbox"
+                          checked={(muokattavaVuoro.tehtavaIdt || []).includes(t.id)}
+                          onChange={() => setMuokattavaVuoro({
+                            ...muokattavaVuoro,
+                            tehtavaIdt: vaihdaVuoroValinta(muokattavaVuoro.tehtavaIdt || [], t.id),
+                          })}
+                          className="rounded border-line-strong"
+                        />
+                        {t.nimi}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <span className="block text-sm font-medium text-ink-body mb-2">Vuoron kierrokset</span>
+                {pohjat.length === 0 ? (
+                  <p className="text-xs text-ink-muted">
+                    Kohteelle ei ole kierrospohjia. Ne luodaan Kierrospohjat-näkymässä.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {pohjat.map((po) => (
+                      <label key={po.id} className="flex items-center gap-2 text-sm text-ink-body">
+                        <input
+                          type="checkbox"
+                          checked={(muokattavaVuoro.pohjaIdt || []).includes(po.id)}
+                          onChange={() => setMuokattavaVuoro({
+                            ...muokattavaVuoro,
+                            pohjaIdt: vaihdaVuoroValinta(muokattavaVuoro.pohjaIdt || [], po.id),
+                          })}
+                          className="rounded border-line-strong"
+                        />
+                        <Route size={14} className="text-ink-subtle" />
+                        {po.nimi}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={tallennaVuoro}
+                  className="bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
+                >
+                  Valmis
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMuokattavaVuoro(null)}
+                  className="text-sm font-medium text-ink-muted hover:text-ink-body px-4 py-2"
+                >
+                  Peruuta
+                </button>
+              </div>
+            </div>
+          ) : saaMuokata ? (
+            <button
+              type="button"
+              onClick={() => setMuokattavaVuoro(tyhjaVuoro())}
+              className="inline-flex items-center gap-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
+            >
+              <Plus size={16} />
+              Lisää vuoro
+            </button>
+          ) : null}
+
+          <p className="text-xs text-ink-muted mt-4">
+            Vuorot tallentuvat vasta kun tallennat kohteen.
+          </p>
+        </div>
+      )}
+
       {valilehti === 'perehdytys' && (
         <div>
           <p className="text-sm text-ink-muted mb-4">
-            Henkilöt jotka on perehdytetty tähän kohteeseen. Merkintä säilyy vaikka henkilö
-            poistettaisiin työntekijäpankista myöhemmin.
+            Henkilöt jotka on perehdytetty tähän kohteeseen, ja mihin vuoroihin perehdytys
+            pätee. Merkintä säilyy vaikka henkilö poistettaisiin työntekijäpankista
+            myöhemmin.
+          </p>
+          <p className="text-sm text-ink-muted mb-4">
+            <strong className="font-semibold text-ink-body">Perehdytys ratkaisee pääsyn.</strong>{' '}
+            Vartija voi kirjautua vain niihin vuoroihin jotka on tässä rastitettu hänen
+            käyttäjätunnukselleen. Merkintä ilman tunnusta on kirjaus siitä että perehdytys
+            on pidetty, mutta se ei avaa yhtään vuoroa.
           </p>
 
           {perehdytykset.length > 0 && (
@@ -582,7 +875,48 @@ export const KohteenHallinta = ({
                     <p className="text-xs text-ink-muted">
                       Perehdytetty {p.pvm}
                       {p.perehdyttaja ? ` · perehdyttäjä ${p.perehdyttaja}` : ''}
+                      {p.username ? ` · tunnus ${p.username}` : ''}
                     </p>
+
+                    {!p.username ? (
+                      /* Kytkemätön merkintä. Tämä on sanottava ääneen: ilman varoitusta se
+                         näyttää täsmälleen samalta kuin toimiva perehdytys, ja vika
+                         huomataan vasta kun vartija ei pääse vuoroon. */
+                      <p className="mt-1 flex items-start gap-1.5 text-xs text-warning-ink">
+                        <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                        <span>
+                          Ei kytketty käyttäjätunnukseen — ei avaa yhtään vuoroa. Poista
+                          merkintä ja lisää se uudelleen tunnus valiten.
+                        </span>
+                      </p>
+                    ) : vuorotyypit.length === 0 ? (
+                      <p className="mt-1 text-xs text-ink-subtle">
+                        Kohteelle ei ole määritelty vuoroja.
+                      </p>
+                    ) : (
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5">
+                        {vuorotyypit.map((v) => (
+                          <label key={v.id} className="flex items-center gap-1.5 text-xs text-ink-body">
+                            <input
+                              type="checkbox"
+                              disabled={!saaMuokata}
+                              checked={(p.vuorotyyppiIdt || []).includes(v.id)}
+                              onChange={() => vaihdaPerehdytyksenVuoro(p.id, v.id)}
+                              className="rounded border-line-strong"
+                            />
+                            {v.nimi}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+
+                    {p.username && vuorotyypit.length > 0 && (p.vuorotyyppiIdt || []).length === 0 && (
+                      /* Tyhjä vuorolista tarkoittaa EI YHTÄÄN eikä kaikkia (server/vuorot.js).
+                         Sitä ei voi päätellä katsomalla, joten se sanotaan. */
+                      <p className="mt-1.5 text-xs text-ink-muted">
+                        Ei yhtään vuoroa rastitettuna — tämä perehdytys ei avaa mitään.
+                      </p>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -624,6 +958,64 @@ export const KohteenHallinta = ({
                 vinkki="Työntekijäpankki ei ole käytettävissä — kirjoita nimi käsin."
               />
             )}
+            {/* Käyttäjätunnus on se kenttä joka myöntää pääsyn. Se on omana valintanaan
+                työntekijäpankin rinnalla eikä sen sijaan: työntekijätietue on
+                henkilöstöhallinnan tieto, tunnus on se jolla vartija kirjautuu, eivätkä ne
+                ole sama asia ennen kuin joku kytkee ne yhteen. */}
+            <label className="block">
+              <span className="block text-sm font-medium text-ink-body mb-1">
+                Käyttäjätunnus
+              </span>
+              <select
+                value={uusiPerehdytys.username}
+                onChange={(e) => setUusiPerehdytys({ ...uusiPerehdytys, username: e.target.value })}
+                disabled={perehdytettavat.length === 0}
+                className="w-full rounded-lg border border-line-strong p-2.5 text-sm bg-surface outline-none focus:ring-2 focus:ring-accent disabled:opacity-60"
+              >
+                <option value="">Ei kytketä tunnukseen…</option>
+                {perehdytettavat.map((k) => (
+                  <option key={k.username} value={k.username}>
+                    {k.nimi} ({k.username})
+                  </option>
+                ))}
+              </select>
+              <span className="block text-xs text-ink-muted mt-1">
+                {!kohde.id
+                  ? 'Tallenna kohde ensin, niin tunnukset voidaan hakea.'
+                  : perehdytettavat.length === 0
+                    ? 'Yhdelläkään tunnuksella ei ole pääsyä tähän kohteeseen. Perehdytyksen voi silti kirjata, mutta se ei avaa vuoroja.'
+                    : 'Ilman tunnusta merkintä on kirjaus perehdytyksestä, ei pääsy vuoroon.'}
+              </span>
+            </label>
+
+            <div>
+              <span className="block text-sm font-medium text-ink-body mb-2">
+                Perehdytetyt vuorot
+              </span>
+              {vuorotyypit.length === 0 ? (
+                <p className="text-xs text-ink-muted">
+                  Kohteelle ei ole vielä määritelty vuoroja. Lisää ne Vuorot-välilehdellä.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                  {vuorotyypit.map((v) => (
+                    <label key={v.id} className="flex items-center gap-1.5 text-sm text-ink-body">
+                      <input
+                        type="checkbox"
+                        checked={uusiPerehdytys.vuorotyyppiIdt.includes(v.id)}
+                        onChange={() => setUusiPerehdytys({
+                          ...uusiPerehdytys,
+                          vuorotyyppiIdt: vaihdaVuoroValinta(uusiPerehdytys.vuorotyyppiIdt, v.id),
+                        })}
+                        className="rounded border-line-strong"
+                      />
+                      {v.nimi}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-2">
               <Kentta
                 label="Perehdytyspäivä"

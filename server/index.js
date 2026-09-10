@@ -28,6 +28,7 @@ import {
   kelpaakoKoodi, laitteenTietue, lueAvain, luoKoodi, luoNonceMuisti, tarkistaAllekirjoitus,
   luoLyontimuisti, tarvitaankoLyonninTallennus, valvonnanTila,
 } from './laite.js';
+import { JOUSTO_MIN, vuorovaihtoehdot } from './vuorot.js';
 import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
 import {
   luoToken,
@@ -1518,6 +1519,79 @@ const guardPortti = (req, res, next) => {
   }
   next();
 };
+
+// ====================== VUOROT (erä 16) ======================
+//
+// Vuorotyypit ovat kohteen kenttä eivätkä oma kokoelmansa, joten niiden luku ja
+// kirjoitus kulkevat guardSites-kokoelman tavallista tietä. Täällä on vain se mitä
+// kohdetietue ei suoraan kerro: kenen vuoro on kenenkin, ja kuka voidaan perehdyttää.
+
+// Vartijan omat vuorovaihtoehdot kirjautumisnäkymälle.
+//
+// VAIN KYSYJÄN OMAT, ja se on tietosuojaraja eikä optimointi. Kohteen perehdytyslista on
+// nimilista siitä kuka on perehdytetty — henkilötietoa, joka on tarkoituksella jätetty
+// pois laitteelle jäävästä kopiosta (src/shared/vuorodata.ts). Tämä reitti ei saa
+// kiertää sääntöä palauttamalla saman tiedon toisessa muodossa, joten se palauttaa
+// johtopäätöksen ("näihin vuoroihin sinä pääset") eikä aineistoa josta se on tehty.
+//
+// Kohdejoukko tulee readableDatasta eikä omasta säännöstä: silloin vuorolista ei voi
+// näyttää kohdetta jota käyttäjä ei muutenkaan saisi lukea.
+app.get('/api/vuorot/omat', requireAuth, guardPortti, (req, res) => {
+  const luettavat = readableData(
+    req.role, req.permissions, req.eventAccess, 'guardSites', readCollection('guardSites')
+  );
+  if (!luettavat.ok) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia kohteiden lukemiseen.' });
+  }
+  const kaikki = luettavat.data || [];
+  const kohteet = vuorovaihtoehdot({ kohteet: kaikki, username: req.username });
+
+  // Kuinka moni luettava kohde jäi pois perehdytyksen puuttumisen takia. Tämä ei vuoda
+  // mitään — kohteet ovat kutsujan luettavissa muutenkin — mutta se vastaa kysymykseen
+  // "miksi listani on lyhyt" ilman että siitä pitää soittaa jollekulle.
+  const nakyvat = new Set(kohteet.map((k) => k.siteId));
+  const ilmanPerehdytysta = kaikki
+    .filter((k) => !k.archived && (k.vuorotyypit || []).some((v) => v && !v.arkistoitu))
+    .filter((k) => !nakyvat.has(k.id)).length;
+
+  res.json({ ok: true, kohteet, ilmanPerehdytysta, joustoMin: JOUSTO_MIN });
+});
+
+// Ketkä voidaan perehdyttää tähän kohteeseen.
+//
+// Oma kapea reittinsä eikä /api/users, joka on pääkäyttäjän takana: kohteita voi hallita
+// ilman pääkäyttäjyyttä, eikä perehdytyksen kirjaaminen saa vaatia koko käyttäjähallinnan
+// oikeuksia. Palautetaan vain se mitä valintaan tarvitaan — tunnus, näyttönimi ja
+// tunnistenumero — eikä rooleja, oikeuksia tai kirjautumistietoja.
+//
+// Joukko lasketaan OIKEUKSISTA eikä erillisestä listasta, samasta syystä kuin
+// tiedotteenVastaanottajat: erillinen lista vanhenisi heti, ja kaksi totuutta siitä kuka
+// kohteessa työskentelee olisi pahempi kuin yksi.
+//
+// Pääkäyttäjät jätetään pois. Perehdytys on vartijan oikeus vuoroon, eikä pääkäyttäjää
+// rajata sillä perusteella — merkintä hänelle olisi tietue joka ei tee mitään.
+app.get('/api/kohde/:id/perehdytettavat', requireAuth, guardPortti, (req, res) => {
+  const siteId = req.params.id;
+  if (req.role !== 'admin' && !canEdit(req.permissions, siteId, 'guard_sites')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta kohteen perehdytyksiin.' });
+  }
+  const kayttajat = listUsers()
+    .filter((u) => u.role !== 'admin')
+    .filter((u) => paaseeTuotteisiin(u).includes('guard'))
+    .filter((u) => {
+      if (!eventAllowed(u.eventAccess, siteId)) return false;
+      // Kentällä työskentely voi näkyä useassa solmussa riippuen tasosta: toinen tekee
+      // kierroksia, toinen tehtäviä, kolmas lukee kohteen ohjeita. Mikä tahansa niistä
+      // riittää, koska kysymys on "voiko tämä henkilö olla täällä töissä".
+      const oikeudet = rolePermissions(u.roleId);
+      return canView(oikeudet, siteId, 'guard_site_info')
+        || canView(oikeudet, siteId, 'guard_patrols')
+        || canView(oikeudet, siteId, 'guard_tasks');
+    })
+    .map((u) => ({ username: u.username, nimi: u.nickname || u.username, displayId: u.displayId ?? null }));
+  res.json({ ok: true, kayttajat });
+});
+
 
 // Kanavaviesti pohjan muutoksesta. Viesti kuljettaa vain id:n, ja sisältö haetaan
 // oikeustarkistetulta reitiltä. Skenaariopohjan muutos on tieto joka on saatava kentälle

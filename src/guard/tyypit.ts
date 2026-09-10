@@ -10,10 +10,54 @@ import type { Vyohyke } from '../shared/vyohykkeet';
 export type Perehdytys = {
   id: string;
   nimi: string;
+  // KÄYTTÄJÄTUNNUS ON PÄÄSYN EHTO, NIMI EI (päätös 10.9.2026).
+  //
+  // Nimi jää tietueeseen sellaisenaan edellä kuvatusta syystä, mutta se ei kelpaa
+  // tunnisteeksi: kaksi Virtasta on tavallisempaa kuin yksi. Perehdytys myöntää pääsyn
+  // vain jos tämä kenttä osoittaa siihen tunnukseen jolla vartija kirjautuu.
+  // Ilman sitä tietue on yhä pätevä dokumentti mutta ei avaa mitään — ja se on
+  // näytettävä käyttöliittymässä erikseen merkittynä, koska muuten se näyttää toimivalta.
+  username?: string;
   employeeId?: string;
   displayId?: number | null;
   pvm: string;
   perehdyttaja?: string;
+  // Mihin kohteen vuorotyyppeihin tämä perehdytys pätee.
+  //
+  // TYHJÄ LISTA TARKOITTAA EI YHTÄÄN, EI KAIKKIA. Tämä on tarkoituksellinen poikkeus
+  // eventAccess-käytännöstä, jossa tyhjä lista tarkoittaa "ei rajausta". Sama sopimus
+  // tässä olisi vaarallinen: puolivalmis merkintä myöntäisi hiljaa pääsyn jokaiseen
+  // vuoroon, ja virhe näyttäisi täsmälleen samalta kuin harkittu päätös.
+  vuorotyyppiIdt?: string[];
+  // Varattu vanhenemiselle. EI OLE VOIMASSA: päätös 10.9.2026 oli ettei perehdytys
+  // vanhene v1:ssä. Kenttä on tässä jotta vanheneminen voidaan ottaa käyttöön ilman
+  // migraatiota — ja server/vuorot.test.js pitää huolen siitä ettei kukaan luule sen
+  // vaikuttavan ennen kuin sääntö kirjoitetaan.
+  voimassaAsti?: string | null;
+};
+
+// Kohteen vuorotyyppi: se vuoro johon vartija kirjautuu, ja se mitä vuoroon kuuluu.
+//
+// Kohteen kenttä eikä oma kokoelmansa, samasta syystä kuin vyöhykkeet ja tehtävät
+// (päätös V5): vuorotyyppi ei elä ilman kohdetta, sitä ei jaeta kohteiden välillä eikä
+// sillä ole omaa elinkaartaan.
+//
+// VIITTAUS EIKÄ KOPIO. Tehtävät ja kierrospohjat ovat tässä id:llä. Kopio vanhentuisi
+// hiljaa: tehtävän tekstiä korjattaisiin kohteen hallinnassa ja vuoro näyttäisi yhä
+// vanhaa. Kopio otetaan vasta vuoron alkaessa (erä 17), samoin kuin kierros kopioi
+// pisteensä pohjasta.
+export type Vuorotyyppi = {
+  id: string;
+  nimi: string;
+  kuvaus?: string;
+  // Ohjeelliset kellonajat muodossa "07:00". Rajoittavat kirjautumista jouston verran
+  // molempiin suuntiin (server/vuorot.js) — mutta puuttuva aika ei ole virhe: kellonajaton
+  // lisävuoro on olemassa, eikä puuttuva rajoite saa muuttua rajoitteeksi.
+  alkaa?: string;
+  paattyy?: string;
+  tehtavaIdt?: string[];
+  pohjaIdt?: string[];
+  arkistoitu?: boolean;
 };
 
 // Kohteelle määritelty tehtävä työvuoroon. Kaksi muotoa:
@@ -38,6 +82,7 @@ export type Kohde = {
   archived?: boolean;
   perehdytykset?: Perehdytys[];
   tehtavat?: Tehtava[];
+  vuorotyypit?: Vuorotyyppi[];
   // Kohteen pohjakartta ja sen päälle piirretyt vyöhykkeet. Sama malli kuin
   // tapahtumalla (päätös V5): vyöhyke on kohteen kenttä eikä omaa kokoelmaansa.
   // HUOM: mapUploadId on rekisteröitävä palvelimella kahteen paikkaan —

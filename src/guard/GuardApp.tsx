@@ -1385,6 +1385,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onPeruuta={() => setLomake(null)}
           tallentaa={tallentaa}
           tyontekijat={tyontekijat}
+          pohjat={pohjat.filter((po) => po.ownerId === lomake.id && !po.arkistoitu)}
           tiedostot={tiedostot.filter((t) => t.siteId === lomake.id)}
           onLisaaTiedosto={lisaaTiedosto}
           onPoistaTiedosto={poistaTiedosto}

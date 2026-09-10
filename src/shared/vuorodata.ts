@@ -56,6 +56,9 @@ export const riisuKohde = (kohde: Kohde): Kohde => ({
   // Vartijan ohjeet: tämä on se kenttä jonka takia koko tallennus tehdään.
   notes: kohde.notes,
   tehtavat: kohde.tehtavat,
+  // Vuorotyypit: nimi, kellonajat ja viittaukset tehtäviin. Ei henkilötietoa — tässä ei
+  // lue kuka vuorossa on, vaan mitä vuoroon kuuluu.
+  vuorotyypit: kohde.vuorotyypit,
   zones: kohde.zones,
   // Karttakuva itse on /api/uploads-polun takana eikä sitä tallenneta (ks. sw-pohja.js:
   // API-vastauksia ei välimuistiteta). Id säilytetään, jotta kartta latautuu heti kun
