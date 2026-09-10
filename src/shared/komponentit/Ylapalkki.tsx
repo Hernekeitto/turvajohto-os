@@ -38,12 +38,12 @@ export const YlapalkkiLogo = ({ tuoteNimi, alaotsikko, onLogo }: YlapalkkiLogoPr
   </button>
 );
 
-type YlapalkkiProps = YlapalkkiLogoProps & {
+type YlapalkkiProps<T extends Ilmoitus> = YlapalkkiLogoProps & {
   // Annettu kellonaika näytetään palkissa; puuttuva jättää kellon pois.
   kello?: string;
   sticky?: boolean;
-  ilmoitukset: Ilmoitus[];
-  onIlmoitus: (ilmoitus: Ilmoitus) => void;
+  ilmoitukset: T[];
+  onIlmoitus: (ilmoitus: T) => void;
   nimimerkki: string;
   isAdmin: boolean;
   onChangePassword?: () => void;
@@ -51,7 +51,7 @@ type YlapalkkiProps = YlapalkkiLogoProps & {
   onLogout: () => void;
 };
 
-export const Ylapalkki = ({
+export const Ylapalkki = <T extends Ilmoitus,>({
   tuoteNimi,
   alaotsikko,
   onLogo,
@@ -64,7 +64,7 @@ export const Ylapalkki = ({
   onChangePassword,
   onViewAuditLog,
   onLogout,
-}: YlapalkkiProps) => (
+}: YlapalkkiProps<T>) => (
   <nav
     className={`bg-surface-dark text-ink-on-dark px-6 py-4 flex justify-between items-center shadow-md${
       sticky ? ' sticky top-0 z-50' : ''

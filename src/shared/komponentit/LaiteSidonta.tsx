@@ -29,7 +29,11 @@ const paiva = (iso: string) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('fi-FI');
 };
 
-export const LaiteSidonta = () => {
+// Ulkoreunuksen väli tulee kutsujalta: vuorovalinnassa kortti erottuu listasta ja
+// tarvitsee tilan päälleen, valikon ikkunassa se on ainoa sisältö eikä saa työntyä irti.
+type Props = { className?: string };
+
+export const LaiteSidonta = ({ className = 'mt-6' }: Props) => {
   const [laite, setLaite] = useState<Laite | null>(null);
   const [ladattu, setLadattu] = useState(false);
   const [odottaa, setOdottaa] = useState(false);
@@ -88,7 +92,7 @@ export const LaiteSidonta = () => {
   if (!ladattu) return null;
 
   return (
-    <div className="rounded-xl border border-line bg-surface p-4 mt-6">
+    <div className={`rounded-xl border border-line bg-surface p-4 ${className}`}>
       <h3 className="text-base font-bold text-ink flex items-center gap-2">
         {laite ? (
           <ShieldCheck size={18} className="text-success" />

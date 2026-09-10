@@ -2,7 +2,9 @@
 // puolilla on sama yläpalkki, samat ilmoitukset ja sama tunnus.
 
 import { useState } from 'react';
-import { Bell, KeyRound, History, LogOut } from 'lucide-react';
+import { Bell, KeyRound, History, LogOut, Smartphone, X } from 'lucide-react';
+
+import { LaiteSidonta } from './LaiteSidonta';
 
 // Ilmoituksen muoto on tarkoituksella yleinen, ks. NotificationBellin kommentti.
 export type Ilmoitus = {
@@ -13,9 +15,9 @@ export type Ilmoitus = {
   [avain: string]: unknown;
 };
 
-type NotificationBellProps = {
-  notifications: Ilmoitus[];
-  onOpen: (ilmoitus: Ilmoitus) => void;
+type NotificationBellProps<T extends Ilmoitus> = {
+  notifications: T[];
+  onOpen: (ilmoitus: T) => void;
 };
 
 type ProfileMenuProps = {
@@ -40,7 +42,7 @@ const getInitials = (name: unknown) => {
 // jotta muut ilmoituslajit voi lisätä palvelimen /api/notifications-reittiin ilman että
 // tätä komponenttia tarvitsee muuttaa. Toistaiseksi ainoa laji on pääkäyttäjälle tuleva
 // jakolinkin hyväksymispyyntö.
-export const NotificationBell = ({ notifications, onOpen }: NotificationBellProps) => {
+export const NotificationBell = <T extends Ilmoitus,>({ notifications, onOpen }: NotificationBellProps<T>) => {
   const [open, setOpen] = useState(false);
   const maara = notifications.length;
   return (
@@ -68,7 +70,7 @@ export const NotificationBell = ({ notifications, onOpen }: NotificationBellProp
               <p className="px-4 py-6 text-sm text-ink-muted text-center">Ei uusia ilmoituksia.</p>
             ) : (
               <div className="max-h-80 overflow-y-auto divide-y divide-line-soft">
-                {notifications.map((ilm: Ilmoitus) => (
+                {notifications.map((ilm) => (
                   <button
                     key={ilm.id}
                     onClick={() => { setOpen(false); onOpen(ilm); }}
@@ -98,6 +100,11 @@ export const NotificationBell = ({ notifications, onOpen }: NotificationBellProp
 // painikkeina — valikkoon jäävät vain omaan tunnukseen liittyvät toiminnot.
 export const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onViewAuditLog, onLogout }: ProfileMenuProps) => {
   const [open, setOpen] = useState(false);
+  // Sidonta avautuu omaan ikkunaansa eikä uutena näkymänä, eikä se ole propsi: se on
+  // omaan tunnukseen liittyvä toiminto niin kuin salasanan vaihto, ja se koskee juuri
+  // sitä laitetta jolla valikko on auki. Ilman ikkunaa jokainen käyttöpaikka joutuisi
+  // kytkemään oman reitin samaan korttiin.
+  const [laiteAuki, setLaiteAuki] = useState(false);
   return (
     <div className="relative">
       <button
@@ -124,6 +131,13 @@ export const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onViewAuditLo
                 Vaihda salasana
               </button>
             )}
+            <button
+              onClick={() => { setOpen(false); setLaiteAuki(true); }}
+              className="w-full text-left px-4 py-2 text-sm text-ink-body hover:bg-sunken flex items-center gap-2 transition-colors"
+            >
+              <Smartphone size={16} className="text-ink-subtle" />
+              Laitteen sidonta
+            </button>
             {isAdmin && onViewAuditLog && (
               <button
                 onClick={() => { setOpen(false); onViewAuditLog(); }}
@@ -143,6 +157,33 @@ export const ProfileMenu = ({ nickname, isAdmin, onChangePassword, onViewAuditLo
             </button>
           </div>
         </>
+      )}
+
+      {laiteAuki && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/50 flex items-start justify-center p-4 overflow-y-auto"
+          onClick={() => setLaiteAuki(false)}
+        >
+          {/* Klikkaus kortin sisällä ei saa sulkea ikkunaa: sidontapainikkeen painaminen
+              on juuri sellainen klikkaus, ja ikkunan katoaminen sen alta veisi odotustilan
+              näkyvistä juuri kun sitä pitäisi katsoa. */}
+          <div
+            className="w-full max-w-md mt-16 text-ink"
+            onClick={(tapahtuma) => tapahtuma.stopPropagation()}
+          >
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setLaiteAuki(false)}
+                aria-label="Sulje"
+                className="mb-2 p-2 rounded-lg bg-surface border border-line hover:bg-sunken transition-colors"
+              >
+                <X size={16} className="text-ink-muted" />
+              </button>
+            </div>
+            <LaiteSidonta className="" />
+          </div>
+        </div>
       )}
     </div>
   );
