@@ -8,7 +8,8 @@
 // minuutit, aloittamattomalla tarkistuspisteiden määrä. Molemmissa on lyhyt selite
 // numeron alla, koska pelkkä numero kortilla on arvoitus — ja arvoitus kentällä on
 // pahempi kuin puuttuva tieto.
-import { AlertTriangle, ClipboardCheck, Route, Siren, Timer } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, ClipboardCheck, Route, Search, Siren, Timer } from 'lucide-react';
 
 import { TYYPPI_LABEL, type Halytys } from '../../shared/halytykset';
 import type { Kierros as KierrosTietue, Kierrospohja, Kohde, TehtavaSuoritus } from '../tyypit';
@@ -19,6 +20,13 @@ type Props = {
   // vuorotonta tilaa tai vuoroa jossa ei ole kierroksia — kummassakin tapauksessa mitään
   // ei korosteta, mikä on oikea lopputulos molemmille.
   vuoronPohjaIdt: string[];
+  vuoronTehtavaIdt: string[];
+  // Onko vuoro palvelimella. Hakemisto lisää tehtäviä VUOROON, joten ilman vuoroa sillä
+  // ei ole mihin lisätä — eikä painiketta jolla ei ole kohdetta pidä näyttää.
+  vuoroKaynnissa: boolean;
+  lisataan: boolean;
+  lisaysVirhe: string | null;
+  onLisaaVuoroon: (laji: 'tehtava' | 'kierros', id: string) => void;
   pohjat: Kierrospohja[];
   kierrokset: KierrosTietue[];
   halytykset: Halytys[];
@@ -51,9 +59,11 @@ const minuutteja = (alkoi: string) => {
 };
 
 export const MobiiliEtusivu = ({
-  kohde, vuoronPohjaIdt, pohjat, kierrokset, halytykset, suoritukset, sallitut,
-  onKierros, onTehtavat, onHalytykset,
+  kohde, vuoronPohjaIdt, vuoronTehtavaIdt, vuoroKaynnissa, lisataan, lisaysVirhe,
+  pohjat, kierrokset, halytykset, suoritukset, sallitut,
+  onKierros, onTehtavat, onHalytykset, onLisaaVuoroon,
 }: Props) => {
+  const [hakemistoAuki, setHakemistoAuki] = useState(false);
   const vuoroon = new Set(vuoronPohjaIdt);
   // Vuoron omat kierrokset ensin. Tämä on erän 17 koko lupaus näkymässä: vartijan ei
   // tarvitse tietää mitä kohteessa ajetaan, vaan se mikä kuuluu juuri tähän vuoroon on
@@ -73,6 +83,15 @@ export const MobiiliEtusivu = ({
   // montako tämän päivän tehtävää on kuitattu — eilinen kuittaus ei kerro tästä
   // vuorosta mitään.
   const tehtavat = kohde.tehtavat || [];
+  // Mitä kohteen hakemistosta voi vielä lisätä vuoroon. Jo vuorossa olevat jäävät pois:
+  // "lisää" jonka painaminen ei tee mitään on huonompi kuin puuttuva rivi.
+  const vuoronTehtavat = new Set(vuoronTehtavaIdt);
+  const lisattavat: { laji: 'tehtava' | 'kierros'; id: string; nimi: string }[] = [
+    ...(sallitut.tehtavat ? tehtavat.filter((t) => !vuoronTehtavat.has(t.id))
+      .map((t) => ({ laji: 'tehtava' as const, id: t.id, nimi: t.nimi })) : []),
+    ...(sallitut.kierrokset ? omatPohjat.filter((p) => !vuoroon.has(p.id))
+      .map((p) => ({ laji: 'kierros' as const, id: p.id, nimi: p.nimi })) : []),
+  ];
   const kuitatutTanaan = new Set(
     suoritukset
       .filter((s) => s.siteId === kohde.id && samaPaiva(s.aika))
@@ -167,6 +186,60 @@ export const MobiiliEtusivu = ({
       {sallitut.halytykset && kaynnissa.map((h) => (
         <HalytysKortti key={h.id} halytys={h} kohde={kohde} kriittinen={false} onClick={onHalytykset} />
       ))}
+
+      {/* Kohteen tehtävähakemisto (erä 17).
+          Vuoro kertoo mitä PITÄÄ tehdä; tämä vastaa kysymykseen saanko tehdä myös tämän.
+          Jos vain tämä olisi olemassa, oltaisiin nykytilassa jossa vartija etsii kaiken
+          itse. Jos vain vuorolista, kukaan ei voisi tehdä ylimääräistä ilman esimiestä.
+
+          Suljettuna oletuksena: etusivu vastaa kysymykseen mitä minun pitää nyt tehdä,
+          eikä hakemisto ole se vastaus. */}
+      {vuoroKaynnissa && lisattavat.length > 0 && (
+        <div className="rounded-xl border border-line bg-surface">
+          <button
+            type="button"
+            onClick={() => setHakemistoAuki(!hakemistoAuki)}
+            className="w-full text-left p-4 flex items-center gap-3"
+          >
+            <Search size={18} className="text-ink-subtle shrink-0" />
+            <span className="flex-1 text-base font-medium text-ink-body">
+              Lisää vuorooni kohteen hakemistosta
+            </span>
+            <span className="text-base text-ink-muted shrink-0">
+              {hakemistoAuki ? '−' : `+${lisattavat.length}`}
+            </span>
+          </button>
+
+          {hakemistoAuki && (
+            <div className="border-t border-line-soft divide-y divide-line-soft">
+              {lisaysVirhe && (
+                <p className="px-4 py-3 text-sm text-danger-ink bg-danger-soft">{lisaysVirhe}</p>
+              )}
+              {lisattavat.map((rivi) => (
+                <div key={`${rivi.laji}-${rivi.id}`} className="px-4 py-3 flex items-center gap-3">
+                  {rivi.laji === 'kierros'
+                    ? <Route size={16} className="text-ink-subtle shrink-0" />
+                    : <ClipboardCheck size={16} className="text-ink-subtle shrink-0" />}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-base text-ink-body truncate">{rivi.nimi}</span>
+                    <span className="block text-sm text-ink-muted">
+                      {rivi.laji === 'kierros' ? 'Kierros' : 'Tehtävä'}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={lisataan}
+                    onClick={() => onLisaaVuoroon(rivi.laji, rivi.id)}
+                    className="shrink-0 text-sm font-medium text-accent hover:underline disabled:opacity-50"
+                  >
+                    Lisää
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {tyhja && (
         <div className="rounded-xl border border-line bg-surface p-8 text-center">

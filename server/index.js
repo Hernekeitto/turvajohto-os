@@ -29,7 +29,8 @@ import {
   luoLyontimuisti, tarvitaankoLyonninTallennus, valvonnanTila,
 } from './laite.js';
 import {
-  JOUSTO_MIN, aloitaVuoro, keskenOlevaVuoro, lisaaVuoroon, paataVuoro, vuorovaihtoehdot,
+  JOUSTO_MIN, aloitaVuoro, keskenOlevaVuoro, kohteetPerehdytyksenMukaan, lisaaVuoroon,
+  paataVuoro, vuorovaihtoehdot,
 } from './vuorot.js';
 import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
 import {
@@ -585,6 +586,14 @@ function tuoteEstaa(req, name) {
   return tuote !== null && !(req.tuotteet || []).includes(tuote);
 }
 
+// Koskeeko perehdytysrajaus tätä käyttäjää. Kolme ohitusta, ja jokaisella oma syynsä:
+// pääkäyttäjä hallinnoi järjestelmää, kohteiden hallinnoija ylläpitää kohteita joihin
+// häntä ei ole perehdytetty, ja päivystäjä valvoo kaikkia kohteita olematta kentällä.
+const vainPerehdytetytKohteet = (req) =>
+  req.role !== 'admin'
+  && !canEdit(req.permissions, null, 'guard_sites')
+  && !canView(req.permissions, null, 'guard_dispatch');
+
 app.get('/api/data/:name', requireAuth, (req, res) => {
   const { name } = req.params;
   if (!KNOWN_COLLECTIONS.includes(name)) {
@@ -612,6 +621,23 @@ app.get('/api/data/:name', requireAuth, (req, res) => {
   // Tarkistuspisteiden tokenit peitetään samalla säännöllä: ne haetaan erikseen vasta
   // kun käyttäjä tulostaa tarrat (/api/pohjat/:id/tarrat).
   if (name === 'templates') data = (result.data || []).map(julkinenPohja);
+
+  // Kohdelista perehdytyksen mukaan (erä 17, päätös 10.9.2026).
+  //
+  // Rajaus koskee VAIN kenttävartijaa: se ohitetaan pääkäyttäjällä, kohteiden
+  // hallinnoijalla (`guard_sites` muokkaus) ja päivystäjällä (`guard_dispatch`). Heillä
+  // ei ole perehdytyksiä hallinnoimiinsa tai valvomiinsa kohteisiin, eikä heiltä siksi
+  // saa viedä kohdelistaa — rajaus tekisi hallinnasta mahdotonta juuri niille joiden
+  // tehtävä se on.
+  //
+  // Molemmat solmut ovat GLOBAL_NODES-solmuja (permissions.js), joten eventId on null.
+  if (name === 'guardSites' && vainPerehdytetytKohteet(req)) {
+    data = kohteetPerehdytyksenMukaan({
+      kohteet: data || [],
+      username: req.username,
+      vuorot: readCollection('guardShifts') || [],
+    });
+  }
   res.json({ ok: true, data });
 });
 

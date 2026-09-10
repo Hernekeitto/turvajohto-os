@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import {
   JOUSTO_MIN,
   minuutit, onKytketty, perehdytetytVuorot, saakoAloittaa, vuoroIkkunassa, vuorovaihtoehdot,
-  aloitaVuoro, keskenOlevaVuoro, lisaaVuoroon, paataVuoro,
+  aloitaVuoro, keskenOlevaVuoro, kohteetPerehdytyksenMukaan, lisaaVuoroon, paataVuoro,
 } from './vuorot.js';
 
 // Kello annetaan aina paikallisena, koska vuoroikkuna on paikallista aikaa: vartija tulee
@@ -397,4 +397,42 @@ test('yksi kesken oleva vuoro kerrallaan', () => {
   assert.equal(keskenOlevaVuoro([paattynyt, vuoro, toinen], 'vartija1').id, 'vuoro-1');
   assert.equal(keskenOlevaVuoro([paattynyt], 'vartija1'), null);
   assert.equal(keskenOlevaVuoro([], 'vartija1'), null);
+});
+
+// --- Kohdenäkyvyys perehdytyksen mukaan ---------------------------------------------
+
+test('vartija näkee vain perehdytetyt kohteet', () => {
+  const perehdytetty = kohde({ id: 'k1', perehdytykset: [perehdytys()] });
+  const vieras = kohde({ id: 'k2', perehdytykset: [] });
+  const nakyvat = kohteetPerehdytyksenMukaan({ kohteet: [perehdytetty, vieras], username: 'vartija1' });
+  assert.deepEqual(nakyvat.map((k) => k.id), ['k1']);
+});
+
+test('kesken oleva vuoro ohittaa perehdytyksen', () => {
+  // Hälytyskeskus voi avata vuoron kertaluvalla ilman perehdytystä. Ilman tätä poikkeusta
+  // kertalupa antaisi työn muttei kohteen ohjeita, yhteystietoja eikä vyöhykkeitä.
+  const vieras = kohde({ id: 'k2', perehdytykset: [] });
+  const vuorot = [{ id: 'v1', siteId: 'k2', vartija: 'vartija1', tila: 'kesken' }];
+  assert.equal(kohteetPerehdytyksenMukaan({ kohteet: [vieras], username: 'vartija1', vuorot }).length, 1);
+});
+
+test('päättynyt vuoro ei jätä kohdetta näkyviin', () => {
+  const vieras = kohde({ id: 'k2', perehdytykset: [] });
+  const vuorot = [{ id: 'v1', siteId: 'k2', vartija: 'vartija1', tila: 'paattynyt' }];
+  assert.equal(kohteetPerehdytyksenMukaan({ kohteet: [vieras], username: 'vartija1', vuorot }).length, 0);
+});
+
+test('toisen vartijan vuoro ei avaa kohdetta', () => {
+  const vieras = kohde({ id: 'k2', perehdytykset: [] });
+  const vuorot = [{ id: 'v1', siteId: 'k2', vartija: 'vartija2', tila: 'kesken' }];
+  assert.equal(kohteetPerehdytyksenMukaan({ kohteet: [vieras], username: 'vartija1', vuorot }).length, 0);
+});
+
+test('kytkemätön tai tyhjä perehdytys ei avaa kohdetta', () => {
+  const kytkematon = kohde({ id: 'k3', perehdytykset: [perehdytys({ username: undefined })] });
+  const tyhja = kohde({ id: 'k4', perehdytykset: [perehdytys({ vuorotyyppiIdt: [] })] });
+  assert.deepEqual(
+    kohteetPerehdytyksenMukaan({ kohteet: [kytkematon, tyhja], username: 'vartija1' }).map((k) => k.id),
+    []
+  );
 });

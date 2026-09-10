@@ -271,6 +271,33 @@ try {
   const suoraSyy = await suora.json().catch(() => null);
   vaita(suora.status === 403, `suora kirjoitus torjutaan (${suora.status})`);
   vaita(/ylläpitää palvelin/.test(suoraSyy?.error || ''), 'ja oikeasta syystä');
+
+  console.log('\n15. Kohdelista perehdytyksen mukaan');
+  const kohteet = async (evasteet) => {
+    const v = await fetch(`${PALVELIN}/api/data/guardSites`, { headers: { Cookie: evasteet } });
+    const d = await v.json().catch(() => null);
+    return (d?.data || []).map((k) => k.id);
+  };
+
+  // Pääkäyttäjä on rajauksen ulkopuolella: hän hallinnoi kohteita joihin häntä ei ole
+  // perehdytetty, ja rajaus tekisi hallinnasta mahdotonta juuri hänelle.
+  vaita((await kohteet(evaste)).length === 3, 'pääkäyttäjä näkee kaikki kohteet');
+
+  // Kenttävartija ilman perehdytystä ei näe yhtään kohdetta.
+  vaita((await kohteet(vartijanEvaste)).length === 0, 'perehdyttämätön vartija ei näe kohteita');
+
+  // Kertaluvalla avattu vuoro avaa myös kohteen tiedot. Ilman tätä poikkeusta lupa
+  // antaisi työn muttei ohjeita, yhteystietoja eikä vyöhykkeitä joilla se tehdään.
+  const luvitettu = await post('/api/vuoro', {
+    siteId: 'kohde-perehdytetty', vuorotyyppiId: 'v-lisa',
+    vartija: 'vartija1', poikkeusSyy: 'Kertaluvan testi',
+  });
+  vaita(luvitettu.status === 200, 'kertalupa myönnettiin');
+  vaita((await kohteet(vartijanEvaste)).includes('kohde-perehdytetty'),
+    'kesken oleva vuoro avaa kohteen ilman perehdytystä');
+
+  await post(`/api/vuoro/${luvitettu.data.vuoro.id}/paata`, {});
+  vaita((await kohteet(vartijanEvaste)).length === 0, 'vuoron päätyttyä kohde katoaa taas');
 } finally {
   palvelin.kill();
   fs.rmSync(DATA, { recursive: true, force: true });

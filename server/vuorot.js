@@ -301,3 +301,30 @@ export function lisaaVuoroon({ vuoro, kohde, pohjat = [], laji, kohdeId, lahde =
 export function keskenOlevaVuoro(vuorot, username) {
   return (vuorot || []).find((v) => v?.tila === 'kesken' && v.vartija === username) || null;
 }
+
+// --- Kohdenäkyvyys perehdytyksen mukaan (erä 17) ------------------------------------
+//
+// Päätös 10.9.2026: perehdytys korvaa kohderajauksen VARTIJALLA. Kolme asiaa on syytä
+// sanoa ääneen, koska tämä on oikeussääntö eikä käyttöliittymän suodatin:
+//
+// 1. TÄMÄ KOSKEE VAIN KOHDELISTAA (guardSites). Muut kohdesidonnaiset kokoelmat —
+//    raportit, kierrokset, hälytykset — noudattavat yhä `eventAccess`-rajausta ja omia
+//    solmujaan. Tämä ei siis ole täydellinen tietoraja vaan se mitä päätöksessä
+//    tarkoitettiin: vartija ei näe kohdelistassa kohteita joihin häntä ei ole
+//    perehdytetty.
+//
+// 2. KESKEN OLEVA VUORO OHITTAA PEREHDYTYKSEN. Hälytyskeskus voi avata vuoron
+//    kertaluvalla ilman perehdytystä (ks. aloitaVuoro). Ilman tätä poikkeusta vartija
+//    saisi vuoron muttei näkisi kohteen ohjeita, yhteystietoja eikä vyöhykkeitä — eli
+//    kertalupa antaisi työn muttei sen tekemiseen tarvittavaa tietoa.
+//
+// 3. RAJAUS EI KOSKE KOHTEIDEN HALLINTAA EIKÄ PÄIVYSTYSTÄ. Vartioesimiehellä ei ole
+//    perehdytyksiä hallinnoimiinsa kohteisiin eikä päivystäjällä valvomiinsa, eikä
+//    heiltä siksi saa viedä kohdelistaa. Ehto on kutsujalla (index.js), koska se on
+//    oikeuskysymys eikä vuorosääntö.
+export function kohteetPerehdytyksenMukaan({ kohteet = [], username, vuorot = [] }) {
+  const avoimet = new Set(
+    vuorot.filter((v) => v?.tila === 'kesken' && v.vartija === username).map((v) => v.siteId)
+  );
+  return kohteet.filter((k) => avoimet.has(k?.id) || perehdytetytVuorot(k, username).size > 0);
+}

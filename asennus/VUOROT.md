@@ -340,9 +340,9 @@ Vartija kirjautuu nyt **vuoroon** eikä kohteeseen, ja vuoro on palvelimen tietu
 | Kanavaviesti vuoron muutoksista | valmis |
 | Kirjautumisnäkymä (kohde × vuoro) kolmella tilalla | valmis |
 | Vuoron kierrokset ensin ja merkittyinä etusivulla | valmis |
-| Tehtävähakemiston selainkäyttöliittymä | **tekemättä** (reitti on) |
-| Kohdenäkyvyyden kytkin perehdytykseen | **tekemättä** |
-| Natiivisilta saa vuoron tunnisteen | **tekemättä** (vaatii uuden APK:n) |
+| Tehtävähakemisto etusivulla | valmis |
+| Kohdenäkyvyys perehdytyksen mukaan | valmis |
+| Natiivisilta saa vuoron tunnisteen ja vuorotyypin | valmis |
 
 **Palvelin on totuus, laite on kopio.** Laitteen `localStorage` luetaan ensin, jotta
 näkymä on oikea heti eikä vilku tyhjänä verkon ajan, mutta palvelin voittaa
@@ -362,6 +362,46 @@ ettei vartija pääse ulos vuorosta ennen kuin verkko palaa.
 ennenkin `paataVuoro`a, mutta silloin se päätti vain laitteen tilan. Nyt se päättää vuoron
 myös palvelimella, ja se on kirjaus — painike joka aliarvioi tekonsa on pahempi kuin
 pitkä nimi.
+
+#### Kohdenäkyvyys: mitä rajaus koskee ja mitä ei
+
+Perehdytys korvaa kohderajauksen **kohdelistassa** (`GET /api/data/guardSites`). Se ei ole
+täydellinen tietoraja vaan täsmälleen se mitä päätöksessä tarkoitettiin: vartija ei näe
+kohteita joihin häntä ei ole perehdytetty. Muut kohdesidonnaiset kokoelmat — raportit,
+kierrokset, hälytykset — noudattavat yhä `eventAccess`-rajausta ja omia solmujaan. Tämä on
+sanottava, koska "perehdytys korvaa kohderajauksen" kuulostaa laajemmalta kuin se on.
+
+Rajaus **ohitetaan kolmella ehdolla**, ja jokaisella on oma syynsä:
+
+| Ohitus | Miksi |
+|---|---|
+| Pääkäyttäjä | hallinnoi järjestelmää, ei tee vuoroja perehdytyksen nojalla |
+| `guard_sites` muokkaus | ylläpitää kohteita joihin häntä ei ole perehdytetty |
+| `guard_dispatch` | valvoo kaikkia kohteita olematta kentällä |
+
+Ilman näitä rajaus tekisi kohteiden hallinnasta mahdotonta juuri niille joiden tehtävä se
+on. Molemmat solmut ovat globaaleja (`permissions.js`: GLOBAL_NODES), joten tarkistus ei
+ole kohdekohtainen.
+
+**Kesken oleva vuoro ohittaa perehdytyksen.** Hälytyskeskus voi avata vuoron kertaluvalla
+ilman perehdytystä; ilman tätä poikkeusta vartija saisi vuoron muttei näkisi kohteen
+ohjeita, yhteystietoja eikä vyöhykkeitä — lupa antaisi työn muttei sen tekemiseen
+tarvittavaa tietoa. Todennettu päästä päähän: lupa avaa kohteen, ja vuoron päätyttyä se
+katoaa taas.
+
+#### Natiivisilta
+
+`turvajohto-guard://vuoro?id=…&nimi=…&vuoro=…`. Kaksi muutosta:
+
+- `nimi` sisältää nyt vuorotyypin (`"Kauppakeskus Hansa · Yövuoro"`). Pysyvä ilmoitus
+  erottaa siis aamu- ja yövuoron, ja se on juuri se mitä vartija ilmoituksesta tarkistaa
+  kun epäilee kirjautuneensa väärään vuoroon. **Toimii nykyisellä APK:lla** — se näyttää
+  merkkijonon sellaisenaan.
+- `vuoro` on palvelimen vuorotietueen tunniste. **Nykyinen APK ei lue sitä**
+  (`SiltaActivity` poimii vain `id`:n ja `nimi`:n, ja tuntematon kyselyparametri jää
+  huomiotta). Se lähetetään silti nyt, jotta kun sijainnin lähetys erässä 11 ripustetaan
+  vuoroon, tieto on jo sillassa — kaksi muutosta yhdellä kertaa on kaksi kertaa vaikeampi
+  todeta oikeaksi.
 
 **Kertalupa toteutui yksinkertaisemmin kuin määrittelyssä.** Alkuperäinen ajatus oli
 hyväksyntäjono: vartija pyytää, päivystäjä myöntää, vartija aloittaa. Toteutus on sen

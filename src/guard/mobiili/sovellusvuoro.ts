@@ -69,9 +69,22 @@ export function onAlustaJollaSovellus(): boolean {
  * vuoron: palvelu korvaa vuoronsa eikä käynnistä toista rinnalle.
  */
 export function kaynnistaSovelluksessa(vuoro: Vuoro): Vuoronvalitys {
+  // Pysyvässä ilmoituksessa näkyvä teksti. Vuorotyyppi mukaan, koska pelkkä kohteen nimi
+  // ei erota aamu- ja yövuoroa toisistaan — ja se on juuri se ero jonka vartija tarkistaa
+  // ilmoituksesta silloin kun hän epäilee kirjautuneensa väärään vuoroon.
+  const nimi = vuoro.vuorotyyppiNimi
+    ? `${vuoro.kohdeNimi} · ${vuoro.vuorotyyppiNimi}`
+    : vuoro.kohdeNimi;
+
+  // `vuoro` on palvelimen vuorotietueen tunniste. NYKYINEN SOVELLUS EI LUE SITÄ
+  // (SiltaActivity poimii vain id:n ja nimen), ja tuntematon kyselyparametri jää siltä
+  // huomiotta. Se lähetetään silti nyt, jotta kun sijainnin lähetys erässä 11 ripustetaan
+  // vuoroon, tieto on jo sillassa eikä sitä tarvitse lisätä samalla kun se otetaan
+  // käyttöön — kaksi muutosta yhdellä kertaa on kaksi kertaa vaikeampi todeta oikeaksi.
   return avaa('turvajohto-guard://vuoro'
     + `?id=${encodeURIComponent(vuoro.kohdeId)}`
-    + `&nimi=${encodeURIComponent(vuoro.kohdeNimi)}`);
+    + `&nimi=${encodeURIComponent(nimi)}`
+    + (vuoro.vuoroId ? `&vuoro=${encodeURIComponent(vuoro.vuoroId)}` : ''));
 }
 
 // Päättämisen tulosta ei tarvitse kertoa käyttäjälle: jos sovellusta ei tavoitettu, ei ole

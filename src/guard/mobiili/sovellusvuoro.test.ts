@@ -54,6 +54,23 @@ test('asennetussa sovelluksessa vuoro välittyy', () => {
   assert.match(avatut[0], /^turvajohto-guard:\/\/vuoro\?id=kohde-1&nimi=Testikohde$/);
 });
 
+test('vuorotyyppi ja vuoron tunniste kulkevat sovellukseen', () => {
+  // Pysyvän ilmoituksen teksti erottaa aamu- ja yövuoron; tunniste on erää 11 varten,
+  // eikä nykyinen sovellus lue sitä.
+  const avatut = ymparisto({ standalone: true });
+  kaynnistaSovelluksessa({ ...VUORO, vuoroId: 'v-123', vuorotyyppiNimi: 'Yövuoro' });
+  assert.match(avatut[0], /nimi=Testikohde%20%C2%B7%20Y%C3%B6vuoro/);
+  assert.match(avatut[0], /&vuoro=v-123$/);
+});
+
+test('vuoron tunnistetta ei lähetetä tyhjänä', () => {
+  // Tyhjä parametri näyttäisi sovelluksessa tunnisteelta jota ei ole, ja erässä 11 se
+  // olisi vuoro johon sijainti ripustettaisiin.
+  const avatut = ymparisto({ standalone: true });
+  kaynnistaSovelluksessa(VUORO);
+  assert.equal(avatut[0].includes('vuoro='), false);
+});
+
 test('selainvälilehdessä vuoro EI välity, ja se kerrotaan', () => {
   // Tämä on 10.9.2026: puhelin, oikea tunnus, oikea kohde — mutta selain eikä sovellus.
   // Ennen korjausta tämä palautti undefinedin eikä kutsuja voinut tietää mitään.

@@ -157,6 +157,36 @@ export async function paataVuoroPalvelimella(vuoroId: string): Promise<boolean> 
 }
 
 /**
+ * Tehtävän tai kierroksen lisäys omaan vuoroon kohteen hakemistosta.
+ *
+ * Tämä on "lisäksi, ei tilalle": vuoro kertoo mitä pitää tehdä, hakemisto vastaa
+ * kysymykseen saanko tehdä myös tämän. Palvelin hyväksyy vain kohteen omasta
+ * hakemistosta, ja merkitsee lisätyn lähteellä `itse_lisatty` — jälkikäteen on nähtävä
+ * mikä oli suunniteltua työtä ja mikä tuli vuoron aikana lisää.
+ */
+export async function lisaaVuoroon(
+  vuoroId: string,
+  laji: 'tehtava' | 'kierros',
+  kohdeId: string,
+): Promise<{ ok: true; vuoro: PalvelimenVuoro } | { ok: false; virhe: string }> {
+  try {
+    const vastaus = await fetch(`/api/vuoro/${encodeURIComponent(vuoroId)}/lisaa`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ laji, kohdeId }),
+    });
+    const data = await vastaus.json().catch(() => null);
+    if (!vastaus.ok || !data?.ok) {
+      return { ok: false, virhe: data?.error || 'Lisäys ei onnistunut.' };
+    }
+    return { ok: true, vuoro: data.vuoro };
+  } catch {
+    return { ok: false, virhe: 'Lisäys ei onnistunut: palvelimeen ei saatu yhteyttä.' };
+  }
+}
+
+/**
  * Ketkä voidaan perehdyttää tähän kohteeseen. 403 ei ole virhe vaan odotettu lopputulos
  * tunnukselle joka ei hallitse kohteita — kutsuja päättää mitä silloin näytetään.
  */

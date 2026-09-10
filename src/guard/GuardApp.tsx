@@ -32,7 +32,7 @@ import { Skanneri } from './mobiili/Skanneri';
 import { Tilatieto } from './mobiili/Tilatieto';
 import { lueVuoro, tallennaVuoro, unohdaVuoro, type Vuoro } from './mobiili/vuoro';
 import {
-  aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, paataVuoroPalvelimella,
+  aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, lisaaVuoroon, paataVuoroPalvelimella,
   type PalvelimenVuoro, type Vuorokohde, type VuoroVaihtoehto,
 } from './vuorot';
 import { kaynnistaSovelluksessa, onAlustaJollaSovellus, paataSovelluksessa } from './mobiili/sovellusvuoro';
@@ -246,6 +246,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [ilmanPerehdytysta, setIlmanPerehdytysta] = useState(0);
   const [vuoroVirhe, setVuoroVirhe] = useState<string | null>(null);
   const [vuoroaAloitetaan, setVuoroaAloitetaan] = useState(false);
+  const [vuoroonLisataan, setVuoroonLisataan] = useState(false);
+  const [lisaysVirhe, setLisaysVirhe] = useState<string | null>(null);
   const [kameraAuki, setKameraAuki] = useState(false);
   const [tilatietoAuki, setTilatietoAuki] = useState(false);
   // Skannauksen tulos: puhelimen kamera avasi /guard?piste=<token>, ja palvelin kertoo
@@ -1032,6 +1034,22 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     setValvontaVaroitus(valitys === 'ei_tavoitettu' && onAlustaJollaSovellus());
   };
 
+  // Tehtävän tai kierroksen lisäys omaan vuoroon kohteen hakemistosta. Palvelin
+  // hyväksyy vain kohteen omasta hakemistosta ja merkitsee lähteen `itse_lisatty`,
+  // joten jälkikäteen erottuu mikä oli suunniteltua työtä ja mikä tuli vuoron aikana.
+  const lisaaOmaanVuoroon = async (laji: 'tehtava' | 'kierros', kohdeId: string) => {
+    if (!vuoro?.vuoroId) return;
+    setLisaysVirhe(null);
+    setVuoroonLisataan(true);
+    const tulos = await lisaaVuoroon(vuoro.vuoroId, laji, kohdeId);
+    setVuoroonLisataan(false);
+    if (!tulos.ok) {
+      setLisaysVirhe(tulos.virhe);
+      return;
+    }
+    setPalvelimenVuoro(tulos.vuoro);
+  };
+
   // Päättäminen ei jää verkon varaan. Palvelimelle lähetetään pyyntö, mutta laitteen
   // vuoro päättyy joka tapauksessa: katvealueelle jäänyt pyyntö tarkoittaisi muuten,
   // ettei vartija pääse ulos vuorosta ennen kuin verkko palaa.
@@ -1044,6 +1062,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     setPalvelimenVuoro(null);
     setVuorotLadattu(false);
     setVuoroVirhe(null);
+    setLisaysVirhe(null);
     nollaaNakymat();
     setOsio('etusivu');
   };
@@ -1523,6 +1542,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         vuoroKohde ? (
           <MobiiliEtusivu
             vuoronPohjaIdt={(palvelimenVuoro?.pohjat || []).map((x) => x.id)}
+            vuoronTehtavaIdt={(palvelimenVuoro?.tehtavat || []).map((x) => x.id)}
+            vuoroKaynnissa={!!palvelimenVuoro}
+            lisataan={vuoroonLisataan}
+            lisaysVirhe={lisaysVirhe}
+            onLisaaVuoroon={lisaaOmaanVuoroon}
             kohde={vuoroKohde}
             pohjat={pohjat}
             kierrokset={kierrokset}
