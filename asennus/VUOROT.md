@@ -326,11 +326,9 @@ sillä hetkellä kun se käännetään, jokainen vartijatunnus jolla ei ole yht�
 menettää näkyvyyden kaikkiin kohteisiin. Erä 16 on juuri se työkalu jolla perehdytykset
 syötetään ensin.
 
-### Erä 17 — Vuoron aloitus ja päättäminen 🟡 PALVELIN VALMIS 10.9.2026
+### Erä 17 — Vuoron aloitus ja päättäminen 🟢 VALMIS 10.9.2026
 
-**Palvelinpuoli on valmis ja todennettu.** Käyttöliittymä on tekemättä, eikä vartijan
-näkymä ole vielä muuttunut miksikään — vanha kohdevalinta toimii kuten ennenkin. Reitit
-ovat lisäyksiä eivätkä muuta mitään olemassa olevaa.
+Vartija kirjautuu nyt **vuoroon** eikä kohteeseen, ja vuoro on palvelimen tietue.
 
 | Osa | Tila |
 |---|---|
@@ -340,10 +338,30 @@ ovat lisäyksiä eivätkä muuta mitään olemassa olevaa.
 | `POST /api/vuoro` · `/:id/paata` · `/:id/lisaa` | valmis |
 | Hälytyskeskuksen kertalupa | valmis |
 | Kanavaviesti vuoron muutoksista | valmis |
-| Uusi kirjautumisnäkymä (kohde × vuoro) | **tekemättä** |
-| Tehtävälista vuorosta ja tehtävähakemisto | **tekemättä** |
+| Kirjautumisnäkymä (kohde × vuoro) kolmella tilalla | valmis |
+| Vuoron kierrokset ensin ja merkittyinä etusivulla | valmis |
+| Tehtävähakemiston selainkäyttöliittymä | **tekemättä** (reitti on) |
 | Kohdenäkyvyyden kytkin perehdytykseen | **tekemättä** |
-| Natiivisilta saa vuoron tunnisteen | **tekemättä** |
+| Natiivisilta saa vuoron tunnisteen | **tekemättä** (vaatii uuden APK:n) |
+
+**Palvelin on totuus, laite on kopio.** Laitteen `localStorage` luetaan ensin, jotta
+näkymä on oikea heti eikä vilku tyhjänä verkon ajan, mutta palvelin voittaa
+ristiriidassa. Todennettu selaimessa pyyhkimällä laitteen tallenne kesken vuoron: vuoro
+palautui silti, ja kopio kirjoitettiin takaisin.
+
+**Verkkovirhe ja "ei vuoroa" ovat eri asioita.** `haeOmaVuoro` palauttaa `undefined`in kun
+palvelinta ei tavoiteta ja `null`in kun vuoroa ei ole. Jos ne olisivat sama arvo,
+katvealue päättäisi vartijan vuoron hänen puolestaan.
+
+**Aloitus vaatii yhteyden, päättäminen ei.** Perehdytystä ei voi tarkistaa offline, joten
+aloitus on ainoa kohta koko mobiilipuolella joka vaatii verkon. Päättäminen lähtee
+palvelimelle mutta ei jää sen varaan — katvealueelle jäänyt pyyntö tarkoittaisi muuten,
+ettei vartija pääse ulos vuorosta ennen kuin verkko palaa.
+
+**"Vaihda kohdetta" on nyt "Vaihda vuoroa (päättää nykyisen)".** Sama painike kutsui
+ennenkin `paataVuoro`a, mutta silloin se päätti vain laitteen tilan. Nyt se päättää vuoron
+myös palvelimella, ja se on kirjaus — painike joka aliarvioi tekonsa on pahempi kuin
+pitkä nimi.
 
 **Kertalupa toteutui yksinkertaisemmin kuin määrittelyssä.** Alkuperäinen ajatus oli
 hyväksyntäjono: vartija pyytää, päivystäjä myöntää, vartija aloittaa. Toteutus on sen

@@ -31,6 +31,10 @@ import { Vuorovalinta } from './mobiili/Vuorovalinta';
 import { Skanneri } from './mobiili/Skanneri';
 import { Tilatieto } from './mobiili/Tilatieto';
 import { lueVuoro, tallennaVuoro, unohdaVuoro, type Vuoro } from './mobiili/vuoro';
+import {
+  aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, paataVuoroPalvelimella,
+  type PalvelimenVuoro, type Vuorokohde, type VuoroVaihtoehto,
+} from './vuorot';
 import { kaynnistaSovelluksessa, onAlustaJollaSovellus, paataSovelluksessa } from './mobiili/sovellusvuoro';
 import { useKanava } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
@@ -233,6 +237,15 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Vuoro (vain mobiiliversio): kohde jossa vartija on nyt töissä. Laitteen tilaa, ei
   // palvelimen tietue — ks. mobiili/vuoro.ts.
   const [vuoro, setVuoro] = useState<Vuoro | null>(null);
+  // Palvelimen vuorotietue: tehtävät ja kierrokset lähteineen. Erillään `vuoro`sta, joka
+  // on laitteen kevyt kopio siitä missä ollaan töissä — sitä lukee moni näkymä, eikä sen
+  // muotoa muuteta tässä erässä.
+  const [palvelimenVuoro, setPalvelimenVuoro] = useState<PalvelimenVuoro | null>(null);
+  const [vuorovaihtoehdot, setVuorovaihtoehdot] = useState<Vuorokohde[]>([]);
+  const [vuorotLadattu, setVuorotLadattu] = useState(false);
+  const [ilmanPerehdytysta, setIlmanPerehdytysta] = useState(0);
+  const [vuoroVirhe, setVuoroVirhe] = useState<string | null>(null);
+  const [vuoroaAloitetaan, setVuoroaAloitetaan] = useState(false);
   const [kameraAuki, setKameraAuki] = useState(false);
   const [tilatietoAuki, setTilatietoAuki] = useState(false);
   // Skannauksen tulos: puhelimen kamera avasi /guard?piste=<token>, ja palvelin kertoo
@@ -497,12 +510,57 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     }
   }, []);
 
-  // Vuoro luetaan laitteelta käyttäjäkohtaisesti: jaetulla puhelimella edellisen
-  // vartijan vuoro ei saa jäädä seuraavan päälle.
+  // Vuoron palautus. Laitteen tallenne luetaan ensin, jotta näkymä on oikea heti eikä
+  // vilku tyhjänä verkon ajan — mutta se on kopio, ja palvelin voittaa ristiriidassa.
+  //
+  // Tallenne on käyttäjäkohtainen samasta syystä kuin ennenkin: jaetulla puhelimella
+  // edellisen vartijan vuoro ei saa jäädä seuraavan päälle.
   useEffect(() => {
-    if (!mobiili) return;
-    setVuoro(lueVuoro(session?.username || ''));
+    if (!mobiili) return undefined;
+    const kayttaja = session?.username || '';
+    setVuoro(lueVuoro(kayttaja));
+
+    let voimassa = true;
+    haeOmaVuoro().then((palvelimelta) => {
+      if (!voimassa) return;
+      // undefined = ei tavoitettu. Silloin laitteen tallenne jää voimaan: katvealue ei saa
+      // päättää vartijan vuoroa hänen puolestaan.
+      if (palvelimelta === undefined) return;
+      setPalvelimenVuoro(palvelimelta);
+      if (palvelimelta) {
+        const paivitetty: Vuoro = {
+          kohdeId: palvelimelta.siteId,
+          kohdeNimi: palvelimelta.siteNimi,
+          alkoi: palvelimelta.alkoi,
+          vuoroId: palvelimelta.id,
+          vuorotyyppiNimi: palvelimelta.vuorotyyppiNimi,
+        };
+        tallennaVuoro(kayttaja, paivitetty);
+        setVuoro(paivitetty);
+      } else {
+        // Palvelin sanoo ettei vuoroa ole: laitteelle jäänyt tallenne on vanhentunut.
+        unohdaVuoro();
+        setVuoro(null);
+      }
+    });
+    return () => { voimassa = false; };
   }, [mobiili, session?.username]);
+
+  // Vuorovaihtoehdot haetaan vasta kun vuoroa ei ole: listaa tarvitaan vain
+  // kirjautumisnäkymässä, eikä sitä kannata pitää ajan tasalla kesken vuoron.
+  useEffect(() => {
+    if (!mobiili || vuoro) return undefined;
+    let voimassa = true;
+    haeOmatVuorot()
+      .then((tulos) => {
+        if (!voimassa) return;
+        setVuorovaihtoehdot(tulos.kohteet);
+        setIlmanPerehdytysta(tulos.ilmanPerehdytysta);
+      })
+      .catch(() => {})
+      .finally(() => { if (voimassa) setVuorotLadattu(true); });
+    return () => { voimassa = false; };
+  }, [mobiili, vuoro, session?.username]);
 
   const paivitaHalytys = (halytys: Halytys) => {
     setHalytykset((edelliset) => {
@@ -939,9 +997,32 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
   // --- Mobiiliversion toiminnot ----------------------------------------------------
 
-  const aloitaVuoro = (kohde: Kohde) => {
-    const uusi: Vuoro = { kohdeId: kohde.id, kohdeNimi: kohde.name, alkoi: new Date().toISOString() };
+  // Vuoron aloitus kulkee PALVELIMEN KAUTTA (erä 17), eikä se ole muotoseikka: perehdytys
+  // ja vuoroikkuna tarkistetaan siellä, eikä niitä voi tarkistaa laitteella. Siksi
+  // aloitus on ainoa kohta koko mobiilipuolella joka vaatii yhteyden — työn tekeminen ei
+  // vaadi, mutta työn aloittaminen ilman oikeustarkistusta olisi eri asia.
+  const aloitaVuoro = async (siteId: string, vaihtoehto: VuoroVaihtoehto) => {
+    setVuoroVirhe(null);
+    setVuoroaAloitetaan(true);
+    const tulos = await aloitaVuoroPalvelimella(siteId, vaihtoehto.id).catch(() => null);
+    setVuoroaAloitetaan(false);
+
+    if (!tulos || !tulos.ok) {
+      setVuoroVirhe(tulos
+        ? tulos.virhe
+        : 'Vuoroa ei voitu aloittaa: palvelimeen ei saatu yhteyttä. Vuoron aloitus vaatii verkon, koska perehdytys tarkistetaan palvelimella.');
+      return;
+    }
+
+    const uusi: Vuoro = {
+      kohdeId: tulos.vuoro.siteId,
+      kohdeNimi: tulos.vuoro.siteNimi,
+      alkoi: tulos.vuoro.alkoi,
+      vuoroId: tulos.vuoro.id,
+      vuorotyyppiNimi: tulos.vuoro.vuorotyyppiNimi,
+    };
     tallennaVuoro(session?.username || '', uusi);
+    setPalvelimenVuoro(tulos.vuoro);
     setVuoro(uusi);
     // Natiivipalvelu käynnistetään vasta kun vuoro on tallessa: jos sovelluksen avaaminen
     // vie näkymän hetkeksi pois, palaava käyttöliittymä lukee vuoron varastosta.
@@ -951,11 +1032,18 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     setValvontaVaroitus(valitys === 'ei_tavoitettu' && onAlustaJollaSovellus());
   };
 
+  // Päättäminen ei jää verkon varaan. Palvelimelle lähetetään pyyntö, mutta laitteen
+  // vuoro päättyy joka tapauksessa: katvealueelle jäänyt pyyntö tarkoittaisi muuten,
+  // ettei vartija pääse ulos vuorosta ennen kuin verkko palaa.
   const paataVuoro = () => {
+    if (vuoro?.vuoroId) void paataVuoroPalvelimella(vuoro.vuoroId);
     paataSovelluksessa();
     unohdaVuoro();
     setVuoro(null);
     setValvontaVaroitus(false);
+    setPalvelimenVuoro(null);
+    setVuorotLadattu(false);
+    setVuoroVirhe(null);
     nollaaNakymat();
     setOsio('etusivu');
   };
@@ -1035,7 +1123,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       ...(saaKirjataToimenpiteen ? [{ id: 'toimenpide', label: 'Kirjaa toimenpide' }] : []),
       ...(saaKirjataIlmoituksen ? [{ id: 'ilmoitus', label: 'Tapahtumailmoitus' }] : []),
       ...(saaNahdaTiedot ? [{ id: 'tiedot', label: 'Kohteen tiedot' }] : []),
-      { id: 'vaihda-kohde', label: 'Vaihda kohdetta' },
+      // 'Vaihda kohdetta' päätti ennen vain laitteen tilan. Erässä 17 se päättää vuoron
+      // myös palvelimella, joten nimi kertoo sen: vuoron päättyminen on kirjaus, ja
+      // painike joka aliarvioi tekonsa on pahempi kuin pitkä nimi.
+      { id: 'vaihda-kohde', label: 'Vaihda vuoroa (päättää nykyisen)' },
     ]
     : [];
 
@@ -1431,6 +1522,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
            että hätäpainike hälyttää väärän kohteen numeroihin. */
         vuoroKohde ? (
           <MobiiliEtusivu
+            vuoronPohjaIdt={(palvelimenVuoro?.pohjat || []).map((x) => x.id)}
             kohde={vuoroKohde}
             pohjat={pohjat}
             kierrokset={kierrokset}
@@ -1446,7 +1538,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             onHalytykset={() => setHalytysKohde(vuoroKohde)}
           />
         ) : (
-          <Vuorovalinta kohteet={kohteet} ladattu={ladattu} onValitse={aloitaVuoro} />
+          <Vuorovalinta
+            kohteet={vuorovaihtoehdot}
+            ladattu={vuorotLadattu}
+            ilmanPerehdytysta={ilmanPerehdytysta}
+            virhe={vuoroVirhe}
+            aloittaa={vuoroaAloitetaan}
+            onValitse={aloitaVuoro}
+          />
         )
       ) : osio === 'etusivu' ? (
         <Etusivu

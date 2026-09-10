@@ -19,6 +19,15 @@ export type Vuoro = {
   kohdeId: string;
   kohdeNimi: string;
   alkoi: string;
+  // Palvelimen vuorotietueen tunniste (erä 17). Valinnainen kahdesta syystä: laitteella
+  // voi olla erää 17 edeltävä tallenne, ja pakollinen kenttä tarkoittaisi että vanha
+  // tallenne hylätään hiljaa kesken vuoron.
+  //
+  // TÄMÄ TALLENNE EI OLE ENÄÄ TOTUUS vaan kopio. Vuoro on palvelimen tietue; tämä on se
+  // mitä laite muistaa siitä, jotta käyttöliittymä näyttää vuoron heti eikä odota
+  // verkkoa. Ristiriidassa palvelin voittaa.
+  vuoroId?: string;
+  vuorotyyppiNimi?: string;
 };
 
 const AVAIN = 'turvajohto-guard-vuoro';

@@ -15,6 +15,10 @@ import type { Kierros as KierrosTietue, Kierrospohja, Kohde, TehtavaSuoritus } f
 
 type Props = {
   kohde: Kohde;
+  // Kesken olevan vuoron kierrospohjien tunnisteet (erä 17). Tyhjä lista tarkoittaa joko
+  // vuorotonta tilaa tai vuoroa jossa ei ole kierroksia — kummassakin tapauksessa mitään
+  // ei korosteta, mikä on oikea lopputulos molemmille.
+  vuoronPohjaIdt: string[];
   pohjat: Kierrospohja[];
   kierrokset: KierrosTietue[];
   halytykset: Halytys[];
@@ -47,10 +51,17 @@ const minuutteja = (alkoi: string) => {
 };
 
 export const MobiiliEtusivu = ({
-  kohde, pohjat, kierrokset, halytykset, suoritukset, sallitut,
+  kohde, vuoronPohjaIdt, pohjat, kierrokset, halytykset, suoritukset, sallitut,
   onKierros, onTehtavat, onHalytykset,
 }: Props) => {
-  const omatPohjat = pohjat.filter((p) => p.ownerId === kohde.id && p.kind === 'patrol' && !p.arkistoitu);
+  const vuoroon = new Set(vuoronPohjaIdt);
+  // Vuoron omat kierrokset ensin. Tämä on erän 17 koko lupaus näkymässä: vartijan ei
+  // tarvitse tietää mitä kohteessa ajetaan, vaan se mikä kuuluu juuri tähän vuoroon on
+  // ylimpänä. Kohteen muut kierrokset jäävät alle — niitä saa yhä tehdä, mutta ne eivät
+  // ole se mitä vuorolta odotetaan.
+  const omatPohjat = pohjat
+    .filter((p) => p.ownerId === kohde.id && p.kind === 'patrol' && !p.arkistoitu)
+    .sort((a, b) => Number(vuoroon.has(b.id)) - Number(vuoroon.has(a.id)));
   const omatKierrokset = kierrokset.filter((k) => k.siteId === kohde.id);
   const avoimet = halytykset.filter(
     (h) => h.eventId === kohde.id && (h.tila === 'lauennut' || h.tila === 'kaynnissa')
@@ -84,6 +95,7 @@ export const MobiiliEtusivu = ({
       ))}
 
       {sallitut.kierrokset && omatPohjat.map((pohja) => {
+        const kuuluuVuoroon = vuoroon.has(pohja.id);
         const kesken = omatKierrokset.find((k) => k.templateId === pohja.id && k.tila === 'kesken') || null;
         const viimeisin = omatKierrokset
           .filter((k) => k.templateId === pohja.id && k.tila !== 'kesken')
@@ -106,6 +118,13 @@ export const MobiiliEtusivu = ({
                 <Route size={18} className="text-accent shrink-0" />
                 <span className="min-w-0 break-words">{pohja.nimi}</span>
               </span>
+              {kuuluuVuoroon && (
+                /* Merkintä eikä pelkkä järjestys: lista järjestyy myös sattumalta, eikä
+                   vartija voi tietää kumpi se oli. */
+                <span className="inline-block mt-1.5 text-sm font-medium text-accent">
+                  Kuuluu vuoroon
+                </span>
+              )}
               <span className="block text-base text-ink-body mt-2">
                 {kesken
                   ? `Aloitettu klo ${kello(kesken.alkoi)}`
