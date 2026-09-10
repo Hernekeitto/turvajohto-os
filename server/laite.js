@@ -252,3 +252,99 @@ export function luoNonceMuisti(ikkunaMs = AIKAIKKUNA_MS) {
     },
   };
 }
+
+// --- Sydämenlyönti: onko valvonta oikeasti käynnissä --------------------------------
+//
+// Tämä lisättiin 10.9.2026, kun päivätesti paljasti aukon jota ei voinut nähdä mistään:
+// kierros näytti täydelliseltä (10/10 pistettä, GPS mukana, tila "valmis"), mutta
+// natiivipalvelu ei ollut käynnistynyt kertaakaan. Sen huomasi vain puhelimen omasta
+// lokista — eli jälkikäteen, kaapelin päästä, yhden laitteen osalta.
+//
+// Sovellus lyö sydäntä minuutin välein kutsumalla `GET /api/laite/oma` allekirjoitettuna.
+// Kutsu oli pelkkä luku eikä jättänyt jälkeä mihinkään. Nyt jättää: JOKAINEN kelvollinen
+// allekirjoitettu pyyntö on todiste siitä, että sovellus on hengissä sillä hetkellä.
+//
+// --- Miksi kaksi säilöä eikä yksi ---------------------------------------------------
+//
+// Kysymyksiä on kaksi, ja ne vaativat eri asian:
+//
+//   "Onko valvonta käynnissä juuri nyt?"   -> tarkkuus tärkeä, historia ei
+//   "Kävikö se ollenkaan tänään?"          -> historia tärkeä, tarkkuus ei
+//
+// Ensimmäiseen vastaa MUISTI, toiseen LEVY. Jos molemmat hoidettaisiin levyllä, jokainen
+// lyönti kirjoittaisi koko devices-kokoelman uudelleen `writeFileSync`illä pyyntösäikeessä
+// — minuutin välein jokaista laitetta kohden. Sama huoli on kirjoitettu store.js:ään
+// kenttäsalauksen migraatiosta, eikä tätä kannata tehdä juuri niin kuin siellä varotaan.
+//
+// Jos taas molemmat hoidettaisiin muistissa, backendin uudelleenkäynnistys — jonka
+// jokainen deploy tekee — unohtaisi kaiken, eikä tämän päivän kysymykseen olisi vieläkään
+// voinut vastata jälkikäteen.
+//
+// Kumpikaan säilö ei siis esitä olevansa toinen: muisti on tarkka mutta unohtaa, levy
+// muistaa mutta on korkeintaan tallennusvälin verran jäljessä.
+
+// Kuinka usein lyönti kirjoitetaan levylle. Viisi minuuttia riittää vastaamaan
+// kysymykseen "kävikö valvonta tämän vuoron aikana ja milloin se hiljeni", eikä se ole
+// lupaus tarkemmasta.
+export const LYONTI_TALLENNUSVALI_MS = 5 * 60 * 1000;
+
+// Milloin valvonta katsotaan hiljentyneeksi. Lyönti tulee minuutin välein, joten kaksi
+// väliin jäänyttä lyöntiä riittää — yksi voi jäädä väliin verkkokatkosta.
+export const VALVONTA_HILJENEE_MS = 3 * 60 * 1000;
+
+/**
+ * Muisti viimeisimmistä lyönneistä. Sama rakenne ja sama peruste kuin nonce-muistilla:
+ * tämä on tilaa eikä sääntö, joten se annetaan kutsujalta eikä luoda tänne moduulitasolle.
+ */
+export function luoLyontimuisti() {
+  const lyonnit = new Map();
+  return {
+    merkitse(laiteId, nyt = Date.now()) {
+      lyonnit.set(String(laiteId), nyt);
+    },
+    viimeisin(laiteId) {
+      return lyonnit.get(String(laiteId)) ?? null;
+    },
+    unohda(laiteId) {
+      lyonnit.delete(String(laiteId));
+    },
+    get koko() {
+      return lyonnit.size;
+    },
+  };
+}
+
+/**
+ * Kirjoitetaanko tämä lyönti levylle. Ensimmäinen lyönti kirjoitetaan aina: ilman sitä
+ * juuri käynnistyneen valvonnan olemassaolo näkyisi levyllä vasta viiden minuutin
+ * kuluttua, ja juuri se hetki on se jolloin vartija katsoo alkoiko valvonta.
+ */
+export function tarvitaankoLyonninTallennus(laite, nyt = Date.now(), vali = LYONTI_TALLENNUSVALI_MS) {
+  if (!laite) return false;
+  const edellinen = Number(laite.viimeinenLyontiMs);
+  if (!Number.isFinite(edellinen)) return true;
+  // Kello taaksepäin (NTP-korjaus) ei saa jäädyttää tallennusta pysyvästi: jos levyllä
+  // oleva hetki on tulevaisuudessa, se on väärin ja se korjataan heti.
+  if (edellinen > nyt) return true;
+  return nyt - edellinen >= vali;
+}
+
+/**
+ * Laitteen valvontatilanne kutsujalle. `muistiMs` on tarkka mutta katoaa
+ * uudelleenkäynnistyksessä, levyllä oleva on karkea mutta pysyy — tuorein voittaa.
+ *
+ * Uudelleenkäynnistyksen jälkeen tämä voi näyttää hiljaista korkeintaan yhden lyönnin
+ * ajan, koska muisti on tyhjä ja levy on jäljessä. Virheen suunta on tarkoituksellinen:
+ * turha varoitus on korjattavissa katsomalla uudelleen, väärä vakuutus valvonnan
+ * toimivuudesta ei ole.
+ */
+export function valvonnanTila({ laite, muistiMs = null, nyt = Date.now(), hiljenee = VALVONTA_HILJENEE_MS }) {
+  if (!laite) return { viimeinenLyonti: null, valvontaElossa: false };
+  const levy = Number(laite.viimeinenLyontiMs);
+  const tuorein = Math.max(Number.isFinite(levy) ? levy : 0, Number(muistiMs) || 0);
+  if (!tuorein) return { viimeinenLyonti: null, valvontaElossa: false };
+  return {
+    viimeinenLyonti: new Date(tuorein).toISOString(),
+    valvontaElossa: nyt - tuorein < hiljenee,
+  };
+}

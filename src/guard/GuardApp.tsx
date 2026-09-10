@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ShieldCheck, Plus, Building2, Settings, QrCode, CloudOff, ChevronRight } from 'lucide-react';
+import { ShieldCheck, Plus, Building2, Settings, QrCode, CloudOff, ChevronRight, ShieldOff } from 'lucide-react';
 import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
@@ -31,7 +31,7 @@ import { Vuorovalinta } from './mobiili/Vuorovalinta';
 import { Skanneri } from './mobiili/Skanneri';
 import { Tilatieto } from './mobiili/Tilatieto';
 import { lueVuoro, tallennaVuoro, unohdaVuoro, type Vuoro } from './mobiili/vuoro';
-import { kaynnistaSovelluksessa, paataSovelluksessa } from './mobiili/sovellusvuoro';
+import { kaynnistaSovelluksessa, onAlustaJollaSovellus, paataSovelluksessa } from './mobiili/sovellusvuoro';
 import { useKanava } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
@@ -239,6 +239,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // mitä siitä seurasi. Näytetään bannerina, koska käyttäjä tuli sivulle kameran kautta
   // eikä hän tiedä mitä sovelluksessa tapahtui.
   const [skannaus, setSkannaus] = useState<{ tyyppi: 'ok' | 'virhe'; viesti: string } | null>(null);
+  // Vuoro alkoi, mutta natiivipalvelua ei tavoitettu. Tämä on oma tilansa eikä `virhe`:
+  // vuoro ITSE onnistui, ja käyttöliittymä toimii normaalisti — vain taustavalvonta
+  // puuttuu. Ero on se mikä 10.9.2026 jäi kertomatta ja maksoi koko päivätestin.
+  const [valvontaVaroitus, setValvontaVaroitus] = useState(false);
   const skannausTehty = useRef(false);
   // Aikaleima siitä milloin näytettävät tiedot on tallennettu laitteelle. Ei-null
   // tarkoittaa, että ollaan offline-tilassa ja katsotaan tallennetta.
@@ -941,13 +945,17 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     setVuoro(uusi);
     // Natiivipalvelu käynnistetään vasta kun vuoro on tallessa: jos sovelluksen avaaminen
     // vie näkymän hetkeksi pois, palaava käyttöliittymä lukee vuoron varastosta.
-    kaynnistaSovelluksessa(uusi);
+    const valitys = kaynnistaSovelluksessa(uusi);
+    // Varoitetaan vain siellä missä sovellus on olemassa. Työpöydällä ja iPhonella vuoro
+    // on käyttöliittymän tila eikä valvontaa, eikä siitä ole mitään kerrottavaa.
+    setValvontaVaroitus(valitys === 'ei_tavoitettu' && onAlustaJollaSovellus());
   };
 
   const paataVuoro = () => {
     paataSovelluksessa();
     unohdaVuoro();
     setVuoro(null);
+    setValvontaVaroitus(false);
     nollaaNakymat();
     setOsio('etusivu');
   };
@@ -1207,6 +1215,22 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           >
             Sulje
           </button>
+        </div>
+      )}
+
+      {/* Vuoro käynnistyi ilman taustavalvontaa. Tämä ei ole virhe vaan tila josta on
+          kerrottava: vartija luulee muuten olevansa valvonnan piirissä. Ei suljettavissa
+          niin kuin skannausbanneri — se palaisi joka tapauksessa vasta seuraavassa
+          vuoron aloituksessa, ja siihen mennessä koko vuoro olisi ohi. */}
+      {valvontaVaroitus && (
+        <div className="mb-6 flex items-start gap-3 rounded-lg px-4 py-3 border bg-danger-soft border-danger/30 text-danger-ink">
+          <ShieldOff size={18} className="shrink-0 mt-0.5" />
+          <p className="text-sm flex-1">
+            <strong className="font-semibold">Taustavalvonta ei ole käynnissä.</strong>{' '}
+            Vuoro on alkanut ja työn voi tehdä normaalisti, mutta puhelin ei valvo taustalla:
+            tämä on selain eikä asennettu sovellus. Avaa Turvajohto GUARD -sovellus ja aloita
+            vuoro siellä uudelleen.
+          </p>
         </div>
       )}
 

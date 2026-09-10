@@ -284,6 +284,8 @@ Hätäpainike on ilmoituksessa ja pika-asetuksissa, joissa tarkoitus on yksiseli
 | Uusi hälytystyyppi `apupyynto` + kohdistus lähimpiin | `server/halytys.js`, `server/index.js` |
 | Audit: `laite_sidottu`, `laite_nollattu`, `apupyynto_lahetetty` | `server/audit.js`-kutsut |
 | Sidontakoodille oma nopeusrajoitin | `server/index.js` |
+| Sydämenlyönnin kirjaus: `viimeinenLyonti` + `valvontaElossa` (ks. päivätesti 10.9.) | `server/laite.js`, `server/index.js` |
+| Valvonnan tila päivystäjän laitelistalla | `src/shared/asetukset/Laitteet.tsx` |
 
 Hälytys- ja sijaintipolut **eivät muutu**. Natiivi puhuu samaa rajapintaa kuin selain.
 
@@ -546,6 +548,46 @@ mieleisekseen:
 
 Luku on **alaraja** eikä lopullinen: erä 10 ei käytä verkkoa eikä GPS:ää lainkaan, ja
 varsinaiset kuluttajat tulevat erässä 11.
+
+#### Päivätesti 10.9.2026: kierros onnistui, valvonta ei käynnistynyt
+
+Viiden ja puolen tunnin päivätesti tuotti näennäisen täydellisen tuloksen: kierros
+`valmis`, 10/10 pistettä, jokainen `tapa: "qr"` eli oikeasti skannattu, GPS mukana
+viimeistä myöten. **Natiivipalvelu ei silti käynnistynyt kertaakaan.** Puhelimen loki
+sisälsi vain edellisen yön rivit, eikä loki kierrätä vaan liittää perään — mitään ei siis
+kirjoitettu koko päivänä.
+
+Syitä oli kaksi, ja molemmat ovat suunnitteluvirheitä eivätkä laitteen oikkuja:
+
+1. **Kierroksen aloitus ei ole vuoron aloitus.** Silta natiivipalveluun on kiinni vain
+   `aloitaVuoro`ssa (`GuardApp.tsx`). `POST /api/kierros` ei koske siihen mitenkään.
+2. **Välitys vaikeni.** `kaynnistaSovelluksessa` palautti `void` ja poistui äänettömästi
+   kun `display-mode: standalone` oli epätosi. Androidin selainvälilehdessä — jonne
+   puhelimen kameralla skannattu QR-linkki vie — vuoro näytti alkaneelta ja valvonta oli
+   pois päältä.
+
+Kumpikaan ei näkynyt käyttöliittymässä eikä palvelimella. Se on tämän kohdan varsinainen
+opetus: **sidottu laite ei tarkoita käynnissä olevaa valvontaa**, eikä eroa voinut nähdä
+mistään.
+
+Korjaukset:
+
+- **Sydämenlyönti jättää jäljen.** Jokainen kelvollinen allekirjoitettu pyyntö merkitsee
+  laitteen eläväksi. Tarkka tieto on muistissa, karkea levyllä viiden minuutin välein —
+  perustelu kummallekin on `server/laite.js`:n kommentissa. Ilman jakoa joko jokainen
+  lyönti kirjoittaisi koko `devices`-kokoelman uudelleen minuutin välein, tai deploy
+  unohtaisi kaiken.
+- **Välitys kertoo tuloksensa** (`'avattu' | 'ei_tavoitettu'`), ja vuoron aloitus näyttää
+  Androidissa varoituksen kun sovellusta ei tavoitettu. Työpöydällä ja iPhonella vaietaan
+  yhä: siellä vuoro on käyttöliittymän tila eikä valvontaa.
+- **Päivystäjän laitelista näyttää valvonnan tilan** ja päivittyy minuutin välein.
+
+Huomaa mitä `avattu` EI tarkoita: skeema avattiin, ei että palvelu käynnistyi. Ainoa
+todiste siitä on palvelimelle saapuva lyönti.
+
+**Päivätesti on uusittava**, koska se ei mitannut natiivipuolta lainkaan: asennettu
+sovellus auki, vuoro aloitettuna kohteesta, pysyvä ilmoitus näkyvissä — ja vasta sitten
+skannaukset.
 
 ### Erä 11 — Kanava ja sijainti
 

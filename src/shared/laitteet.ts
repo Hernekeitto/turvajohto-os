@@ -9,6 +9,11 @@ export type Laite = {
   kayttaja?: string;
   malli: string;
   sidottu: string;
+  // Valvonnan tila. Nämä EIVÄT kerro sidonnasta vaan siitä puhuuko laite juuri nyt —
+  // sidottu puhelin voi olla viikon hiljaa, ja täsmälleen niin kävi 10.9.2026. Palvelin
+  // päättelee ne sovelluksen sydämenlyönnistä (server/laite.js).
+  viimeinenLyonti?: string | null;
+  valvontaElossa?: boolean;
 };
 
 export type LaiteTila = { sidottu: boolean; laite: Laite | null };

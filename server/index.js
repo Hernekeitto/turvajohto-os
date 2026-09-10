@@ -26,6 +26,7 @@ import { istunnonKesto, SOVELLUS_VUOROKAUDET } from './istunto.js';
 import {
   KOODI_VOIMASSA_MS, LAITTEITA_TUNNUSTA_KOHDEN,
   kelpaakoKoodi, laitteenTietue, lueAvain, luoKoodi, luoNonceMuisti, tarkistaAllekirjoitus,
+  luoLyontimuisti, tarvitaankoLyonninTallennus, valvonnanTila,
 } from './laite.js';
 import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
 import {
@@ -256,6 +257,33 @@ function onSovellusIstunto(req) {
 // Nähdyt noncet aikaikkunan ajan. Muistissa eikä levyllä — ks. laite.js:n perustelu.
 const nonceMuisti = luoNonceMuisti();
 
+// Viimeisimmät sydämenlyönnit laitteittain. Tarkka mutta katoaa uudelleenkäynnistyksessä;
+// levylle kirjoitetaan harvakseltaan. Perustelu kummallekin säilölle on laite.js:ssä.
+const lyontimuisti = luoLyontimuisti();
+
+// Merkintä siitä että laite on hengissä juuri nyt.
+//
+// Kutsutaan JOKAISESTA kelvollisesta allekirjoitetusta pyynnöstä eikä vain
+// sydämenlyönnistä: mikä tahansa laitteen tekemä pyyntö on yhtä pätevä todiste siitä että
+// sovellus on käynnissä, eikä todistetta kannata rajata yhteen reittiin.
+function merkitseLyonti(laite, nyt = Date.now()) {
+  lyontimuisti.merkitse(laite.id, nyt);
+  if (!tarvitaankoLyonninTallennus(laite, nyt)) return;
+
+  // Levylle kirjoitetaan uudelleen luettu tietue eikä pyynnön alussa luettu: hälytyskeskus
+  // on voinut sillä välin nollata sidonnan, ja vanhan kopion kirjoittaminen palauttaisi
+  // nollatun laitteen takaisin kokoelmaan.
+  const laitteet = readCollection('devices') || [];
+  const kohta = laitteet.findIndex((l) => l.id === laite.id);
+  if (kohta < 0) return;
+  laitteet[kohta] = {
+    ...laitteet[kohta],
+    viimeinenLyonti: new Date(nyt).toISOString(),
+    viimeinenLyontiMs: nyt,
+  };
+  writeCollection('devices', laitteet);
+}
+
 // Sidotun laitteen tunnistus allekirjoituksesta.
 //
 // EI EVÄSTETTÄ EIKÄ TOKENIA. Laitteella ei ole levyllä mitään salaista: se allekirjoittaa
@@ -302,6 +330,7 @@ function laiteIstunto(req) {
   }
 
   nonceMuisti.merkitse(String(nonce));
+  merkitseLyonti(laite);
   req._laite = laite;
   return laite;
 }
@@ -1153,10 +1182,16 @@ app.post('/api/laite/rekisteroi', laiteLimiter, (req, res) => {
 // hälytyskeskukselta nollausta.
 app.get('/api/laite/tila', requireAuth, (req, res) => {
   const laite = (readCollection('devices') || []).find((l) => l.kayttaja === req.username) || null;
+  // Sidonta ja valvonta ovat eri asioita, ja niiden sekoittaminen oli tämän kentän koko
+  // syy: 10.9.2026 puhelin oli sidottu koko päivän eikä valvonta ollut käynnissä
+  // hetkeäkään. Sidottu kertoo että laite on tunnistettu, valvontaElossa että se puhuu.
+  const valvonta = valvonnanTila({ laite, muistiMs: laite ? lyontimuisti.viimeisin(laite.id) : null });
   res.json({
     ok: true,
     sidottu: !!laite,
-    laite: laite ? { id: laite.id, malli: laite.malli, sidottu: laite.sidottu } : null,
+    laite: laite
+      ? { id: laite.id, malli: laite.malli, sidottu: laite.sidottu, ...valvonta }
+      : null,
   });
 });
 
@@ -1180,6 +1215,7 @@ app.get('/api/laitteet', requireAuth, (req, res) => {
     kayttaja: l.kayttaja,
     malli: l.malli,
     sidottu: l.sidottu,
+    ...valvonnanTila({ laite: l, muistiMs: lyontimuisti.viimeisin(l.id) }),
   }));
   res.json({ ok: true, laitteet });
 });
@@ -1197,6 +1233,9 @@ app.post('/api/laite/:id/nollaa', requireAuth, (req, res) => {
   if (!laite) return res.status(404).json({ ok: false, error: 'Laitetta ei löydy.' });
 
   writeCollection('devices', laitteet.filter((l) => l.id !== laite.id));
+  // Myös muistista: muuten nollatun laitteen lyönti jäisi elämään listalla siihen asti
+  // kunnes hiljenemisraja umpeutuu, ja nollaus näyttäisi epäonnistuneen.
+  lyontimuisti.unohda(laite.id);
   logAudit({
     user: req.username,
     action: 'laite_nollattu',

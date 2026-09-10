@@ -14,6 +14,8 @@ import {
   AIKAIKKUNA_MS, KOODI_PITUUS, KOODI_VOIMASSA_MS,
   kanoninenViesti, kelpaakoKoodi, laitteenTietue, lueAvain, luoKoodi, luoNonceMuisti,
   tarkistaAllekirjoitus,
+  LYONTI_TALLENNUSVALI_MS, VALVONTA_HILJENEE_MS,
+  luoLyontimuisti, tarvitaankoLyonninTallennus, valvonnanTila,
 } from './laite.js';
 
 const T0 = Date.parse('2026-09-09T12:00:00Z');
@@ -183,4 +185,68 @@ test('nonce unohtuu aikaikkunan jälkeen', () => {
   assert.equal(muisti.onkoNahty('abc12345', T0 + 500), true);
   assert.equal(muisti.onkoNahty('abc12345', T0 + 1500), false);
   assert.equal(muisti.koko, 0);
+});
+
+// --- Sydämenlyönti ja valvonnan tila ------------------------------------------------
+//
+// Nämä testit kirjoitettiin sen jälkeen kun päivätesti 10.9.2026 näytti täydelliseltä
+// kierrokselta, vaikka natiivipalvelu ei ollut käynnistynyt kertaakaan. Painopiste on
+// siinä ETTEI valvonta näytä elävältä silloin kun se ei ole.
+
+test('ensimmäinen lyönti kirjoitetaan levylle heti', () => {
+  assert.equal(tarvitaankoLyonninTallennus({ id: 'a' }, T0), true);
+});
+
+test('lyöntejä ei kirjoiteta levylle joka minuutti', () => {
+  const laite = { id: 'a', viimeinenLyontiMs: T0 };
+  assert.equal(tarvitaankoLyonninTallennus(laite, T0 + 60 * 1000), false);
+  assert.equal(tarvitaankoLyonninTallennus(laite, T0 + LYONTI_TALLENNUSVALI_MS - 1), false);
+  assert.equal(tarvitaankoLyonninTallennus(laite, T0 + LYONTI_TALLENNUSVALI_MS), true);
+});
+
+test('tulevaisuudessa oleva lyönti korjataan heti eikä jäädytä tallennusta', () => {
+  // Puhelimen tai palvelimen kello on hypännyt taaksepäin. Ilman tätä ehtoa levylle
+  // jäänyt tulevaisuuden aikaleima estäisi tallennuksen siihen asti kunnes todellinen
+  // aika ohittaa sen.
+  assert.equal(tarvitaankoLyonninTallennus({ id: 'a', viimeinenLyontiMs: T0 + 60_000 }, T0), true);
+});
+
+test('laite jolta ei ole kuulunut mitään ei ole elossa', () => {
+  const tila = valvonnanTila({ laite: { id: 'a' }, nyt: T0 });
+  assert.deepEqual(tila, { viimeinenLyonti: null, valvontaElossa: false });
+});
+
+test('valvonta hiljenee kahden väliin jääneen lyönnin jälkeen', () => {
+  const laite = { id: 'a', viimeinenLyontiMs: T0 };
+  assert.equal(valvonnanTila({ laite, nyt: T0 + 60 * 1000 }).valvontaElossa, true);
+  assert.equal(valvonnanTila({ laite, nyt: T0 + VALVONTA_HILJENEE_MS - 1 }).valvontaElossa, true);
+  assert.equal(valvonnanTila({ laite, nyt: T0 + VALVONTA_HILJENEE_MS }).valvontaElossa, false);
+});
+
+test('muistissa oleva tuore lyönti voittaa levyn karkean', () => {
+  // Tavallinen tilanne: levylle kirjoitetaan viiden minuutin välein, joten levy on
+  // melkein aina jäljessä. Ilman muistia valvonta näyttäisi hiljentyneeltä joka kerta
+  // kun tallennusväli ylittää hiljenemisrajan.
+  const laite = { id: 'a', viimeinenLyontiMs: T0 };
+  const nyt = T0 + 4 * 60 * 1000;
+  assert.equal(valvonnanTila({ laite, nyt }).valvontaElossa, false);
+  assert.equal(valvonnanTila({ laite, muistiMs: nyt - 1000, nyt }).valvontaElossa, true);
+});
+
+test('vanhentunut muisti ei elvytä laitetta jonka levyarvo on tuoreempi', () => {
+  const laite = { id: 'a', viimeinenLyontiMs: T0 + 60 * 1000 };
+  const tila = valvonnanTila({ laite, muistiMs: T0, nyt: T0 + 90 * 1000 });
+  assert.equal(tila.viimeinenLyonti, new Date(T0 + 60 * 1000).toISOString());
+});
+
+test('lyöntimuisti on laitekohtainen', () => {
+  const muisti = luoLyontimuisti();
+  muisti.merkitse('a', T0);
+  assert.equal(muisti.viimeisin('a'), T0);
+  assert.equal(muisti.viimeisin('b'), null);
+  muisti.merkitse('b', T0 + 1);
+  assert.equal(muisti.koko, 2);
+  muisti.unohda('a');
+  assert.equal(muisti.viimeisin('a'), null);
+  assert.equal(muisti.koko, 1);
 });

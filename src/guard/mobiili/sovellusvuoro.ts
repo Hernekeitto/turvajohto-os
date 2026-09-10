@@ -15,33 +15,67 @@
 //
 // Oma URL-skeema on sovelluksen osoite, eikä selaimessa ole sovellusta jolle puhua.
 // Tavallisessa selaimessa kutsu joko ei tee mitään tai näyttää virheen — kumpikin olisi
-// väärin, koska työpöydällä vuoro on käyttöliittymän tila eikä valvontaa. Siksi tämä
-// vaikenee kun sovellusta ei ole.
+// väärin, koska työpöydällä vuoro on käyttöliittymän tila eikä valvontaa.
+//
+// --- Miksi se ei silti saa VAIETA -------------------------------------------------
+//
+// Aluksi tämä palautti `void` ja vaikeni. Se oli oikein työpöydällä ja väärin puhelimessa,
+// ja ero maksoi 10.9.2026 kokonaisen päivätestin: vuoro käynnistettiin Androidin
+// selainvälilehdestä, natiivipalvelu ei kuullut siitä mitään, ja käyttöliittymä näytti
+// vuoron käynnissä olevalta koko päivän. Kierros valmistui 10/10 pisteellä ilman että
+// valvonta oli hetkeäkään päällä.
+//
+// Siksi tämä KERTOO tavoitettiinko sovellus, ja kutsuja päättää mitä siitä sanotaan.
+// Vaikeneminen on yhä oikea vastaus työpöydällä — mutta se on nyt kutsujan päätös.
+//
+// Huomaa mitä `avattu` tarkoittaa ja mitä ei: skeema avattiin, eikä se ole todiste siitä
+// että palvelu käynnistyi. Ainoa todiste siitä on palvelimelle saapuva sydämenlyönti
+// (server/laite.js, valvonnanTila).
 
-import { onAsennettuSovellus } from '../../shared/asennettu';
+// Pääte mukana, koska tämä moduuli on testattava: Vite kestää sen ilmankin, mutta
+// node --test käyttää ESM-resolvointia. Sama tapa kuin muissakin testatuissa moduuleissa.
+import { onAsennettuSovellus } from '../../shared/asennettu.ts';
 import type { Vuoro } from './vuoro';
 
-const avaa = (osoite: string) => {
-  if (!onAsennettuSovellus()) return;
+export type Vuoronvalitys = 'avattu' | 'ei_tavoitettu';
+
+const avaa = (osoite: string): Vuoronvalitys => {
+  if (!onAsennettuSovellus()) return 'ei_tavoitettu';
   try {
     window.location.href = osoite;
   } catch {
     // Skeeman avaaminen voi epäonnistua selaimen asetuksista riippuen. Se ei saa kaataa
     // vuoron valintaa: käyttöliittymän vuoro on olemassa silloinkin kun natiivipalvelu
-    // ei käynnistynyt, ja vartija näkee sen pysyvän ilmoituksen puuttumisesta.
+    // ei käynnistynyt. Kutsuja saa tiedon ja kertoo sen käyttäjälle.
+    return 'ei_tavoitettu';
   }
+  return 'avattu';
 };
+
+/**
+ * Onko tämä alusta jolla sovellus ylipäätään on olemassa.
+ *
+ * Tätä kysytään VAIN sen ratkaisemiseen kannattaako sovelluksen puuttumisesta varoittaa.
+ * Työpöydällä ja iPhonella ei ole sovellusta johon ohjata, joten varoitus olisi siellä
+ * pelkkää melua; Androidilla se on se yksi asia joka olisi paljastanut 10.9. vian heti.
+ */
+export function onAlustaJollaSovellus(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /android/i.test(navigator.userAgent || '');
+}
 
 /**
  * Käynnistää tai siirtää natiivivuoron. Sama kutsu kelpaa kohteen vaihtoon kesken
  * vuoron: palvelu korvaa vuoronsa eikä käynnistä toista rinnalle.
  */
-export function kaynnistaSovelluksessa(vuoro: Vuoro) {
-  avaa('turvajohto-guard://vuoro'
+export function kaynnistaSovelluksessa(vuoro: Vuoro): Vuoronvalitys {
+  return avaa('turvajohto-guard://vuoro'
     + `?id=${encodeURIComponent(vuoro.kohdeId)}`
     + `&nimi=${encodeURIComponent(vuoro.kohdeNimi)}`);
 }
 
-export function paataSovelluksessa() {
-  avaa('turvajohto-guard://paata');
+// Päättämisen tulosta ei tarvitse kertoa käyttäjälle: jos sovellusta ei tavoitettu, ei ole
+// myöskään palvelua jota pitäisi sammuttaa. Vain käynnistys on lupaus joka voi pettää.
+export function paataSovelluksessa(): Vuoronvalitys {
+  return avaa('turvajohto-guard://paata');
 }

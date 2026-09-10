@@ -14,6 +14,13 @@ import { haeLaitteet, nollaaSidonta, type Laite } from '../laitteet';
 // seuraavalle; se ei näe eikä valitse uutta laitetta. Siksi väärin painettu nollaus
 // pahimmillaan pakottaa vartijan sitomaan puhelimensa uudelleen eikä anna kenellekään
 // pääsyä mihinkään — ja siksi vahvistuskysymys riittää tähän.
+//
+// --- Miksi tässä näkyy myös VALVONTA eikä vain sidonta ------------------------------
+//
+// Ne ovat eri asioita, ja niiden sekoittaminen maksoi 10.9.2026 päivätestin: puhelin oli
+// sidottu koko päivän, mutta taustapalvelu ei käynnistynyt kertaakaan. Sidonta kertoo että
+// laite on tunnistettu, valvonta että se puhuu. Päivystäjä on ainoa joka näkee tämän
+// kaikista laitteista yhtä aikaa, joten hän on myös ainoa joka voi huomata sen.
 
 const paiva = (iso: string) => {
   const d = new Date(iso);
@@ -21,6 +28,19 @@ const paiva = (iso: string) => {
     ? ''
     : d.toLocaleDateString('fi-FI', { day: 'numeric', month: 'numeric', year: 'numeric' });
 };
+
+const hetki = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const tanaan = new Date().toDateString() === d.toDateString();
+  const kello = d.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+  return tanaan ? `klo ${kello}` : `${paiva(iso)} klo ${kello}`;
+};
+
+// Kuinka usein lista päivittyy itsestään. Ilman tätä "valvonta käynnissä" jäisi ruudulle
+// sellaisenaan senkin jälkeen kun laite on hiljentynyt — ja pysähtynyt tilatieto on
+// pahempi kuin ei tilatietoa, koska se näyttää samalta kuin toimiva.
+const PAIVITYSVALI_MS = 60 * 1000;
 
 export const Laitteet = () => {
   const [laitteet, setLaitteet] = useState<Laite[]>([]);
@@ -36,6 +56,11 @@ export const Laitteet = () => {
   }, []);
 
   useEffect(() => { hae(); }, [hae]);
+
+  useEffect(() => {
+    const ajastin = window.setInterval(hae, PAIVITYSVALI_MS);
+    return () => window.clearInterval(ajastin);
+  }, [hae]);
 
   const nollaa = async (laite: Laite) => {
     if (!window.confirm(
@@ -80,6 +105,21 @@ export const Laitteet = () => {
                 <span className="block text-sm text-ink-muted truncate">
                   {laite.malli || 'Tuntematon laite'}
                   {laite.sidottu && ` · sidottu ${paiva(laite.sidottu)}`}
+                </span>
+                <span className="mt-1 flex items-center gap-1.5 text-sm">
+                  <span
+                    aria-hidden
+                    className={`h-2 w-2 shrink-0 rounded-full ${laite.valvontaElossa ? 'bg-success' : 'bg-ink-muted/40'}`}
+                  />
+                  {laite.valvontaElossa ? (
+                    <span className="text-success-ink">Valvonta käynnissä</span>
+                  ) : laite.viimeinenLyonti ? (
+                    <span className="text-ink-muted">
+                      Valvonta ei käynnissä · viimeksi {hetki(laite.viimeinenLyonti)}
+                    </span>
+                  ) : (
+                    <span className="text-ink-muted">Valvonta ei ole käynnistynyt kertaakaan</span>
+                  )}
                 </span>
               </span>
               <button
