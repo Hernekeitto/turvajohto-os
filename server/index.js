@@ -1571,17 +1571,27 @@ app.get('/api/vuorot/omat', requireAuth, guardPortti, (req, res) => {
 // tiedotteenVastaanottajat: erillinen lista vanhenisi heti, ja kaksi totuutta siitä kuka
 // kohteessa työskentelee olisi pahempi kuin yksi.
 //
-// Pääkäyttäjät jätetään pois. Perehdytys on vartijan oikeus vuoroon, eikä pääkäyttäjää
-// rajata sillä perusteella — merkintä hänelle olisi tietue joka ei tee mitään.
+// PÄÄKÄYTTÄJÄT OVAT MUKANA, ja tämä korjattiin 10.9.2026 jälkikäteen.
+//
+// Aluksi heidät rajattiin pois `tiedotteenVastaanottajat`-funktion mallilla ("pääkäyttäjä
+// näkee kaiken oikeuksiensa puolesta"). Perustelu ei siirry tänne: perehdytys ei ole
+// näkyvyysoikeus vaan kirjaus siitä että joku on koulutettu tähän kohteeseen ja vuoroon.
+//
+// Rajaus tuotti umpikujan. Vuorolista (/api/vuorot/omat) rajaa perehdytyksen mukaan
+// EIKÄ tunne pääkäyttäjäpoikkeusta — pääkäyttäjä ei siis olisi päässyt yhteenkään
+// vuoroon, koska hänelle ei voinut kirjata perehdytystä. Pienessä vartiointiliikkeessä
+// sama ihminen hallinnoi järjestelmää ja tekee vuoroja, joten se ei ole reunatapaus.
 app.get('/api/kohde/:id/perehdytettavat', requireAuth, guardPortti, (req, res) => {
   const siteId = req.params.id;
   if (req.role !== 'admin' && !canEdit(req.permissions, siteId, 'guard_sites')) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta kohteen perehdytyksiin.' });
   }
   const kayttajat = listUsers()
-    .filter((u) => u.role !== 'admin')
     .filter((u) => paaseeTuotteisiin(u).includes('guard'))
     .filter((u) => {
+      // Pääkäyttäjä pääsee kaikkialle roolinsa nojalla, eikä se näy käyttäjätasossa —
+      // `rolePermissions` ei siis kerro hänestä mitään ja solmutarkistus hylkäisi hänet.
+      if (u.role === 'admin') return true;
       if (!eventAllowed(u.eventAccess, siteId)) return false;
       // Kentällä työskentely voi näkyä useassa solmussa riippuen tasosta: toinen tekee
       // kierroksia, toinen tehtäviä, kolmas lukee kohteen ohjeita. Mikä tahansa niistä
@@ -1668,8 +1678,14 @@ app.post('/api/vuoro', requireAuth, guardPortti, (req, res) => {
 
   // Kertalupa vaatii syyn. Ilman syytä poikkeus olisi merkintä siitä että sääntö
   // ohitettiin, ja se on vähemmän kuin ei mitään: se näyttää valvonnalta ilman sisältöä.
+  //
+  // Lupa ratkeaa VALTUUDESTA eikä siitä kenelle vuoro aloitetaan (korjattu 10.9.2026).
+  // Aiemmin ehtona oli `toisenPuolesta`, jolloin päivystäjä ei voinut myöntää lupaa
+  // itselleen — yhden pääkäyttäjän vartiointiliikkeessä poikkeusta ei olisi voinut
+  // käyttää lainkaan, koska myöntäjää ei olisi ollut. Ilman `guard_dispatch`-valtuutta
+  // syyn kirjoittaminen ei myönnä mitään, joten vartija ei voi luvittaa itseään.
   const syy = String(poikkeusSyy || '').trim();
-  const poikkeus = toisenPuolesta && syy.length >= 5
+  const poikkeus = saaMyontaaKertaluvan(req) && syy.length >= 5
     ? { myontaja: req.username, syy: syy.slice(0, 500) }
     : null;
 

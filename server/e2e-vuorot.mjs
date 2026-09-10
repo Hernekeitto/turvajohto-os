@@ -17,11 +17,21 @@ const LISA = { id: 'v-lisa', nimi: 'Lisävuoro', tehtavaIdt: ['t1'], pohjaIdt: [
 
 // Oma taso vartijalle: ilman tasoa käyttäjällä ei ole yhtään oikeutta, jolloin
 // perehdytettävien lista jäisi tyhjäksi eikä kenttärajausta voisi todistaa.
+//
+// `guard_tasks` on muokkausoikeuksin, ja se on välttämätöntä eikä koristetta: ilman sitä
+// vartija torjutaan jo "ei oikeutta työskennellä tässä kohteessa" -ehtoon, eikä
+// perehdytystä koskeviin testeihin päästäisi lainkaan. Testi mittaisi silloin eri estettä
+// kuin se väittää mittaavansa.
 fs.writeFileSync(path.join(DATA, 'roles.json'), JSON.stringify({ roles: [
   {
     id: 'vartijataso',
     name: 'Vartija',
-    permissions: { __default__: { guard_site_info: { view: true, edit: false } } },
+    permissions: {
+      __default__: {
+        guard_site_info: { view: true, edit: false },
+        guard_tasks: { view: true, edit: true },
+      },
+    },
   },
 ] }, null, 2));
 
@@ -135,8 +145,10 @@ try {
   const kayttajat = (await lista.json()).kayttajat;
   vaita(lista.status === 200, `reitti vastaa (${lista.status})`);
   vaita(Array.isArray(kayttajat), 'palauttaa listan');
-  // Pääkäyttäjät jätetään pois: perehdytys on vartijan oikeus vuoroon.
-  vaita(!kayttajat.some((k) => k.username === 'testiadmin'), 'pääkäyttäjä ei ole perehdytettävissä');
+  // Pääkäyttäjä ON perehdytettävissä (korjattu 10.9.2026). Aluksi hänet rajattiin pois,
+  // mistä seurasi umpikuja: vuorolista rajaa perehdytyksen mukaan eikä tunne
+  // pääkäyttäjäpoikkeusta, joten pääkäyttäjä ei olisi päässyt yhteenkään vuoroon.
+  vaita(kayttajat.some((k) => k.username === 'testiadmin'), 'pääkäyttäjä on perehdytettävissä');
   vaita(kayttajat.some((k) => k.username === 'vartija1'), 'vartija on perehdytettävissä');
   const kentat = new Set(kayttajat.flatMap((k) => Object.keys(k)));
   vaita(kentat.size > 0 && [...kentat].every((k) => ['username', 'nimi', 'displayId'].includes(k)),
@@ -213,6 +225,9 @@ try {
   vaita(lupa.data?.vuoro?.vartija === 'vartija1', 'vuoro on vartijan eikä myöntäjän');
   vaita(lupa.data?.vuoro?.perehdytysPoikkeus?.myontaja === 'testiadmin', 'myöntäjä jää tietueeseen');
   vaita(lupa.data?.vuoro?.perehdytysPoikkeus?.este === 'ei_perehdytysta', 'este jää tietueeseen');
+  // Päätetään heti: vartija1 tarvitaan vielä kohdassa 13, eikä kesken jäänyt vuoro saa
+  // muuttaa myöhempää testiä 409-tapaukseksi ja mitata eri asiaa kuin se väittää.
+  await post(`/api/vuoro/${lupa.data.vuoro.id}/paata`, {});
 
   console.log('\n12. Kertalupa ei ole kenen tahansa myönnettävissä');
   const vartijanKirj = await fetch(`${PALVELIN}/api/login`, {
@@ -227,7 +242,26 @@ try {
   }, vartijanEvaste);
   vaita(yritys.status === 403, `vartija ei voi aloittaa vuoroa toisen puolesta (${yritys.status})`);
 
-  console.log('\n13. Vuorokokoelmaa ei voi kirjoittaa selaimesta');
+  console.log('\n13. Kertalupa itselle ja ilman valtuutta');
+  // Päivystäjä voi luvittaa myös itsensä: yhden pääkäyttäjän talossa toista myöntäjää ei
+  // ole, eikä poikkeusta jota ei voi myöntää kannata olla olemassa.
+  const itselle = await post('/api/vuoro', {
+    siteId: 'kohde-perehdytetty', vuorotyyppiId: 'v-ilta',
+    poikkeusSyy: 'Ainoa paikalla oleva vartija',
+  });
+  vaita(itselle.status === 200, `päivystäjä voi luvittaa itsensä (${itselle.status})`);
+  vaita(itselle.data?.vuoro?.perehdytysPoikkeus?.myontaja === 'testiadmin', 'myöntäjä kirjataan silti');
+  await post(`/api/vuoro/${itselle.data.vuoro.id}/paata`, {});
+
+  // Vartijalla ei ole valtuutta: syyn kirjoittaminen ei riitä miksikään.
+  const ilmanValtuutta = await post('/api/vuoro', {
+    siteId: 'kohde-perehdytetty', vuorotyyppiId: 'v-ilta',
+    poikkeusSyy: 'Kirjoitan tähän mitä tahansa',
+  }, vartijanEvaste);
+  vaita(ilmanValtuutta.status === 403, `vartija ei voi luvittaa itseään (${ilmanValtuutta.status})`);
+  vaita(ilmanValtuutta.data?.syy === 'ei_perehdytysta', 'este pysyy perehdytyksessä');
+
+  console.log('\n14. Vuorokokoelmaa ei voi kirjoittaa selaimesta');
   const suora = await fetch(`${PALVELIN}/api/data/guardShifts`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: evaste },
     // Kelvollinen runko (taulukko), jotta pyyntö pääsee muotovalidoinnin ohi. Muuten

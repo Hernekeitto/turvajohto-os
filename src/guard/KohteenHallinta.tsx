@@ -979,6 +979,8 @@ export const KohteenHallinta = ({
                   </option>
                 ))}
               </select>
+              {/* Puuttuva nimi listalta on kysymys johon käyttöliittymän on vastattava.
+                  Ilman tätä ainoa tapa selvittää se on lukea palvelinkoodia. */}
               <span className="block text-xs text-ink-muted mt-1">
                 {!kohde.id
                   ? 'Tallenna kohde ensin, niin tunnukset voidaan hakea.'
@@ -986,6 +988,12 @@ export const KohteenHallinta = ({
                     ? 'Yhdelläkään tunnuksella ei ole pääsyä tähän kohteeseen. Perehdytyksen voi silti kirjata, mutta se ei avaa vuoroja.'
                     : 'Ilman tunnusta merkintä on kirjaus perehdytyksestä, ei pääsy vuoroon.'}
               </span>
+              {kohde.id && perehdytettavat.length > 0 && (
+                <span className="block text-xs text-ink-subtle mt-1">
+                  Listalla ovat GUARD-tunnukset joilla on pääsy tähän kohteeseen. Jos joku
+                  puuttuu, tarkista hänen käyttäjätasonsa ja kohderajauksensa.
+                </span>
+              )}
             </label>
 
             <div>
