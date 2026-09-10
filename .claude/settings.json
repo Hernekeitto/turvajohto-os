@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node tyokalut/tj.mjs *)"
+    ]
+  }
+}
