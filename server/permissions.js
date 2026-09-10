@@ -377,6 +377,20 @@ const COLLECTIONS = {
     eventIdOf: (item) => item?.siteId,
     tuote: 'guard',
   },
+  // Vuorot (erä 17). Sama muoto kuin patrolRunsilla ja samasta syystä: kirjoitus tapahtuu
+  // vain palvelimen omilla reiteillä, joten touch koskee käytännössä vain adminin
+  // teoreettista suoraa kirjoitusta. Säännöt ovat vuorot.js:ssä eivätkä täällä.
+  //
+  // Kolmas lukusolmu on hälytyskeskus: päivystäjän on nähtävä kuka on vuorossa missäkin
+  // kohteessa olematta itse kentällä. Se on juuri se tieto jota päivystys tarvitsee ja
+  // jota ei tähän asti ollut missään.
+  guardShifts: {
+    view: ['guard_patrols', 'guard_site_info', 'guard_dispatch'],
+    touch: () => ['guard_patrols'],
+    eventScoped: true,
+    eventIdOf: (item) => item?.siteId,
+    tuote: 'guard',
+  },
   // Hälytykset (erä 7). Kokoelma on molempien puolien yhteinen, joten `tuote`-rajausta EI
   // ole: sama tietue voi kuulua tapahtumaan tai vartiointikohteeseen, ja eventScoped +
   // eventAccess hoitaa rajauksen kummassakin tapauksessa. Kaksi solmua lukuoikeudessa

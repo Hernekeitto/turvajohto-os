@@ -28,7 +28,9 @@ import {
   kelpaakoKoodi, laitteenTietue, lueAvain, luoKoodi, luoNonceMuisti, tarkistaAllekirjoitus,
   luoLyontimuisti, tarvitaankoLyonninTallennus, valvonnanTila,
 } from './laite.js';
-import { JOUSTO_MIN, vuorovaihtoehdot } from './vuorot.js';
+import {
+  JOUSTO_MIN, aloitaVuoro, keskenOlevaVuoro, lisaaVuoroon, paataVuoro, vuorovaihtoehdot,
+} from './vuorot.js';
 import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
 import {
   luoToken,
@@ -545,7 +547,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -1247,6 +1249,7 @@ app.post('/api/laite/:id/nollaa', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+
 // ====================== KÄYTTÄJÄTASOT ======================
 // Tasot määräävät sivukartta-oikeudet (ks. roles.js). Vain pääkäyttäjä hallinnoi niitä.
 app.get('/api/roles', requireAuth, requireAdmin, (req, res) => {
@@ -1590,6 +1593,162 @@ app.get('/api/kohde/:id/perehdytettavat', requireAuth, guardPortti, (req, res) =
     })
     .map((u) => ({ username: u.username, nimi: u.nickname || u.username, displayId: u.displayId ?? null }));
   res.json({ ok: true, kayttajat });
+});
+
+// --- Vuoron elinkaari ---------------------------------------------------------------
+
+// Kuka saa myöntää kertaluvan vuoroon johon vartijalla ei ole perehdytystä.
+//
+// Sama `guard_dispatch`-valtuus kuin laitesidonnan nollauksella, ja samasta syystä: yöllä
+// sairastapauksessa päivystäjä on se joka on paikalla. Poikkeus jonka voi myöntää on
+// parempi kuin sääntö jonka voi kiertää — kierretty sääntö ei jätä lokiin mitään.
+const saaMyontaaKertaluvan = (req) =>
+  req.role === 'admin' || canEdit(req.permissions, null, 'guard_dispatch');
+
+// Saako tunnus tehdä työtä tässä kohteessa. Kierrokset TAI tehtävät riittää: vuoro voi
+// koostua kummasta tahansa, eikä pelkkiä tehtäviä tekevää saa estää aloittamasta vuoroa.
+const saaTyoskennella = (req, siteId) =>
+  req.role === 'admin'
+  || canEdit(req.permissions, siteId, 'guard_patrols')
+  || canEdit(req.permissions, siteId, 'guard_tasks');
+
+// Kanavaviesti vuoron muutoksesta. Sama periaate kuin kierroksilla: viesti kuljettaa vain
+// id:n, ja sisältö haetaan oikeustarkistetulta reitiltä.
+function kerroVuorosta(vuoro, action) {
+  lahetaKanavalle('guardShifts', [{ action, id: vuoro.id, eventId: vuoro.siteId }], {
+    saaNahda: (istunto, siteId) =>
+      istunto?.role === 'admin'
+      || (eventAllowed(istunto?.eventAccess, siteId)
+        && (canView(rolePermissions(istunto?.roleId), siteId, 'guard_patrols')
+          || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch'))),
+  });
+}
+
+// Oma kesken oleva vuoro. Selain kysyy tämän käynnistyessään: vuoron totuus on
+// palvelimella, ja laitteen localStorage on vain kopio jonka voi menettää.
+app.get('/api/vuoro/oma', requireAuth, guardPortti, (req, res) => {
+  const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
+  res.json({ ok: true, vuoro });
+});
+
+// Vuoron aloitus.
+//
+// `vartija` kentässä = hälytyskeskus aloittaa vuoron toisen puolesta kertaluvalla. Se ei
+// ole oikeus tehdä työtä toisen nimissä vaan ainoa tapa avata perehdyttämätön vuoro, ja
+// siksi se vaatii syyn ja jää sekä vuoron tietueeseen että auditlokiin.
+app.post('/api/vuoro', requireAuth, guardPortti, (req, res) => {
+  const { siteId, vuorotyyppiId, vartija, poikkeusSyy } = req.body || {};
+
+  const kenelle = typeof vartija === 'string' && vartija ? vartija : req.username;
+  const toisenPuolesta = kenelle !== req.username;
+  if (toisenPuolesta && !saaMyontaaKertaluvan(req)) {
+    return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus voi aloittaa vuoron toisen puolesta.' });
+  }
+  if (toisenPuolesta && !findUser(kenelle)) {
+    return res.status(404).json({ ok: false, error: 'Vartijaa ei löytynyt.' });
+  }
+
+  const kohde = (readCollection('guardSites') || []).find((k) => k?.id === siteId);
+  if (!kohde) return res.status(404).json({ ok: false, error: 'Kohdetta ei löytynyt.' });
+  if (!saaTyoskennella(req, siteId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta työskennellä tässä kohteessa.' });
+  }
+
+  const vuorot = readCollection('guardShifts') || [];
+  // Yksi vuoro kerrallaan (päätös 10.9.2026), sama sääntö kuin kierroksella: kahden
+  // yhtaikaisen vuoron tehtävistä ei tietäisi kumpaan ne kuuluvat.
+  const auki = keskenOlevaVuoro(vuorot, kenelle);
+  if (auki) {
+    return res.status(409).json({
+      ok: false,
+      error: `Vuoro on jo käynnissä kohteessa ${auki.siteNimi}. Päätä se ensin.`,
+      vuoroId: auki.id,
+    });
+  }
+
+  // Kertalupa vaatii syyn. Ilman syytä poikkeus olisi merkintä siitä että sääntö
+  // ohitettiin, ja se on vähemmän kuin ei mitään: se näyttää valvonnalta ilman sisältöä.
+  const syy = String(poikkeusSyy || '').trim();
+  const poikkeus = toisenPuolesta && syy.length >= 5
+    ? { myontaja: req.username, syy: syy.slice(0, 500) }
+    : null;
+
+  const tulos = aloitaVuoro({
+    kohde, vuorotyyppiId, username: kenelle, pohjat: readCollection('templates') || [],
+    id: crypto.randomUUID(), poikkeus,
+  });
+  if (!tulos.ok) {
+    // Koneluettava syy mukaan: käyttöliittymä tarjoaa kertalupaa vain silloin kun este on
+    // sellainen jonka lupa voi avata, eikä esimerkiksi poistettua vuoroa.
+    return res.status(403).json({ ok: false, error: tulos.error, syy: tulos.syy });
+  }
+
+  writeCollection('guardShifts', [tulos.vuoro, ...vuorot]);
+  logAudit({
+    user: req.username, action: 'vuoro_alkoi', collection: 'guardShifts',
+    recordId: tulos.vuoro.id, eventId: kohde.id,
+    ...(toisenPuolesta ? { kohdeKayttaja: kenelle } : {}),
+    ...(tulos.vuoro.perehdytysPoikkeus
+      ? { poikkeus: tulos.vuoro.perehdytysPoikkeus.este, syy: tulos.vuoro.perehdytysPoikkeus.syy }
+      : {}),
+  });
+  kerroVuorosta(tulos.vuoro, 'create');
+  res.json({ ok: true, vuoro: tulos.vuoro });
+});
+
+// Vuoron päättäminen.
+app.post('/api/vuoro/:id/paata', requireAuth, guardPortti, (req, res) => {
+  const vuorot = readCollection('guardShifts') || [];
+  const vuoro = vuorot.find((v) => v?.id === req.params.id);
+  if (!vuoro) return res.status(404).json({ ok: false, error: 'Vuoroa ei löytynyt.' });
+  // Vuoro on henkilökohtainen. Hälytyskeskus voi päättää unohtuneen vuoron, koska
+  // ikuisesti auki oleva vuoro on väärää tietoa siitä kuka on kentällä.
+  if (vuoro.vartija !== req.username && !saaMyontaaKertaluvan(req)) {
+    return res.status(403).json({ ok: false, error: 'Vuoro on toisen vartijan.' });
+  }
+
+  const tulos = paataVuoro({ vuoro, toisto: req.body?.toisto === true });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  if (tulos.duplikaatti) return res.json({ ok: true, vuoro: tulos.vuoro, duplikaatti: true });
+
+  writeCollection('guardShifts', vuorot.map((v) => (v.id === vuoro.id ? tulos.vuoro : v)));
+  logAudit({
+    user: req.username, action: 'vuoro_paattyi', collection: 'guardShifts',
+    recordId: vuoro.id, eventId: vuoro.siteId,
+    ...(vuoro.vartija !== req.username ? { kohdeKayttaja: vuoro.vartija } : {}),
+  });
+  kerroVuorosta(tulos.vuoro, 'update');
+  res.json({ ok: true, vuoro: tulos.vuoro });
+});
+
+// Tehtävän tai kierroksen lisäys omaan vuoroon kohteen hakemistosta.
+//
+// Tämä on se "lisäksi, ei tilalle" -osa: vuoro kertoo mitä pitää tehdä, hakemisto vastaa
+// kysymykseen saanko tehdä myös tämän. Ilman jälkimmäistä oltaisiin nykytilassa, jossa
+// vartija etsii kaiken itse; ilman edellistä kukaan ei voisi tehdä ylimääräistä.
+app.post('/api/vuoro/:id/lisaa', requireAuth, guardPortti, (req, res) => {
+  const vuorot = readCollection('guardShifts') || [];
+  const vuoro = vuorot.find((v) => v?.id === req.params.id);
+  if (!vuoro) return res.status(404).json({ ok: false, error: 'Vuoroa ei löytynyt.' });
+  if (vuoro.vartija !== req.username) {
+    return res.status(403).json({ ok: false, error: 'Vuoro on toisen vartijan.' });
+  }
+
+  const kohde = (readCollection('guardSites') || []).find((k) => k?.id === vuoro.siteId);
+  const tulos = lisaaVuoroon({
+    vuoro, kohde, pohjat: readCollection('templates') || [],
+    laji: req.body?.laji, kohdeId: req.body?.kohdeId, lahde: 'itse_lisatty',
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  if (tulos.duplikaatti) return res.json({ ok: true, vuoro: tulos.vuoro, duplikaatti: true });
+
+  writeCollection('guardShifts', vuorot.map((v) => (v.id === vuoro.id ? tulos.vuoro : v)));
+  logAudit({
+    user: req.username, action: 'vuoro_tehtava_lisatty', collection: 'guardShifts',
+    recordId: vuoro.id, eventId: vuoro.siteId, laji: req.body?.laji,
+  });
+  kerroVuorosta(tulos.vuoro, 'update');
+  res.json({ ok: true, vuoro: tulos.vuoro });
 });
 
 

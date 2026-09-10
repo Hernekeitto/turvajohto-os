@@ -161,3 +161,143 @@ export function saakoAloittaa({ kohde, vuorotyyppiId, username, nyt = new Date()
   if (!ikkuna.ok) return { ok: false, syy: ikkuna.syy };
   return { ok: true, syy: null, vuorotyyppi };
 }
+
+// --- Vuoron elinkaari (erä 17) ------------------------------------------------------
+//
+// Vuoro on palvelimen tietue eikä laitteen tila. Laitteelle jää kopio, mutta totuus on
+// täällä — muuten "kuka oli töissä ja missä" olisi kysymys johon vastaa vain se puhelin
+// joka sattuu olemaan tallella.
+
+// Ihmisluettava teksti koneluettavasta syystä. Sääntömoduuli ei muotoile virheitä
+// kutsujan puolesta muualla, mutta tässä se on perusteltua: sama syy tarkoittaa samaa
+// asiaa kaikille kutsujille, ja kolme eri sanamuotoa samasta esteestä olisi kolme eri
+// ohjetta samaan tilanteeseen.
+const SYYN_TEKSTI = {
+  tuntematon_vuoro: 'Vuoroa ei löytynyt.',
+  arkistoitu_vuoro: 'Vuoro on poistettu käytöstä.',
+  ei_perehdytysta: 'Sinua ei ole perehdytetty tähän vuoroon. Hälytyskeskus voi avata sen kertaluvalla.',
+  ikkunan_ulkopuolella: 'Vuoroon voi kirjautua aikaisintaan kaksi tuntia ennen alkua ja viimeistään kaksi tuntia päättymisen jälkeen.',
+};
+
+// Mitkä esteet kertalupa voi ohittaa. Olematonta tai arkistoitua vuoroa ei voi luvittaa:
+// lupa vuoroon jota ei ole ei ole lupa vaan tietue joka näyttää luvalta.
+const LUVITETTAVAT = new Set(['ei_perehdytysta', 'ikkunan_ulkopuolella']);
+
+/**
+ * Vuoron aloitus.
+ *
+ * Tehtävät ja kierrokset KOPIOIDAAN vuorotyypistä, täsmälleen kuten kierros kopioi
+ * pisteensä pohjasta (server/kierros.js). Kesken vuoron tehty vuorotyypin muokkaus ei saa
+ * muuttaa sitä mitä tältä vuorolta vaadittiin — muuten jälkikäteen ei voi sanoa mitä
+ * vartijan piti tehdä.
+ *
+ * `poikkeus` on hälytyskeskuksen kertalupa: { myontaja, syy }. Se ohittaa perehdytyksen ja
+ * kellon mutta ei muuta, ja se jää tietueeseen pysyvästi.
+ */
+export function aloitaVuoro({
+  kohde, vuorotyyppiId, username, pohjat = [], id,
+  nyt = new Date(), joustoMin = JOUSTO_MIN, poikkeus = null,
+}) {
+  const portti = saakoAloittaa({ kohde, vuorotyyppiId, username, nyt, joustoMin });
+  if (!portti.ok && !(poikkeus && LUVITETTAVAT.has(portti.syy))) {
+    return { ok: false, syy: portti.syy, error: SYYN_TEKSTI[portti.syy] || 'Vuoroa ei voi aloittaa.' };
+  }
+
+  const vuorotyyppi = portti.vuorotyyppi
+    || (kohde.vuorotyypit || []).find((v) => v?.id === vuorotyyppiId);
+  if (!vuorotyyppi) {
+    return { ok: false, syy: 'tuntematon_vuoro', error: SYYN_TEKSTI.tuntematon_vuoro };
+  }
+
+  // Vain olemassa olevat: viittaus poistettuun tehtävään tuottaisi vuorolle rivin jolla ei
+  // ole sisältöä, ja se näyttäisi tekemättömältä työltä.
+  const tehtavat = (vuorotyyppi.tehtavaIdt || [])
+    .map((tid) => (kohde.tehtavat || []).find((t) => t?.id === tid))
+    .filter(Boolean)
+    .map((t) => ({ id: t.id, nimi: t.nimi, lahde: 'vuoro' }));
+
+  const kierrokset = (vuorotyyppi.pohjaIdt || [])
+    .map((pid) => pohjat.find((p) => p?.id === pid))
+    .filter(Boolean)
+    .map((p) => ({ id: p.id, nimi: p.nimi, lahde: 'vuoro' }));
+
+  return {
+    ok: true,
+    vuoro: {
+      id,
+      siteId: kohde.id,
+      // Nimet kopioidaan: kohteen tai vuoron nimen muutos ei saa muuttaa mennyttä vuoroa.
+      siteNimi: kohde.name || '',
+      vuorotyyppiId: vuorotyyppi.id,
+      vuorotyyppiNimi: vuorotyyppi.nimi || '',
+      vartija: username,
+      alkoi: new Date(nyt).toISOString(),
+      paattyi: null,
+      tila: 'kesken',
+      tehtavat,
+      pohjat: kierrokset,
+      perehdytysPoikkeus: poikkeus && !portti.ok
+        ? { myontaja: poikkeus.myontaja, syy: poikkeus.syy, este: portti.syy, aika: new Date(nyt).toISOString() }
+        : null,
+    },
+  };
+}
+
+/**
+ * Vuoron päättäminen.
+ *
+ * Tekemättömät tehtävät EIVÄT estä päättämistä (päätös 10.9.2026). Estäminen tarkoittaisi
+ * käytännössä että vuoroa ei päätetä ollenkaan, ja auki jäänyt vuoro on huonompi tieto
+ * kuin päättynyt vuoro jolla on tekemättömiä rivejä. Ne jäävät tietueeseen näkyviin.
+ */
+export function paataVuoro({ vuoro, nyt = new Date(), toisto = false }) {
+  if (!vuoro) return { ok: false, error: 'Vuoroa ei löytynyt.' };
+  // Jonon uudelleenyritys: jo päättynyt vuoro on toistona haluttu lopputulos.
+  if (vuoro.tila === 'paattynyt') {
+    return toisto
+      ? { ok: true, vuoro, duplikaatti: true }
+      : { ok: false, error: 'Vuoro on jo päättynyt.' };
+  }
+  return {
+    ok: true,
+    vuoro: { ...vuoro, tila: 'paattynyt', paattyi: new Date(nyt).toISOString() },
+  };
+}
+
+/**
+ * Tehtävän tai kierroksen lisäys kesken olevaan vuoroon.
+ *
+ * Käytetään sekä tehtävähakemistosta ('itse_lisatty') että siirrosta ja pakotuksesta
+ * (erät 18–19). Lähde säilyy tietueessa, koska se erottaa suunnitellun työn siitä mitä
+ * vuoron aikana tuli lisää — ja se on raportoinnin kiinnostavin tieto.
+ */
+export function lisaaVuoroon({ vuoro, kohde, pohjat = [], laji, kohdeId, lahde = 'itse_lisatty' }) {
+  if (!vuoro) return { ok: false, error: 'Vuoroa ei löytynyt.' };
+  if (vuoro.tila !== 'kesken') return { ok: false, error: 'Vuoro on jo päättynyt.' };
+  if (laji !== 'tehtava' && laji !== 'kierros') {
+    return { ok: false, error: 'Tuntematon laji.' };
+  }
+
+  const avain = laji === 'tehtava' ? 'tehtavat' : 'pohjat';
+  const lahdelista = laji === 'tehtava' ? (kohde?.tehtavat || []) : pohjat;
+  const osuma = lahdelista.find((x) => x?.id === kohdeId);
+  if (!osuma) return { ok: false, error: 'Kohdetta ei löytynyt kohteen hakemistosta.' };
+
+  // Jo listalla: ei virhe vaan tilanne. Sama tehtävä kahdesti näyttäisi kahdelta työltä.
+  if ((vuoro[avain] || []).some((x) => x.id === kohdeId)) {
+    return { ok: true, vuoro, duplikaatti: true };
+  }
+
+  return {
+    ok: true,
+    vuoro: { ...vuoro, [avain]: [...(vuoro[avain] || []), { id: osuma.id, nimi: osuma.nimi, lahde }] },
+  };
+}
+
+/**
+ * Onko vartijalla jo vuoro kesken. Yksi kerrallaan (päätös 10.9.2026), sama sääntö kuin
+ * kierroksella: kahden yhtaikaisen vuoron tehtävistä ei tietäisi kumpaan ne kuuluvat.
+ */
+export function keskenOlevaVuoro(vuorot, username) {
+  return (vuorot || []).find((v) => v?.tila === 'kesken' && v.vartija === username) || null;
+}

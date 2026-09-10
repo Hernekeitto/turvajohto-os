@@ -326,7 +326,41 @@ sillä hetkellä kun se käännetään, jokainen vartijatunnus jolla ei ole yht�
 menettää näkyvyyden kaikkiin kohteisiin. Erä 16 on juuri se työkalu jolla perehdytykset
 syötetään ensin.
 
-### Erä 17 — Vuoron aloitus ja päättäminen
+### Erä 17 — Vuoron aloitus ja päättäminen 🟡 PALVELIN VALMIS 10.9.2026
+
+**Palvelinpuoli on valmis ja todennettu.** Käyttöliittymä on tekemättä, eikä vartijan
+näkymä ole vielä muuttunut miksikään — vanha kohdevalinta toimii kuten ennenkin. Reitit
+ovat lisäyksiä eivätkä muuta mitään olemassa olevaa.
+
+| Osa | Tila |
+|---|---|
+| Elinkaaren säännöt (`aloitaVuoro`, `paataVuoro`, `lisaaVuoroon`) | valmis, 16 testiä |
+| `guardShifts`-kokoelma, palvelimen ylläpitämä | valmis |
+| `GET /api/vuoro/oma` | valmis |
+| `POST /api/vuoro` · `/:id/paata` · `/:id/lisaa` | valmis |
+| Hälytyskeskuksen kertalupa | valmis |
+| Kanavaviesti vuoron muutoksista | valmis |
+| Uusi kirjautumisnäkymä (kohde × vuoro) | **tekemättä** |
+| Tehtävälista vuorosta ja tehtävähakemisto | **tekemättä** |
+| Kohdenäkyvyyden kytkin perehdytykseen | **tekemättä** |
+| Natiivisilta saa vuoron tunnisteen | **tekemättä** |
+
+**Kertalupa toteutui yksinkertaisemmin kuin määrittelyssä.** Alkuperäinen ajatus oli
+hyväksyntäjono: vartija pyytää, päivystäjä myöntää, vartija aloittaa. Toteutus on sen
+sijaan että **päivystäjä aloittaa vuoron vartijan puolesta** (`vartija`-kenttä rungossa,
+vaatii `guard_dispatch`). Se vastaa sitä miten asia oikeasti tapahtuu — vartija soittaa
+hälytyskeskukseen — eikä vaadi omaa kokoelmaa, jonoa eikä odotustilaa. Syy on pakollinen
+ja jää sekä vuoron tietueeseen (`perehdytysPoikkeus`) että auditlokiin.
+
+Lupa avaa **vain** perehdytyksen ja kellon. Olematonta tai arkistoitua vuoroa se ei avaa:
+lupa vuoroon jota ei ole ei ole lupa vaan tietue joka näyttää luvalta.
+
+**Sama TDZ-ansa toistui.** Reitit kirjoitettiin taas kohtaan jossa `guardPortti` oli vielä
+ajallisessa kuolleessa vyöhykkeessä, ja palvelin kieltäytyi käynnistymästä. `node --check`,
+typecheck ja 405 yksikkötestiä menivät kaikki läpi. `server/e2e-vuorot.mjs` nappasi sen
+toisen kerran peräkkäin — se on nyt 54 väitettä.
+
+#### Alkuperäinen suunnitelma
 
 `server/vuorot.js` sääntöineen ja testeineen, `guardShifts`-kokoelma, uusi
 kirjautumisnäkymä, tehtävien kopiointi vuorosta, tehtävähakemisto, hälytyskeskuksen

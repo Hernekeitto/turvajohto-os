@@ -70,6 +70,12 @@ const COLLECTIONS = {
   // vajaata ei voi sulkea, keskeytys vaatii syyn, kuittaus on peruuttamaton — menettäisivät
   // merkityksensä jos selain voisi kirjoittaa kokoelman suoraan.
   patrolRuns: 'patrolRuns.json',
+  // Vuorot (erä 17). Vuoro on se mitä kierros on pohjalle: määrittely on kohteen
+  // vuorotyypissä, suoritus on tapahtuma ajassa. Samasta syystä kuin patrolRuns tämä on
+  // PALVELIMEN YLLÄPITÄMÄ (index.js: PALVELIMEN_YLLAPITAMAT) — vuoro jonka selain voisi
+  // kirjoittaa olisi vuoro jonka perehdytysehdon voisi ohittaa kirjoittamalla tietueen
+  // suoraan, ja koko perehdytysrajaus olisi silloin pelkkä käyttöliittymän este.
+  guardShifts: 'guardShifts.json',
   // Hälytykset (erä 7): ajastin, man-down, hätäpainike ja vyöhykepoikkeama. YKSI kokoelma
   // kaikille tyypeille samasta syystä kuin templates: tilamalli, kuittaus, eskalointi ja
   // valvomonäkymä ovat samat riippumatta siitä mikä hälytyksen laukaisi. Palvelimen

@@ -13,7 +13,7 @@ const PALVELIN = `http://127.0.0.1:${PORT}`;
 
 const AAMU = { id: 'v-aamu', nimi: 'Aamuvuoro', alkaa: '07:00', paattyy: '15:00', tehtavaIdt: ['t1'], pohjaIdt: ['p1'] };
 const ILTA = { id: 'v-ilta', nimi: 'Iltavuoro', alkaa: '15:00', paattyy: '23:00', tehtavaIdt: [], pohjaIdt: [] };
-const LISA = { id: 'v-lisa', nimi: 'Lisävuoro', tehtavaIdt: [], pohjaIdt: [] };
+const LISA = { id: 'v-lisa', nimi: 'Lisävuoro', tehtavaIdt: ['t1'], pohjaIdt: ['pohja-1'] };
 
 // Oma taso vartijalle: ilman tasoa käyttäjällä ei ole yhtään oikeutta, jolloin
 // perehdytettävien lista jäisi tyhjäksi eikä kenttärajausta voisi todistaa.
@@ -38,6 +38,10 @@ fs.writeFileSync(path.join(DATA, 'guardSites.json'), JSON.stringify([
   {
     id: 'kohde-perehdytetty',
     name: 'Kauppakeskus Hansa',
+    tehtavat: [
+      { id: 't1', nimi: 'Sulkukierros', tyyppi: 'kuittaus', kohdat: [] },
+      { id: 't2', nimi: 'Avainten tarkistus', tyyppi: 'lista', kohdat: ['Pääovi'] },
+    ],
     vuorotyypit: [AAMU, ILTA, LISA],
     perehdytykset: [
       // Kytketty tunnukseen: myöntää aamu- ja lisävuoron.
@@ -60,6 +64,11 @@ fs.writeFileSync(path.join(DATA, 'guardSites.json'), JSON.stringify([
     // Ei tunnusta: dokumentti kyllä, oikeus ei.
     perehdytykset: [{ id: 'p4', nimi: 'Virtanen Matti', pvm: '2026-09-01', vuorotyyppiIdt: ['v-aamu3'] }],
   },
+], null, 2));
+
+fs.writeFileSync(path.join(DATA, 'templates.json'), JSON.stringify([
+  { id: 'pohja-1', kind: 'patrol', ownerId: 'kohde-perehdytetty', nimi: 'Yökierros', versio: 1, pisteet: [] },
+  { id: 'pohja-2', kind: 'patrol', ownerId: 'kohde-perehdytetty', nimi: 'Ulkokierros', versio: 1, pisteet: [] },
 ], null, 2));
 
 const palvelin = spawn(process.execPath, ['server/index.js'], {
@@ -141,6 +150,93 @@ try {
   vaita((await fetch(`${PALVELIN}/api/vuorot/omat`)).status === 401, 'omat vuorot vaatii istunnon');
   vaita((await fetch(`${PALVELIN}/api/kohde/kohde-perehdytetty/perehdytettavat`)).status === 401,
     'perehdytettävät vaatii istunnon');
+
+  console.log('\n6. Vuoron aloitus ja sisällön kopiointi');
+  const post = async (polku, runko, evasteet = evaste) => {
+    const v = await fetch(`${PALVELIN}${polku}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: evasteet },
+      body: JSON.stringify(runko),
+    });
+    return { status: v.status, data: await v.json().catch(() => null) };
+  };
+
+  // Kellonajaton lisävuoro: elinkaaren testi ei saa riippua ajohetkestä.
+  const aloitus = await post('/api/vuoro', { siteId: 'kohde-perehdytetty', vuorotyyppiId: 'v-lisa' });
+  vaita(aloitus.status === 200 && aloitus.data.ok, `vuoro alkoi (${aloitus.status})`);
+  const vuoro = aloitus.data.vuoro;
+  vaita(vuoro?.tila === 'kesken', 'tila on kesken');
+  vaita(vuoro?.siteNimi === 'Kauppakeskus Hansa', 'kohteen nimi kopioitu tietueeseen');
+  vaita(vuoro?.tehtavat?.length === 1 && vuoro.tehtavat[0].lahde === 'vuoro',
+    'tehtävä kopioitu vuorotyypistä lähteineen');
+  vaita(vuoro?.pohjat?.length === 1 && vuoro.pohjat[0].nimi === 'Yökierros', 'kierros kopioitu');
+
+  console.log('\n7. Yksi vuoro kerrallaan');
+  const toinen = await post('/api/vuoro', { siteId: 'kohde-perehdytetty', vuorotyyppiId: 'v-aamu' });
+  vaita(toinen.status === 409, `toinen vuoro torjutaan (${toinen.status})`);
+  vaita(toinen.data?.vuoroId === vuoro.id, 'vastaus kertoo mikä vuoro on auki');
+
+  console.log('\n8. Oma vuoro palvelimelta');
+  const oma = await (await fetch(`${PALVELIN}/api/vuoro/oma`, { headers: { Cookie: evaste } })).json();
+  vaita(oma.vuoro?.id === vuoro.id, 'kesken oleva vuoro löytyy tunnuksella');
+
+  console.log('\n9. Lisäys kohteen hakemistosta');
+  const lisays = await post(`/api/vuoro/${vuoro.id}/lisaa`, { laji: 'tehtava', kohdeId: 't2' });
+  vaita(lisays.data?.vuoro?.tehtavat?.length === 2, 'tehtävä lisättiin');
+  vaita(lisays.data?.vuoro?.tehtavat?.[1]?.lahde === 'itse_lisatty', 'lähde erottaa sen vuoron omista');
+  const toisto = await post(`/api/vuoro/${vuoro.id}/lisaa`, { laji: 'tehtava', kohdeId: 't2' });
+  vaita(toisto.data?.duplikaatti === true, 'sama tehtävä ei tule kahdesti');
+  const vieras = await post(`/api/vuoro/${vuoro.id}/lisaa`, { laji: 'tehtava', kohdeId: 'ei-ole' });
+  vaita(vieras.status === 400, 'hakemiston ulkopuolista ei voi lisätä');
+
+  console.log('\n10. Vuoron päättäminen');
+  const paatos = await post(`/api/vuoro/${vuoro.id}/paata`, {});
+  vaita(paatos.data?.vuoro?.tila === 'paattynyt', 'vuoro päättyi');
+  vaita(!!paatos.data?.vuoro?.paattyi, 'päättymisaika kirjattu');
+  vaita(paatos.data.vuoro.tehtavat.length === 2, 'tekemättömät tehtävät jäävät näkyviin');
+  const uudelleen = await post(`/api/vuoro/${vuoro.id}/paata`, {});
+  vaita(uudelleen.status === 400, 'päättynyttä ei päätetä uudelleen');
+  vaita((await post(`/api/vuoro/${vuoro.id}/paata`, { toisto: true })).data?.duplikaatti === true,
+    'jonon uusintayritys on silti ok');
+
+  console.log('\n11. Perehdyttämätön vuoro ja kertalupa');
+  const esto = await post('/api/vuoro', { siteId: 'kohde-perehdytetty', vuorotyyppiId: 'v-ilta' });
+  vaita(esto.status === 403, `perehdyttämätön vuoro estetään (${esto.status})`);
+  vaita(esto.data?.syy === 'ei_perehdytysta', 'syy on koneluettava, jotta lupaa voi tarjota');
+
+  // Vartija1:llä ei ole perehdytystä mihinkään: hälytyskeskus avaa vuoron kertaluvalla.
+  const lupa = await post('/api/vuoro', {
+    siteId: 'kohde-perehdytetty', vuorotyyppiId: 'v-lisa',
+    vartija: 'vartija1', poikkeusSyy: 'Sairastapaus, ei muuta vartijaa saatavilla',
+  });
+  vaita(lupa.status === 200, `kertalupa avaa vuoron (${lupa.status})`);
+  vaita(lupa.data?.vuoro?.vartija === 'vartija1', 'vuoro on vartijan eikä myöntäjän');
+  vaita(lupa.data?.vuoro?.perehdytysPoikkeus?.myontaja === 'testiadmin', 'myöntäjä jää tietueeseen');
+  vaita(lupa.data?.vuoro?.perehdytysPoikkeus?.este === 'ei_perehdytysta', 'este jää tietueeseen');
+
+  console.log('\n12. Kertalupa ei ole kenen tahansa myönnettävissä');
+  const vartijanKirj = await fetch(`${PALVELIN}/api/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'vartija1', password: 'salasana123' }),
+  });
+  const vartijanEvaste = (vartijanKirj.headers.getSetCookie() || []).map((r) => r.split(';')[0]).join('; ');
+  vaita(!!vartijanEvaste, 'vartija kirjautui');
+  const yritys = await post('/api/vuoro', {
+    siteId: 'kohde-perehdytetty', vuorotyyppiId: 'v-lisa',
+    vartija: 'vartija2', poikkeusSyy: 'ei syytä',
+  }, vartijanEvaste);
+  vaita(yritys.status === 403, `vartija ei voi aloittaa vuoroa toisen puolesta (${yritys.status})`);
+
+  console.log('\n13. Vuorokokoelmaa ei voi kirjoittaa selaimesta');
+  const suora = await fetch(`${PALVELIN}/api/data/guardShifts`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: evaste },
+    // Kelvollinen runko (taulukko), jotta pyyntö pääsee muotovalidoinnin ohi. Muuten
+    // testi mittaisi runkotarkistusta eikä sitä suojaa jota se väittää mittaavansa.
+    body: JSON.stringify([]),
+  });
+  const suoraSyy = await suora.json().catch(() => null);
+  vaita(suora.status === 403, `suora kirjoitus torjutaan (${suora.status})`);
+  vaita(/ylläpitää palvelin/.test(suoraSyy?.error || ''), 'ja oikeasta syystä');
 } finally {
   palvelin.kill();
   fs.rmSync(DATA, { recursive: true, force: true });

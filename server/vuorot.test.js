@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import {
   JOUSTO_MIN,
   minuutit, onKytketty, perehdytetytVuorot, saakoAloittaa, vuoroIkkunassa, vuorovaihtoehdot,
+  aloitaVuoro, keskenOlevaVuoro, lisaaVuoroon, paataVuoro,
 } from './vuorot.js';
 
 // Kello annetaan aina paikallisena, koska vuoroikkuna on paikallista aikaa: vartija tulee
@@ -246,4 +247,154 @@ test('tuntematon ja arkistoitu vuoro torjutaan omilla syillään', () => {
   });
   assert.equal(saakoAloittaa({ kohde: k, vuorotyyppiId: 'v-eioo', username: 'vartija1' }).syy, 'tuntematon_vuoro');
   assert.equal(saakoAloittaa({ kohde: k, vuorotyyppiId: 'v-aamu', username: 'vartija1' }).syy, 'arkistoitu_vuoro');
+});
+
+// --- Vuoron elinkaari (erä 17) ------------------------------------------------------
+
+const POHJAT = [
+  { id: 'p1', nimi: 'Yökierros' },
+  { id: 'p2', nimi: 'Ulkokierros' },
+];
+
+const KOHDE_TEHTAVILLA = () => kohde({
+  tehtavat: [
+    { id: 't1', nimi: 'Sulkukierros', tyyppi: 'kuittaus', kohdat: [] },
+    { id: 't2', nimi: 'Avaimet', tyyppi: 'lista', kohdat: [] },
+  ],
+  perehdytykset: [perehdytys()],
+});
+
+const aloita = (yli = {}) => aloitaVuoro({
+  kohde: KOHDE_TEHTAVILLA(),
+  vuorotyyppiId: 'v-aamu',
+  username: 'vartija1',
+  pohjat: POHJAT,
+  id: 'vuoro-1',
+  nyt: klo(8),
+  ...yli,
+});
+
+test('vuoro kopioi tehtävänsä ja kierroksensa vuorotyypistä', () => {
+  const { ok, vuoro } = aloita();
+  assert.equal(ok, true);
+  assert.equal(vuoro.tila, 'kesken');
+  assert.equal(vuoro.vartija, 'vartija1');
+  assert.equal(vuoro.vuorotyyppiNimi, 'Aamuvuoro');
+  assert.deepEqual(vuoro.tehtavat, [{ id: 't1', nimi: 'Sulkukierros', lahde: 'vuoro' }]);
+  assert.deepEqual(vuoro.pohjat, [{ id: 'p1', nimi: 'Yökierros', lahde: 'vuoro' }]);
+});
+
+test('kohteen ja vuoron nimi kopioidaan eikä viitata', () => {
+  // Kohteen nimen muutos ei saa muuttaa mennyttä vuoroa: jälkikäteen on voitava sanoa
+  // missä vartija oli töissä sinä päivänä, ei missä kohde on nyt.
+  const { vuoro } = aloita();
+  assert.equal(vuoro.siteNimi, 'Kauppakeskus Hansa');
+  assert.equal(typeof vuoro.siteNimi, 'string');
+});
+
+test('poistettuun tehtävään osoittava viittaus ei tuota tyhjää riviä', () => {
+  const k = KOHDE_TEHTAVILLA();
+  k.vuorotyypit = k.vuorotyypit.map((v) => (v.id === 'v-aamu' ? { ...v, tehtavaIdt: ['t1', 'poistettu'] } : v));
+  const { vuoro } = aloita({ kohde: k });
+  assert.equal(vuoro.tehtavat.length, 1);
+});
+
+test('perehdyttämätön vuoro ei ala ilman kertalupaa', () => {
+  const tulos = aloita({ vuorotyyppiId: 'v-ilta', nyt: klo(16) });
+  assert.equal(tulos.ok, false);
+  assert.equal(tulos.syy, 'ei_perehdytysta');
+  assert.match(tulos.error, /perehdytetty/i);
+});
+
+test('kertalupa avaa perehdytyksen ja kellon, ja jää tietueeseen', () => {
+  const tulos = aloita({
+    vuorotyyppiId: 'v-ilta', nyt: klo(16),
+    poikkeus: { myontaja: 'paivystaja', syy: 'Sairastapaus, ei muuta vartijaa saatavilla' },
+  });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.vuoro.perehdytysPoikkeus.myontaja, 'paivystaja');
+  assert.equal(tulos.vuoro.perehdytysPoikkeus.este, 'ei_perehdytysta');
+  assert.match(tulos.vuoro.perehdytysPoikkeus.syy, /Sairastapaus/);
+});
+
+test('kertalupa EI avaa olematonta eikä arkistoitua vuoroa', () => {
+  // Lupa vuoroon jota ei ole ei ole lupa vaan tietue joka näyttää luvalta.
+  const poikkeus = { myontaja: 'paivystaja', syy: 'syy' };
+  assert.equal(aloita({ vuorotyyppiId: 'v-eioo', poikkeus }).syy, 'tuntematon_vuoro');
+  const k = KOHDE_TEHTAVILLA();
+  k.vuorotyypit = k.vuorotyypit.map((v) => (v.id === 'v-aamu' ? { ...v, arkistoitu: true } : v));
+  assert.equal(aloita({ kohde: k, poikkeus }).syy, 'arkistoitu_vuoro');
+});
+
+test('kertalupaa ei kirjata kun sitä ei tarvittu', () => {
+  // Turha poikkeusmerkintä väittäisi jälkikäteen että vuoro ajettiin luvan varassa.
+  const { vuoro } = aloita({ poikkeus: { myontaja: 'paivystaja', syy: 'varmuuden vuoksi' } });
+  assert.equal(vuoro.perehdytysPoikkeus, null);
+});
+
+test('vuoro päättyy ja saa päättymisajan', () => {
+  const { vuoro } = aloita();
+  const tulos = paataVuoro({ vuoro, nyt: klo(15) });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.vuoro.tila, 'paattynyt');
+  assert.equal(tulos.vuoro.paattyi, klo(15).toISOString());
+});
+
+test('tekemättömät tehtävät eivät estä päättämistä', () => {
+  // Päätös 10.9.2026: estäminen tarkoittaisi että vuoroa ei päätetä ollenkaan, ja auki
+  // jäänyt vuoro on huonompi tieto kuin päättynyt vuoro jolla on tekemättömiä rivejä.
+  const { vuoro } = aloita();
+  assert.equal(vuoro.tehtavat.length, 1);
+  assert.equal(paataVuoro({ vuoro, nyt: klo(15) }).ok, true);
+});
+
+test('päättynyttä vuoroa ei päätetä uudelleen, mutta toisto on ok', () => {
+  const { vuoro } = aloita();
+  const paattynyt = paataVuoro({ vuoro, nyt: klo(15) }).vuoro;
+  assert.equal(paataVuoro({ vuoro: paattynyt, nyt: klo(16) }).ok, false);
+  const toisto = paataVuoro({ vuoro: paattynyt, nyt: klo(16), toisto: true });
+  assert.equal(toisto.duplikaatti, true);
+  assert.equal(toisto.vuoro.paattyi, klo(15).toISOString(), 'alkuperäinen päättymisaika säilyy');
+});
+
+test('tehtävän voi lisätä hakemistosta ja lähde säilyy', () => {
+  const { vuoro } = aloita();
+  const tulos = lisaaVuoroon({ vuoro, kohde: KOHDE_TEHTAVILLA(), laji: 'tehtava', kohdeId: 't2' });
+  assert.equal(tulos.ok, true);
+  assert.deepEqual(tulos.vuoro.tehtavat.map((t) => t.lahde), ['vuoro', 'itse_lisatty']);
+});
+
+test('sama tehtävä ei tule listalle kahdesti', () => {
+  const { vuoro } = aloita();
+  const tulos = lisaaVuoroon({ vuoro, kohde: KOHDE_TEHTAVILLA(), laji: 'tehtava', kohdeId: 't1' });
+  assert.equal(tulos.duplikaatti, true);
+  assert.equal(tulos.vuoro.tehtavat.length, 1);
+});
+
+test('vain kohteen omasta hakemistosta voi lisätä', () => {
+  const { vuoro } = aloita();
+  const tulos = lisaaVuoroon({ vuoro, kohde: KOHDE_TEHTAVILLA(), laji: 'tehtava', kohdeId: 'toisen-kohteen-tehtava' });
+  assert.equal(tulos.ok, false);
+});
+
+test('päättyneeseen vuoroon ei lisätä mitään', () => {
+  const { vuoro } = aloita();
+  const paattynyt = paataVuoro({ vuoro, nyt: klo(15) }).vuoro;
+  assert.equal(lisaaVuoroon({ vuoro: paattynyt, kohde: KOHDE_TEHTAVILLA(), laji: 'tehtava', kohdeId: 't2' }).ok, false);
+});
+
+test('kierroksen lisäys menee omaan listaansa', () => {
+  const { vuoro } = aloita();
+  const tulos = lisaaVuoroon({ vuoro, kohde: KOHDE_TEHTAVILLA(), pohjat: POHJAT, laji: 'kierros', kohdeId: 'p2', lahde: 'siirto' });
+  assert.deepEqual(tulos.vuoro.pohjat.map((p) => [p.nimi, p.lahde]), [['Yökierros', 'vuoro'], ['Ulkokierros', 'siirto']]);
+  assert.equal(tulos.vuoro.tehtavat.length, 1, 'tehtävälista ei muutu');
+});
+
+test('yksi kesken oleva vuoro kerrallaan', () => {
+  const { vuoro } = aloita();
+  const toinen = { ...vuoro, id: 'vuoro-2', vartija: 'vartija2' };
+  const paattynyt = { ...vuoro, id: 'vuoro-3', tila: 'paattynyt' };
+  assert.equal(keskenOlevaVuoro([paattynyt, vuoro, toinen], 'vartija1').id, 'vuoro-1');
+  assert.equal(keskenOlevaVuoro([paattynyt], 'vartija1'), null);
+  assert.equal(keskenOlevaVuoro([], 'vartija1'), null);
 });
