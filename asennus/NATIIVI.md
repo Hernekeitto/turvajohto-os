@@ -447,9 +447,21 @@ Osa 2: palvelimella `server/laite.js` ja sen 18 testiä, reitit `/api/laite/sido
 `SiltaActivity`n `sido`-haara. Webissä `src/shared/laitteet.ts`, vartijan
 `LaiteSidonta`-kortti vuorovalinnassa ja hälytyskeskuksen laitelista asetuksissa.
 
-**Osa 3 on tekemättä:** sydämenlyönti palvelimelle ja vuoron käynnistys
-web-käyttöliittymästä. Samassa yhteydessä suljetaan `turvajohto-guard://vuoro`
-vaatimaan sidontaa (ks. `SiltaActivity`n avoin turvallisuuskysymys). Käännös menee läpi ja yhdistetty manifesti on tarkistettu: luvat,
+Palvelinpuoli on **tuotannossa 10.9.2026** (commit `f40d459`). Forgejon post-receive
+rakentaa sivuston ja päivittää myös backendin, joten API-reitit tulivat voimaan samalla
+pushilla — erillistä uudelleenkäynnistystä ei tarvittu.
+
+Osa 3: sydämenlyönti menee palvelimelle allekirjoitettuna `GET /api/laite/oma`
+-kutsuna, `turvajohto-guard://vuoro` vaatii sidonnan, ja vuoro käynnistyy ja päättyy
+web-käyttöliittymästä (`src/guard/mobiili/sovellusvuoro.ts`). Uloskirjautuminen
+pysäyttää valvonnan ennen istunnon päättämistä.
+
+Lisäksi **vahtikoira** (`Vahtikoira.java`): epätarkka herätys varttitunnin välein
+tarkistaa onko palvelu elossa, käynnistää sen tarvittaessa ja kirjaa kuolinhetken.
+Tarkka herätys olisi vaatinut `SCHEDULE_EXACT_ALARM`-luvan ja Play-perustelun;
+epätarkka riittää, koska Doze päästää sen läpi noin yhdeksän minuutin välein.
+
+**Erä 10 on koodin osalta valmis.** Auki on enää akkumittauksen tulos. Käännös menee läpi ja yhdistetty manifesti on tarkistettu: luvat,
 `VuoroService` tyypillä `specialUse`, `SiltaActivity` skeemalla `turvajohto-guard` ja
 `minSdkVersion="28"` ovat app-moduulin manifestissa, vaikka niitä ei ole kirjoitettu
 sinne.

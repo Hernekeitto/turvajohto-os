@@ -31,6 +31,7 @@ import { Vuorovalinta } from './mobiili/Vuorovalinta';
 import { Skanneri } from './mobiili/Skanneri';
 import { Tilatieto } from './mobiili/Tilatieto';
 import { lueVuoro, tallennaVuoro, unohdaVuoro, type Vuoro } from './mobiili/vuoro';
+import { kaynnistaSovelluksessa, paataSovelluksessa } from './mobiili/sovellusvuoro';
 import { useKanava } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
@@ -938,9 +939,13 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     const uusi: Vuoro = { kohdeId: kohde.id, kohdeNimi: kohde.name, alkoi: new Date().toISOString() };
     tallennaVuoro(session?.username || '', uusi);
     setVuoro(uusi);
+    // Natiivipalvelu käynnistetään vasta kun vuoro on tallessa: jos sovelluksen avaaminen
+    // vie näkymän hetkeksi pois, palaava käyttöliittymä lukee vuoron varastosta.
+    kaynnistaSovelluksessa(uusi);
   };
 
   const paataVuoro = () => {
+    paataSovelluksessa();
     unohdaVuoro();
     setVuoro(null);
     nollaaNakymat();
@@ -1072,6 +1077,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const kirjauduUlos = async () => {
     // Laitteelle ei jää työtietoja uloskirjautumisen jälkeen. Jonoa EI tyhjennetä:
     // lähettämätön kirjaus on tehtyä työtä, ja se odottaa seuraavaa kirjautumista.
+    // Valvonta lopetetaan ENNEN uloskirjautumista. Muuten laitteelle jäisi pyörimään
+    // palvelu, joka jakaa sijaintia tunnuksella jolla ei enää ole istuntoa — ja se on
+    // täsmälleen se tilanne jota "vapaa-ajalla ei seurata" ei saa tarkoittaa.
+    paataSovelluksessa();
     unohdaVuorodata();
     unohdaVuoro();
     unohdaIstunto();
