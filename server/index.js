@@ -1829,6 +1829,33 @@ app.get('/api/siirrot/omat', requireAuth, guardPortti, (req, res) => {
   res.json({ ok: true, ...omatSiirrot(readCollection('guardAssignments') || [], req.username) });
 });
 
+// Ketkä ovat nyt vuorossa ja voivat siksi ottaa siirron vastaan.
+//
+// Kysyjän on itse oltava vuorossa: siirtää voi vain omasta vuorostaan, joten
+// vuoroton ei tarvitse tätä listaa eikä hänelle kuulu tieto siitä kuka on missäkin
+// kentällä. Palautetaan vain se mitä valintaan tarvitaan — tunnus, näyttönimi ja
+// kohteen nimi — eikä esimerkiksi vuoron alkamisaikaa tai tehtäviä.
+//
+// Kohteen nimi on mukana tarkoituksella: piirivartija ja kauppakeskusvartija ovat eri
+// kohteissa, ja "kenelle siirrän" on käytännössä kysymys "kuka on lähellä".
+app.get('/api/siirrot/vastaanottajat', requireAuth, guardPortti, (req, res) => {
+  const vuorot = readCollection('guardShifts') || [];
+  if (!keskenOlevaVuoro(vuorot, req.username)) {
+    return res.status(409).json({ ok: false, error: 'Et ole vuorossa.' });
+  }
+  const vastaanottajat = vuorot
+    .filter((v) => v?.tila === 'kesken' && v.vartija !== req.username)
+    .map((v) => {
+      const kayttaja = findUser(v.vartija);
+      return {
+        username: v.vartija,
+        nimi: kayttaja?.nickname || v.vartija,
+        kohde: v.siteNimi || '',
+      };
+    });
+  res.json({ ok: true, vastaanottajat });
+});
+
 // Uusi siirto. Antaja antaa OMAN tehtävänsä, joten se haetaan hänen kesken olevasta
 // vuorostaan — vartija ei voi siirtää työtä jota hänellä itsellään ei ole.
 app.post('/api/siirto', requireAuth, guardPortti, (req, res) => {

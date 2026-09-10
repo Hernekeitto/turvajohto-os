@@ -429,7 +429,7 @@ pyytää, palvelimella on tietue alku- ja loppuaikoineen, perehdyttämätön vuo
 kertalupa avaa sen ja jää lokiin — ja sovelluksen valvonta käynnistyy samalla
 (`valvontaElossa: true`, ks. `NATIIVI.md` päivätesti 10.9.).
 
-### Erä 18 — Tehtävän siirto vartijalta vartijalle 🟡 PALVELIN VALMIS 10.9.2026
+### Erä 18 — Tehtävän siirto vartijalta vartijalle 🟢 VALMIS 10.9.2026
 
 **Määrittely muuttui toteutettaessa, ja muutos oli käyttäjän eikä minun.** Alkuperäinen
 suunnitelma lisäsi siirretyn tehtävän saajan vuoroon. Se ei toimi: piirivartija on omassa
@@ -457,9 +457,47 @@ sitä mitä se lupaa.
 | `GET /api/siirrot/omat` (saapuvat, hyväksytyt, lähtevät) | valmis |
 | `POST /api/siirto` · `/:id/vastaa` · `/:id/peru` | valmis |
 | Hyväksytty siirto avaa kohteen saajalle | valmis |
-| Siirtopainike antajalle | **tekemättä** |
-| Hyväksy/hylkää saajan ilmoituksissa | **tekemättä** |
-| Yhdistetty prioriteettilista etusivulla | **tekemättä** |
+| Siirtopainike antajalle + vastaanottajan valinta | valmis |
+| Hyväksy/hylkää saajan etusivulla | valmis |
+| Yhdistetty prioriteettilista etusivulla | valmis |
+| `GET /api/siirrot/vastaanottajat` (ketkä ovat vuorossa) | valmis |
+
+#### Listan järjestys
+
+```
+1. Lauenneet hälytykset
+2. Käynnissä olevat hälytykset
+3. Saapuvat siirrot (odottavat vastausta)
+4. Hyväksytyt siirrot ja vuoron oma työ
+5. Tehdyt kierrokset
+```
+
+Käynnissä oleva hälytys oli aiemmin listan **pohjalla**, kierrosten alla. Se on
+hälytystehtävä siinä missä lauennutkin, ja sen paikka on muun työn yläpuolella.
+
+Saapuva siirto on hälytysten jälkeen mutta ennen omaa työtä: vastaaminen kestää sekunnin
+ja vapauttaa toisen vartijan suunnittelemaan vuoronsa.
+
+**Siirtopainike ei ole kortin sisällä.** Kortti itse on `<button>`, ja sisäkkäinen painike
+ei ole kelvollista HTML:ää eikä avautuisi näppäimistöltä. Siirto on sisarelementti kortin
+alla. Sitä ei näytetä kesken olevalle kierrokselle: puolikkaan kierroksen luovuttaminen
+jättäisi kuittaukset kahden vartijan nimiin.
+
+#### Selaintesti paljasti valheellisen koeasetelman
+
+Ensimmäinen kahden vartijan selainajo näytti onnistuvan, mutta **antaja ajoi
+pääkäyttäjänä**: `server/db.js` ylentää taulukon ensimmäisen tilin adminiksi jos yhtään
+adminia ei ole, eikä koedatassa ollut. Testi mittasi siis pääkäyttäjän oikeuksia vaikka
+väitti mittaavansa vartijan. Lisäksi koetasolta puuttui `guard_sites`-katseluoikeus, joka
+sisäänrakennetulla Vartija-tasolla on (`roles.js`: VARTIJA_KATSELU) — ilman sitä
+mobiilinäkymä näyttää "Ei näkyvyysoikeutta".
+
+Molemmat korjattiin ja ajo toistettiin oikeilla vartijatunnuksilla. Lopputulos:
+
+- Antaja näki "Siirrä toiselle vartijalle" vain vuoron omilla kierroksilla
+- Vastaanottajalistalla näkyi toinen vartija ja hänen kohteensa
+- Saaja näki pyynnön ylimpänä viesteineen, hyväksy/hylkää-painikkeineen
+- **Ennen hyväksyntää saaja näki yhden kohteen, hyväksynnän jälkeen kaksi**
 
 **Siirtää voi vain vuorossa olevalle** (päätös 10.9.2026). Perustelu on ihmisen eikä
 koneen: vapaapäivää viettävälle vartijalle ei kuulu lähettää hyväksymispyyntöä keskellä

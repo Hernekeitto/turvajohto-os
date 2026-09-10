@@ -28,6 +28,7 @@ import { tallennaLaitevalinta, TYOPOYTAPOLKU } from '../shared/laitevalinta';
 import { MobiiliKehys, type MobiiliIlmoitus, type MobiiliLinkki } from './mobiili/MobiiliKehys';
 import { MobiiliEtusivu } from './mobiili/MobiiliEtusivu';
 import { Vuorovalinta } from './mobiili/Vuorovalinta';
+import { SiirtoValinta } from './mobiili/SiirtoValinta';
 import { Skanneri } from './mobiili/Skanneri';
 import { Tilatieto } from './mobiili/Tilatieto';
 import { lueVuoro, tallennaVuoro, unohdaVuoro, type Vuoro } from './mobiili/vuoro';
@@ -35,6 +36,10 @@ import {
   aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, lisaaVuoroon, paataVuoroPalvelimella,
   type PalvelimenVuoro, type Vuorokohde, type VuoroVaihtoehto,
 } from './vuorot';
+import {
+  TYHJAT_SIIRROT, haeOmatSiirrot, haeVastaanottajat, siirraTehtava, vastaaSiirtoon,
+  type OmatSiirrot, type Vastaanottaja,
+} from './siirrot';
 import { kaynnistaSovelluksessa, onAlustaJollaSovellus, paataSovelluksessa } from './mobiili/sovellusvuoro';
 import { useKanava } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
@@ -248,6 +253,15 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [vuoroaAloitetaan, setVuoroaAloitetaan] = useState(false);
   const [vuoroonLisataan, setVuoroonLisataan] = useState(false);
   const [lisaysVirhe, setLisaysVirhe] = useState<string | null>(null);
+  // Siirrot (erä 18). Omana tilanaan eikä osana vuoroa: siirretty kierros voi olla eri
+  // kohteessa kuin vartijan oma vuoro, ja juuri se on ominaisuuden tarkoitus.
+  const [siirrot, setSiirrot] = useState<OmatSiirrot>(TYHJAT_SIIRROT);
+  const [siirtoVastataan, setSiirtoVastataan] = useState(false);
+  const [siirrettava, setSiirrettava] = useState<{ laji: 'tehtava' | 'kierros'; id: string; nimi: string } | null>(null);
+  const [vastaanottajat, setVastaanottajat] = useState<Vastaanottaja[]>([]);
+  const [vastaanottajatLadattu, setVastaanottajatLadattu] = useState(false);
+  const [siirtoLahetetaan, setSiirtoLahetetaan] = useState(false);
+  const [siirtoVirhe, setSiirtoVirhe] = useState<string | null>(null);
   const [kameraAuki, setKameraAuki] = useState(false);
   const [tilatietoAuki, setTilatietoAuki] = useState(false);
   // Skannauksen tulos: puhelimen kamera avasi /guard?piste=<token>, ja palvelin kertoo
@@ -547,6 +561,16 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     });
     return () => { voimassa = false; };
   }, [mobiili, session?.username]);
+
+  // Tunnus on riippuvuus eikä koriste: siirrot ovat kysyjän omia, ja jaetulla
+  // puhelimella seuraava vartija ei saa nähdä edellisen siirtoja. Ilman istuntoa ei ole
+  // mitään haettavaa.
+  const paivitaSiirrot = useCallback(async () => {
+    if (!mobiili || !session?.username) return;
+    setSiirrot(await haeOmatSiirrot());
+  }, [mobiili, session?.username]);
+
+  useEffect(() => { void paivitaSiirrot(); }, [paivitaSiirrot, vuoro?.vuoroId]);
 
   // Vuorovaihtoehdot haetaan vasta kun vuoroa ei ole: listaa tarvitaan vain
   // kirjautumisnäkymässä, eikä sitä kannata pitää ajan tasalla kesken vuoron.
@@ -1050,6 +1074,59 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     setPalvelimenVuoro(tulos.vuoro);
   };
 
+  // --- Tehtävän siirto (erä 18) ----------------------------------------------------
+
+  const avaaSiirto = async (laji: 'tehtava' | 'kierros', id: string, nimi: string) => {
+    setSiirrettava({ laji, id, nimi });
+    setSiirtoVirhe(null);
+    setVastaanottajatLadattu(false);
+    setVastaanottajat(await haeVastaanottajat());
+    setVastaanottajatLadattu(true);
+  };
+
+  const lahetaSiirto = async (saaja: string, viesti: string) => {
+    if (!siirrettava) return;
+    setSiirtoVirhe(null);
+    setSiirtoLahetetaan(true);
+    const tulos = await siirraTehtava(saaja, siirrettava.laji, siirrettava.id, viesti);
+    setSiirtoLahetetaan(false);
+    if (!tulos.ok) {
+      setSiirtoVirhe(tulos.virhe);
+      return;
+    }
+    setSiirrettava(null);
+    await paivitaSiirrot();
+  };
+
+  // Vastauksen jälkeen haetaan sekä siirrot ETTÄ vuoro: hyväksytty siirto voi avata
+  // kohteen jota vartija ei aiemmin nähnyt, eikä vanha kohdelista kerro siitä mitään.
+  const vastaaSiirtoPyyntoon = async (id: string, hyvaksy: boolean) => {
+    setSiirtoVastataan(true);
+    const tulos = await vastaaSiirtoon(id, hyvaksy);
+    setSiirtoVastataan(false);
+    if (!tulos.ok) {
+      setVirhe(tulos.virhe);
+      return;
+    }
+    await paivitaSiirrot();
+    if (hyvaksy) paivitaKohteet();
+  };
+
+  // Kohdelistan uudelleenhaku. Hyväksytty siirto voi avata kohteen jota vartija ei
+  // aiemmin nähnyt (server/index.js: siirtojenAvaamatKohteet), eikä käynnistyksessä
+  // haettu lista kerro siitä mitään.
+  const paivitaKohteet = () => {
+    fetch('/api/data/guardSites', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res?.ok === true && Array.isArray(res.data)) setKohteet(res.data);
+      })
+      .catch(() => {
+        // Epäonnistuminen ei saa kaataa siirron hyväksyntää: siirto on jo tallessa
+        // palvelimella, ja kohdelista päivittyy viimeistään seuraavassa latauksessa.
+      });
+  };
+
   // Päättäminen ei jää verkon varaan. Palvelimelle lähetetään pyyntö, mutta laitteen
   // vuoro päättyy joka tapauksessa: katvealueelle jäänyt pyyntö tarkoittaisi muuten,
   // ettei vartija pääse ulos vuorosta ennen kuin verkko palaa.
@@ -1332,6 +1409,18 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           kerrottava: vartija luulee muuten olevansa valvonnan piirissä. Ei suljettavissa
           niin kuin skannausbanneri — se palaisi joka tapauksessa vasta seuraavassa
           vuoron aloituksessa, ja siihen mennessä koko vuoro olisi ohi. */}
+      {siirrettava && (
+        <SiirtoValinta
+          tehtavaNimi={siirrettava.nimi}
+          vastaanottajat={vastaanottajat}
+          ladattu={vastaanottajatLadattu}
+          lahettaa={siirtoLahetetaan}
+          virhe={siirtoVirhe}
+          onSiirra={lahetaSiirto}
+          onSulje={() => setSiirrettava(null)}
+        />
+      )}
+
       {valvontaVaroitus && (
         <div className="mb-6 flex items-start gap-3 rounded-lg px-4 py-3 border bg-danger-soft border-danger/30 text-danger-ink">
           <ShieldOff size={18} className="shrink-0 mt-0.5" />
@@ -1547,6 +1636,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             lisataan={vuoroonLisataan}
             lisaysVirhe={lisaysVirhe}
             onLisaaVuoroon={lisaaOmaanVuoroon}
+            siirrot={siirrot}
+            siirtoVastataan={siirtoVastataan}
+            onVastaaSiirtoon={vastaaSiirtoPyyntoon}
+            onSiirra={avaaSiirto}
             kohde={vuoroKohde}
             pohjat={pohjat}
             kierrokset={kierrokset}

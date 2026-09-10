@@ -9,9 +9,12 @@
 // numeron alla, koska pelkkä numero kortilla on arvoitus — ja arvoitus kentällä on
 // pahempi kuin puuttuva tieto.
 import { useState } from 'react';
-import { AlertTriangle, ClipboardCheck, Route, Search, Siren, Timer } from 'lucide-react';
+import {
+  AlertTriangle, ArrowRightLeft, Check, ClipboardCheck, Route, Search, Siren, Timer, X,
+} from 'lucide-react';
 
 import { TYYPPI_LABEL, type Halytys } from '../../shared/halytykset';
+import type { OmatSiirrot } from '../siirrot';
 import type { Kierros as KierrosTietue, Kierrospohja, Kohde, TehtavaSuoritus } from '../tyypit';
 
 type Props = {
@@ -27,6 +30,12 @@ type Props = {
   lisataan: boolean;
   lisaysVirhe: string | null;
   onLisaaVuoroon: (laji: 'tehtava' | 'kierros', id: string) => void;
+  // Siirrot (erä 18). Vartijan työlista syntyy yhdistämällä vuoron omat tehtävät,
+  // hyväksytyt siirrot ja hälytykset — lista on vartijan, vuoro vain kylvää sen.
+  siirrot: OmatSiirrot;
+  siirtoVastataan: boolean;
+  onVastaaSiirtoon: (id: string, hyvaksy: boolean) => void;
+  onSiirra: (laji: 'tehtava' | 'kierros', id: string, nimi: string) => void;
   pohjat: Kierrospohja[];
   kierrokset: KierrosTietue[];
   halytykset: Halytys[];
@@ -61,18 +70,35 @@ const minuutteja = (alkoi: string) => {
 export const MobiiliEtusivu = ({
   kohde, vuoronPohjaIdt, vuoronTehtavaIdt, vuoroKaynnissa, lisataan, lisaysVirhe,
   pohjat, kierrokset, halytykset, suoritukset, sallitut,
-  onKierros, onTehtavat, onHalytykset, onLisaaVuoroon,
+  siirrot, siirtoVastataan,
+  onKierros, onTehtavat, onHalytykset, onLisaaVuoroon, onVastaaSiirtoon, onSiirra,
 }: Props) => {
   const [hakemistoAuki, setHakemistoAuki] = useState(false);
   const vuoroon = new Set(vuoronPohjaIdt);
-  // Vuoron omat kierrokset ensin. Tämä on erän 17 koko lupaus näkymässä: vartijan ei
-  // tarvitse tietää mitä kohteessa ajetaan, vaan se mikä kuuluu juuri tähän vuoroon on
-  // ylimpänä. Kohteen muut kierrokset jäävät alle — niitä saa yhä tehdä, mutta ne eivät
-  // ole se mitä vuorolta odotetaan.
+  const omatKierrokset = kierrokset.filter((k) => k.siteId === kohde.id);
+
+  // Tänään jo ajetut kierrokset. Kesken oleva EI ole tehty: se on juuri se jota
+  // parhaillaan tehdään, ja sen paikka on ylhäällä eikä pohjalla.
+  const tehtyTanaan = new Set(
+    omatKierrokset
+      .filter((k) => k.tila !== 'kesken' && samaPaiva(k.paattyi))
+      .map((k) => k.templateId)
+  );
+
+  // Listan järjestys (päätös 10.9.2026): hälytykset ensin, sitten vuoron työ, suoritetut
+  // viimeisenä. Tässä ratkeaa kaksi jälkimmäistä:
+  //
+  //   1. tekemättömät ennen tehtyjä — tehty kierros ei ole enää tehtävä
+  //   2. vuoron omat ennen kohteen muita — vartijan ei tarvitse tietää mitä kohteessa
+  //      ajetaan, vaan se mikä kuuluu tähän vuoroon on ylimpänä
+  //
+  // HUOM: suoritusaikoja ei ole. Vuorotyypillä on kellonajat, yksittäisellä kierroksella
+  // ei, joten "suoritusaikojen mukaan" toteutuu toistaiseksi vuoron määrittelemänä
+  // järjestyksenä. Aikakenttä on lisättävä ennen kuin järjestys voi luvata enempää.
   const omatPohjat = pohjat
     .filter((p) => p.ownerId === kohde.id && p.kind === 'patrol' && !p.arkistoitu)
-    .sort((a, b) => Number(vuoroon.has(b.id)) - Number(vuoroon.has(a.id)));
-  const omatKierrokset = kierrokset.filter((k) => k.siteId === kohde.id);
+    .sort((a, b) => (Number(tehtyTanaan.has(a.id)) - Number(tehtyTanaan.has(b.id)))
+      || (Number(vuoroon.has(b.id)) - Number(vuoroon.has(a.id))));
   const avoimet = halytykset.filter(
     (h) => h.eventId === kohde.id && (h.tila === 'lauennut' || h.tila === 'kaynnissa')
   );
@@ -113,6 +139,67 @@ export const MobiiliEtusivu = ({
         <HalytysKortti key={h.id} halytys={h} kohde={kohde} kriittinen onClick={onHalytykset} />
       ))}
 
+      {/* Käynnissä oleva hälytys on hälytystehtävä siinä missä lauennutkin, ja sen paikka
+          on muun työn yläpuolella (päätös 10.9.2026). Aiemmin se oli listan pohjalla,
+          mikä tarkoitti että kesken oleva hälytystehtävä katosi kierrosten alle. */}
+      {sallitut.halytykset && kaynnissa.map((h) => (
+        <HalytysKortti key={h.id} halytys={h} kohde={kohde} kriittinen={false} onClick={onHalytykset} />
+      ))}
+
+      {/* Saapuvat siirrot: nämä odottavat vastausta, ja toinen vartija odottaa sitä
+          myös. Hälytysten jälkeen mutta ennen omaa työtä — vastaaminen kestää sekunnin
+          ja vapauttaa toisen suunnittelemaan vuoronsa. */}
+      {siirrot.saapuvat.map((siirto) => (
+        <div key={siirto.id} className="rounded-xl border border-accent/40 bg-accent-soft p-4">
+          <span className="flex items-center gap-2 text-base font-bold text-accent-ink">
+            <ArrowRightLeft size={18} className="shrink-0" />
+            {siirto.antaja} siirtäisi sinulle
+          </span>
+          <span className="block text-lg font-bold text-ink-strong mt-2 break-words">{siirto.nimi}</span>
+          <span className="block text-base text-ink-body mt-0.5">
+            {siirto.siteNimi} · {siirto.laji === 'kierros' ? 'kierros' : 'tehtävä'}
+          </span>
+          {siirto.viesti && (
+            <span className="block text-base text-ink-body mt-2 break-words">”{siirto.viesti}”</span>
+          )}
+          <div className="flex gap-2 mt-4">
+            <button
+              type="button"
+              disabled={siirtoVastataan}
+              onClick={() => onVastaaSiirtoon(siirto.id, true)}
+              className="flex-1 flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-base font-medium rounded-xl px-4 py-3"
+            >
+              <Check size={18} />
+              Otan vastaan
+            </button>
+            <button
+              type="button"
+              disabled={siirtoVastataan}
+              onClick={() => onVastaaSiirtoon(siirto.id, false)}
+              className="flex items-center justify-center gap-2 border border-line-strong disabled:opacity-50 text-ink-body text-base font-medium rounded-xl px-4 py-3"
+            >
+              <X size={18} />
+              En ehdi
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {/* Hyväksytyt siirrot ovat omaa työtä, mutta EIVÄT tämän kohteen työtä: siirretty
+          kierros voi olla toisessa kohteessa. Siksi kohteen nimi on kortilla — ilman sitä
+          vartija ei tietäisi minne mennä. */}
+      {siirrot.hyvaksytyt.map((siirto) => (
+        <div key={siirto.id} className="rounded-xl border border-line bg-surface p-4">
+          <span className="flex items-center gap-2 text-lg font-bold text-ink-strong">
+            <ArrowRightLeft size={18} className="text-accent shrink-0" />
+            <span className="min-w-0 break-words">{siirto.nimi}</span>
+          </span>
+          <span className="block text-base text-ink-body mt-2">
+            {siirto.siteNimi} · siirretty sinulle ({siirto.antaja})
+          </span>
+        </div>
+      ))}
+
       {sallitut.kierrokset && omatPohjat.map((pohja) => {
         const kuuluuVuoroon = vuoroon.has(pohja.id);
         const kesken = omatKierrokset.find((k) => k.templateId === pohja.id && k.tila === 'kesken') || null;
@@ -122,8 +209,8 @@ export const MobiiliEtusivu = ({
         const pisteita = kesken ? kesken.pisteet.length : pohja.pisteet.length;
         const kuitattu = kesken ? kesken.pisteet.filter((p) => p.kuitattu).length : 0;
         return (
+          <div key={pohja.id}>
           <button
-            key={pohja.id}
             type="button"
             onClick={onKierros}
             className={`w-full text-left rounded-xl border p-4 flex items-start gap-3 transition-colors ${
@@ -161,6 +248,22 @@ export const MobiiliEtusivu = ({
               korostus={!!kesken}
             />
           </button>
+
+          {/* Siirto vain vuoron omista kierroksista ja vain kun vuoro on käynnissä:
+              siirtää voi vain omasta vuorostaan, ja palvelin valvoo saman säännön.
+              Kesken olevaa kierrosta ei siirretä — se on jo aloitettu, ja puolikkaan
+              kierroksen luovuttaminen jättäisi kuittaukset kahden vartijan nimiin. */}
+          {vuoroKaynnissa && kuuluuVuoroon && !kesken && (
+            <button
+              type="button"
+              onClick={() => onSiirra('kierros', pohja.id, pohja.nimi)}
+              className="mt-1 ml-1 inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-accent"
+            >
+              <ArrowRightLeft size={14} />
+              Siirrä toiselle vartijalle
+            </button>
+          )}
+          </div>
         );
       })}
 
@@ -182,10 +285,6 @@ export const MobiiliEtusivu = ({
           <Luku arvo={Math.max(0, tehtavat.length - kuitatutTanaan.size)} selite="jäljellä" />
         </button>
       )}
-
-      {sallitut.halytykset && kaynnissa.map((h) => (
-        <HalytysKortti key={h.id} halytys={h} kohde={kohde} kriittinen={false} onClick={onHalytykset} />
-      ))}
 
       {/* Kohteen tehtävähakemisto (erä 17).
           Vuoro kertoo mitä PITÄÄ tehdä; tämä vastaa kysymykseen saanko tehdä myös tämän.
