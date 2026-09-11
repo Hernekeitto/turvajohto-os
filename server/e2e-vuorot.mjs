@@ -395,6 +395,51 @@ try {
   await post(`/api/vuoro/${koosteId}/paata`, {});
   const paatetty = await kooste(evaste);
   vaita(!!paatetty.data.kooste.paattyi, 'päättymisaika ilmestyy koosteeseen');
+
+  console.log('\n18. Pakotus (erä 19)');
+  const kaikki = async (evasteet) => {
+    const v = await fetch(`${PALVELIN}/api/tehtavat/kaikki`, { headers: { Cookie: evasteet } });
+    return { status: v.status, data: await v.json().catch(() => null) };
+  };
+
+  const kokoLista = await kaikki(evaste);
+  vaita(kokoLista.status === 200, `koko organisaation tehtävälista vastaa (${kokoLista.status})`);
+  vaita(kokoLista.data.kohteet.length >= 1, 'listalla on kohteita');
+  const hansa = kokoLista.data.kohteet.find((k) => k.siteId === 'kohde-perehdytetty');
+  vaita(hansa?.tehtavat.length === 2 && hansa?.pohjat.length === 2,
+    'kohteen tehtävät ja kierrokset samalla rivillä');
+
+  vaita((await kaikki(vartijanEvaste)).status === 403, 'vartija ei näe koko organisaation listaa');
+
+  // Pakotus ei vaadi saajalta vuoroa: vartija1 on vuoroton tässä vaiheessa.
+  const vuorotonSaaja = await (await fetch(`${PALVELIN}/api/vuoro/oma`, { headers: { Cookie: vartijanEvaste } })).json();
+  vaita(vuorotonSaaja.vuoro === null, 'saaja ei ole vuorossa');
+
+  const pakotettu = await post('/api/pakota', {
+    saaja: 'vartija1', siteId: 'kohde-perehdytetty', laji: 'kierros', kohdeId: 'pohja-2',
+    viesti: 'Aja tämä ennen puoltayötä',
+  });
+  vaita(pakotettu.status === 200, `pakotus onnistui vuorottomallekin (${pakotettu.status})`);
+  vaita(pakotettu.data.siirto.tapa === 'pakotus', 'tapa on pakotus');
+
+  const saajanTila = await (await fetch(`${PALVELIN}/api/siirrot/omat`, { headers: { Cookie: vartijanEvaste } })).json();
+  vaita(saajanTila.pakotukset?.length === 1, 'pakotus näkyy omassa listassaan');
+  vaita(saajanTila.saapuvat?.length === 0, 'pakotus EI näy hyväksyttävänä siirtona');
+
+  // Pakotusta ei voi hylätä eikä hyväksyä.
+  const hylkaysyritys = await post(`/api/siirto/${pakotettu.data.siirto.id}/vastaa`, { hyvaksy: false }, vartijanEvaste);
+  vaita(hylkaysyritys.status === 400, `pakotusta ei voi hylätä (${hylkaysyritys.status})`);
+
+  const vaaraKuittaaja = await post(`/api/siirto/${pakotettu.data.siirto.id}/kuittaa`, {});
+  vaita(vaaraKuittaaja.status === 400, 'vain saaja kuittaa');
+
+  const kuittaus = await post(`/api/siirto/${pakotettu.data.siirto.id}/kuittaa`, {}, vartijanEvaste);
+  vaita(kuittaus.data?.siirto?.tila === 'kuitattu', 'saaja kuittasi');
+  const toistoKuittaus = await post(`/api/siirto/${pakotettu.data.siirto.id}/kuittaa`, {}, vartijanEvaste);
+  vaita(toistoKuittaus.data?.duplikaatti === true, 'kuittauksen toisto on ok');
+
+  const jalkeen = await (await fetch(`${PALVELIN}/api/siirrot/omat`, { headers: { Cookie: vartijanEvaste } })).json();
+  vaita(jalkeen.pakotukset?.length === 0, 'kuitattu pakotus ei enää estä');
 } finally {
   palvelin.kill();
   fs.rmSync(DATA, { recursive: true, force: true });

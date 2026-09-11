@@ -33,7 +33,8 @@ import {
   paataVuoro, vuorovaihtoehdot,
 } from './vuorot.js';
 import {
-  joSiirrossa, luoSiirto, omatSiirrot, peruSiirto, siirtojenAvaamatKohteet, vastaaSiirtoon,
+  joSiirrossa, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto, omatSiirrot, peruSiirto,
+  siirtojenAvaamatKohteet, vastaaSiirtoon,
 } from './siirto.js';
 import { vuoronKooste } from './kooste.js';
 import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
@@ -1852,7 +1853,14 @@ function kerroSiirrosta(siirto, action) {
 // pääse siihen kohteeseen josta siirto tulee, joten kohdesidonnainen listahaku rajaisi
 // hänet ulos juuri siitä tiedosta jonka takia koko siirto tehtiin.
 app.get('/api/siirrot/omat', requireAuth, guardPortti, (req, res) => {
-  res.json({ ok: true, ...omatSiirrot(readCollection('guardAssignments') || [], req.username) });
+  const siirrot = readCollection('guardAssignments') || [];
+  res.json({
+    ok: true,
+    ...omatSiirrot(siirrot, req.username),
+    // Omana kenttänään: pakotus estää muun käytön kunnes se on kuitattu, eikä sitä saa
+    // sekoittaa siirtoihin joissa saaja saa valita.
+    pakotukset: kuittaamattomatPakotukset(siirrot, req.username),
+  });
 });
 
 // Ketkä ovat nyt vuorossa ja voivat siksi ottaa siirron vastaan.
@@ -1963,6 +1971,118 @@ app.post('/api/siirto/:id/peru', requireAuth, guardPortti, (req, res) => {
   logAudit({
     user: req.username, action: 'tehtava_siirto_peruttu', collection: 'guardAssignments',
     recordId: siirto.id, eventId: siirto.siteId, saaja: siirto.saaja,
+  });
+  kerroSiirrosta(tulos.siirto, 'update');
+  res.json({ ok: true, siirto: tulos.siirto });
+});
+
+// --- Pakotus (erä 19) ---------------------------------------------------------------
+
+// Kaikkien kohteiden kaikki tehtävät ja kierrokset yhtenä listana.
+//
+// Tällaista näkymää ei ole ollut: tehtävät ovat kohteen sisällä, ja niiden vertailu on
+// vaatinut kohteen vaihtamista. Lista on pääkäyttäjälle ja hälytyskeskukselle, ja se on
+// se paikka josta tehtävä pakotetaan vartijalle.
+//
+// Kohdejoukko tulee readableDatasta eikä omasta säännöstä: lista ei voi näyttää kohdetta
+// jota kutsuja ei muutenkaan saisi lukea.
+app.get('/api/tehtavat/kaikki', requireAuth, guardPortti, (req, res) => {
+  if (!saaMyontaaKertaluvan(req)) {
+    return res.status(403).json({ ok: false, error: 'Vaatii pääkäyttäjän tai hälytyskeskuksen oikeudet.' });
+  }
+  const luettavat = readableData(
+    req.role, req.permissions, req.eventAccess, 'guardSites', readCollection('guardSites')
+  );
+  if (!luettavat.ok) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia kohteiden lukemiseen.' });
+  }
+  const pohjat = readCollection('templates') || [];
+  const kohteet = (luettavat.data || [])
+    .filter((k) => k && !k.archived)
+    .map((k) => ({
+      siteId: k.id,
+      siteNimi: k.name || '',
+      tehtavat: (k.tehtavat || []).map((t) => ({
+        id: t.id, nimi: t.nimi, tyyppi: t.tyyppi, suoritusaika: t.suoritusaika || null,
+      })),
+      pohjat: pohjat
+        .filter((po) => po?.ownerId === k.id && po.kind === 'patrol' && !po.arkistoitu)
+        .map((po) => ({ id: po.id, nimi: po.nimi, suoritusaika: po.suoritusaika || null })),
+    }))
+    .filter((k) => k.tehtavat.length > 0 || k.pohjat.length > 0);
+  res.json({ ok: true, kohteet });
+});
+
+// Pakotus: pääkäyttäjä tai hälytyskeskus määrää tehtävän vartijalle.
+//
+// Ero siirtoon on kaksi asiaa ja vain ne: saaja ei voi kieltäytyä, ja hänen on
+// kuitattava. Pakotus ei myöskään vaadi saajalta vuoroa — määräys ei ole pyyntö, eikä
+// sen ehtona voi olla että saaja on sattumalta kirjautunut vuoroon.
+//
+// Tehtävä haetaan KOHTEEN hakemistosta eikä määrääjän vuorosta: pääkäyttäjä ei ole
+// vuorossa, ja koko ominaisuuden tarkoitus on että hän voi määrätä mitä tahansa mistä
+// tahansa kohteesta.
+app.post('/api/pakota', requireAuth, guardPortti, (req, res) => {
+  if (!saaMyontaaKertaluvan(req)) {
+    return res.status(403).json({ ok: false, error: 'Vaatii pääkäyttäjän tai hälytyskeskuksen oikeudet.' });
+  }
+  const { saaja, siteId, laji, kohdeId, viesti } = req.body || {};
+
+  const kohde = (readCollection('guardSites') || []).find((k) => k?.id === siteId);
+  if (!kohde) return res.status(404).json({ ok: false, error: 'Kohdetta ei löytynyt.' });
+  if (!findUser(saaja)) return res.status(404).json({ ok: false, error: 'Vartijaa ei löytynyt.' });
+
+  const osuma = laji === 'kierros'
+    ? (readCollection('templates') || []).find((po) => po?.id === kohdeId && po.ownerId === siteId)
+    : (kohde.tehtavat || []).find((t) => t?.id === kohdeId);
+  if (!osuma) return res.status(404).json({ ok: false, error: 'Tehtävää ei löytynyt kohteesta.' });
+
+  const siirrot = readCollection('guardAssignments') || [];
+  if (joSiirrossa(siirrot, { saaja, kohdeId, laji })) {
+    return res.status(409).json({ ok: false, error: 'Tämä tehtävä odottaa jo kyseisen vartijan vastausta.' });
+  }
+
+  const tulos = luoSiirto({
+    antaja: req.username,
+    saaja,
+    laji,
+    kohdeId,
+    nimi: osuma.nimi,
+    siteId,
+    siteNimi: kohde.name || '',
+    saajanVuoro: keskenOlevaVuoro(readCollection('guardShifts') || [], saaja),
+    viesti,
+    tapa: 'pakotus',
+    id: crypto.randomUUID(),
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('guardAssignments', [tulos.siirto, ...siirrot]);
+  logAudit({
+    user: req.username, action: 'tehtava_pakotettu', collection: 'guardAssignments',
+    recordId: tulos.siirto.id, eventId: siteId, saaja, laji,
+  });
+  kerroSiirrosta(tulos.siirto, 'create');
+  res.json({ ok: true, siirto: tulos.siirto });
+});
+
+// Saaja kuittaa pakotetun tehtävän nähdyksi.
+//
+// Kuittaus EI ole hyväksyntä: sitä ei voi hylätä. Se on merkintä siitä että määräys on
+// nähty — määräys jonka vastaanotosta ei ole merkintää ei ole määräys vaan toive.
+app.post('/api/siirto/:id/kuittaa', requireAuth, guardPortti, (req, res) => {
+  const siirrot = readCollection('guardAssignments') || [];
+  const siirto = siirrot.find((x) => x?.id === req.params.id);
+  const tulos = kuittaaPakotus({ siirto, kayttaja: req.username });
+  if (!tulos.ok) {
+    return res.status(siirto ? 400 : 404).json({ ok: false, error: tulos.error });
+  }
+  if (tulos.duplikaatti) return res.json({ ok: true, siirto: tulos.siirto, duplikaatti: true });
+
+  writeCollection('guardAssignments', siirrot.map((x) => (x.id === siirto.id ? tulos.siirto : x)));
+  logAudit({
+    user: req.username, action: 'tehtava_kuitattu', collection: 'guardAssignments',
+    recordId: siirto.id, eventId: siirto.siteId, maaraaja: siirto.antaja,
   });
   kerroSiirrosta(tulos.siirto, 'update');
   res.json({ ok: true, siirto: tulos.siirto });

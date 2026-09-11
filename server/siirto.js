@@ -136,7 +136,10 @@ export function peruSiirto({ siirto, kayttaja, nyt = Date.now() }) {
 export function omatSiirrot(siirrot, username) {
   const omat = (siirrot || []).filter((s) => s?.saaja === username || s?.antaja === username);
   return {
-    saapuvat: omat.filter((s) => s.saaja === username && s.tila === 'odottaa'),
+    // Pakotus EI ole saapuva siirto vaikka se odottaa vastausta: se ei ole pyyntö johon
+    // vastataan vaan määräys joka kuitataan, eikä sitä saa näyttää hyväksyttävänä.
+    // Kuittaamattomat pakotukset haetaan erikseen (kuittaamattomatPakotukset).
+    saapuvat: omat.filter((s) => s.saaja === username && s.tila === 'odottaa' && s.tapa !== 'pakotus'),
     hyvaksytyt: omat.filter((s) => s.saaja === username && s.tila === 'hyvaksytty'),
     lahtevat: omat.filter((s) => s.antaja === username && s.tila === 'odottaa'),
   };
@@ -154,5 +157,50 @@ export function siirtojenAvaamatKohteet(siirrot, username) {
     (siirrot || [])
       .filter((s) => s?.saaja === username && s.tila === 'hyvaksytty')
       .map((s) => s.siteId)
+  );
+}
+
+// --- Pakotus (erä 19) ---------------------------------------------------------------
+//
+// Pääkäyttäjä tai hälytyskeskus määrää tehtävän vartijalle. Ero siirtoon on kaksi asiaa
+// ja vain ne: saaja ei voi kieltäytyä, ja hänen on kuitattava.
+//
+// KUITTAUS EI OLE HYVÄKSYNTÄ. Sitä ei voi hylätä eikä jättää tekemättä — se on merkintä
+// siitä että määräys on nähty. Määräys jonka vastaanotosta ei ole merkintää ei ole
+// määräys vaan toive, ja juuri se ero on koko ominaisuuden syy.
+//
+// Pakotus ei myöskään vaadi saajalta vuoroa toisin kuin siirto: määräys ei ole pyyntö,
+// eikä sen ehtona voi olla että saaja on sattumalta kirjautunut vuoroon.
+
+/**
+ * Saaja kuittaa pakotetun tehtävän nähdyksi.
+ *
+ * Vain pakotusta kuitataan. Jos siirron voisi kuitata, saaja voisi ohittaa
+ * hyväksy/hylkää-valinnan kokonaan — ja siirron koko pointti on että saaja saa valita.
+ */
+export function kuittaaPakotus({ siirto, kayttaja, nyt = Date.now() }) {
+  if (!siirto) return { ok: false, error: 'Tehtävää ei löytynyt.' };
+  if (siirto.saaja !== kayttaja) return { ok: false, error: 'Tehtävä on toiselle vartijalle.' };
+  if (siirto.tapa !== 'pakotus') {
+    return { ok: false, error: 'Siirto hyväksytään tai hylätään, ei kuitata.' };
+  }
+  // Jo kuitattu on toistona haluttu lopputulos: kuittaus voi lähteä uudelleen jonosta,
+  // eikä toinen kuittaus tarkoita mitään muuta kuin ensimmäinenkään.
+  if (siirto.tila === 'kuitattu') return { ok: true, siirto, duplikaatti: true };
+  if (siirto.tila !== 'odottaa') return { ok: false, error: 'Tehtävään on jo vastattu.' };
+
+  return {
+    ok: true,
+    siirto: { ...siirto, tila: 'kuitattu', ratkaistu: new Date(nyt).toISOString() },
+  };
+}
+
+/**
+ * Kuittaamattomat pakotukset. Nämä estävät muun käytön kunnes ne on kuitattu, joten
+ * kutsujan on saatava ne erillään tavallisista siirroista.
+ */
+export function kuittaamattomatPakotukset(siirrot, username) {
+  return (siirrot || []).filter(
+    (s) => s?.saaja === username && s.tapa === 'pakotus' && s.tila === 'odottaa'
   );
 }

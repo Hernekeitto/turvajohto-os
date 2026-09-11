@@ -11,7 +11,8 @@ import assert from 'node:assert/strict';
 
 import {
   VIESTIN_MAX,
-  joSiirrossa, luoSiirto, omatSiirrot, peruSiirto, siirtojenAvaamatKohteet, vastaaSiirtoon,
+  joSiirrossa, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto, omatSiirrot, peruSiirto,
+  siirtojenAvaamatKohteet, vastaaSiirtoon,
 } from './siirto.js';
 
 const T0 = Date.parse('2026-09-10T12:00:00Z');
@@ -181,4 +182,52 @@ test('odottava, hylätty tai toisen siirto ei avaa kohdetta', () => {
   const hylatty = { ...siirto(), id: 's2', tila: 'hylatty' };
   const toisen = { ...siirto(), id: 's3', tila: 'hyvaksytty', saaja: 'joku-muu' };
   assert.equal(siirtojenAvaamatKohteet([odottaa, hylatty, toisen], 'piirivartija').size, 0);
+});
+
+// --- Pakotus (erä 19) ---------------------------------------------------------------
+
+const pakotus = (yli = {}) => ({ ...siirto({ tapa: 'pakotus', saajanVuoro: null }), ...yli });
+
+test('pakotus kuitataan nähdyksi', () => {
+  const tulos = kuittaaPakotus({ siirto: pakotus(), kayttaja: 'piirivartija', nyt: T0 });
+  assert.equal(tulos.siirto.tila, 'kuitattu');
+  assert.equal(tulos.siirto.ratkaistu, new Date(T0).toISOString());
+});
+
+test('vain saaja kuittaa', () => {
+  assert.equal(kuittaaPakotus({ siirto: pakotus(), kayttaja: 'joku-muu' }).ok, false);
+});
+
+test('SIIRTOA ei voi kuitata', () => {
+  // Jos siirron voisi kuitata, saaja ohittaisi hyväksy/hylkää-valinnan kokonaan — ja
+  // siirron koko pointti on että saaja saa valita.
+  const tulos = kuittaaPakotus({ siirto: siirto(), kayttaja: 'piirivartija' });
+  assert.equal(tulos.ok, false);
+  assert.match(tulos.error, /hyväksytään tai hylätään/);
+});
+
+test('kuittauksen toisto on ok, mutta hylättyä ei kuitata', () => {
+  const kuitattu = kuittaaPakotus({ siirto: pakotus(), kayttaja: 'piirivartija' }).siirto;
+  const toisto = kuittaaPakotus({ siirto: kuitattu, kayttaja: 'piirivartija' });
+  assert.equal(toisto.duplikaatti, true);
+  assert.equal(kuittaaPakotus({ siirto: pakotus({ tila: 'peruttu' }), kayttaja: 'piirivartija' }).ok, false);
+});
+
+test('kuittaamattomat pakotukset erotellaan siirroista', () => {
+  // Nämä estävät muun käytön, joten kutsujan on saatava ne erillään.
+  const odottava = pakotus();
+  const kuitattu = pakotus({ id: 's2', tila: 'kuitattu' });
+  const tavallinen = siirto({ id: 's3' });
+  const toisen = pakotus({ id: 's4', saaja: 'joku-muu' });
+  const lista = kuittaamattomatPakotukset([odottava, kuitattu, tavallinen, toisen], 'piirivartija');
+  assert.deepEqual(lista.map((s) => s.id), ['s1']);
+});
+
+test('PAKOTUS ei ole saapuva siirto', () => {
+  // Ilman tätä pakotus näkyisi sekä hyväksyttävänä korttina että estävänä modaalina —
+  // kaksi eri lupausta samasta tietueesta, joista toinen on väärä.
+  const odottavaPakotus = pakotus();
+  const omat = omatSiirrot([odottavaPakotus], 'piirivartija');
+  assert.equal(omat.saapuvat.length, 0);
+  assert.equal(kuittaamattomatPakotukset([odottavaPakotus], 'piirivartija').length, 1);
 });
