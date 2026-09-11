@@ -216,7 +216,7 @@ test('laite jolta ei ole kuulunut mitään ei ole elossa', () => {
   assert.deepEqual(tila, { viimeinenLyonti: null, valvontaElossa: false });
 });
 
-test('valvonta hiljenee kahden väliin jääneen lyönnin jälkeen', () => {
+test('valvonta hiljenee kun lyöntejä ei kuulu hiljenemisrajaan asti', () => {
   const laite = { id: 'a', viimeinenLyontiMs: T0 };
   assert.equal(valvonnanTila({ laite, nyt: T0 + 60 * 1000 }).valvontaElossa, true);
   assert.equal(valvonnanTila({ laite, nyt: T0 + VALVONTA_HILJENEE_MS - 1 }).valvontaElossa, true);
@@ -224,11 +224,17 @@ test('valvonta hiljenee kahden väliin jääneen lyönnin jälkeen', () => {
 });
 
 test('muistissa oleva tuore lyönti voittaa levyn karkean', () => {
-  // Tavallinen tilanne: levylle kirjoitetaan viiden minuutin välein, joten levy on
-  // melkein aina jäljessä. Ilman muistia valvonta näyttäisi hiljentyneeltä joka kerta
-  // kun tallennusväli ylittää hiljenemisrajan.
+  // Muisti on tarkempi kuin levy, jolle kirjoitetaan viiden minuutin välein.
+  //
+  // Kun hiljenemisraja oli kolme minuuttia, muisti oli VÄLTTÄMÄTÖN: levy yksin olisi
+  // näyttänyt hiljentyneeltä joka kerta kun tallennusväli ylitti rajan. Rajan noustua
+  // 25 minuuttiin viisi minuuttia mahtuu siihen vaivatta, joten muisti on nyt
+  // TARKKUUTTA eikä korjausta. Se kannattaa silti pitää: viimeinenLyonti näytetään
+  // ihmiselle, ja viisi minuuttia vanha aikaleima herättää kysymyksiä joita tuore ei.
+  //
+  // Siksi tämä testi mittaa enää yhtä asiaa: tuorein voittaa, tuli se kummasta vain.
   const laite = { id: 'a', viimeinenLyontiMs: T0 };
-  const nyt = T0 + 4 * 60 * 1000;
+  const nyt = T0 + VALVONTA_HILJENEE_MS + 60 * 1000;
   assert.equal(valvonnanTila({ laite, nyt }).valvontaElossa, false);
   assert.equal(valvonnanTila({ laite, muistiMs: nyt - 1000, nyt }).valvontaElossa, true);
 });
@@ -249,4 +255,13 @@ test('lyöntimuisti on laitekohtainen', () => {
   muisti.unohda('a');
   assert.equal(muisti.viimeisin('a'), null);
   assert.equal(muisti.koko, 1);
+});
+
+test('hiljenemisraja kattaa vahtikoiran välin', () => {
+  // Vahtikoira lyö varttitunnin välein, ja se on lyönnin ainoa yläraja: palvelun oma
+  // lyönti venyy Dozessa rajatta. Jos tämä raja alittaa vahdin välin, terve puhelin
+  // ilmoitetaan kuolleeksi joka kerta kun laite nukkuu — täsmälleen se vika joka
+  // mitattiin 11.9.2026 ja joka toistui neljästi puolessa tunnissa.
+  assert.ok(VALVONTA_HILJENEE_MS > 15 * 60 * 1000,
+    'raja on alle vahtikoiran välin, jolloin nukkuva laite näyttää kuolleelta');
 });

@@ -288,9 +288,32 @@ export function luoNonceMuisti(ikkunaMs = AIKAIKKUNA_MS) {
 // lupaus tarkemmasta.
 export const LYONTI_TALLENNUSVALI_MS = 5 * 60 * 1000;
 
-// Milloin valvonta katsotaan hiljentyneeksi. Lyönti tulee minuutin välein, joten kaksi
-// väliin jäänyttä lyöntiä riittää — yksi voi jäädä väliin verkkokatkosta.
-export const VALVONTA_HILJENEE_MS = 3 * 60 * 1000;
+// Milloin valvonta katsotaan hiljentyneeksi.
+//
+// Kolme minuuttia oli VÄÄRIN, ja vanha perustelu kertoo miksi: se mitoitettiin
+// oletukselle "lyönti tulee minuutin välein". Oletus ei pidä paikkaansa. Palvelun oma
+// lyönti nojaa Handler.postDelayediin, joka laskee aikaa uptimeMillis-kellolla — se EI
+// kulje laitteen syvässä unessa. 11.9.2026 mitattuna minuutin lyöntiväli venyi Dozessa
+// kuuteen minuuttiin, eikä venymälle ole ylärajaa lainkaan.
+//
+// Seuraus oli pahin mahdollinen laatuaan: palvelin ilmoitti täysin terveen puhelimen
+// valvonnan kuolleeksi NELJÄ kertaa puolessa tunnissa. Hälytys joka on useimmiten väärä
+// opettaa ohittamaan sen myös silloin kun se on oikeassa.
+//
+// Nyt luku JOHDETAAN eikä arvata. Vahtikoira (Vahtikoira.java) herää varttitunnin välein
+// setAndAllowWhileIdle-herätyksellä, jonka Doze päästää läpi, ja lyö samalla palvelimelle.
+// Lyönnillä on siis yläraja, jota postDelayedilla ei ollut:
+//
+//     15 min   vahdin väli
+//   +  9 min   Dozen jousto (setAndAllowWhileIdle sallitaan n. 9 min välein)
+//   +  1 min   varmuusvara
+//   = 25 min
+//
+// Tämä sietää yhden MYÖHÄSTYNEEN vahtilyönnin muttei kokonaan väliin jäänyttä, ja se on
+// harkittu: puolen tunnin hiljaisuus on tieto jonka hälytyskeskuksen kuuluu saada myös
+// silloin kun syy on pelkkä katvealue. Valvonta joka ei raportoi ei ole valvontaa,
+// vaikka laite olisi hengissä.
+export const VALVONTA_HILJENEE_MS = 25 * 60 * 1000;
 
 /**
  * Muisti viimeisimmistä lyönneistä. Sama rakenne ja sama peruste kuin nonce-muistilla:
