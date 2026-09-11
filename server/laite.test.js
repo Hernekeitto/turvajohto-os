@@ -257,11 +257,15 @@ test('lyöntimuisti on laitekohtainen', () => {
   assert.equal(muisti.koko, 1);
 });
 
-test('hiljenemisraja kattaa vahtikoiran välin', () => {
-  // Vahtikoira lyö varttitunnin välein, ja se on lyönnin ainoa yläraja: palvelun oma
-  // lyönti venyy Dozessa rajatta. Jos tämä raja alittaa vahdin välin, terve puhelin
-  // ilmoitetaan kuolleeksi joka kerta kun laite nukkuu — täsmälleen se vika joka
-  // mitattiin 11.9.2026 ja joka toistui neljästi puolessa tunnissa.
-  assert.ok(VALVONTA_HILJENEE_MS > 15 * 60 * 1000,
-    'raja on alle vahtikoiran välin, jolloin nukkuva laite näyttää kuolleelta');
+test('hiljenemisraja kattaa vahtikoiran MITATUN välin', () => {
+  // Vahdin väli on koodissa 15 min, mutta Doze venyttää sen. Tämä luku ei ole arvaus
+  // vaan kuuden tunnin ajon suurin mitattu väli 11.9.2026 — ja se on 11 minuuttia yli
+  // koodin nimellisen välin.
+  //
+  // Testi vahtii nimenomaan MITATTUA lukua eikä nimellistä, koska juuri sen sekoittaminen
+  // tuotti aiemmat kaksi väärää rajaa: ensin 3 min (oletus "lyönti minuutin välein"),
+  // sitten 25 min (oletus "Dozen jousto on 9 min"). Molemmat alittivat todellisuuden.
+  const MITATTU_VAHTIVALI_MS = 26 * 60 * 1000 + 16 * 1000;
+  assert.ok(VALVONTA_HILJENEE_MS > MITATTU_VAHTIVALI_MS,
+    'raja alittaa mitatun vahtivälin, jolloin nukkuva laite näyttää kuolleelta');
 });

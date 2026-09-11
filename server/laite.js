@@ -300,20 +300,35 @@ export const LYONTI_TALLENNUSVALI_MS = 5 * 60 * 1000;
 // valvonnan kuolleeksi NELJÄ kertaa puolessa tunnissa. Hälytys joka on useimmiten väärä
 // opettaa ohittamaan sen myös silloin kun se on oikeassa.
 //
-// Nyt luku JOHDETAAN eikä arvata. Vahtikoira (Vahtikoira.java) herää varttitunnin välein
-// setAndAllowWhileIdle-herätyksellä, jonka Doze päästää läpi, ja lyö samalla palvelimelle.
-// Lyönnillä on siis yläraja, jota postDelayedilla ei ollut:
+// Vahtikoira (Vahtikoira.java) herää setAndAllowWhileIdle-herätyksellä, jonka Doze
+// päästää läpi, ja lyö samalla palvelimelle. Vahdin lyönnillä on siis yläraja, jota
+// postDelayedilla ei ollut — ja tämä raja johdetaan siitä ylärajasta.
 //
-//     15 min   vahdin väli
-//   +  9 min   Dozen jousto (setAndAllowWhileIdle sallitaan n. 9 min välein)
-//   +  1 min   varmuusvara
-//   = 25 min
+// Luku on MITATTU eikä laskettu, ja se on koko pointti. Ensin se laskettiin: vahdin väli
+// on koodissa 15 min, Dozen jouston oletettiin olevan 9 min, plus minuutti varmuusvaraa
+// = 25 min. Laskelma oli väärä. Kuuden tunnin ajossa 11.9.2026 vahdin todelliset välit
+// olivat:
 //
-// Tämä sietää yhden MYÖHÄSTYNEEN vahtilyönnin muttei kokonaan väliin jäänyttä, ja se on
-// harkittu: puolen tunnin hiljaisuus on tieto jonka hälytyskeskuksen kuuluu saada myös
-// silloin kun syy on pelkkä katvealue. Valvonta joka ei raportoi ei ole valvontaa,
-// vaikka laite olisi hengissä.
-export const VALVONTA_HILJENEE_MS = 25 * 60 * 1000;
+//     16–19 min   ennen kuin Doze vakiintui
+//     26 min 15 s kuusi kertaa peräkkäin, kun laite oli asettunut Dozeen
+//     26 min 16 s suurin mitattu
+//
+// Dozen jousto on siis yli 11 minuuttia eikä yhdeksän, ja 25 minuutin raja alitti vahdin
+// oman välin. Vika oli sama jota se oli korjaavinaan.
+//
+//     26 min 16 s  mitattu suurin vahtiväli
+//   +  ~9 min      yksi Dozen jaksotusaskel varmuudeksi
+//   =  35 min
+//
+// Tämä ei silti ole lopullinen vaan LATTIA: kuuden tunnin ajo ei käynyt kertaakaan
+// syvässä unessa (uni_s pysyi viidessä sekunnissa herätelukon takia), joten yön yli
+// -ajo voi venyttää väliä vielä. Jos herätelukko joskus poistetaan akun säästämiseksi,
+// tämä luku on mitattava uudelleen ENNEN sitä — silloin vahdin lyönti jää ainoaksi
+// signaaliksi jolla on yläraja.
+//
+// Hinta on tiedostettu: oikeasti kuollut laite huomataan kymmenen minuuttia myöhemmin
+// kuin ennen. Se on halvempi kuin väärä hälytys, joka opettaa ohittamaan myös oikeat.
+export const VALVONTA_HILJENEE_MS = 35 * 60 * 1000;
 
 /**
  * Muisti viimeisimmistä lyönneistä. Sama rakenne ja sama peruste kuin nonce-muistilla:

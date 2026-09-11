@@ -681,9 +681,58 @@ venyi Dozessa kuuteen minuuttiin, ja vahti kirjasi **11 väärää `elossa=false
 
 Korjaus oli kaksiosainen: vahtikoira **lyö** nyt palvelimelle jokaisella herätyksellään
 (`setAndAllowWhileIdle` läpäisee Dozen, eli lyönnillä on yläraja jota `postDelayed`illa
-ei ollut), ja raja johdetaan siitä välistä: 15 min vahdin väli + 9 min Dozen jousto +
-1 min varmuusvara = **25 min**. Perustelu on `server/laite.js`:n kommentissa ja
-regressioesto `server/laite.test.js`:ssä.
+ei ollut), ja raja johdetaan siitä välistä.
+
+Raja laskettiin ensin ja se meni väärin: 15 min vahdin väli + 9 min Dozen oletettu jousto
++ 1 min varmuusvara = 25 min. Kuuden tunnin ajo samana iltana mittasi vahdin todelliset
+välit, ja ne olivat muuta:
+
+| Vaihe | Vahdin väli |
+|---|---|
+| Ennen kuin Doze vakiintui | 16–19 min |
+| Doze vakiintuneena, kuusi kertaa peräkkäin | **26 min 15 s** |
+| Suurin mitattu | **26 min 16 s** |
+
+Dozen jousto on siis yli 11 minuuttia eikä yhdeksän, ja 25 minuutin raja alitti vahdin
+oman välin — sama vika jota se oli korjaavinaan. **Raja on nyt 35 min** (mitattu 26 min
+16 s + yksi Dozen jaksotusaskel). Luku on MITATTU eikä laskettu, ja regressioesto
+`server/laite.test.js`:ssä vahtii nimenomaan mitattua eikä koodin nimellistä väliä.
+
+Se on silti lattia eikä lopullinen: kuuden tunnin ajo ei käynyt kertaakaan syvässä
+unessa, joten yön yli -ajo voi venyttää väliä vielä. **Jos herätelukko joskus poistetaan
+akun säästämiseksi, tämä luku on mitattava uudelleen ENNEN sitä** — silloin vahdin lyönti
+jää ainoaksi signaaliksi jolla on yläraja.
+
+##### Kuuden tunnin ajo 11.9.2026: mitä hallinta kesti ja mitä akku maksoi
+
+Ajo alkoi 12:22:10 ja päättyi 18:33:38 vahingossa tulleeseen uudelleenkäynnistykseen —
+**ei ROMin tappamaan.** Aamulla sama laite kuoli viidessä minuutissa.
+
+| Mittari | Tulos |
+|---|---|
+| Lyöntejä | 372, epäonnistuneita 0 |
+| Lyöntivälejä | 371, **kaikki tasan 60 s** |
+| Vahtikoiran laukeamisia | 16, ja jokaisesta `vahti_lyonti palvelin=200` |
+| Kuoleman merkkejä | ei yhtään |
+
+`doze=kylla` kytkeytyi klo 14:06 ja pysyi, mutta `uni_s` pysyi viidessä sekunnissa koko
+kuusi tuntia: laite oli Dozessa mutta ei vaipunut kertaakaan syvään uneen. Herätelukko
+esti sen — ja juuri siksi lyöntiväli ei venynyt sekuntiakaan. Vahvistus tuli vuoron
+päättyessä: `uni_s` hyppäsi heti 291 sekuntiin kun lukko vapautui.
+
+**Akku: 73 % → 57 % viidessä tunnissa 20 minuutissa = 3,0 %/h.** Kahdeksan tunnin vuoro
+veisi noin 24 prosenttiyksikköä.
+
+Päätössääntö sanoi "yli 1 %/h → herätelukko vaihdetaan", ja luku ylittää sen
+kolminkertaisesti. **Sääntö oletti kuitenkin että koko kulutus on herätelukon syytä, eikä
+se ole:** yön mittaus valvonta KUOLLEENA kulutti 2,25 %/h. Herätelukon marginaalikustannus
+on siis noin 0,75 %/h, ja sekin epävarma koska päivä ja yö eivät ole vertailukelpoisia.
+Lukon poistaminen ei palauttaisi kolmea prosenttiyksikköä vaan alle yhden. Suurin
+kuluttaja on jokin muu — epäilty on web-sovelluksen sekunnin ajastimet
+(`Halytysvahti.tsx`, `Halytykset.tsx`, `src/shared/jono.ts`).
+
+**Ennen erää 11 tarvitaan kontrolloitu vertailu eikä suora uudelleensuunnittelu:** sama
+laite, sama kesto, valvonta päällä ja pois, ja web-sovellus suljettuna molemmissa.
 
 ### Erä 11 — Kanava ja sijainti
 
