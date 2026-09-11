@@ -748,6 +748,60 @@ laite, sama kesto, valvonta päällä ja pois, ja web-sovellus suljettuna molemm
 ensimmäinen erä joka tuottaa näkyvää hyötyä. Akunkulutus mitataan tässä, ennen kuin 60
 sekunnin väli lukitaan.
 
+#### Tila 11.9.2026: ensimmäinen puolisko täyttyi, toinen ei
+
+| Osa | Tila |
+|---|---|
+| Palvelinpuoli | **Ei vaatinut riviäkään.** Ks. alla |
+| `Kanava.java` | Valmis, todennettu laitteella |
+| `Sijainti.java` | Valmis, todennettu laitteella |
+| Luvat ja FGS-tyyppi | Valmis |
+| Vyöhykepoikkeama | **Ei laukea** — tarkkuus ei riitä |
+
+**Palvelinpuoli oli valmis ennestään, ja se oli arvaus kunnes se ajettiin.**
+`tunnistaKanava` kutsuu `getSessionUser`ia, joka putoaa laiteallekirjoitukseen kun
+evästettä ei ole, ja `laiteIstunto` lukee polun `req.url`ista juuri kanavan kättelyä
+varten. Sovelluksella ei ole istuntokeksiä eikä tokenia (perustelu: `server/laite.js`,
+"Miksi laitteella EI ole tokenia"), joten kättely allekirjoitetaan samalla neljän
+otsakkeen nelikolla kuin HTTP-pyynnöt. `server/e2e-kanava.mjs` todentaa tämän ilman
+puhelinta: neljä torjuntaa (allekirjoittamaton, vieras avain, vanhentunut, toistettu) ja
+kaksi läpimenoa (kättely ja sijainti soketin yli).
+
+Laitteella 19:04:44 vuoron alkaessa:
+
+```
+sijainti_alkoi vali_s=60
+sijainti_ei_kanavaa      ← EI VIKA, ks. alla
+kanava_auki
+kanava_viesti tavuja=45  ← palvelin työnsi alas; erän 12 alassuunta toimii jo
+```
+
+**`sijainti_ei_kanavaa` vuoron ensimmäisellä rivillä ei ole vika.** `Kanava.avaa`
+käynnistää kättelyn ja palaa heti, kun taas FusedLocation antaa välittömästi viimeksi
+tunnetun sijainnin välimuistista — ensimmäinen korjaus ehtii ennen soketin aukeamista ja
+pudotetaan. Mitattu hinta on **61 sekuntia**: seuraava korjaus meni läpi ja vartija näkyi
+kartalla. Tilanne korjaa itsensä, joten Kanavan ja Sijainnin väliin ei lisätty kytkentää.
+
+##### Avoin päätös: tarkkuus vastaan akku
+
+Ensimmäinen mitattu tarkkuus oli **100 m**, ja `geofence.js`:n
+`MAX_TARKKUUS_M = 50` hylkää koko vyöhykearvioinnin sitä huonommalla. Vyöhykesäännöt
+eivät siis vielä laukea, vaikka vartija näkyy kartalla.
+
+Syy on tietoinen valinta `Sijainti.java`:ssa:
+`PRIORITY_BALANCED_POWER_ACCURACY` nojaa verkkoon ja solumastoihin eikä sytytä
+GPS-radiota. Sata metriä on täsmälleen se mitä siltä odottaa ilman näkyvyyttä taivaalle.
+
+`PRIORITY_HIGH_ACCURACY` ratkaisisi tarkkuuden mutta pitäisi GPS:n päällä koko vuoron.
+Mittakaava: 11.9.2026 valvonta kulutti **3,0 %/h ilman sijaintia lainkaan**, ja
+kahdeksan tunnin vuoro on silloin jo 24 prosenttiyksikköä. GPS päälle koko vuoroksi on
+eri suuruusluokan kysymys, eikä sitä saa päättää yhdestä sisätilamittauksesta.
+
+**Halvin koe ensin:** vuoro lähettää sijaintia minuutin välein joka tapauksessa, joten
+ulkona mitattu tarkkuus kertyy itsestään. Jos balanced antaa ulkona 50 m tai parempaa,
+nykyinen asetus riittää — vyöhykkeet ovat joka tapauksessa ulkotiloja. Vasta jos ei
+anna, vaihto on perusteltu ja se tehdään tietäen mitä se maksaa.
+
 ### Erä 12 — Man-down ja täysruutuhälytys
 
 | Osa | Uutta |
