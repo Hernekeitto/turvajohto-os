@@ -657,8 +657,16 @@ Kaksi sudenkuoppaa jotka osuivat kohdalle:
   `adb shell dumpsys deviceidle whitelist +fi.turvajohto_os.guard`
 - **Poisto ja uudelleenasennus (toisin kuin päivitys) pyyhkii laitesidonnan puhelimen
   päästä.** Palvelimella sidonta jää, ja koska tunnusta kohden sallitaan yksi laite,
-  uusi sidonta torjutaan kunnes vanha nollataan hallinnasta. Ks. `Sidonta.unohda()`
-  avoimissa päätöksissä.
+  uusi sidonta torjutaan kunnes vanha nollataan hallinnasta.
+
+  **Korjattu 11.9.2026.** Vastakkainen tilanne oli pahempi ja se oli umpikuja: kun
+  hälytyskeskus nollaa laitteen, palvelimen sidonta katoaa mutta puhelimen oma jää, eikä
+  mikään purkanut sitä — vartija näki "Laite on jo sidottu" vaikka juuri hänen sidontansa
+  oli peruttu. `SiltaActivity.sido()` kysyy nyt `GET /api/laite/oma` ennen
+  kieltäytymistä ja purkaa paikallisen sidonnan **vain 401:llä**, joka on ainoa vastaus
+  jolla on merkitys "tätä laitetta ei enää tunneta". Verkkovirheellä ei pureta koskaan:
+  katvealue ei ole sama asia kuin peruttu oikeus, ja purku hävittäisi Keystore-avaimen
+  jota ei saa takaisin.
 
 ##### Zebra ja muut laitteet
 
@@ -875,18 +883,13 @@ Kalenterin määrää käytännössä juridiikka, ei koodi.
    saapumisesta jäädä erillinen merkintä jälkiraporttiin?
 2. **Sijaintiväli.** 60 s vastaa nykyistä web-väliä. Vuoron kesto ja akun kesto
    ratkaisevat, onko se oikea — mitattava laitteella ennen lukitsemista.
-3. **`Sidonta.unohda()` on kirjoitettu mutta kutsumaton.** Kun `sido()` kutsutaan jo
-   sidotulla laitteella, se kieltäytyy — myös silloin kun sidonta on palvelimella jo
-   nollattu. Ehdotus: kysy `GET /api/laite/oma`, ja **vain 401:llä** (sidonta oikeasti
-   peruttu) unohda paikallinen sidonta ja jatka. Verkkovirheellä ei saa unohtaa koskaan,
-   koska katvealue ei ole sama asia kuin peruttu oikeus.
-4. **Laitteen hallinnan purku puuttuu.** `dpm set-device-owner` on käytännössä
+3. **Laitteen hallinnan purku puuttuu.** `dpm set-device-owner` on käytännössä
    yksisuuntainen: purku vaatii joko tehdasasetusten palautuksen tai sen, että sovellus
    itse kutsuu `clearDeviceOwnerApp`ia. Jälkimmäistä ei ole toteutettu. Ennen kuin
    hallintaa otetaan käyttöön oikeilla työsuhdelaitteilla, purkutie on rakennettava ja
    dokumentoitava — muuten laite jää sovelluksen hallintaan senkin jälkeen kun se
    poistuu käytöstä.
-5. **`BOOT_COMPLETED`-vastaanotinta ei ole.** Uudelleenkäynnistys pysäyttää valvonnan
+4. **`BOOT_COMPLETED`-vastaanotinta ei ole.** Uudelleenkäynnistys pysäyttää valvonnan
    hiljaa: 11.9.2026 Jelly Star käynnistyi kesken päivän eikä palvelu palannut itsestään.
    Vuoron jatkaminen käynnistyksen jälkeen on erikseen päätettävä — automaattinen jatko
    voi olla väärin, mutta hiljainen katkos on varmasti väärin.
