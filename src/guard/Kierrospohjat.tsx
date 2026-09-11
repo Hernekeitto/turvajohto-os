@@ -62,6 +62,7 @@ type Luonnos = {
   pisteet: Tarkistuspiste[];
   sijaintiPakotus: boolean;
   sietorajaM: string;
+  suoritusaika: string;
 };
 
 const tyhjaLuonnos = (): Luonnos => ({
@@ -71,6 +72,7 @@ const tyhjaLuonnos = (): Luonnos => ({
   pisteet: [],
   sijaintiPakotus: false,
   sietorajaM: '100',
+  suoritusaika: '',
 });
 
 const luonnosPohjasta = (pohja: Kierrospohja): Luonnos => ({
@@ -81,6 +83,7 @@ const luonnosPohjasta = (pohja: Kierrospohja): Luonnos => ({
   pisteet: (pohja.pisteet || []).map((p) => ({ ...p })),
   sijaintiPakotus: pohja.sijaintiPakotus === true,
   sietorajaM: String(pohja.sietorajaM ?? 100),
+  suoritusaika: pohja.suoritusaika || '',
 });
 
 export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTakaisin }: Props) => {
@@ -170,6 +173,7 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
         pisteet: luonnos.pisteet,
         sijaintiPakotus: luonnos.sijaintiPakotus,
         sietorajaM: Number(luonnos.sietorajaM) || 100,
+        suoritusaika: luonnos.suoritusaika,
       };
       const res = await fetch(luonnos.id ? `/api/pohjat/${encodeURIComponent(luonnos.id)}` : '/api/pohjat', {
         method: luonnos.id ? 'PUT' : 'POST',
@@ -296,6 +300,17 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
               arvo={luonnos.nimi}
               onChange={(v) => setLuonnos({ ...luonnos, nimi: v })}
               placeholder="Esimerkiksi: Yökierros"
+            />
+            {/* Suoritusaika EI rajoita mitään (päätös 10.9.2026). Se on kahta varten:
+                vartija näkee milloin tämä on suunniteltu tehtäväksi, ja työlista
+                järjestyy sen mukaan. Ero vuoron kellonaikoihin on olennainen — NE
+                rajoittavat kirjautumista, tämä ei estä eikä salli mitään. */}
+            <Kentta
+              label="Suunniteltu suoritusaika (valinnainen)"
+              arvo={luonnos.suoritusaika}
+              onChange={(v) => setLuonnos({ ...luonnos, suoritusaika: v })}
+              tyyppi="time"
+              vinkki="Milloin kierros on suunniteltu ajettavaksi. Ei estä ajamista muuna aikana — poikkeamasta jää merkintä vuoron koosteeseen."
             />
             <Kentta
               label="Kuvaus (valinnainen)"

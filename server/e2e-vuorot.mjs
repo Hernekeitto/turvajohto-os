@@ -365,6 +365,36 @@ try {
 
   await post(`/api/vuoro/${antajanVuoro.data.vuoro.id}/paata`, {});
   await post(`/api/vuoro/${saajanVuoro.data.vuoro.id}/paata`, {});
+
+  console.log('\n17. Vuoron kooste (erä 18b)');
+  // Poikkeamalogiikka on yksikkötesteissä (server/kooste.test.js, 16 testiä). Täällä
+  // varmistetaan reitti: muoto, oikeudet ja se että kooste tunnistaa tekemättömän työn.
+  const koostettava = await post('/api/vuoro', { siteId: 'kohde-perehdytetty', vuorotyyppiId: 'v-lisa' });
+  vaita(koostettava.status === 200, 'vuoro koostetta varten');
+  const koosteId = koostettava.data.vuoro.id;
+
+  const kooste = async (evasteet) => {
+    const v = await fetch(`${PALVELIN}/api/vuoro/${koosteId}/kooste`, { headers: { Cookie: evasteet } });
+    return { status: v.status, data: await v.json().catch(() => null) };
+  };
+
+  const omaKooste = await kooste(evaste);
+  vaita(omaKooste.status === 200 && omaKooste.data.ok, `kooste vastaa (${omaKooste.status})`);
+  vaita(omaKooste.data.kooste.vuorotyyppiNimi === 'Lisävuoro', 'kooste kertoo vuorotyypin');
+  vaita(omaKooste.data.kooste.tekematta === 2, `tekemätön työ näkyy tekemättömänä (${omaKooste.data.kooste.tekematta})`);
+  vaita(omaKooste.data.kooste.tehty === 0, 'mitään ei ole tehty');
+  vaita(omaKooste.data.kooste.poikkeamia === 0, 'tekemätön ei ole aikapoikkeama');
+  vaita(omaKooste.data.kooste.pohjat[0].tila === 'tekematta', 'kierroksen tila');
+  vaita(omaKooste.data.kooste.paattyi === null, 'kesken oleva vuoro saa koosteen ilman päättymisaikaa');
+
+  // Toisen vartijan kooste on toisen asia. Hälytyskeskus näkee kaikki, joten tässä
+  // testataan tavallisella vartijatunnuksella.
+  const vieraanKooste = await kooste(vartijanEvaste);
+  vaita(vieraanKooste.status === 403, `toisen vuoron koostetta ei saa (${vieraanKooste.status})`);
+
+  await post(`/api/vuoro/${koosteId}/paata`, {});
+  const paatetty = await kooste(evaste);
+  vaita(!!paatetty.data.kooste.paattyi, 'päättymisaika ilmestyy koosteeseen');
 } finally {
   palvelin.kill();
   fs.rmSync(DATA, { recursive: true, force: true });

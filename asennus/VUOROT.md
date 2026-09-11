@@ -521,6 +521,57 @@ jossa kierros jää ajamatta kummaltakin.
 **Valmis kun:** X antaa tehtävän Y:lle, Y näkee sen ilmoituksissaan, hyväksyntä siirtää
 tehtävän ja hylkäys palauttaa sen X:lle, ja auditlokista näkee molemmat nimet.
 
+### Erä 18b — Suoritusajat ja vuoron kooste 🟢 VALMIS 10.9.2026
+
+Erän 18 listajärjestys lupasi "kohteen kierrokset ja tehtävät **suoritusaikojensa
+mukaan**", mutta suoritusaikoja ei ollut olemassa. Tämä erä lisää ne.
+
+**Suoritusaika on työkalu eikä sääntö** (päätös 10.9.2026). Se ei estä eikä salli mitään:
+tehtävän voi tehdä milloin tahansa, ennen aikaa tai jälkeen. Se tekee kaksi asiaa —
+kertoo vartijalle milloin työ on suunniteltu tehtäväksi, ja järjestää työlistan.
+
+Ero vuorotyypin kellonaikoihin on olennainen ja se on syytä pitää mielessä koodia
+lukiessa: **ne rajoittavat kirjautumista, tämä ei rajoita mitään.**
+
+| Asia | Ratkaisu |
+|---|---|
+| Missä aika elää | Tehtävässä ja kierrospohjassa itsessään (`suoritusaika: "22:00"`) |
+| Miksi siellä | Jokaiselle vuorolle tehdään omat kierroksensa ja tehtävänsä, joten sekaannusta ei synny |
+| Liukuma | ±5 min. Klo 19 tarkoittaa 18:55–19:05 |
+| Pakotettu tehtävä | **Ei poikkeamaa.** Yövuoron tehtävän aika ei voi olla oikein aamuvuorossa |
+| Kierroksen vertailuhetki | **Aloitus**, ei päättyminen |
+
+**Kierroksen vertailuhetki on aloitus.** "Sulkukierros klo 19" tarkoittaa että kierros
+aloitetaan seitsemältä; neljäkymmentä minuuttia kestänyt kierros ei ole myöhässä siksi
+että se päättyi 19:40.
+
+#### Vuoron kooste — näkymä jota ei ollut lainkaan
+
+Vuorotietue on ollut palvelimella erästä 17 asti, mutta **yksikään näkymä ei lukenut
+sitä**: `src/`-puolella ei ollut ainuttakaan viittausta `guardShifts`iin. Keltainen
+merkintä tarvitsi paikan, ja paikka piti rakentaa.
+
+Kooste näytetään kun vartija päättää vuoron: mitä kuului vuoroon, mitä tehtiin, mitä jäi
+tekemättä, ja keltaisella ne jotka tehtiin liukuman ulkopuolella. Se näytetään
+**vartijalle** eikä vain päivystäjälle: unohtunut kierros selviää muuten vasta seuraavana
+päivänä jonkun toisen katsoessa listaa, eikä sille voi silloin tehdä mitään. Koosteen
+paikka on se hetki jolloin vartija on vielä kohteessa.
+
+**Kooste lasketaan pyydettäessä eikä tallenneta vuoron tietueeseen.** Se on johtopäätös
+lähdeaineistosta (kierrokset, tehtäväsuoritukset), ja tallennettu johtopäätös vanhenee
+hiljaa kun lähdeaineisto korjataan. Vuoron omat kentät — alkoi, päättyi, mitä siihen
+kuului — ovat tietueessa, ja ne ovat tosiasioita.
+
+Kesken oleva kierros ei ole tehty eikä tekemätön vaan **kesken**. Niputtaminen kumpaankaan
+antaisi väärän luvun juuri siitä mitä luku väittää mittaavansa.
+
+#### Testi löysi vian jota ei olisi huomannut
+
+`new Date(null)` on kelvollinen päivämäärä (epookki). Ilman erillistä tyhjän tarkistusta
+puuttuva aikaleima olisi tuottanut **tekaistun poikkeaman** sen sijaan että kertoisi ettei
+suoritusta ole — keltaisia merkintöjä tyhjästä. Testi `ilman suoritusaikaa tai suoritusta
+ei ole poikkeamaa` nappasi sen.
+
 ### Erä 19 — Pääkäyttäjän kaikki tehtävät ja pakotus
 
 Koko organisaation tehtävälista suodattimineen, pakotus ja estävä kuittausmodaali.

@@ -264,6 +264,10 @@ export const KohteenHallinta = ({
       kohdat: muokattavaTehtava.tyyppi === 'lista'
         ? muokattavaTehtava.kohdat.map((k) => k.trim()).filter(Boolean)
         : [],
+      // Tyhjä aika tallennetaan puuttuvana eikä tyhjänä merkkijonona: koostelaskenta
+      // tulkitsee puuttuvan "ei aikaa määritelty", ja tyhjän merkkijonon on näytettävä
+      // samalta myös levyllä.
+      suoritusaika: muokattavaTehtava.suoritusaika?.trim() || undefined,
     };
     const uudet = tehtavat.some((t) => t.id === puhdas.id)
       ? tehtavat.map((t) => (t.id === puhdas.id ? puhdas : t))
@@ -1106,6 +1110,16 @@ export const KohteenHallinta = ({
                 onChange={(v) => setMuokattavaTehtava({ ...muokattavaTehtava, kuvaus: v })}
                 placeholder="Mitä vartijan on tarkistettava"
                 monirivinen
+              />
+              {/* Suoritusaika EI rajoita mitään: se kertoo vartijalle milloin tehtävä on
+                  suunniteltu tehtäväksi ja järjestää työlistan. Poikkeamasta jää merkintä
+                  vuoron koosteeseen, ei estettä. */}
+              <Kentta
+                label="Suunniteltu suoritusaika (valinnainen)"
+                arvo={muokattavaTehtava.suoritusaika || ''}
+                onChange={(v) => setMuokattavaTehtava({ ...muokattavaTehtava, suoritusaika: v })}
+                tyyppi="time"
+                vinkki="Ei estä suorittamista muuna aikana — poikkeamasta jää merkintä vuoron koosteeseen."
               />
               <div>
                 <span className="block text-sm font-medium text-ink-body mb-2">Tehtävän muoto</span>

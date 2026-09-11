@@ -186,6 +186,58 @@ export async function lisaaVuoroon(
   }
 }
 
+
+// --- Vuoron kooste (erä 18b) --------------------------------------------------------
+
+export type KoosteRivi = {
+  id: string;
+  nimi: string;
+  lahde: 'vuoro' | 'itse_lisatty' | 'siirto' | 'pakotus';
+  suoritusaika: string | null;
+  tila: 'valmis' | 'kesken' | 'keskeytetty' | 'tekematta';
+  tehtyKlo: string | null;
+  // Minuutteja suunnitellusta, etumerkki mukaan: positiivinen on myöhässä.
+  poikkeamaMin: number | null;
+  // Onko liukuman ulkopuolella. ERI ASIA kuin poikkeamaMin: kahden minuutin ero on
+  // poikkeama luvultaan mutta ei merkinnältään.
+  poikkeama: boolean;
+};
+
+export type VuoronKooste = {
+  vuoroId: string;
+  siteNimi: string;
+  vuorotyyppiNimi: string;
+  vartija: string;
+  alkoi: string;
+  paattyi: string | null;
+  tehty: number;
+  tekematta: number;
+  kesken: number;
+  keskeytetty: number;
+  poikkeamia: number;
+  perehdytysPoikkeus: { myontaja: string; syy: string; este: string; aika: string } | null;
+  pohjat: KoosteRivi[];
+  tehtavat: KoosteRivi[];
+};
+
+/**
+ * Vuoron kooste. Palvelin laskee sen pyydettäessä lähdeaineistosta eikä palauta
+ * tallennettua johtopäätöstä — tallennettu johtopäätös vanhenisi hiljaa kun
+ * lähdeaineisto korjataan.
+ */
+export async function haeVuoronKooste(vuoroId: string): Promise<VuoronKooste | null> {
+  try {
+    const vastaus = await fetch(`/api/vuoro/${encodeURIComponent(vuoroId)}/kooste`, {
+      credentials: 'include',
+    });
+    if (!vastaus.ok) return null;
+    const data = await vastaus.json();
+    return data?.ok ? (data.kooste || null) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Ketkä voidaan perehdyttää tähän kohteeseen. 403 ei ole virhe vaan odotettu lopputulos
  * tunnukselle joka ei hallitse kohteita — kutsuja päättää mitä silloin näytetään.

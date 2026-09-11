@@ -280,8 +280,11 @@ test('vuoro kopioi tehtävänsä ja kierroksensa vuorotyypistä', () => {
   assert.equal(vuoro.tila, 'kesken');
   assert.equal(vuoro.vartija, 'vartija1');
   assert.equal(vuoro.vuorotyyppiNimi, 'Aamuvuoro');
-  assert.deepEqual(vuoro.tehtavat, [{ id: 't1', nimi: 'Sulkukierros', lahde: 'vuoro' }]);
-  assert.deepEqual(vuoro.pohjat, [{ id: 'p1', nimi: 'Yökierros', lahde: 'vuoro' }]);
+  // Suoritusaika on mukana kopiossa (erä 18b). Null tarkoittaa ettei aikaa ole
+  // määritelty — se ei ole sama asia kuin puuttuva kenttä, jonka koostelaskenta
+  // tulkitsisi vanhaksi tietueeksi.
+  assert.deepEqual(vuoro.tehtavat, [{ id: 't1', nimi: 'Sulkukierros', lahde: 'vuoro', suoritusaika: null }]);
+  assert.deepEqual(vuoro.pohjat, [{ id: 'p1', nimi: 'Yökierros', lahde: 'vuoro', suoritusaika: null }]);
 });
 
 test('kohteen ja vuoron nimi kopioidaan eikä viitata', () => {

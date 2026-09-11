@@ -70,6 +70,16 @@ export type Tehtava = {
   kuvaus?: string;
   // Vain 'lista'-tyypille. Tyhjä lista 'kuittaus'-tyypillä.
   kohdat: string[];
+  // Suunniteltu suoritusaika muodossa "22:00" (erä 18b, päätös 10.9.2026).
+  //
+  // TÄMÄ ON TYÖKALU EIKÄ SÄÄNTÖ. Se ei estä eikä salli mitään: tehtävän voi suorittaa
+  // milloin tahansa, ennen aikaa tai jälkeen. Se tekee kaksi asiaa — kertoo vartijalle
+  // milloin tehtävä on suunniteltu tehtäväksi, ja järjestää työlistan. Ero vuorotyypin
+  // kellonaikoihin on olennainen: NE rajoittavat kirjautumista, tämä ei rajoita mitään.
+  //
+  // Poikkeamasta jää keltainen merkintä vuoron koosteeseen, ja siinäkin on liukuma
+  // (server/kooste.js). Merkintä on tieto jälkikäteen, ei este etukäteen.
+  suoritusaika?: string;
 };
 
 export type Kohde = {
@@ -224,6 +234,16 @@ export type Kierrospohja = {
   // kuittausta, koska puhelimen paikannus on rakennuksen seinustalla epäluotettava.
   sijaintiPakotus?: boolean;
   sietorajaM?: number;
+  // Suunniteltu suoritusaika muodossa "22:00" (erä 18b, päätös 10.9.2026).
+  //
+  // TÄMÄ ON TYÖKALU EIKÄ SÄÄNTÖ. Se ei estä eikä salli mitään: tehtävän voi suorittaa
+  // milloin tahansa, ennen aikaa tai jälkeen. Se tekee kaksi asiaa — kertoo vartijalle
+  // milloin tehtävä on suunniteltu tehtäväksi, ja järjestää työlistan. Ero vuorotyypin
+  // kellonaikoihin on olennainen: NE rajoittavat kirjautumista, tämä ei rajoita mitään.
+  //
+  // Poikkeamasta jää keltainen merkintä vuoron koosteeseen, ja siinäkin on liukuma
+  // (server/kooste.js). Merkintä on tieto jälkikäteen, ei este etukäteen.
+  suoritusaika?: string;
   luotu?: string;
   luoja?: string;
   muokattu?: string;

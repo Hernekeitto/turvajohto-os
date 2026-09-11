@@ -95,10 +95,16 @@ export const MobiiliEtusivu = ({
   // HUOM: suoritusaikoja ei ole. Vuorotyypillä on kellonajat, yksittäisellä kierroksella
   // ei, joten "suoritusaikojen mukaan" toteutuu toistaiseksi vuoron määrittelemänä
   // järjestyksenä. Aikakenttä on lisättävä ennen kuin järjestys voi luvata enempää.
+  // Ajaton viimeiseksi omassa ryhmässään: se ei ole myöhässä eikä ajallaan, ja tyhjän
+  // ajan järjestäminen ykköseksi tai viimeiseksi olisi yhtä mielivaltaista — mutta
+  // aikaan sidotut ovat se mitä kello ohjaa, joten ne kuuluvat ylös.
+  const aikaJarjestys = (aika?: string) => (aika && /^\d{1,2}:\d{2}$/.test(aika) ? aika : '99:99');
+
   const omatPohjat = pohjat
     .filter((p) => p.ownerId === kohde.id && p.kind === 'patrol' && !p.arkistoitu)
     .sort((a, b) => (Number(tehtyTanaan.has(a.id)) - Number(tehtyTanaan.has(b.id)))
-      || (Number(vuoroon.has(b.id)) - Number(vuoroon.has(a.id))));
+      || (Number(vuoroon.has(b.id)) - Number(vuoroon.has(a.id)))
+      || aikaJarjestys(a.suoritusaika).localeCompare(aikaJarjestys(b.suoritusaika)));
   const avoimet = halytykset.filter(
     (h) => h.eventId === kohde.id && (h.tila === 'lauennut' || h.tila === 'kaynnissa')
   );
@@ -238,6 +244,13 @@ export const MobiiliEtusivu = ({
                     ? `Tehty tänään klo ${kello(viimeisin.paattyi)}`
                     : 'Ei aloitettu'}
               </span>
+              {/* Suunniteltu aika on tieto eikä vaatimus: kierroksen voi ajaa muulloinkin,
+                  ja poikkeamasta jää merkintä vasta vuoron koosteeseen. */}
+              {pohja.suoritusaika && (
+                <span className="block text-base text-ink-muted mt-1">
+                  Suunniteltu klo {pohja.suoritusaika}
+                </span>
+              )}
               <span className="block text-base text-ink-body mt-1.5">
                 {kuitattu}/{pisteita} pistettä tarkastettu
               </span>

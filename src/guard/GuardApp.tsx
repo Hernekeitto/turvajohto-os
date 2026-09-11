@@ -29,12 +29,14 @@ import { MobiiliKehys, type MobiiliIlmoitus, type MobiiliLinkki } from './mobiil
 import { MobiiliEtusivu } from './mobiili/MobiiliEtusivu';
 import { Vuorovalinta } from './mobiili/Vuorovalinta';
 import { SiirtoValinta } from './mobiili/SiirtoValinta';
+import { VuoronKooste as VuoronKoosteNakyma } from './mobiili/VuoronKooste';
 import { Skanneri } from './mobiili/Skanneri';
 import { Tilatieto } from './mobiili/Tilatieto';
 import { lueVuoro, tallennaVuoro, unohdaVuoro, type Vuoro } from './mobiili/vuoro';
 import {
-  aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, lisaaVuoroon, paataVuoroPalvelimella,
-  type PalvelimenVuoro, type Vuorokohde, type VuoroVaihtoehto,
+  aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, haeVuoronKooste, lisaaVuoroon,
+  paataVuoroPalvelimella,
+  type PalvelimenVuoro, type VuoronKooste, type Vuorokohde, type VuoroVaihtoehto,
 } from './vuorot';
 import {
   TYHJAT_SIIRROT, haeOmatSiirrot, haeVastaanottajat, siirraTehtava, vastaaSiirtoon,
@@ -262,6 +264,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [vastaanottajatLadattu, setVastaanottajatLadattu] = useState(false);
   const [siirtoLahetetaan, setSiirtoLahetetaan] = useState(false);
   const [siirtoVirhe, setSiirtoVirhe] = useState<string | null>(null);
+  // Vuoron kooste näytetään päättämisen jälkeen. Oma tilansa eikä osa vuoroa: vuoro on
+  // jo päättynyt siinä vaiheessa kun kooste on ruudulla.
+  const [kooste, setKooste] = useState<VuoronKooste | null>(null);
+  const [koosteAuki, setKoosteAuki] = useState(false);
+  const [koostettaHaetaan, setKoostettaHaetaan] = useState(false);
   const [kameraAuki, setKameraAuki] = useState(false);
   const [tilatietoAuki, setTilatietoAuki] = useState(false);
   // Skannauksen tulos: puhelimen kamera avasi /guard?piste=<token>, ja palvelin kertoo
@@ -1131,7 +1138,19 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // vuoro päättyy joka tapauksessa: katvealueelle jäänyt pyyntö tarkoittaisi muuten,
   // ettei vartija pääse ulos vuorosta ennen kuin verkko palaa.
   const paataVuoro = () => {
-    if (vuoro?.vuoroId) void paataVuoroPalvelimella(vuoro.vuoroId);
+    // Kooste haetaan VASTA päättämisen jälkeen, jotta päättymisaika ja viimeiset
+    // kuittaukset ovat mukana. Se ei estä vuoron päättymistä: näkymä vapautuu heti, ja
+    // kooste ilmestyy kun se on valmis.
+    const paattyva = vuoro?.vuoroId;
+    if (paattyva) {
+      setKoosteAuki(true);
+      setKoostettaHaetaan(true);
+      setKooste(null);
+      void paataVuoroPalvelimella(paattyva)
+        .then(() => haeVuoronKooste(paattyva))
+        .then((tulos) => setKooste(tulos))
+        .finally(() => setKoostettaHaetaan(false));
+    }
     paataSovelluksessa();
     unohdaVuoro();
     setVuoro(null);
@@ -1409,6 +1428,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           kerrottava: vartija luulee muuten olevansa valvonnan piirissä. Ei suljettavissa
           niin kuin skannausbanneri — se palaisi joka tapauksessa vasta seuraavassa
           vuoron aloituksessa, ja siihen mennessä koko vuoro olisi ohi. */}
+      {koosteAuki && (
+        <VuoronKoosteNakyma
+          kooste={kooste}
+          ladataan={koostettaHaetaan}
+          onSulje={() => { setKoosteAuki(false); setKooste(null); }}
+        />
+      )}
+
       {siirrettava && (
         <SiirtoValinta
           tehtavaNimi={siirrettava.nimi}

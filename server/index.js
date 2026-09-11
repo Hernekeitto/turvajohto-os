@@ -35,6 +35,7 @@ import {
 import {
   joSiirrossa, luoSiirto, omatSiirrot, peruSiirto, siirtojenAvaamatKohteet, vastaaSiirtoon,
 } from './siirto.js';
+import { vuoronKooste } from './kooste.js';
 import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
 import {
   luoToken,
@@ -1748,6 +1749,31 @@ app.post('/api/vuoro', requireAuth, guardPortti, (req, res) => {
   res.json({ ok: true, vuoro: tulos.vuoro });
 });
 
+// Vuoron kooste: mitä kuului vuoroon, mitä tehtiin ja mikä poikkesi suoritusajastaan.
+//
+// Lasketaan PYYDETTÄESSÄ eikä tallenneta vuoron tietueeseen: kooste on johtopäätös
+// lähdeaineistosta, ja tallennettu johtopäätös vanhenee hiljaa kun lähdeaineisto
+// korjataan.
+//
+// Vartija näkee omansa, hälytyskeskus ja pääkäyttäjä kaikki. Vartijan on nähtävä oma
+// koosteensa ennen kotiinlähtöä — muuten unohtunut kierros selviää vasta seuraavana
+// päivänä jonkun toisen katsoessa listaa.
+app.get('/api/vuoro/:id/kooste', requireAuth, guardPortti, (req, res) => {
+  const vuoro = (readCollection('guardShifts') || []).find((v) => v?.id === req.params.id);
+  if (!vuoro) return res.status(404).json({ ok: false, error: 'Vuoroa ei löytynyt.' });
+  if (vuoro.vartija !== req.username && !saaMyontaaKertaluvan(req)) {
+    return res.status(403).json({ ok: false, error: 'Vuoro on toisen vartijan.' });
+  }
+  res.json({
+    ok: true,
+    kooste: vuoronKooste({
+      vuoro,
+      kierrokset: readCollection('patrolRuns') || [],
+      suoritukset: readCollection('guardTaskRuns') || [],
+    }),
+  });
+});
+
 // Vuoron päättäminen.
 app.post('/api/vuoro/:id/paata', requireAuth, guardPortti, (req, res) => {
   const vuorot = readCollection('guardShifts') || [];
@@ -1956,8 +1982,12 @@ function kerroPohjasta(pohja, action) {
   });
 }
 
+const puhdasAika = (arvo) => (/^\d{1,2}:\d{2}$/.test(String(arvo ?? '').trim())
+  ? String(arvo).trim()
+  : undefined);
+
 app.post('/api/pohjat', requireAuth, (req, res) => {
-  const { kind, ownerId, nimi, kuvaus, pisteet, kohdat, sijaintiPakotus, sietorajaM } = req.body || {};
+  const { kind, ownerId, nimi, kuvaus, pisteet, kohdat, sijaintiPakotus, sietorajaM, suoritusaika } = req.body || {};
   if (!onTunnettuLaji(kind)) {
     return res.status(400).json({ ok: false, error: 'Tuntematon pohjalaji.' });
   }
@@ -2009,6 +2039,10 @@ app.post('/api/pohjat', requireAuth, (req, res) => {
     pohja.sietorajaM = Number.isFinite(Number(sietorajaM)) && Number(sietorajaM) > 0
       ? Math.round(Number(sietorajaM))
       : OLETUS_SIETORAJA_M;
+    // Suunniteltu suoritusaika (erä 18b). EI rajoita mitään: se kertoo vartijalle milloin
+    // kierros on suunniteltu ajettavaksi ja järjestää työlistan. Poikkeamasta jää keltainen
+    // merkintä vuoron koosteeseen (server/kooste.js), ei estettä.
+    pohja.suoritusaika = puhdasAika(suoritusaika);
   } else {
     const kohtaTulos = tarkistaKohdat(kohdat, kind);
     if (!kohtaTulos.ok) return res.status(400).json({ ok: false, error: kohtaTulos.error });
@@ -2054,6 +2088,11 @@ app.put('/api/pohjat/:id', requireAuth, (req, res) => {
     paivitetty.sietorajaM = Number.isFinite(Number(req.body?.sietorajaM)) && Number(req.body.sietorajaM) > 0
       ? Math.round(Number(req.body.sietorajaM))
       : (vanha.sietorajaM ?? OLETUS_SIETORAJA_M);
+    // Puuttuva kenttä säilyttää vanhan, tyhjä merkkijono poistaa. Ero on tarpeen: aika on
+    // voitava myös ottaa pois, eikä sitä voi tehdä jos tyhjä tarkoittaisi "älä muuta".
+    paivitetty.suoritusaika = req.body?.suoritusaika === undefined
+      ? vanha.suoritusaika
+      : puhdasAika(req.body.suoritusaika);
   } else {
     const kohtaTulos = tarkistaKohdat(req.body?.kohdat ?? vanha.kohdat, vanha.kind);
     if (!kohtaTulos.ok) return res.status(400).json({ ok: false, error: kohtaTulos.error });

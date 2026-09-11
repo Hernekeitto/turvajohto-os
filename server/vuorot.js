@@ -214,12 +214,15 @@ export function aloitaVuoro({
   const tehtavat = (vuorotyyppi.tehtavaIdt || [])
     .map((tid) => (kohde.tehtavat || []).find((t) => t?.id === tid))
     .filter(Boolean)
-    .map((t) => ({ id: t.id, nimi: t.nimi, lahde: 'vuoro' }));
+    // Suoritusaika kopioidaan samasta syystä kuin nimi: se on se aika joka tälle
+    // vuorolle suunniteltiin, eikä myöhempi muutos kohteen tehtävään saa muuttaa sitä
+    // mitä tältä vuorolta odotettiin.
+    .map((t) => ({ id: t.id, nimi: t.nimi, lahde: 'vuoro', suoritusaika: t.suoritusaika || null }));
 
   const kierrokset = (vuorotyyppi.pohjaIdt || [])
     .map((pid) => pohjat.find((p) => p?.id === pid))
     .filter(Boolean)
-    .map((p) => ({ id: p.id, nimi: p.nimi, lahde: 'vuoro' }));
+    .map((p) => ({ id: p.id, nimi: p.nimi, lahde: 'vuoro', suoritusaika: p.suoritusaika || null }));
 
   return {
     ok: true,
@@ -290,7 +293,13 @@ export function lisaaVuoroon({ vuoro, kohde, pohjat = [], laji, kohdeId, lahde =
 
   return {
     ok: true,
-    vuoro: { ...vuoro, [avain]: [...(vuoro[avain] || []), { id: osuma.id, nimi: osuma.nimi, lahde }] },
+    vuoro: {
+      ...vuoro,
+      [avain]: [
+        ...(vuoro[avain] || []),
+        { id: osuma.id, nimi: osuma.nimi, lahde, suoritusaika: osuma.suoritusaika || null },
+      ],
+    },
   };
 }
 
