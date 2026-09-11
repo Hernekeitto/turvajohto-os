@@ -716,6 +716,17 @@ jää ainoaksi signaaliksi jolla on yläraja.
 Ajo alkoi 12:22:10 ja päättyi 18:33:38 vahingossa tulleeseen uudelleenkäynnistykseen —
 **ei ROMin tappamaan.** Aamulla sama laite kuoli viidessä minuutissa.
 
+Uudelleenkäynnistys paljasti samalla oman aukkonsa: valvonta ei palannut itsestään,
+koska `BOOT_COMPLETED`-vastaanotinta ei ollut. Vuoro oli auki palvelimella, puhelin
+näytti tavalliselta, ja valvonta oli kuollut — ilman yhtäkään vikaa missään.
+**Korjattu samana päivänä** (`Kaynnistys.java`): käynnistyksen jälkeen vartijalle
+näytetään ilmoitus "Puhelin käynnistyi uudelleen", jota napauttamalla vuoro jatkuu.
+Automaattista jatkoa EI tehdä, ja päätös on tietoinen: käynnistyksen syytä ei tiedetä, ja
+itsestään käynnistyvä sijainninlähetys silloin kun ihminen luulee olevansa vapaalla on
+väärin tavalla jota ei korjata jälkikäteen. Ilmoituksesta lähtevä käynnistys on myös yksi
+harvoista tavoista nostaa etualan palvelu taustalta Android 12:sta alkaen, joten ihmisen
+napautus on samalla luotettavampi kuin sovelluksen oma yritys.
+
 | Mittari | Tulos |
 |---|---|
 | Lyöntejä | 372, epäonnistuneita 0 |
@@ -889,7 +900,3 @@ Kalenterin määrää käytännössä juridiikka, ei koodi.
    hallintaa otetaan käyttöön oikeilla työsuhdelaitteilla, purkutie on rakennettava ja
    dokumentoitava — muuten laite jää sovelluksen hallintaan senkin jälkeen kun se
    poistuu käytöstä.
-4. **`BOOT_COMPLETED`-vastaanotinta ei ole.** Uudelleenkäynnistys pysäyttää valvonnan
-   hiljaa: 11.9.2026 Jelly Star käynnistyi kesken päivän eikä palvelu palannut itsestään.
-   Vuoron jatkaminen käynnistyksen jälkeen on erikseen päätettävä — automaattinen jatko
-   voi olla väärin, mutta hiljainen katkos on varmasti väärin.
