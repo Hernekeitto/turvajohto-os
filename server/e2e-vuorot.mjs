@@ -440,6 +440,13 @@ try {
 
   const jalkeen = await (await fetch(`${PALVELIN}/api/siirrot/omat`, { headers: { Cookie: vartijanEvaste } })).json();
   vaita(jalkeen.pakotukset?.length === 0, 'kuitattu pakotus ei enää estä');
+  // Kuitattu pakotus on saajan tyota: sen on nakyttava tyolistalla ja avattava kohde.
+  vaita(jalkeen.hyvaksytyt?.some((x) => x.id === pakotettu.data.siirto.id),
+    'kuitattu pakotus jaa saajan tyolistalle');
+  const avatutPakotuksella = await fetch(`${PALVELIN}/api/data/guardSites`, { headers: { Cookie: vartijanEvaste } });
+  const avatutData = (await avatutPakotuksella.json().catch(() => null))?.data || [];
+  vaita(avatutData.some((k) => k.id === 'kohde-perehdytetty'),
+    'kuitattu pakotus avaa kohteen saajalle');
 } finally {
   palvelin.kill();
   fs.rmSync(DATA, { recursive: true, force: true });

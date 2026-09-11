@@ -2010,7 +2010,18 @@ app.get('/api/tehtavat/kaikki', requireAuth, guardPortti, (req, res) => {
         .map((po) => ({ id: po.id, nimi: po.nimi, suoritusaika: po.suoritusaika || null })),
     }))
     .filter((k) => k.tehtavat.length > 0 || k.pohjat.length > 0);
-  res.json({ ok: true, kohteet });
+
+  // Vartijalista samassa vastauksessa eikä omalla reitillään: se on tämän näkymän
+  // valintalista eikä itsenäinen tieto, ja kaksi kutsua yhdelle ruudulle on kaksi
+  // paikkaa jossa toinen voi epäonnistua ilman että käyttäjä ymmärtää miksi.
+  //
+  // Pakotus ei vaadi perehdytystä eikä vuoroa, joten rajaus on vain tuotepääsy:
+  // määräys ei ole pyyntö, eikä sen ehtona voi olla että saaja on kirjautunut vuoroon.
+  const vartijat = listUsers()
+    .filter((u) => paaseeTuotteisiin(u).includes('guard'))
+    .map((u) => ({ username: u.username, nimi: u.nickname || u.username, displayId: u.displayId ?? null }));
+
+  res.json({ ok: true, kohteet, vartijat });
 });
 
 // Pakotus: pääkäyttäjä tai hälytyskeskus määrää tehtävän vartijalle.

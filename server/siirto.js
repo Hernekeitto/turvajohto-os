@@ -126,6 +126,14 @@ export function peruSiirto({ siirto, kayttaja, nyt = Date.now() }) {
   return { ok: true, siirto: { ...siirto, tila: 'peruttu', ratkaistu: new Date(nyt).toISOString() } };
 }
 
+// Ne tilat joissa tehtävä on SAAJAN TYÖTÄ. Hyväksytty siirto ja kuitattu pakotus ovat
+// tässä sama asia: molemmat tarkoittavat että työ on nyt tämän vartijan. Ero on vain
+// siinä saiko hän valita.
+//
+// Kuitatun puuttuminen tästä joukosta oli vika: pakotettu tehtävä katosi työlistalta
+// heti kun se kuitattiin, vaikka kuittausmodaali lupasi päinvastaista.
+const OMAKSI_TULLEET = new Set(['hyvaksytty', 'kuitattu']);
+
 /**
  * Vartijan siirrot molempiin suuntiin.
  *
@@ -140,7 +148,7 @@ export function omatSiirrot(siirrot, username) {
     // vastataan vaan määräys joka kuitataan, eikä sitä saa näyttää hyväksyttävänä.
     // Kuittaamattomat pakotukset haetaan erikseen (kuittaamattomatPakotukset).
     saapuvat: omat.filter((s) => s.saaja === username && s.tila === 'odottaa' && s.tapa !== 'pakotus'),
-    hyvaksytyt: omat.filter((s) => s.saaja === username && s.tila === 'hyvaksytty'),
+    hyvaksytyt: omat.filter((s) => s.saaja === username && OMAKSI_TULLEET.has(s.tila)),
     lahtevat: omat.filter((s) => s.antaja === username && s.tila === 'odottaa'),
   };
 }
@@ -155,7 +163,7 @@ export function omatSiirrot(siirrot, username) {
 export function siirtojenAvaamatKohteet(siirrot, username) {
   return new Set(
     (siirrot || [])
-      .filter((s) => s?.saaja === username && s.tila === 'hyvaksytty')
+      .filter((s) => s?.saaja === username && OMAKSI_TULLEET.has(s.tila))
       .map((s) => s.siteId)
   );
 }

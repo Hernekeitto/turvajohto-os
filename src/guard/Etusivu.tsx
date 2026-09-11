@@ -10,25 +10,30 @@
 // päättää sen.
 
 import type { ReactNode } from 'react';
-import { ArrowRight, Building2, Siren, Settings, Timer, Route } from 'lucide-react';
+import { ArrowRight, Building2, ClipboardList, Siren, Settings, Timer, Route } from 'lucide-react';
 
 type Props = {
   saaNahdaKohteet: boolean;
   saaNahdaHalytyskeskus: boolean;
   saaNahdaAsetukset: boolean;
+  // Tehtävien jako (erä 19): sama oikeus kuin hälytyskeskuksella, koska määrääjä on
+  // pääkäyttäjä tai päivystäjä. Oma korttinsa eikä hälytyskeskuksen sisällä: hälytys on
+  // tapahtuma johon reagoidaan, tehtävien jako on suunnittelua.
+  saaJakaaTehtavia: boolean;
   kohteita: number;
   lauenneita: number;
   ajastimia: number;
   kierroksiaKesken: number;
   onKohteet: () => void;
   onHalytyskeskus: () => void;
+  onTehtavanjako: () => void;
   onAsetukset: () => void;
 };
 
 export const Etusivu = ({
-  saaNahdaKohteet, saaNahdaHalytyskeskus, saaNahdaAsetukset,
+  saaNahdaKohteet, saaNahdaHalytyskeskus, saaNahdaAsetukset, saaJakaaTehtavia,
   kohteita, lauenneita, ajastimia, kierroksiaKesken,
-  onKohteet, onHalytyskeskus, onAsetukset,
+  onKohteet, onHalytyskeskus, onTehtavanjako, onAsetukset,
 }: Props) => (
   <div>
     <div className="mb-8">
@@ -114,6 +119,20 @@ export const Etusivu = ({
         </button>
       )}
     </div>
+
+    {/* Tehtävien jako (erä 19). Riviksi eikä kortiksi: kortit vastaavat kysymykseen
+        "missä pitää olla nyt", ja tehtävien jako on suunnittelua johon mennään kun
+        siihen on syytä — ei tilanne joka vaatii huomiota. */}
+    {saaJakaaTehtavia && (
+      <button
+        type="button"
+        onClick={onTehtavanjako}
+        className="mt-6 mr-6 inline-flex items-center gap-2 text-sm font-medium text-ink-body hover:text-accent transition-colors"
+      >
+        <ClipboardList size={16} />
+        Tehtävien jako
+      </button>
+    )}
 
     {/* Sovellusasetukset myös täältä. Aiemmin ainoa reitti oli kohdelistan yläpalkki,
         eikä pelkällä päivystysoikeudella varustettu käyttäjä pääse sinne lainkaan. */}

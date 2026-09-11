@@ -572,7 +572,48 @@ puuttuva aikaleima olisi tuottanut **tekaistun poikkeaman** sen sijaan että ker
 suoritusta ole — keltaisia merkintöjä tyhjästä. Testi `ilman suoritusaikaa tai suoritusta
 ei ole poikkeamaa` nappasi sen.
 
-### Erä 19 — Pääkäyttäjän kaikki tehtävät ja pakotus
+### Erä 19 — Pääkäyttäjän kaikki tehtävät ja pakotus 🟢 VALMIS 11.9.2026
+
+| Osa | Tila |
+|---|---|
+| Pakotuksen säännöt (`server/siirto.js`) | valmis, 26 testiä |
+| `GET /api/tehtavat/kaikki` (kaikki kohteet yhtenä listana) | valmis |
+| `POST /api/pakota` · `POST /api/siirto/:id/kuittaa` | valmis |
+| Tehtävien jako -näkymä pääkäyttäjälle ja päivystäjälle | valmis |
+| Estävä kuittausilmoitus vartijalle | valmis |
+
+**Pakotus eroaa siirrosta kahdessa asiassa ja vain niissä:** saaja ei voi kieltäytyä, ja
+hänen on kuitattava. Kuittaus **ei ole hyväksyntä** — sitä ei voi hylätä. Se on merkintä
+siitä että määräys on nähty, ja määräys jonka vastaanotosta ei ole merkintää ei ole
+määräys vaan toive.
+
+Pakotus ei vaadi saajalta vuoroa toisin kuin siirto: määräys ei ole pyyntö, eikä sen
+ehtona voi olla että saaja on sattumalta kirjautunut vuoroon. Todennettu selaimessa:
+ilmoitus tuli ruudulle vartijalle joka oli vasta vuoronvalintanäkymässä.
+
+**Estävä ilmoitus on selaimen modaali, ei natiivin täysruutuhälytys.** Se toimii vain kun
+sovellus on auki. Jos pakotuksen pitää herättää nukkuva puhelin, se odottaa natiiviputken
+erää 12 (`NATIIVI.md`, ominaisuus 3). Sulkupainiketta ei ole: ainoa ulospääsy on kuittaus,
+koska ilmoitus jonka voi pyyhkäistä pois on ilmoitus jota ei lueta.
+
+**Suoritusaikaa ei näytetä eikä käytetä pakotetulle tehtävälle.** Se on toisen vuoron aika
+eikä voi olla oikein tässä (päätös 10.9.2026), joten aikataulu kerrotaan määräyksen
+viestissä. Määräysikkunassa on siitä erillinen vinkki.
+
+#### Kaksi vikaa jotka löytyivät testaamalla
+
+**E2E:tä kirjoittaessa:** `omatSiirrot` olisi laittanut pakotuksen myös `saapuvat`-listaan,
+jolloin se olisi näkynyt sekä hyväksyttävänä korttina että estävänä modaalina — kaksi eri
+lupausta samasta tietueesta, joista toinen on väärä.
+
+**Selaintestissä:** kuitattu pakotus **katosi työlistalta** heti kun se kuitattiin, vaikka
+kuittausmodaali lupasi "tehtävä on jo lisätty sinulle". `hyvaksytyt` tunnisti vain tilan
+`hyvaksytty`. Hyväksytty siirto ja kuitattu pakotus ovat saajan kannalta sama asia —
+molemmat tarkoittavat että työ on nyt tämän vartijan, ja ero on vain siinä saiko hän
+valita. Tämä on nyt oma joukkonsa (`OMAKSI_TULLEET`) eikä kahteen paikkaan kirjoitettu
+ehto.
+
+### Erä 19 — alkuperäinen suunnitelma
 
 Koko organisaation tehtävälista suodattimineen, pakotus ja estävä kuittausmodaali.
 

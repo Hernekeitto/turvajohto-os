@@ -30,6 +30,10 @@ export type Siirto = {
 };
 
 export type OmatSiirrot = {
+  // Kuittaamattomat pakotukset. OMA KENTTÄNSÄ eikä osa saapuvia: pakotus ei ole pyyntö
+  // johon vastataan vaan määräys joka kuitataan, ja se estää muun käytön kunnes se on
+  // nähty. Sekoittaminen näyttäisi sen hyväksyttävänä, mikä se ei ole.
+  pakotukset: Siirto[];
   // Mihin minun on vastattava.
   saapuvat: Siirto[];
   // Mikä on jo minun tehtävänäni.
@@ -41,7 +45,7 @@ export type OmatSiirrot = {
 
 export type Vastaanottaja = { username: string; nimi: string; kohde: string };
 
-export const TYHJAT_SIIRROT: OmatSiirrot = { saapuvat: [], hyvaksytyt: [], lahtevat: [] };
+export const TYHJAT_SIIRROT: OmatSiirrot = { saapuvat: [], hyvaksytyt: [], lahtevat: [], pakotukset: [] };
 
 export async function haeOmatSiirrot(): Promise<OmatSiirrot> {
   try {
@@ -53,6 +57,7 @@ export async function haeOmatSiirrot(): Promise<OmatSiirrot> {
       saapuvat: data.saapuvat || [],
       hyvaksytyt: data.hyvaksytyt || [],
       lahtevat: data.lahtevat || [],
+      pakotukset: data.pakotukset || [],
     };
   } catch {
     return TYHJAT_SIIRROT;
@@ -104,3 +109,52 @@ export const vastaaSiirtoon = (id: string, hyvaksy: boolean) =>
 
 export const peruSiirto = (id: string) =>
   posti(`/api/siirto/${encodeURIComponent(id)}/peru`, {});
+
+// --- Pakotus (erä 19) ---------------------------------------------------------------
+
+export type JaettavaTehtava = {
+  id: string;
+  nimi: string;
+  tyyppi?: 'kuittaus' | 'lista';
+  suoritusaika: string | null;
+};
+
+export type JaettavaKohde = {
+  siteId: string;
+  siteNimi: string;
+  tehtavat: JaettavaTehtava[];
+  pohjat: JaettavaTehtava[];
+};
+
+/**
+ * Kaikkien kohteiden tehtävät ja kierrokset. Vaatii pääkäyttäjän tai hälytyskeskuksen
+ * oikeudet; 403 ei ole virhe vaan odotettu lopputulos muille.
+ */
+export async function haeKaikkiTehtavat(): Promise<{ kohteet: JaettavaKohde[]; vartijat: Vastaanottaja[] }> {
+  const tyhja = { kohteet: [], vartijat: [] };
+  try {
+    const vastaus = await fetch('/api/tehtavat/kaikki', { credentials: 'include' });
+    if (!vastaus.ok) return tyhja;
+    const data = await vastaus.json();
+    return data?.ok ? { kohteet: data.kohteet || [], vartijat: data.vartijat || [] } : tyhja;
+  } catch {
+    return tyhja;
+  }
+}
+
+/**
+ * Tehtävän määrääminen vartijalle. Saaja ei voi kieltäytyä — hän kuittaa nähdyksi.
+ * Vuoroa ei vaadita: määräys ei ole pyyntö.
+ */
+export const pakotaTehtava = (
+  saaja: string,
+  siteId: string,
+  laji: 'tehtava' | 'kierros',
+  kohdeId: string,
+  viesti = '',
+) => posti('/api/pakota', { saaja, siteId, laji, kohdeId, viesti });
+
+export const kuittaaPakotus = (id: string) =>
+  posti(`/api/siirto/${encodeURIComponent(id)}/kuittaa`, {});
+
+

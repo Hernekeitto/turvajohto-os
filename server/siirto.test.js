@@ -231,3 +231,20 @@ test('PAKOTUS ei ole saapuva siirto', () => {
   assert.equal(omat.saapuvat.length, 0);
   assert.equal(kuittaamattomatPakotukset([odottavaPakotus], 'piirivartija').length, 1);
 });
+
+test('KUITATTU PAKOTUS on saajan tyota siina missa hyvaksytty siirtokin', () => {
+  // Vika jonka selaintesti loysi: kuitattu pakotus katosi tyolistalta heti kun se
+  // kuitattiin, vaikka kuittausmodaali lupasi "tehtava on jo lisatty sinulle".
+  const kuitattu = pakotus({ tila: 'kuitattu' });
+  const omat = omatSiirrot([kuitattu], 'piirivartija');
+  assert.equal(omat.hyvaksytyt.length, 1);
+  assert.equal(siirtojenAvaamatKohteet([kuitattu], 'piirivartija').has('kohde-a'), true);
+});
+
+test('hylatty tai peruttu ei ole kenenkaan tyota', () => {
+  for (const tila of ['hylatty', 'peruttu', 'odottaa']) {
+    const s = pakotus({ tila });
+    assert.equal(omatSiirrot([s], 'piirivartija').hyvaksytyt.length, 0, tila);
+    assert.equal(siirtojenAvaamatKohteet([s], 'piirivartija').size, 0, tila);
+  }
+});

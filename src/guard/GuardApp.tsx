@@ -30,6 +30,8 @@ import { MobiiliEtusivu } from './mobiili/MobiiliEtusivu';
 import { Vuorovalinta } from './mobiili/Vuorovalinta';
 import { SiirtoValinta } from './mobiili/SiirtoValinta';
 import { VuoronKooste as VuoronKoosteNakyma } from './mobiili/VuoronKooste';
+import { PakotettuTehtava } from './mobiili/PakotettuTehtava';
+import { Tehtavanjako } from './Tehtavanjako';
 import { Skanneri } from './mobiili/Skanneri';
 import { Tilatieto } from './mobiili/Tilatieto';
 import { lueVuoro, tallennaVuoro, unohdaVuoro, type Vuoro } from './mobiili/vuoro';
@@ -39,7 +41,8 @@ import {
   type PalvelimenVuoro, type VuoronKooste, type Vuorokohde, type VuoroVaihtoehto,
 } from './vuorot';
 import {
-  TYHJAT_SIIRROT, haeOmatSiirrot, haeVastaanottajat, siirraTehtava, vastaaSiirtoon,
+  TYHJAT_SIIRROT, haeOmatSiirrot, haeVastaanottajat, kuittaaPakotus, siirraTehtava,
+  vastaaSiirtoon,
   type OmatSiirrot, type Vastaanottaja,
 } from './siirrot';
 import { kaynnistaSovelluksessa, onAlustaJollaSovellus, paataSovelluksessa } from './mobiili/sovellusvuoro';
@@ -79,7 +82,7 @@ const JUURINAKYMA = 'etusivu';
 
 // Etusivun osiot. Erillinen tila eikä johdettu jostain muusta: käyttäjä voi olla
 // Kohteet-osiossa ilman että yhtäkään kohdetta on avattu.
-type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus';
+type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus' | 'tehtavanjako';
 
 // Historiamerkinnän näkymätunniste -> kohteen toiminto. Mobiiliversion takaisin-nappi
 // tarvitsee tämän: siellä ei ole kohdevalikkoa johon palata, joten näkymä avataan
@@ -264,6 +267,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [vastaanottajatLadattu, setVastaanottajatLadattu] = useState(false);
   const [siirtoLahetetaan, setSiirtoLahetetaan] = useState(false);
   const [siirtoVirhe, setSiirtoVirhe] = useState<string | null>(null);
+  const [pakotustaKuitataan, setPakotustaKuitataan] = useState(false);
   // Vuoron kooste näytetään päättämisen jälkeen. Oma tilansa eikä osa vuoroa: vuoro on
   // jo päättynyt siinä vaiheessa kun kooste on ruudulla.
   const [kooste, setKooste] = useState<VuoronKooste | null>(null);
@@ -1119,6 +1123,17 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     if (hyvaksy) paivitaKohteet();
   };
 
+  // Pakotuksen kuittaus. Ei ole hyväksyntä: tehtävä on jo vartijan, ja kuittaus kertoo
+  // vain että määräys on nähty. Kohdelista haetaan perään, koska pakotus voi koskea
+  // kohdetta jota vartija ei aiemmin nähnyt.
+  const kuittaaMaarays = async (id: string) => {
+    setPakotustaKuitataan(true);
+    await kuittaaPakotus(id);
+    setPakotustaKuitataan(false);
+    await paivitaSiirrot();
+    paivitaKohteet();
+  };
+
   // Kohdelistan uudelleenhaku. Hyväksytty siirto voi avata kohteen jota vartija ei
   // aiemmin nähnyt (server/index.js: siirtojenAvaamatKohteet), eikä käynnistyksessä
   // haettu lista kerro siitä mitään.
@@ -1428,6 +1443,17 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           kerrottava: vartija luulee muuten olevansa valvonnan piirissä. Ei suljettavissa
           niin kuin skannausbanneri — se palaisi joka tapauksessa vasta seuraavassa
           vuoron aloituksessa, ja siihen mennessä koko vuoro olisi ohi. */}
+      {/* Pakotettu tehtävä estää muun käytön kunnes se on kuitattu. Ylin z-taso ja
+          ennen muita modaaleja: määräys jonka voi ohittaa toisen ikkunan alle ei ole
+          määräys. Yksi kerrallaan — jono purkautuu kuittaus kerrallaan. */}
+      {mobiili && siirrot.pakotukset.length > 0 && (
+        <PakotettuTehtava
+          pakotus={siirrot.pakotukset[0]}
+          kuitataan={pakotustaKuitataan}
+          onKuittaa={kuittaaMaarays}
+        />
+      )}
+
       {koosteAuki && (
         <VuoronKoosteNakyma
           kooste={kooste}
@@ -1467,6 +1493,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onHavita={havitaVanhentuneet}
           onTakaisin={() => setAsetuksissa(false)}
         />
+      ) : osio === 'tehtavanjako' ? (
+        <Tehtavanjako onTakaisin={() => setOsio('etusivu')} />
       ) : osio === 'halytyskeskus' ? (
         <Halytyskeskus
           kohteet={kohteet}
@@ -1696,12 +1724,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           saaNahdaKohteet={saaNahda}
           saaNahdaHalytyskeskus={saaNahdaHalytyskeskus}
           saaNahdaAsetukset={saaNahdaAsetukset}
+          saaJakaaTehtavia={saaNahdaHalytyskeskus || !!isAdmin}
           kohteita={kohteet.length}
           lauenneita={halytykset.filter((h) => h.tila === 'lauennut').length}
           ajastimia={halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa').length}
           kierroksiaKesken={kierrokset.filter((k) => k.tila === 'kesken').length}
           onKohteet={() => setOsio('kohteet')}
           onHalytyskeskus={() => setOsio('halytyskeskus')}
+          onTehtavanjako={() => setOsio('tehtavanjako')}
           onAsetukset={() => setAsetuksissa(true)}
         />
       ) : (
