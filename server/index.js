@@ -65,6 +65,7 @@ import {
   seurantaKaytossa, paivita as paivitaSijainti, kaikki as sijainnit,
   hae as haeSijainti, unohda as unohdaSijainti,
 } from './sijainti.js';
+import { taydennaKuvakoordinaatti } from './georeferointi.js';
 import {
   tarkistaIlmoitus,
   lomakkeenTila,
@@ -2629,12 +2630,27 @@ function saaKuitata(req, halytys) {
 // Hälytys kuuluu joko tapahtumaan tai vartiointikohteeseen. Nimi ja vyöhykkeet haetaan
 // samalla kysymyksellä molemmista, koska kutsuja ei tiedä kummasta on kyse — eikä sen
 // tarvitse tietää.
+// mapRef on mukana erästä 11 alkaen: natiivisovellus lähettää pelkän GPS:n, ja palvelin
+// täydentää kuvakoordinaatin kalibroinnista (georeferointi.js). Sama kenttä kantaa
+// kalibrointipisteet sekä tapahtumalla että GUARD-kohteella.
 function kohteenTiedot(eventId) {
   const tapahtuma = (readCollection('events') || []).find((e) => e?.id === eventId);
-  if (tapahtuma) return { nimi: tapahtuma.name || '', vyohykkeet: Array.isArray(tapahtuma.zones) ? tapahtuma.zones : [] };
+  if (tapahtuma) {
+    return {
+      nimi: tapahtuma.name || '',
+      vyohykkeet: Array.isArray(tapahtuma.zones) ? tapahtuma.zones : [],
+      mapRef: Array.isArray(tapahtuma.mapRef) ? tapahtuma.mapRef : [],
+    };
+  }
   const kohde = (readCollection('guardSites') || []).find((s) => s?.id === eventId);
-  if (kohde) return { nimi: kohde.name || '', vyohykkeet: Array.isArray(kohde.zones) ? kohde.zones : [] };
-  return { nimi: '', vyohykkeet: [] };
+  if (kohde) {
+    return {
+      nimi: kohde.name || '',
+      vyohykkeet: Array.isArray(kohde.zones) ? kohde.zones : [],
+      mapRef: Array.isArray(kohde.mapRef) ? kohde.mapRef : [],
+    };
+  }
+  return { nimi: '', vyohykkeet: [], mapRef: [] };
 }
 
 // Kanavaviesti hälytyksestä. Sama periaate kuin muualla: viesti kuljettaa vain id:n, ja
@@ -4399,8 +4415,13 @@ function kasitteleKanavaViesti(istunto, viesti) {
   if (!seurantaKaytossa()) return;
   // Edellinen sijainti luetaan ENNEN päivitystä: vyöhykepoikkeama on rajan ylitys, ja
   // ylityksen näkee vain vertaamalla uutta sijaintia edelliseen.
+  // Kuvakoordinaatti täydennetään jos se puuttuu. Natiivisovellus lähettää pelkän GPS:n
+  // — georeferoinnin kaksoiskappale laitteella erkanisi kartasta — ja ilman tätä riviä
+  // natiivin sijainti ei laukaisisi vyöhykepoikkeamaa koskaan, koska arvioi() vaatii
+  // img-kentän. Selaimen viestissä img on jo mukana eikä sitä korvata.
+  const taydennetty = taydennaKuvakoordinaatti(viesti, kohteenTiedot(viesti.eventId).mapRef);
   const edellinen = haeSijainti(istunto?.username);
-  const tietue = paivitaSijainti(istunto?.username, viesti.eventId, viesti);
+  const tietue = paivitaSijainti(istunto?.username, viesti.eventId, taydennetty);
   if (!tietue) return;
   lahetaViesti(
     { tyyppi: 'sijainnit', eventId: tietue.eventId, sijainnit: [{ ...tietue, ikaMs: 0 }] },

@@ -7,12 +7,22 @@
 // ollut koskaan ajettu: `Kanava.java` kirjoitetaan tämän varaan, ja väärä oletus
 // maksettaisiin vasta kentällä.
 //
-// Todennetaan neljä asiaa, joista kolme on torjuntoja:
+// Todennetaan kättelyn neljä sääntöä, joista kolme on torjuntoja:
 //   1. allekirjoittamaton kättely torjutaan
 //   2. väärennetty allekirjoitus torjutaan
-//   3. kelvollinen allekirjoitus päästetään läpi
+//   3. vanhentunut allekirjoitus torjutaan
 //   4. toistettu kättely torjutaan (nonce kattaa myös kanavan)
-// ja lopuksi se mitä varten kanava on: sijaintipäivitys kulkee kentältä palvelimelle.
+//   5. kelvollinen kättely päästetään läpi
+//
+// ja sen jälkeen se mitä varten kanava on olemassa, eli KOKO KETJU pelkästä GPS:stä:
+//   6. sijaintipäivitys kulkee kentältä palvelimelle
+//   7. ensimmäinen sijainti ei hälytä (raja on ylitettävä)
+//   8. vyöhykepoikkeama laukeaa vaikka laite ei lähetä kuvakoordinaattia
+//
+// Kohta 8 on erän 11 valmiuskriteeri. Natiivisovellus lähettää pelkän GPS:n, ja
+// geofence.js vaatii kuvakoordinaatin — palvelin laskee sen kalibroinnista
+// (georeferointi.js). Ilman sitä poikkeama ei laukeaisi koskaan, tarkkuudesta
+// riippumatta, ja vika olisi täysin hiljainen.
 //
 // Ajetaan repon juuresta: node server/e2e-kanava.mjs
 
@@ -46,6 +56,41 @@ fs.writeFileSync(path.join(DATA, 'users.json'), JSON.stringify({ users: [
   { username: 'vartija1', role: 'user', roleId: 'vartijataso', password_hash: bcrypt.hashSync('salasana123', 4) },
 ] }, null, 2));
 
+// Kohde jolla on KALIBROINTI ja vyöhyke. Tämä on erän 11 viimeisen palan koekenttä:
+// natiivisovellus lähettää pelkän GPS:n, ja vyöhykearviointi vaatii kuvakoordinaatin —
+// palvelimen on siis laskettava se kalibroinnista tai poikkeama ei laukea koskaan.
+//
+// Kalibrointi on pohjoinen ylöspäin, samat luvut kuin georeferointi.test.js:ssä:
+//   img (0.2, 0.8) <-> (LAT,         LON)
+//   img (0.8, 0.2) <-> (LAT + 0.002, LON + 0.004)
+// jolloin img (0.5, 0.5) <-> (LAT + 0.001, LON + 0.002).
+const LAT = 61.494;
+const LON = 23.765;
+const ULKONA = { lat: LAT, lon: LON };                       // img (0.2, 0.8)
+const SISALLA = { lat: LAT + 0.001, lon: LON + 0.002 };      // img (0.5, 0.5)
+
+fs.writeFileSync(path.join(DATA, 'guardSites.json'), JSON.stringify([
+  {
+    id: 'kohde-vyohyke',
+    name: 'Testikohde',
+    mapRef: [
+      { img: { x: 0.2, y: 0.8 }, gps: { lat: LAT, lon: LON } },
+      { img: { x: 0.8, y: 0.2 }, gps: { lat: LAT + 0.002, lon: LON + 0.004 } },
+    ],
+    zones: [
+      {
+        id: 'vyohyke-1',
+        nimi: 'Kielletty alue',
+        halytys: 'saapuminen',
+        pisteet: [
+          { x: 0.4, y: 0.4 }, { x: 0.6, y: 0.4 },
+          { x: 0.6, y: 0.6 }, { x: 0.4, y: 0.6 },
+        ],
+      },
+    ],
+  },
+], null, 2));
+
 // Laitepari syntyy tässä eikä puhelimessa: yksityinen avain tarvitaan allekirjoittamiseen,
 // ja oikean laitteen avain ei poistu Keystoresta. Julkinen avain menee levylle samassa
 // muodossa kuin sovellus sen lähettäisi (X.509 SPKI DER base64).
@@ -76,6 +121,12 @@ const odota = async () => {
     try { await fetch(`${PALVELIN}/api/session`); return; } catch { await new Promise((r) => setTimeout(r, 200)); }
   }
   throw new Error('palvelin ei noussut');
+};
+
+const halytykset = async (evaste) => {
+  const v = await fetch(`${PALVELIN}/api/data/alerts`, { headers: { Cookie: evaste } });
+  const j = await v.json().catch(() => null);
+  return Array.isArray(j?.data) ? j.data : [];
 };
 
 const vaita = (ehto, teksti) => {
@@ -175,6 +226,36 @@ try {
     nakyy = (v.sijainnit || []).some((s) => s.username === 'vartija1' && s.gps?.lat === 60.1699);
   }
   vaita(nakyy, 'laitteen kanavalla lahettama sijainti nakyy palvelimella');
+
+  // --- 7. Vyöhykepoikkeama pelkästä GPS:stä -----------------------------------------
+  //
+  // Tämä on erän 11 valmiuskriteerin toinen puoli. Kaksi sijaintia, ja järjestys on osa
+  // testiä: geofence hälyttää vain RAJAN YLITYKSESTÄ, joten ensimmäinen sijainti ei saa
+  // hälyttää vaikka se olisi vyöhykkeen sisällä.
+  if (kelpo.auki) {
+    kelpo.ws.send(JSON.stringify({
+      tyyppi: 'sijainti', eventId: 'kohde-vyohyke',
+      gps: { ...ULKONA, tarkkuus: 10 },
+    }));
+    await new Promise((r) => setTimeout(r, 300));
+
+    const ennenYlitysta = await halytykset(evaste);
+    vaita(ennenYlitysta.length === 0, 'ensimmainen sijainti ei halyta');
+
+    kelpo.ws.send(JSON.stringify({
+      tyyppi: 'sijainti', eventId: 'kohde-vyohyke',
+      gps: { ...SISALLA, tarkkuus: 10 },
+    }));
+  }
+
+  let poikkeama = null;
+  for (let i = 0; i < 25 && !poikkeama; i += 1) {
+    await new Promise((r) => setTimeout(r, 100));
+    poikkeama = (await halytykset(evaste)).find((h) => h?.tyyppi === 'geofence') || null;
+  }
+  vaita(!!poikkeama, 'vyohykepoikkeama laukesi pelkasta GPS:sta');
+  vaita(poikkeama?.kuvaus?.includes('Kielletty alue'),
+    'poikkeama nimeaa oikean vyohykkeen');
 
   if (kelpo.auki) kelpo.ws.close();
 } finally {

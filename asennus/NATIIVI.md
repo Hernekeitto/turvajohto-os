@@ -791,7 +791,7 @@ sekunnin väli lukitaan.
 | `Kanava.java` | Valmis, todennettu laitteella |
 | `Sijainti.java` | Valmis, todennettu laitteella |
 | Luvat ja FGS-tyyppi | Valmis |
-| Vyöhykepoikkeama | **Ei laukea** — tarkkuus ei riitä |
+| Vyöhykepoikkeama | **Laukeaa** — ks. alla |
 
 **Palvelinpuoli oli valmis ennestään, ja se oli arvaus kunnes se ajettiin.**
 `tunnistaKanava` kutsuu `getSessionUser`ia, joka putoaa laiteallekirjoitukseen kun
@@ -817,7 +817,40 @@ tunnetun sijainnin välimuistista — ensimmäinen korjaus ehtii ennen soketin a
 pudotetaan. Mitattu hinta on **61 sekuntia**: seuraava korjaus meni läpi ja vartija näkyi
 kartalla. Tilanne korjaa itsensä, joten Kanavan ja Sijainnin väliin ei lisätty kytkentää.
 
-##### Avoin päätös: tarkkuus vastaan akku
+##### Ratkaistu: tarkkuus riittää, ja kuvakoordinaatti lasketaan palvelimella
+
+Kaksi estettä löytyi ja molemmat kaatuivat samana päivänä.
+
+**Tarkkuus ei ollut este.** Mitattu 11.9.2026 minuutin välein samalla laitteella:
+
+| Missä | Tarkkuus |
+|---|---|
+| Sisällä | 100 m seitsemän kertaa peräkkäin, koordinaatit jäätyneinä |
+| Ulkona | 12,1 m · 21,0 m · 52,4 m · 20,9 m |
+
+Sisällä luku on tukiasemapaikannusta eikä mittaus — sata metriä tasan, sama piste joka
+kerta. Ulkona balanced käyttää satelliitteja ja kolme neljästä alitti 50 metrin
+vaatimuksen. `PRIORITY_BALANCED_POWER_ACCURACY` siis riittää, eikä `HIGH_ACCURACY`:n
+akkukustannusta tarvitse maksaa. Yksittäiset ylitykset ohitetaan, ja se on oikea käytös:
+geofence jättää arvioinnin tekemättä eikä hälytä arvauksen perusteella.
+
+**Varsinainen este oli kuvakoordinaatti.** `arvioi()` vaatii `img`-kentän, koska
+vyöhykkeet on piirretty pohjakuvalle, ja natiivi lähettää tarkoituksella pelkän GPS:n.
+Poikkeama ei siis olisi lauennut koskaan, tarkkuudesta riippumatta — ja vika olisi ollut
+täysin hiljainen.
+
+Ratkaisu on `server/georeferointi.js`: palvelin täydentää kuvakoordinaatin kohteen
+kalibroinnista (`mapRef`) kun sitä ei ole. Se on **kolmas tietoinen kaksoiskappale**
+samassa perheessä, ja kolme muuta vaihtoehtoa punnittiin: natiivi laskisi itse (kolmas
+toteutus, kalibrointi vietävä laitteelle), web täydentäisi (vaatisi sovelluksen olevan
+auki — juuri se mitä erä 11 poistaa), tai vyöhykkeet GPS-muotoon (oikeampi pitkällä
+tähtäimellä, mutta muuttaa tietomallin ja käyttöliittymän).
+
+Todennettu päästä päähän: `server/e2e-kanava.mjs` lähettää kaksi pelkkää GPS-sijaintia
+kalibroidulle kohteelle ja varmistaa että ensimmäinen ei hälytä ja toinen laukaisee
+poikkeaman oikealla vyöhykkeen nimellä.
+
+##### Akun avoin kysymys
 
 Ensimmäinen mitattu tarkkuus oli **100 m**, ja `geofence.js`:n
 `MAX_TARKKUUS_M = 50` hylkää koko vyöhykearvioinnin sitä huonommalla. Vyöhykesäännöt
