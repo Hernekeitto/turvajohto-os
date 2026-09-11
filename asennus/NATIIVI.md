@@ -668,6 +668,22 @@ Kaksi sudenkuoppaa jotka osuivat kohdalle:
   katvealue ei ole sama asia kuin peruttu oikeus, ja purku hävittäisi Keystore-avaimen
   jota ei saa takaisin.
 
+##### Hallinnasta luopuminen
+
+`dpm set-device-owner` on käytännössä yksisuuntainen, ja ilman paluusuuntaa
+työsuhdelaitetta ei voi luovuttaa eteenpäin. **Purkutie rakennettiin 11.9.2026:**
+`turvajohto-guard://pura-hallinta`.
+
+Se vaatii että hälytyskeskus on ENSIN nollannut laitteen, ja tämä ei ole muotoseikka
+vaan ainoa asia joka tekee toiminnosta turvallisen: URL-skeema on avoin kaikille laitteen
+sovelluksille, joten ilman tarkistusta mikä tahansa sovellus voisi poistaa
+pakkopysäytyksen eston ja tappaa valvonnan — täsmälleen se hyökkäys jota vastaan hallinta
+on olemassa. Palvelimen **401** on ainoa hyväksytty vastaus; verkkovirhe ja kaikki muut
+koodit torjutaan.
+
+Sidonnaton laite ei pääse tätä tietä lainkaan, jolloin jäljelle jää tehdasasetusten
+palautus. Se on tiedostettu hinta siitä että portti on kapea.
+
 ##### Zebra ja muut laitteet
 
 Zebran kämmentietokoneet tukevat hallintaan ottoa natiivisti StageNow'lla, eikä niissä
@@ -894,9 +910,3 @@ Kalenterin määrää käytännössä juridiikka, ei koodi.
    saapumisesta jäädä erillinen merkintä jälkiraporttiin?
 2. **Sijaintiväli.** 60 s vastaa nykyistä web-väliä. Vuoron kesto ja akun kesto
    ratkaisevat, onko se oikea — mitattava laitteella ennen lukitsemista.
-3. **Laitteen hallinnan purku puuttuu.** `dpm set-device-owner` on käytännössä
-   yksisuuntainen: purku vaatii joko tehdasasetusten palautuksen tai sen, että sovellus
-   itse kutsuu `clearDeviceOwnerApp`ia. Jälkimmäistä ei ole toteutettu. Ennen kuin
-   hallintaa otetaan käyttöön oikeilla työsuhdelaitteilla, purkutie on rakennettava ja
-   dokumentoitava — muuten laite jää sovelluksen hallintaan senkin jälkeen kun se
-   poistuu käytöstä.
