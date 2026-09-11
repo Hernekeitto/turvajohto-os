@@ -589,6 +589,102 @@ todiste siitä on palvelimelle saapuva lyönti.
 sovellus auki, vuoro aloitettuna kohteesta, pysyvä ilmoitus näkyvissä — ja vasta sitten
 skannaukset.
 
+#### Jelly Star 9.–11.9.2026: valmistajan pakkopysäytys ja laitteen hallinta
+
+Yön yli -testi ei koskaan päässyt alkuun Unihertz Jelly Starilla, koska palvelu kuoli
+minuuteissa. Kolme mitattua ajoa: **10 min 1 s** (10.9 ilta), **5 min 0 s** (11.9 aamu)
+ja aiempi kuuden minuutin ajo. Sama allekirjoitettu binääri eli OnePlus Nord 5:llä
+tunteja.
+
+Tuntomerkeistä vika tunnistuu **pakkopysäytykseksi** eikä muistinpuutteeksi:
+
+| Havainto | Mitä se sulkee pois |
+|---|---|
+| `palvelu_tuhottu` puuttuu lokista | `onDestroy` ohitettiin — normaali lopetus |
+| Ei `jarjestelma_kaynnisti_uudelleen`-riviä | START_STICKY oli kuollut |
+| Vahtikoira ei laukennut 85 minuutissa | Ajastetut herätykset oli peruttu |
+| `kulunut_s` vastasi seinäkelloa sekunnilleen | Laite ei ollut käynnistynyt uudelleen |
+
+Pakkopysäytys estää myös lähetykset ja FCM:n. **Mikään minkä sovellus ajastaa itselleen ei
+selviä siitä** — vahtikoira, uudelleenkäynnistys ja push ovat kaikki saman muurin takana.
+Sovelluspuolen korjausta ei siis ole olemassa.
+
+Nämä oli kokeiltu ja todettu riittämättömiksi ennen kuin hallintaan siirryttiin:
+Androidin akkuoptimoinnin poikkeus myönnettynä, sovelluksen akkuasetus
+"Rajoittamaton", DuraSpeedia ei tässä ROMissa ole, recents-lukitusta ei ole.
+
+##### Ratkaisu: laitteen omistajuus
+
+Ainoa Androidin tarjoama keino on `DevicePolicyManager.setUserControlDisabledPackages`
+(Android 11+), joka poistaa paketilta pakkopysäytyksen myös järjestelmän
+asetusnäytöstä. Sen saa kutsua vain laitteen omistaja.
+
+Koodissa kolme osaa: `Omistaja` (DeviceAdminReceiver, pelkkä nimetty osoite),
+`res/xml/laitehallinta.xml` (**tyhjä** `uses-policies` — sovellus ei pyydä yhtään
+hallintaoikeutta) ja `Laitehallinta.suojaa()`, jota `VuoroService.onCreate` kutsuu joka
+vuoron alussa. Suojaus **luetaan takaisin** `getUserControlDisabledPackages`illa eikä
+kutsun läpimenoon luoteta: valmistajan ROM voi hyväksyä kutsun ja jättää sen huomiotta,
+ja juuri sellaista laitetta varten koko luokka on olemassa.
+
+Loki kertoo tilan joka vuoron alussa, myös silloin kun suojausta ei ole:
+
+```
+laitehallinta omistaja=ei                          hallintaa ei ole otettu
+laitehallinta omistaja=kylla suojaus=voimassa      hallinta päällä ja se tarttui
+laitehallinta omistaja=kylla suojaus=ei_tarttunut  ROM hyväksyi kutsun ja jätti huomiotta
+```
+
+##### Hallintaan ottaminen (kertaluontoinen, per laite)
+
+Ehdot: USB-vianetsintä päällä ja **laitteella ei yhtään tiliä** — yksikin Google-tili
+estää komennon. Sovellus on asennettava ennen hallintaan ottoa.
+
+```
+adb shell dumpsys account | grep Accounts:        # pitää olla 0
+adb install -r app-release-signed.apk
+adb shell dpm set-device-owner fi.turvajohto_os.guard/fi.turvajohto_os.natiivi.Omistaja
+adb shell dumpsys device_policy | grep protectedPackages
+```
+
+Viimeinen rivi on riippumaton todiste: se on järjestelmän oma kirjanpito eikä meidän
+kirjoittamamme loki. Jelly Starilla 11.9.2026 se tuotti
+`protectedPackages=[fi.turvajohto_os.guard]` — **Unihertzin ROM hyväksyi kutsun.**
+
+Kaksi sudenkuoppaa jotka osuivat kohdalle:
+
+- **Sovelluksen uudelleenasennus pyyhkii akkuoptimoinnin poikkeuksen.** Lokin
+  `akkuvapautus=ei` paljasti sen. Palautus ilman käyttöliittymää:
+  `adb shell dumpsys deviceidle whitelist +fi.turvajohto_os.guard`
+- **Poisto ja uudelleenasennus (toisin kuin päivitys) pyyhkii laitesidonnan puhelimen
+  päästä.** Palvelimella sidonta jää, ja koska tunnusta kohden sallitaan yksi laite,
+  uusi sidonta torjutaan kunnes vanha nollataan hallinnasta. Ks. `Sidonta.unohda()`
+  avoimissa päätöksissä.
+
+##### Zebra ja muut laitteet
+
+Zebran kämmentietokoneet tukevat hallintaan ottoa natiivisti StageNow'lla, eikä niissä
+ole vastaavaa tappajaa. Sama koodi kattaa molemmat: ilman hallintaa sovellus toimii
+kuten ennenkin, hallinnan kanssa pakkopysäytys on poissa.
+
+Jos vianetsintää ei saa päälle, jäljelle jää QR-provisiointi tehdasasetusten
+palautuksen jälkeen. Se ei vaadi vianetsintää mutta pyyhkii laitteen ja vaatii APK:n
+tarjoamisen verkosta allekirjoituksen tarkistussumman kera.
+
+##### Sivutuote: hiljenemisraja oli väärin
+
+Sama mittausjakso paljasti palvelinpuolen virheen, joka ei liity Jellyyn lainkaan.
+`VALVONTA_HILJENEE_MS` oli kolme minuuttia, mitoitettuna oletukselle "lyönti tulee
+minuutin välein". Oletus ei pidä: palvelun lyönti nojaa `Handler.postDelayed`iin, joka
+laskee aikaa `uptimeMillis`-kellolla eikä kulje syvässä unessa. Nord 5:llä minuutin väli
+venyi Dozessa kuuteen minuuttiin, ja vahti kirjasi **11 väärää `elossa=false`-lukemaa
+1 h 24 min aikana täysin terveellä laitteella.**
+
+Korjaus oli kaksiosainen: vahtikoira **lyö** nyt palvelimelle jokaisella herätyksellään
+(`setAndAllowWhileIdle` läpäisee Dozen, eli lyönnillä on yläraja jota `postDelayed`illa
+ei ollut), ja raja johdetaan siitä välistä: 15 min vahdin väli + 9 min Dozen jousto +
+1 min varmuusvara = **25 min**. Perustelu on `server/laite.js`:n kommentissa ja
+regressioesto `server/laite.test.js`:ssä.
+
 ### Erä 11 — Kanava ja sijainti
 
 | Osa | Uutta |
@@ -676,3 +772,18 @@ Kalenterin määrää käytännössä juridiikka, ei koodi.
    saapumisesta jäädä erillinen merkintä jälkiraporttiin?
 2. **Sijaintiväli.** 60 s vastaa nykyistä web-väliä. Vuoron kesto ja akun kesto
    ratkaisevat, onko se oikea — mitattava laitteella ennen lukitsemista.
+3. **`Sidonta.unohda()` on kirjoitettu mutta kutsumaton.** Kun `sido()` kutsutaan jo
+   sidotulla laitteella, se kieltäytyy — myös silloin kun sidonta on palvelimella jo
+   nollattu. Ehdotus: kysy `GET /api/laite/oma`, ja **vain 401:llä** (sidonta oikeasti
+   peruttu) unohda paikallinen sidonta ja jatka. Verkkovirheellä ei saa unohtaa koskaan,
+   koska katvealue ei ole sama asia kuin peruttu oikeus.
+4. **Laitteen hallinnan purku puuttuu.** `dpm set-device-owner` on käytännössä
+   yksisuuntainen: purku vaatii joko tehdasasetusten palautuksen tai sen, että sovellus
+   itse kutsuu `clearDeviceOwnerApp`ia. Jälkimmäistä ei ole toteutettu. Ennen kuin
+   hallintaa otetaan käyttöön oikeilla työsuhdelaitteilla, purkutie on rakennettava ja
+   dokumentoitava — muuten laite jää sovelluksen hallintaan senkin jälkeen kun se
+   poistuu käytöstä.
+5. **`BOOT_COMPLETED`-vastaanotinta ei ole.** Uudelleenkäynnistys pysäyttää valvonnan
+   hiljaa: 11.9.2026 Jelly Star käynnistyi kesken päivän eikä palvelu palannut itsestään.
+   Vuoron jatkaminen käynnistyksen jälkeen on erikseen päätettävä — automaattinen jatko
+   voi olla väärin, mutta hiljainen katkos on varmasti väärin.
