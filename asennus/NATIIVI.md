@@ -850,6 +850,30 @@ Todennettu päästä päähän: `server/e2e-kanava.mjs` lähettää kaksi pelkk�
 kalibroidulle kohteelle ja varmistaa että ensimmäinen ei hälytä ja toinen laukaisee
 poikkeaman oikealla vyöhykkeen nimellä.
 
+##### Kaksi asiaa jotka tehtiin samana iltana
+
+**Valvonnan tarkistuslista** (`turvajohto-guard://tila`) siirrettiin erästä 15 tähän,
+koska sitä tarvittiin heti: kaikki tämän päivän vianetsintä tehtiin kaapelin yli
+`adb`:llä, eivätkä vartija ja päivystäjä voi tehdä sitä. Näkymä listaa sidonnan,
+laitehallinnan, akkuoptimoinnin, ilmoitus- ja sijaintiluvat, Play-palvelut, vuoron,
+palvelun, kanavan ja yhden allekirjoitetun palvelinkutsun tuloksen. Se **ei korjaa
+mitään** — korjaava diagnostiikka näyttäisi aina vihreää eikä kukaan saisi tietää että
+vika oli olemassa.
+
+**URL-skeeman aukko suljettiin.** `SiltaActivity`:n oma kirjattu turvallisuuskysymys oli
+se, että mikä tahansa laitteen sovellus voi lähettää `turvajohto-guard://vuoro`. Erään 11
+asti haitta oli olematon; nyt vuoroon on ripustettu sijainnin lähetys, ja väärä vuoro
+tarkoittaisi sijaintitiedon syntymistä silloin kun vartija ei ole töissä.
+
+Ratkaisu ei ole lähettäjän tunnistaminen vaan se, ettei sillä ole väliä: sovellus kysyy
+`GET /api/vuoro/oma` ja vertaa kohdetta. Totuus vuorosta asuu joka tapauksessa
+palvelimella, koska selain luo sen `POST /api/vuoro`:lla ennen kuin avaa osoitteen.
+Vieras sovellus ei voi luoda vuoroa eikä siis läpäistä tarkistusta — ja jos vuoro oikeasti
+on käynnissä, valvonnan käynnistäminen on oikein riippumatta siitä kuka intentin lähetti.
+
+Verkkovirhe torjutaan, eikä se estä kenttäkäyttöä: laillinen polku on juuri käynyt
+palvelimella luomassa vuoron, joten ilman verkkoa sitä ei olisi syntynyt lainkaan.
+
 ##### Akun avoin kysymys
 
 Ensimmäinen mitattu tarkkuus oli **100 m**, ja `geofence.js`:n
