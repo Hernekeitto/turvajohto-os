@@ -1034,6 +1034,137 @@ palaa ilman napautusta.
 herättää ruudun → vastaamatta jättäminen tuottaa `mandown`-hälytyksen valvomoon.
 Testivektorien on mentävä läpi sekä Javassa että TypeScriptissä.
 
+#### Tila 12.9.2026: toiminnallisesti valmis, kaksi mittausta auki
+
+| Osa | Tila |
+|---|---|
+| `Mandown.java` + `MandownTest.java` | Valmis — 13 Java-, 12 TS-testiä |
+| Kuljetus palvelimelle | **Ei vaatinut riviäkään** — ks. alla |
+| Asetus palvelimelle + web-käyttöliittymä | Valmis |
+| `Anturit.java` | **Todennettu laitteella** |
+| `HalytysActivity` ja `Kysely` | **Todennettu laitteella** |
+| Selain väistyy natiivin tieltä | Valmis, ei todennettu ajossa |
+
+Todennus laitteella 12.9.2026:
+
+```
+10:42:05 anturi_alkoi vali_ms=250 liikkumaton_min=5
+10:47:23 anturi_epaily laji=liikkumaton        ← 5 min 18 s
+10:47:23 kysely_alkoi laji=liikkumaton vastausaika_s=30
+10:47:41 kysely_kuitattu laji=liikkumaton      ← 18 s vastausaikaa käytetty
+```
+
+`kysely_nakyma_estyi` puuttuu, eli täysruutuaie meni läpi ja näkymä nousi lukitusruudun
+päälle. `halytys_lahetetty` puuttuu, eli nappi peruu oikeasti eikä hälytystä syntynyt.
+
+**Palvelinpuoli oli valmis ennestään, taas.** `/api/halytys` on `requireAuth`in takana,
+joka putoaa laiteallekirjoitukseen kun evästettä ei ole. Koodi näytti tukevan tätä mutta
+sitä ei ollut ajettu tältä polulta. `server/e2e-halytys.mjs` todentaa sen ilman puhelinta:
+12 väitettä, joista tärkein natiivin kannalta on **toistopainallus** — sovellus yrittää
+uudelleen kun verkko takkuaa, ja palvelin palauttaa saman hälytyksen sen sijaan että loisi
+toisen. Yksi kaatuminen, yksi tekstiviesti. Ilman sitä idempotenssi olisi pitänyt rakentaa
+sovellukseen.
+
+Löytyi myös kaksi käyttöönoton ehtoa joita ei voi päätellä mistään muualta: vartijan
+tunnuksella on oltava **`tuotteet: ['guard']`** (muuten `/api/vuoro/oma` torjutaan eikä
+vuoro käynnisty) ja **`guard_alarms`-katseluoikeus** (muuten man-down torjutaan 403:lla
+vaikka allekirjoitus olisi moitteeton). Molemmat on kirjattu e2e-tiedostoon siihen
+kohtaan jossa ne kaatoivat testin.
+
+##### Kolme rakenneratkaisua
+
+**Ajastin on `Kysely`ssä eikä näkymässä.** Näkymä on mahdollisuus perua, ei hälytyksen
+edellytys. Android 14:stä alkaen `USE_FULL_SCREEN_INTENT` myönnetään automaattisesti vain
+puhelu- ja herätyssovelluksille, eikä tämä ole kumpikaan — jos hälytys riippuisi
+näkymästä, man-down vaikenisi juuri niillä laitteilla joilla se eniten tarvitaan. Näkymän
+epäonnistuminen kirjataan ja hälytys lähtee silti.
+
+**Vain nappi peruu.** Näkymän sulkeminen, takaisin-painike tai sovelluksen tappaminen
+eivät peru mitään: kaatunut ihminen ei paina nappia, mutta taskussa oleva puhelin voi
+sulkea näkymän itsestään.
+
+**Toinen kysely avoimen päälle ohitetaan.** Liikkumattomuussääntö tuottaa epäilyn
+uudelleen joka viidennellä minuutilla. Ilman ohitusta jokainen niistä nollaisi
+vastausajan alusta eikä hälytys lähtisi koskaan — sääntö olisi estänyt oman toimintansa.
+
+##### Asetus siirtyi selaimen localStoragesta palvelimelle
+
+Man-downin päällä/pois ja liikkumattomuusraja asuivat selaimen tallenteessa. Se oli väärä
+paikka kahdesta syystä: natiivisovellus ei pääse siihen käsiksi lainkaan — ja juuri se
+sovellus man-downin ajaa, koska selain ei ole auki taskussa — ja tärkeämmin, **man-down on
+työnantajan turvallisuusasetus eikä työntekijän valinta.** localStoragessa vartija saattoi
+kytkeä oman valvontansa pois kenenkään näkemättä, ja raja oli laitekohtainen: sama vartija
+sai eri valvonnan sen mukaan millä puhelimella hän sattui kirjautumaan.
+
+Asetus on nyt kohteen tietueessa ja kulkee `/api/vuoro/oma`-vastauksessa, eli **samassa
+kutsussa jonka sovellus jo tekee** varmistaakseen että vuoro on olemassa. Nolla uutta
+päätepistettä. Oma päätepiste olisi toinen pyyntö joka voi epäonnistua erikseen, ja
+silloin sovelluksen pitäisi päättää mitä tehdä vuorolla jonka asetusta se ei tiedä.
+
+**Oletus on pois päältä**, ja pois päältä oleminen tehdään näkyväksi: sovellus kirjaa
+`mandown_pois_kaytosta` vuoron alussa ja tarkistuslista näyttää sen. Hiljainen
+käyttöönotto jokaisessa olemassa olevassa kohteessa tarkoittaisi yöllisiä kyselyitä ilman
+että kukaan on niin päättänyt; hiljainen poissaolo taas olisi valvonta jota ei ole eikä
+siitä tiedä kukaan.
+
+Vartijan kytkin muuttui **tilanäytöksi** sekä hälytysnäkymässä että mobiilivalikossa. Tila
+näytetään silti, koska vartijan on tiedettävä valvotaanko häntä — tyhjä kohta olisi arvaus.
+
+##### Auki: kaksi mittausta
+
+**Man-downin akkuhinta.** Puhelin on ollut kaapelissa koko todennuksen ajan, joten 4 Hz:n
+anturikuuntelun kustannus on tuntematon. Vertailuluku on olemassa: valvonta ilman
+man-downia kuluttaa 1,56 %/h.
+
+**Anturi Dozessa.** Jatkaako anturi näytteiden toimittamista ruudun ollessa sammuksissa
+tuntikausia? Näytelaskuri kulkee sydämenlyönnin mukana (`lyonti anturi=N`) juuri tätä
+varten — normaali on **190–240 näytettä minuutissa**, ja pysähtynyt luku on man-downin
+hiljainen kuolema.
+
+Molemmat ratkeavat samalla yön yli -ajolla.
+
+##### Testaamatta laitteella
+
+Kaatumissääntö (isku + liikkumattomuus) ja koko ketju hälytykseen asti. Jälkimmäinen
+synnyttää oikean hälytyksen tuotantoon, joten se tehdään tietoisesti eikä ohimennen.
+
+#### v13 12.9.2026: anturin lepolukema ei ole 9,81
+
+Man-down oli päällä ja anturi toimitti näytteitä, mutta liikkumattomuutta ei havaittu
+kertaakaan kymmenessä minuutissa. Vika ei ollut anturissa eikä koodissa vaan **säännön
+oletuksessa.**
+
+Luettu laitteen omasta anturipuskurista (`dumpsys sensorservice`), 50 näytettä puhelin
+liikkumatta pöydällä:
+
+| | |
+|---|---|
+| Voimakkuus | 10,285 – 10,437, keskiarvo **10,378** |
+| Poikkeama 9,81:stä | **+0,568** |
+| Yli 0,6 rajan | **8 / 50 eli 16 %** |
+| Peräkkäisten ero | keskiarvo 0,026, suurin **0,110** |
+
+Sääntö oli `|voimakkuus − 9,81| ≤ 0,6`. Anturin puolen yksikön kalibrointipoikkeama söi
+toleranssista 0,57 ja jäljelle jäi 0,03. Joka kuudes näyte nollasi paikallaanolon, eikä
+viisi minuuttia täyttynyt koskaan. **Vika ei näkynyt minään muuna kuin hiljaisuutena.**
+
+Paikallaanolo mitataan nyt peräkkäisten näytteiden erosta (`LIIKKUMATTA_MUUTOS = 0,35`).
+Kalibrointipoikkeama on sama molemmissa näytteissä ja kumoutuu erotuksessa. Raja on
+kolminkertainen mitattuun lepokohinaan nähden — mitattu eikä arvattu.
+
+**Sama vika oli selaimen toteutuksessa**, eikä sitä olisi huomattu sieltä: se olisi vain
+jättänyt hälyttämättä. Korjattu molempiin samoilla testivektoreilla.
+
+Kaksi seurausta jotka testit paljastivat ja jotka on muistettava sääntöä muutettaessa:
+
+**Iskun jälkeen vertailukohta on tyhjennettävä.** Ensimmäinen näyte iskun jälkeen putoaa
+35:stä kymmeneen, ja muutossääntö lukisi sen liikkeeksi — se nollaisi juuri kirjatun
+iskun, eikä kaatumista voisi havaita koskaan.
+
+**Vakiona pysyvä luku on nyt paikallaan riippumatta arvostaan.** Testivektoreissa liike on
+esitettävä heiluvana arvona. Vanhoissa vektoreissa liikettä esitettiin antamalla arvo
+kaukana 9,81:stä — mikä on vanhan säännön virhe pienoiskoossa.
+
 ### Erä 13 — Hätäpainike sovelluksen ulkopuolelta
 
 | Osa | Uutta |
