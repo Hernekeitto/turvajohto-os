@@ -32,6 +32,9 @@ type Props = {
   // palvelimelta. Vartija voi siis myöntää luvan mutta ei kytkeä valvontaa pois.
   liikelupa: boolean;
   onLiikelupa: (myonnetty: boolean) => void;
+  // Valvooko puhelinsovellus juuri nyt. Jos valvoo, selain väistyy — ja se KERROTAAN,
+  // koska muuten vartija näkisi "ei päällä" ja luulisi valvontaa katkenneeksi.
+  natiivi: boolean;
   onMuutos: (halytys: Halytys) => void;
   onTakaisin: () => void;
 };
@@ -56,7 +59,7 @@ async function pyydaLiikelupa(): Promise<boolean> {
 }
 
 export const Halytykset = ({
-  kohde, halytykset, kayttaja, saaKuitata, mandown, liikelupa, onLiikelupa, onMuutos, onTakaisin,
+  kohde, halytykset, kayttaja, saaKuitata, mandown, liikelupa, onLiikelupa, natiivi, onMuutos, onTakaisin,
 }: Props) => {
   const [virhe, setVirhe] = useState<string | null>(null);
   const [ilmoitus, setIlmoitus] = useState<string | null>(null);
@@ -324,6 +327,11 @@ export const Halytykset = ({
           <p className="text-sm text-ink-body bg-sunken border border-line-soft rounded-lg p-3">
             Man-down ei ole käytössä tässä kohteessa. Asetuksen tekee hälytyskeskus
             kohteen tiedoissa.
+          </p>
+        ) : natiivi ? (
+          <p className="text-sm text-success-ink bg-success-soft border border-success/40 rounded-lg p-3">
+            Puhelinsovellus valvoo man-downia. Selain ei toista sitä, koska sovellus toimii
+            myös taskussa ruudun ollessa sammuksissa.
           </p>
         ) : liikelupa ? (
           <p className="text-sm text-success-ink bg-success-soft border border-success/40 rounded-lg p-3">

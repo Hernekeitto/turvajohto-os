@@ -18,6 +18,39 @@ export type Laite = {
 
 export type LaiteTila = { sidottu: boolean; laite: Laite | null };
 
+// --- Väistääkö selain natiivisovellusta (erä 12) --------------------------------------
+
+// Kuinka tuore laitteen viimeisin sydämenlyönti on oltava, jotta selain katsoo
+// natiivisovelluksen valvovan JUURI NYT.
+//
+// Kolme minuuttia on kolme väliin jäänyttä lyöntiä (sovellus lyö minuutin välein).
+// Tarkoituksella paljon tiukempi kuin palvelimen valvontaElossa, joka sallii 35
+// minuuttia: se vastaa kysymykseen "onko tämä laite hengissä", tämä kysymykseen "onko
+// sen valvonta päällä tällä sekunnilla". Jos käyttäisimme 35 minuutin rajaa, puoli
+// tuntia sitten kuollut sovellus pitäisi selaimen yhä sivussa — eikä kukaan valvoisi.
+//
+// VIRHEEN SUUNTA ON VALITTU: epävarmassa tilanteessa molemmat valvovat. Kaksi kyselyä
+// samasta liikkumattomuudesta on kiusallista mutta vaaratonta — palvelin palauttaa
+// saman hälytyksen eikä luo toista (server/e2e-halytys.mjs) — mutta nolla kyselyä ei
+// ole kumpaakaan.
+export const NATIIVI_TUORE_MS = 3 * 60 * 1000;
+
+/**
+ * Valvooko käyttäjän natiivisovellus juuri nyt.
+ *
+ * Palvelimen muistissa oleva lyöntihetki on tarkka, mutta se katoaa palvelimen
+ * uudelleenkäynnistyksessä — silloin levyllä oleva arvo on korkeintaan viisi minuuttia
+ * jäljessä (LYONTI_TALLENNUSVALI_MS). Tämä vastaa hetken aikaa "ei valvo" vaikka valvoo,
+ * ja se on oikea suunta: selain ottaa valvonnan itselleen turhaan sen sijaan että
+ * jättäisi sen tekemättä.
+ */
+export function natiiviValvoo(tila: LaiteTila | null, nyt = Date.now()): boolean {
+  if (!tila?.sidottu || !tila.laite?.viimeinenLyonti) return false;
+  const hetki = Date.parse(tila.laite.viimeinenLyonti);
+  if (!Number.isFinite(hetki)) return false;
+  return nyt - hetki < NATIIVI_TUORE_MS;
+}
+
 // Oman tunnuksen sidontatilanne.
 export async function haeOmaTila(): Promise<LaiteTila> {
   const vastaus = await fetch('/api/laite/tila', { credentials: 'include' });

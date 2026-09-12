@@ -21,6 +21,7 @@ import { Halytyskeskus } from './Halytyskeskus';
 import { Kohdenakyma } from './Kohdenakyma';
 import { kohteenToiminnot, type Toiminto } from './tilannekuva';
 import { Halytysvahti } from '../shared/komponentit/Halytysvahti';
+import { haeOmaTila, natiiviValvoo, NATIIVI_TUORE_MS } from '../shared/laitteet';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { haeHalytykset, TYYPPI_LABEL, type Halytys } from '../shared/halytykset';
 import { LIIKKUMATON_MS } from '../shared/mandown';
@@ -245,6 +246,15 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // kysytään eleestä, ja muistiin tallennettu "kyllä" ei todistaisi että selain yhä
   // antaa sen.
   const [liikelupa, setLiikelupa] = useState(false);
+
+  // Valvooko puhelinsovellus juuri nyt. Jos valvoo, selain VÄISTYY man-downista.
+  //
+  // Sovellus tekee saman työn paremmin: se toimii taskussa ruudun ollessa sammuksissa,
+  // kun taas selaimen liiketunnistus vaatii sivun olevan auki ja näkyvissä. Molempien
+  // yhtaikainen valvonta ei olisi vaarallista — palvelin palauttaa saman hälytyksen
+  // eikä luo toista — mutta se kysyisi vartijalta saman kysymyksen kahdesti kahdesta
+  // eri paikasta, ja kahdesti kysytty "oletko kunnossa" opettaa ohittamaan sen.
+  const [natiivi, setNatiivi] = useState(false);
 
   // Selaimissa joissa erillistä lupaa ei ole, se katsotaan saaduksi heti.
   //
@@ -539,6 +549,30 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     laheta: lahetaKanavalle,
     muunnos: luoMuunnos((aktiivinenKohde as { mapRef?: never[] } | null)?.mapRef),
   });
+
+  // Puhelinsovelluksen tila. Kysytään vain kun sillä on merkitystä eli man-down on
+  // kohteella päällä — turha kysely joka minuutti olisi kuormaa asiasta jota kukaan
+  // ei katso.
+  //
+  // Väli on minuutti eli sama kuin sovelluksen sydämenlyönti. Tiheämpi kysely ei voi
+  // tuottaa tuoreempaa tietoa kuin mitä palvelimella on.
+  useEffect(() => {
+    if (!mandown) {
+      setNatiivi(false);
+      return;
+    }
+    let voimassa = true;
+    const tarkista = async () => {
+      const tila = await haeOmaTila().catch(() => null);
+      if (voimassa) setNatiivi(natiiviValvoo(tila));
+    };
+    tarkista();
+    const ajastin = window.setInterval(tarkista, 60_000);
+    return () => {
+      voimassa = false;
+      window.clearInterval(ajastin);
+    };
+  }, [mandown]);
 
   // Vuoron palautus. Laitteen tallenne luetaan ensin, jotta näkymä on oikea heti eikä
   // vilku tyhjänä verkon ajan — mutta se on kopio, ja palvelin voittaa ristiriidassa.
@@ -1400,10 +1434,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           halytykset={halytykset}
           onMuutos={paivitaHalytys}
           onVirkista={paivitaHalytykset}
-          // Sekä kohteen asetus ETTÄ selaimen lupa. Kumpikin yksin tarkoittaisi
-          // kuuntelijaa joka ei koskaan saa näytteitä, eli valvontaa joka näyttää
-          // päällä olevalta olematta sitä.
-          mandown={mandown && liikelupa}
+          // Kolme ehtoa. Kohteen asetus ja selaimen lupa ovat edellytyksiä; natiivin
+          // valvonta on este. Kumpi tahansa edellytys yksin tarkoittaisi kuuntelijaa joka
+          // ei koskaan saa näytteitä, eli valvontaa joka näyttää päällä olevalta olematta
+          // sitä.
+          mandown={mandown && liikelupa && !natiivi}
           liikkumatonMin={mandownMin}
         />
       )}
@@ -1609,6 +1644,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           mandown={mandown}
           liikelupa={liikelupa}
           onLiikelupa={setLiikelupa}
+          natiivi={natiivi}
           onMuutos={paivitaHalytys}
           onTakaisin={() => setHalytysKohde(null)}
         />
@@ -1834,6 +1870,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         mandown={mandown}
         mandownMin={mandownMin}
         liikelupa={liikelupa}
+        natiivi={natiivi}
         onKamera={() => setKameraAuki(true)}
         onTilatieto={saaKirjataToimenpiteen && vuoroKohde ? () => setTilatietoAuki(true) : null}
         onPaataVuoro={vuoro ? paataVuoro : null}

@@ -39,6 +39,7 @@ type Props = {
   mandown: boolean;
   mandownMin: number;
   liikelupa: boolean;
+  natiivi: boolean;
   onKamera: () => void;
   // null = tunnuksella ei ole oikeutta kirjata toimenpiteitä, jolloin riviä ei näytetä.
   // Valikon rivi joka ei tee mitään on pahempi kuin puuttuva rivi.
@@ -58,7 +59,7 @@ const kellonaika = (iso: string) => {
 
 export const MobiiliKehys = ({
   otsikko, vuoro, ilmoitukset, onIlmoitus, linkit, onLinkki,
-  mandown, mandownMin, liikelupa,
+  mandown, mandownMin, liikelupa, natiivi,
   onKamera, onTilatieto, onPaataVuoro, onTyopoyta, onLogout, children,
 }: Props) => {
   // Yksi paneeli kerrallaan auki: kolme päällekkäistä paneelia puhelimen ruudulla
@@ -228,7 +229,12 @@ export const MobiiliKehys = ({
                     {mandown ? `käytössä, ${mandownMin} min` : 'ei käytössä'}
                   </span>
                 </div>
-                {mandown && !liikelupa && (
+                {mandown && natiivi && (
+                  <p className="text-sm text-ink-on-dark-muted mt-2 leading-relaxed">
+                    Puhelinsovellus valvoo. Selain ei toista sitä.
+                  </p>
+                )}
+                {mandown && !natiivi && !liikelupa && (
                   <p className="text-sm text-warning mt-2 leading-relaxed">
                     Selain ei ole saanut lupaa liikeantureihin. Valvonta ei ole päällä
                     ennen kuin annat luvan Hälytykset-näkymässä.

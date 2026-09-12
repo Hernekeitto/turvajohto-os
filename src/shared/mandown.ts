@@ -22,17 +22,38 @@
 // ulos. Anturin kuuntelu ja lupakysely ovat käyttöliittymässä, jotta säännöt voi testata
 // ilman selainta — kaatumista ei voi testata muuten kuin syöttämällä lukuja.
 
-// Painovoima levossa. Puhelin pöydällä näyttää noin tätä riippumatta asennosta, koska
-// kiihtyvyys mitataan painovoima mukaan lukien.
+// Painovoima levossa. EI enää käytössä paikallaanolon mittaamiseen — ks.
+// LIIKKUMATTA_MUUTOS. Jää testien ja dokumentaation vertailuarvoksi, koska "noin 9,81"
+// on yhä se suuruusluokka jota levossa oleva laite näyttää.
 export const LEPO = 9.81;
 
 // Iskun raja. 25 m/s² on noin 2,5 g: reipas ravistus ei riitä, kovalle alustalle
 // putoaminen ylittää sen selvästi.
 export const ISKU_RAJA = 25;
 
-// Kuinka paljon lepoarvosta saa poiketa ja silti olla "paikallaan". Taskussa oleva
-// puhelin hengityksen tahdissa liikkuu tämän sisällä; kävelevä ei.
-export const LIIKKUMATTA_POIKKEAMA = 0.6;
+// Kuinka paljon PERÄKKÄISET näytteet saavat erota ja silti olla "paikallaan".
+//
+// --- MIKSI TÄMÄ MITTAA MUUTOSTA EIKÄ ETÄISYYTTÄ LEPOARVOSTA -------------------------
+//
+// Tässä oli 12.9.2026 asti sääntö |voimakkuus - 9,81| <= 0,6. Se oletti että levossa
+// oleva laite näyttää painovoiman verran, ja se oletus on väärä.
+//
+// MITATTU Jelly Starilla (sh3001_acc), 50 näytettä puhelin liikkumatta pöydällä:
+//
+//     voimakkuus      10,285 – 10,437, keskiarvo 10,378
+//     poikkeama 9,81  +0,568
+//     yli 0,6 rajan   8 näytettä 50:stä eli 16 %
+//     peräkkäisten ero  keskiarvo 0,026, suurin 0,110
+//
+// Anturissa on siis puolen yksikön kalibrointipoikkeama, joka söi 0,6:n toleranssista
+// 0,57 — jäljelle jäi 0,03. Joka kuudes näyte ylitti rajan, nollasi paikallaanolon ja
+// aloitti viiden minuutin laskennan alusta. Liikkumattomuutta EI OLISI HAVAITTU KOSKAAN
+// tällä laitteella, eikä vika olisi näkynyt minään muuna kuin hiljaisuutena.
+//
+// Peräkkäisten näytteiden ero on immuuni kalibroinnille: poikkeama on sama molemmissa
+// näytteissä ja kumoutuu erotuksessa. Mitattu lepokohina 0,11 ja raja 0,35 ovat kolmen
+// kertoimen päässä toisistaan, ja kävelyssä ero on suuruusluokkaa yksi.
+export const LIIKKUMATTA_MUUTOS = 0.35;
 
 // Iskun jälkeen vaadittava liikkumattomuus. Kaaduttuaan ihminen nousee tai liikahtaa
 // muutamassa sekunnissa; kaksitoista sekuntia täysin paikallaan iskun jälkeen ei ole
@@ -54,11 +75,14 @@ export const NAYTEVALI_MS = 250;
 export type MandownTila = {
   paikallaanAlkaen: number | null;
   iskuTs: number | null;
+  // Edellinen voimakkuus. Tila eikä johdettu arvo, koska paikallaanolo on nyt
+  // peräkkäisten näytteiden ero eikä yksittäisen näytteen ominaisuus.
+  edellinen: number | null;
 };
 
 export type MandownEpaily = 'kaatuminen' | 'liikkumaton';
 
-export const alkutila = (): MandownTila => ({ paikallaanAlkaen: null, iskuTs: null });
+export const alkutila = (): MandownTila => ({ paikallaanAlkaen: null, iskuTs: null, edellinen: null });
 
 // Kiihtyvyyden suuruus näytteestä. Yksi luku kolmen akselin sijaan: puhelin voi olla
 // taskussa missä asennossa tahansa, joten yksittäisen akselin arvo ei kerro mitään.
@@ -92,24 +116,44 @@ export function syota(
   // Isku nollaa liikkumattomuuden: putoamisen aikana laite ei ole paikallaan, ja
   // laskenta alkaa vasta siitä hetkestä kun se pysähtyy.
   if (v >= ISKU_RAJA) {
-    return { tila: { paikallaanAlkaen: null, iskuTs: ts }, epaily: null };
+    // edellinen = null eikä v.
+    //
+    // Iskun jälkeinen ensimmäinen näyte eroaa iskusta väistämättä valtavasti — 35:stä
+    // takaisin kymmeneen — ja muutokseen perustuva sääntö lukisi sen liikkeeksi, joka
+    // nollaisi juuri kirjatun iskun. Kaatumista ei voisi havaita KOSKAAN. Tyhjentämällä
+    // vertailukohdan seuraava näyte vain asettaa uuden perustason, ja paikallaanolo
+    // lasketaan vasta sitä seuraavasta. Hinta on kaksi näytettä eli puoli sekuntia,
+    // kun iskun ikkuna on kolme sekuntia ja vaadittu liikkumattomuus kaksitoista.
+    return { tila: { paikallaanAlkaen: null, iskuTs: ts, edellinen: null }, epaily: null };
   }
 
-  const paikallaan = Math.abs(v - LEPO) <= LIIKKUMATTA_POIKKEAMA;
+  // Ensimmäinen näyte ei voi kertoa muutoksesta: vertailukohtaa ei ole. Paikallaanolo
+  // alkaa vasta toisesta näytteestä, eli neljäsosasekunnin myöhemmin kuin ennen — ero on
+  // mittakaavassa jonka yksikkö on minuutti.
+  if (tila.edellinen === null) {
+    return { tila: { paikallaanAlkaen: null, iskuTs: tila.iskuTs, edellinen: v }, epaily: null };
+  }
+
+  const paikallaan = Math.abs(v - tila.edellinen) <= LIIKKUMATTA_MUUTOS;
   if (!paikallaan) {
     // Liike nollaa myös iskun: jos ihminen kaatui ja nousi, mitään ei ole tapahtunut.
-    return { tila: { paikallaanAlkaen: null, iskuTs: null }, epaily: null };
+    return { tila: { paikallaanAlkaen: null, iskuTs: null, edellinen: v }, epaily: null };
   }
 
   const alkaen = tila.paikallaanAlkaen ?? ts;
   const kesto = ts - alkaen;
-  const seuraava: MandownTila = { paikallaanAlkaen: alkaen, iskuTs: tila.iskuTs };
+  const seuraava: MandownTila = { paikallaanAlkaen: alkaen, iskuTs: tila.iskuTs, edellinen: v };
 
   const iskunJalkeen =
     tila.iskuTs !== null && alkaen - tila.iskuTs <= ISKUN_IKKUNA_MS && kesto >= iskunJalkeenMs;
-  if (iskunJalkeen) return { tila: alkutila(), epaily: 'kaatuminen' };
+  // Epäilyn jälkeen tila nollataan, mutta edellinen voimakkuus SÄILYY: se on mittausta
+  // eikä laskentaa, ja sen hukkaaminen maksaisi yhden näytteen verran sokeutta heti
+  // epäilyn jälkeen.
+  const nollattu: MandownTila = { paikallaanAlkaen: null, iskuTs: null, edellinen: v };
 
-  if (kesto >= liikkumatonMs) return { tila: alkutila(), epaily: 'liikkumaton' };
+  if (iskunJalkeen) return { tila: nollattu, epaily: 'kaatuminen' };
+
+  if (kesto >= liikkumatonMs) return { tila: nollattu, epaily: 'liikkumaton' };
 
   return { tila: seuraava, epaily: null };
 }
