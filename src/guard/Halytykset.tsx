@@ -23,8 +23,15 @@ type Props = {
   halytykset: Halytys[];
   kayttaja: string;
   saaKuitata: boolean;
+  // Vaatiiko KOHDE man-downin. Ei vartijan valinta (erä 12): asetus siirtyi kohteen
+  // tietueeseen 12.9.2026, koska se on työnantajan turvallisuusasetus.
   mandown: boolean;
-  onMandown: (paalla: boolean) => void;
+  // Onko selain saanut luvan liikeantureihin. Tämä EI ole sama asia kuin man-downin
+  // päälläolo, vaikka vanha käyttöliittymä sekoitti ne yhdeksi kytkimeksi: lupa on
+  // selaimen tekninen ehto, joka on kysyttävä käyttäjän eleestä eikä sitä voi antaa
+  // palvelimelta. Vartija voi siis myöntää luvan mutta ei kytkeä valvontaa pois.
+  liikelupa: boolean;
+  onLiikelupa: (myonnetty: boolean) => void;
   onMuutos: (halytys: Halytys) => void;
   onTakaisin: () => void;
 };
@@ -49,7 +56,7 @@ async function pyydaLiikelupa(): Promise<boolean> {
 }
 
 export const Halytykset = ({
-  kohde, halytykset, kayttaja, saaKuitata, mandown, onMandown, onMuutos, onTakaisin,
+  kohde, halytykset, kayttaja, saaKuitata, mandown, liikelupa, onLiikelupa, onMuutos, onTakaisin,
 }: Props) => {
   const [virhe, setVirhe] = useState<string | null>(null);
   const [ilmoitus, setIlmoitus] = useState<string | null>(null);
@@ -154,17 +161,13 @@ export const Halytykset = ({
     );
   };
 
-  const vaihdaMandown = async () => {
-    if (mandown) {
-      onMandown(false);
-      return;
-    }
+  const salliLiiketunnistus = async () => {
     const lupa = await pyydaLiikelupa();
     if (!lupa) {
       setVirhe('Laite ei antanut lupaa liiketunnistukseen. Man-down ei ole käytettävissä.');
       return;
     }
-    onMandown(true);
+    onLiikelupa(true);
   };
 
   const aikaaJaljella = omaAjastin ? jaljella(omaAjastin, nyt) : null;
@@ -310,20 +313,38 @@ export const Halytykset = ({
         </h3>
         <p className="text-sm text-ink-muted mb-4">
           Puhelin tarkkailee iskua ja liikkumattomuutta. Havainnosta kysytään ensin sinulta
-          — hälytys lähtee vasta jos et vastaa. Toimii vain kun sovellus on auki.
+          — hälytys lähtee vasta jos et vastaa. Selaimessa tämä toimii vain kun sovellus on
+          auki; Android-sovelluksessa myös taskussa.
         </p>
-        <button
-          type="button"
-          onClick={vaihdaMandown}
-          className={`inline-flex items-center gap-2 text-sm font-bold rounded-lg px-5 py-3 border transition-colors ${
-            mandown
-              ? 'bg-success-soft text-success-ink border-success/40'
-              : 'bg-sunken text-ink-body border-line-strong hover:bg-surface'
-          }`}
-        >
-          <Activity size={16} />
-          {mandown ? 'Man-down päällä' : 'Ota man-down käyttöön'}
-        </button>
+
+        {!mandown ? (
+          /* Asetus on kohteella eikä täällä. Tilan NÄYTTÄMINEN on silti tärkeää: vartijan
+             on tiedettävä valvotaanko häntä, ja "ei mitään näkyvissä" olisi sama kuin
+             arvaus. */
+          <p className="text-sm text-ink-body bg-sunken border border-line-soft rounded-lg p-3">
+            Man-down ei ole käytössä tässä kohteessa. Asetuksen tekee hälytyskeskus
+            kohteen tiedoissa.
+          </p>
+        ) : liikelupa ? (
+          <p className="text-sm text-success-ink bg-success-soft border border-success/40 rounded-lg p-3">
+            Man-down on käytössä ja liiketunnistus on sallittu.
+          </p>
+        ) : (
+          <>
+            <p className="text-sm text-warning-ink bg-warning-soft border border-warning/30 rounded-lg p-3 mb-3">
+              Man-down on käytössä tässä kohteessa, mutta selain ei ole vielä saanut lupaa
+              liikeantureihin. Valvonta ei ole päällä ennen kuin annat luvan.
+            </p>
+            <button
+              type="button"
+              onClick={salliLiiketunnistus}
+              className="inline-flex items-center gap-2 text-sm font-bold rounded-lg px-5 py-3 border transition-colors bg-sunken text-ink-body border-line-strong hover:bg-surface"
+            >
+              <Activity size={16} />
+              Salli liiketunnistus
+            </button>
+          </>
+        )}
       </div>
 
       {/* --- Kohteen lauenneet hälytykset --- */}

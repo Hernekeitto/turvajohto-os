@@ -430,6 +430,70 @@ export const KohteenHallinta = ({
             )}
           </div>
 
+          {/* Man-down-valvonta (erä 12).
+
+              TÄMÄ ON TYÖNANTAJAN ASETUS eikä vartijan valinta, ja se on koko syy sille
+              että se on täällä. 12.9.2026 asti se asui selaimen localStoragessa:
+              vartija saattoi kytkeä valvonnan pois kenenkään näkemättä, raja oli
+              laitekohtainen, eikä natiivisovellus päässyt siihen käsiksi lainkaan.
+
+              Vartija näkee asetuksen mutta ei muuta sitä. */}
+          <div className="border-t border-line-soft pt-4">
+            <h3 className="text-sm font-bold text-ink-strong mb-2">Man-down-valvonta</h3>
+            <p className="text-xs text-ink-muted mb-3">
+              Laite kysyy vartijalta "oletko kunnossa" jos se havaitsee iskun tai pitkän
+              liikkumattomuuden. Vastaamatta jäänyt kysely tekee hälytyksen. Asetus koskee
+              kaikkia tämän kohteen vuoroja, ja vartija näkee sen mutta ei voi kytkeä sitä
+              pois.
+            </p>
+
+            <label className="flex items-center gap-2 text-sm text-ink-body mb-3">
+              <input
+                type="checkbox"
+                checked={kohde.mandown?.paalla === true}
+                onChange={(e) => onChange({
+                  ...kohde,
+                  mandown: {
+                    paalla: e.target.checked,
+                    liikkumatonMin: kohde.mandown?.liikkumatonMin || 5,
+                  },
+                })}
+                disabled={!saaMuokata}
+                className="rounded border-line-soft"
+              />
+              Man-down-valvonta käytössä
+            </label>
+
+            {kohde.mandown?.paalla === true && (
+              <label className="flex flex-wrap items-center gap-2 text-sm text-ink-body">
+                Hälytä jos laite ei ole liikkunut
+                <select
+                  value={kohde.mandown?.liikkumatonMin || 5}
+                  onChange={(e) => onChange({
+                    ...kohde,
+                    mandown: { paalla: true, liikkumatonMin: Number(e.target.value) },
+                  })}
+                  disabled={!saaMuokata}
+                  className="rounded-lg border border-line-soft p-2 text-sm"
+                >
+                  {/* Alaraja 5 min: lyhyempi hälyttäisi lomakkeen täyttämisestä puhelin
+                      pöydällä. Yläraja 60 min: pidempi ei enää valvo mitään. Samat rajat
+                      palvelimella (server/halytys.js), joka ei luota tähän valikkoon. */}
+                  {[5, 10, 15, 20, 30, 45, 60].map((m) => (
+                    <option key={m} value={m}>{m} minuuttiin</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {kohde.mandown?.paalla !== true && (
+              <p className="text-xs text-ink-muted">
+                Pois käytöstä. Vartijan puhelin ei kysy mitään eikä liikkumattomuudesta
+                synny hälytystä.
+              </p>
+            )}
+          </div>
+
           {/* Pohjakartta ja vyöhykkeet. Sama malli kuin tapahtumapuolella: kartta on
               kohteen kenttä, ja vyöhykkeet piirretään sen päälle osuuskoordinaatteina. */}
           <div className="border-t border-line-soft pt-4">

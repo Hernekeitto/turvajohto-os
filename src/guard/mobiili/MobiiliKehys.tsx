@@ -34,10 +34,11 @@ type Props = {
   onIlmoitus: (id: string) => void;
   linkit: MobiiliLinkki[];
   onLinkki: (id: string) => void;
+  // Man-down on KOHTEEN asetus (erä 12), ei tämän valikon kytkin. Valikko näyttää
+  // tilan; muuttaminen tapahtuu kohteen tiedoissa hälytyskeskuksen toimesta.
   mandown: boolean;
-  onMandown: (paalla: boolean) => void;
   mandownMin: number;
-  onMandownMin: (minuutit: number) => void;
+  liikelupa: boolean;
   onKamera: () => void;
   // null = tunnuksella ei ole oikeutta kirjata toimenpiteitä, jolloin riviä ei näytetä.
   // Valikon rivi joka ei tee mitään on pahempi kuin puuttuva rivi.
@@ -57,7 +58,7 @@ const kellonaika = (iso: string) => {
 
 export const MobiiliKehys = ({
   otsikko, vuoro, ilmoitukset, onIlmoitus, linkit, onLinkki,
-  mandown, onMandown, mandownMin, onMandownMin,
+  mandown, mandownMin, liikelupa,
   onKamera, onTilatieto, onPaataVuoro, onTyopoyta, onLogout, children,
 }: Props) => {
   // Yksi paneeli kerrallaan auki: kolme päällekkäistä paneelia puhelimen ruudulla
@@ -210,35 +211,32 @@ export const MobiiliKehys = ({
                 <p className="mb-6 text-base text-ink-on-dark-muted">Et ole kirjautuneena vuoroon.</p>
               )}
 
-              {/* Man-down. Säätö ja kytkin ovat samassa: liikkumattomuuden raja ilman
-                  kytkintä olisi asetus toiminnolle joka ei ole päällä. */}
+              {/* Man-down: TILA eikä kytkin.
+
+                  Tässä oli 12.9.2026 asti kytkin ja liukusäädin, joilla vartija saattoi
+                  kytkeä oman valvontansa pois ja säätää sen rajan. Man-down on kuitenkin
+                  työnantajan turvallisuusasetus eikä työntekijän valinta, joten se
+                  siirtyi kohteen tietueeseen palvelimelle.
+
+                  Tila NÄYTETÄÄN silti, ja se on tärkeämpää kuin kytkin oli: vartijan on
+                  tiedettävä valvotaanko häntä nyt vai ei. Tyhjä kohta valikossa olisi
+                  sama kuin arvaus. */}
               <div className="mb-6 border-t border-white/10 pt-5">
-                <label className="flex items-center justify-between gap-3 mb-3">
+                <div className="flex items-center justify-between gap-3">
                   <span className="text-base font-medium">Man-down</span>
-                  <input
-                    type="checkbox"
-                    checked={mandown}
-                    onChange={(e) => onMandown(e.target.checked)}
-                    className="w-6 h-6 accent-accent"
-                  />
-                </label>
-                <p className="text-base text-ink-on-dark-muted mb-2">Man-down ajastimen säätö 5 – 60 min:</p>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min={5}
-                    max={60}
-                    step={5}
-                    value={mandownMin}
-                    onChange={(e) => onMandownMin(Number(e.target.value))}
-                    className="flex-1 accent-accent"
-                    aria-label="Man-down ajastin minuutteina"
-                  />
-                  <span className="w-16 shrink-0 text-right text-base font-bold tabular-nums">{mandownMin} min</span>
+                  <span className={`text-base font-bold ${mandown ? 'text-success' : 'text-ink-on-dark-muted'}`}>
+                    {mandown ? `käytössä, ${mandownMin} min` : 'ei käytössä'}
+                  </span>
                 </div>
+                {mandown && !liikelupa && (
+                  <p className="text-sm text-warning mt-2 leading-relaxed">
+                    Selain ei ole saanut lupaa liikeantureihin. Valvonta ei ole päällä
+                    ennen kuin annat luvan Hälytykset-näkymässä.
+                  </p>
+                )}
                 <p className="text-xs text-ink-on-dark-muted mt-2 leading-relaxed">
-                  Kuinka kauan laite saa olla liikkumatta ennen kuin se kysyy oletko kunnossa.
-                  Isku ja sitä seuraava liikkumattomuus kysyvät aina.
+                  Asetuksen tekee hälytyskeskus kohteen tiedoissa. Isku ja sitä seuraava
+                  liikkumattomuus kysyvät aina, kun valvonta on käytössä.
                 </p>
               </div>
 

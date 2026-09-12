@@ -108,6 +108,18 @@ export type Kohde = {
   // kuin contactPhone: man-down-hälytyksessä soitetaan oman vartiointiliikkeen
   // päivystäjälle, ei toimeksiantajalle kello kolme yöllä.
   halytysNumerot?: { nimi?: string; numero: string }[];
+
+  // Man-down-valvonta (erä 12). KOHTEEN asetus eikä vartijan valinta, ja se on koko
+  // siirron syy: 12.9.2026 asti asetus asui selaimen localStoragessa, jolloin vartija
+  // saattoi kytkeä sen pois kenenkään näkemättä ja raja oli laitekohtainen. Sama vartija
+  // sai eri valvonnan sen mukaan millä puhelimella hän sattui kirjautumaan.
+  //
+  // Natiivisovellus lukee tämän palvelimelta vuoron alkaessa (GET /api/vuoro/oma), eikä
+  // se pääse selaimen tallenteeseen käsiksi lainkaan — se on sama asetus samasta
+  // lähteestä riippumatta siitä kumpi toteutus valvoo.
+  //
+  // Puuttuva kenttä tarkoittaa pois päältä. Ks. server/halytys.js mandownAsetukset.
+  mandown?: { paalla: boolean; liikkumatonMin: number };
 };
 
 // Kohteen tiedosto (guardFiles). Oma kokoelmansa eikä kohteen kenttä, koska liitetiedosto

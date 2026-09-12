@@ -236,14 +236,30 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [mittariKohde, setMittariKohde] = useState<Kohde | null>(null);
   const [jaksoKohde, setJaksoKohde] = useState<Kohde | null>(null);
   const [jalkiraportit, setJalkiraportit] = useState<Jalkiraportti[]>([]);
-  // Man-down päällä/pois säilyy laitteella: vartija kytkee sen kerran vuoron alussa,
-  // eikä asetus saa nollautua sivun latauksesta kesken vuoron.
-  const [mandown, setMandown] = useState(false);
-  // Man-down-ajastin minuutteina: kuinka kauan laite saa olla liikkumatta ennen kuin se
-  // kysyy oletko kunnossa. Säädetään mobiiliversion valikosta ja säilyy laitteella
-  // samasta syystä kuin man-downin päälläolo — kesken vuoron nollautuva asetus olisi
-  // pahempi kuin puuttuva asetus.
-  const [mandownMin, setMandownMin] = useState(LIIKKUMATON_MS / 60000);
+  // Onko selain saanut luvan liikeantureihin.
+  //
+  // EI sama asia kuin man-downin päälläolo, vaikka vanha käyttöliittymä sekoitti ne
+  // yhdeksi kytkimeksi. Päälläolo on kohteen asetus palvelimella; tämä on selaimen
+  // tekninen ehto, joka on iOS:ssä kysyttävä käyttäjän eleestä eikä sitä voi myöntää
+  // palvelimelta. Tila on tarkoituksella vain tämän sivunlatauksen mittainen: lupa
+  // kysytään eleestä, ja muistiin tallennettu "kyllä" ei todistaisi että selain yhä
+  // antaa sen.
+  const [liikelupa, setLiikelupa] = useState(false);
+
+  // Selaimissa joissa erillistä lupaa ei ole, se katsotaan saaduksi heti.
+  //
+  // Vain iOS vaatii DeviceMotionEvent.requestPermissionin, ja vain se on kysyttävä
+  // käyttäjän eleestä. Muualla napin näyttäminen pyytäisi vartijaa tekemään turhan
+  // klikkauksen — ja turha klikkaus opettaa ohittamaan ne kaikki, myös sen joka
+  // jonain päivänä merkitsee jotain.
+  useEffect(() => {
+    const rajapinta = (window as unknown as {
+      DeviceMotionEvent?: { requestPermission?: () => Promise<string> };
+    }).DeviceMotionEvent;
+    if (rajapinta && typeof rajapinta.requestPermission !== 'function') {
+      setLiikelupa(true);
+    }
+  }, []);
   // Vuoro (vain mobiiliversio): kohde jossa vartija on nyt töissä. Laitteen tilaa, ei
   // palvelimen tietue — ks. mobiili/vuoro.ts.
   const [vuoro, setVuoro] = useState<Vuoro | null>(null);
@@ -493,6 +509,24 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const aktiivinenKohde = kierrosKohde || halytysKohde || tehtavaKohde || tietoKohde
     || raporttiKohde?.kohde || vuoroKohde || (kohteet.length === 1 ? kohteet[0] : null);
 
+  // Man-down-asetus tulee KOHTEELTA eikä selaimen tallenteesta.
+  //
+  // 12.9.2026 asti se asui localStoragessa, ja se oli väärä paikka kahdesta syystä.
+  // Vartija saattoi kytkeä valvonnan pois kenenkään näkemättä — man-down on työnantajan
+  // turvallisuusasetus eikä työntekijän valinta — ja raja oli laitekohtainen, joten sama
+  // vartija sai eri valvonnan sen mukaan millä puhelimella hän sattui kirjautumaan.
+  // Natiivisovellus ei myöskään päässyt selaimen tallenteeseen käsiksi lainkaan, ja juuri
+  // se sovellus man-downin oikeasti ajaa taskussa.
+  //
+  // Asetus luetaan VUOROKOHTEELTA eikä aktiivisesta kohteesta: valvonta koskee sitä
+  // kohdetta jossa vartija on töissä, ei sitä jonka tietoja hän sattuu selaamaan.
+  // Rajat tarkistetaan täälläkin, koska tietue tulee palvelimelta kokoelmana eikä
+  // validoituna arvona — sama sääntö kuin server/halytys.js mandownAsetukset.
+  const mandown = vuoroKohde?.mandown?.paalla === true;
+  const mandownMin = Math.min(60, Math.max(5, Math.round(
+    Number(vuoroKohde?.mandown?.liikkumatonMin) || LIIKKUMATON_MS / 60000
+  )));
+
   // Sijainnin lähetys. Kytkin on palvelimella (SIJAINTISEURANTA), ja istunto kertoo sen
   // tilan — ilman tätä selain kysyisi paikannuslupaa toimintoon jota ei ole olemassa.
   //
@@ -505,37 +539,6 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     laheta: lahetaKanavalle,
     muunnos: luoMuunnos((aktiivinenKohde as { mapRef?: never[] } | null)?.mapRef),
   });
-
-  const vaihdaMandownMinuutit = (minuutit: number) => {
-    setMandownMin(minuutit);
-    try {
-      window.localStorage.setItem('turvajohto-mandown-min', String(minuutit));
-    } catch {
-      // Yksityinen selaustila: asetus jää voimaan vain tämän sivunlatauksen ajaksi.
-    }
-  };
-
-  const vaihdaMandown = (paalla: boolean) => {
-    setMandown(paalla);
-    try {
-      window.localStorage.setItem('turvajohto-mandown', paalla ? '1' : '0');
-    } catch {
-      // Yksityinen selaustila: asetus jää voimaan vain tämän sivunlatauksen ajaksi.
-    }
-  };
-
-  useEffect(() => {
-    try {
-      setMandown(window.localStorage.getItem('turvajohto-mandown') === '1');
-      const min = Number(window.localStorage.getItem('turvajohto-mandown-min'));
-      // Rajat samat kuin valikon liukusäätimessä. Tallennetta ei uskota sellaisenaan:
-      // localStorage on käyttäjän muokattavissa, ja nollan minuutin raja tarkoittaisi
-      // hälytystä joka sekunnista jonka puhelin makaa taskussa.
-      if (Number.isFinite(min) && min >= 5 && min <= 60) setMandownMin(min);
-    } catch {
-      // Ei tallennettua asetusta.
-    }
-  }, []);
 
   // Vuoron palautus. Laitteen tallenne luetaan ensin, jotta näkymä on oikea heti eikä
   // vilku tyhjänä verkon ajan — mutta se on kopio, ja palvelin voittaa ristiriidassa.
@@ -1397,7 +1400,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           halytykset={halytykset}
           onMuutos={paivitaHalytys}
           onVirkista={paivitaHalytykset}
-          mandown={mandown}
+          // Sekä kohteen asetus ETTÄ selaimen lupa. Kumpikin yksin tarkoittaisi
+          // kuuntelijaa joka ei koskaan saa näytteitä, eli valvontaa joka näyttää
+          // päällä olevalta olematta sitä.
+          mandown={mandown && liikelupa}
           liikkumatonMin={mandownMin}
         />
       )}
@@ -1601,7 +1607,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           kayttaja={session?.username || ''}
           saaKuitata={saaKuitataHalytyksia}
           mandown={mandown}
-          onMandown={vaihdaMandown}
+          liikelupa={liikelupa}
+          onLiikelupa={setLiikelupa}
           onMuutos={paivitaHalytys}
           onTakaisin={() => setHalytysKohde(null)}
         />
@@ -1825,9 +1832,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         linkit={mobiiliLinkit}
         onLinkki={avaaMobiiliLinkki}
         mandown={mandown}
-        onMandown={vaihdaMandown}
         mandownMin={mandownMin}
-        onMandownMin={vaihdaMandownMinuutit}
+        liikelupa={liikelupa}
         onKamera={() => setKameraAuki(true)}
         onTilatieto={saaKirjataToimenpiteen && vuoroKohde ? () => setTilatietoAuki(true) : null}
         onPaataVuoro={vuoro ? paataVuoro : null}
