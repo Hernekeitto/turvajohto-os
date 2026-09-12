@@ -10,6 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  mandownAsetukset, MANDOWN_MIN_MIN, MANDOWN_MAX_MIN, MANDOWN_OLETUS_MIN,
   luoAjastin, luoHalytys, jatka, laukaise, peru, kuittaa,
   eraantyneet, eskaloitavat, merkitseEskaloitu, viestiTeksti,
   puhdistaGps, onAvoin, TYYPIT, AJASTIN_MAX_MIN, VIESTIN_MAX,
@@ -215,4 +216,54 @@ test('pitkä kuvaus katkaistaan eikä viesti veny usean osan mittaiseksi', () =>
   const h = panic({ kuvaus: 'x'.repeat(200) });
   const viesti = viestiTeksti(h, { kohteenNimi: 'Pitkänimisen tapahtuman nimi tähän', nyt: T0 });
   assert.ok(viesti.length <= VIESTIN_MAX, `viesti oli ${viesti.length} merkkiä`);
+});
+
+// --- Man-downin kohdekohtainen asetus -------------------------------------------------
+//
+// Asetus siirtyi selaimen localStoragesta kohteen tietueeseen 12.9.2026. Tietue tulee
+// asiakkaan kirjoittamana eikä sitä validoida kirjoitushetkellä, joten lukeminen on se
+// kohta jossa roska on torjuttava — ja juuri siksi nämä testit ovat enimmäkseen roskaa.
+
+test('kohde ilman asetusta: man-down on pois paalta', () => {
+  // Oletus on pois päältä eikä päälle. Hiljainen käyttöönotto jokaisessa olemassa
+  // olevassa kohteessa tarkoittaisi yöllisiä kyselyitä ilman että kukaan on niin
+  // päättänyt. Ks. mandownAsetukset.
+  assert.deepEqual(mandownAsetukset({ id: 'k1' }), { paalla: false, liikkumatonMin: 5 });
+  assert.deepEqual(mandownAsetukset(null), { paalla: false, liikkumatonMin: 5 });
+  assert.deepEqual(mandownAsetukset(undefined), { paalla: false, liikkumatonMin: 5 });
+});
+
+test('paalla vaatii tasan tosiarvon', () => {
+  // Ei totuusarvoista tulkintaa: merkkijono '1' tai luku 1 tarkoittaisi, että
+  // turvallisuustoiminto kytkeytyy päälle tietueen kirjoitusvirheestä.
+  assert.equal(mandownAsetukset({ mandown: { paalla: true } }).paalla, true);
+  assert.equal(mandownAsetukset({ mandown: { paalla: 'kylla' } }).paalla, false);
+  assert.equal(mandownAsetukset({ mandown: { paalla: 1 } }).paalla, false);
+  assert.equal(mandownAsetukset({ mandown: { paalla: false } }).paalla, false);
+});
+
+test('liikkumattomuusraja pysyy rajoissa', () => {
+  const min = (m) => mandownAsetukset({ mandown: { paalla: true, liikkumatonMin: m } }).liikkumatonMin;
+  assert.equal(min(20), 20);
+  // Nolla tarkoittaisi hälytystä jokaisesta sekunnista jonka puhelin makaa taskussa.
+  assert.equal(min(0), MANDOWN_MIN_MIN);
+  assert.equal(min(-5), MANDOWN_MIN_MIN);
+  // Ilman ylärajaa hälytystä ei tulisi koskaan.
+  assert.equal(min(10_000), MANDOWN_MAX_MIN);
+  assert.equal(min(7.4), 7);
+});
+
+test('kelvoton raja putoaa oletukseen eika kaada', () => {
+  const min = (m) => mandownAsetukset({ mandown: { paalla: true, liikkumatonMin: m } }).liikkumatonMin;
+  assert.equal(min('viisitoista'), MANDOWN_OLETUS_MIN);
+  assert.equal(min(null), MANDOWN_OLETUS_MIN);
+  assert.equal(min(NaN), MANDOWN_OLETUS_MIN);
+  assert.equal(min(Infinity), MANDOWN_OLETUS_MIN);
+  assert.equal(mandownAsetukset({ mandown: 'roskaa' }).liikkumatonMin, MANDOWN_OLETUS_MIN);
+});
+
+test('raja palautuu myos kun man-down on pois paalta', () => {
+  // Arvon on oltava mielekäs silloinkin kun sitä ei käytetä: käyttöliittymä näyttää
+  // liukusäätimen myös pois päältä olevalle kohteelle, eikä siinä saa lukea NaN.
+  assert.equal(mandownAsetukset({ mandown: { paalla: false, liikkumatonMin: 12 } }).liikkumatonMin, 12);
 });

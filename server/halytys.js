@@ -78,6 +78,50 @@ export const TYYPPI_IDT = Object.keys(TYYPIT);
 export const AJASTIN_MIN_MIN = 1;
 export const AJASTIN_MAX_MIN = 240;
 
+// --- Man-downin kohdekohtainen asetus -------------------------------------------------
+//
+// Asetus asui 12.9.2026 asti pelkästään selaimen localStoragessa, ja se oli väärä paikka
+// kahdesta syystä. Ensinnäkin natiivisovellus ei pääse siihen käsiksi lainkaan, ja se on
+// juuri se sovellus joka man-downin oikeasti ajaa — selain ei ole auki taskussa.
+// Toiseksi, ja tärkeämmin: man-down on TYÖNANTAJAN turvallisuusasetus eikä työntekijän
+// valinta. Selaimen tallenteessa se oli vartijan itsensä päätettävissä, kenenkään
+// näkemättä, ja liikkumattomuusraja oli laitekohtainen — sama vartija sai eri valvonnan
+// riippuen siitä kummalla puhelimella hän sattui kirjautumaan.
+//
+// Nyt asetus on kohteen tietueessa, päivystäjän asettama ja auditlokin piirissä.
+
+export const MANDOWN_MIN_MIN = 5;
+export const MANDOWN_MAX_MIN = 60;
+export const MANDOWN_OLETUS_MIN = 5;
+
+/**
+ * Kohteen man-down-asetus turvallisessa muodossa.
+ *
+ * <b>Oletus on POIS PÄÄLTÄ.</b> Se ei ole turvallisuuden vähättelyä vaan sen tunnustamista,
+ * ettei hiljainen käyttöönotto ole käyttöönotto: jos tämä oletuksena kytkeytyisi päälle
+ * jokaisessa olemassa olevassa kohteessa, vartijat alkaisivat saada kyselyitä ja
+ * hälytyksiä yöllä ilman että kukaan on niin päättänyt. Pois päältä oleminen tehdään sen
+ * sijaan NÄKYVÄKSI — sovellus kirjaa sen vuoron alussa ja tarkistuslista näyttää sen —
+ * jolloin puuttuva valvonta ei ole hiljainen tila vaan luettavissa oleva tila.
+ *
+ * Arvo luetaan puolustavasti, koska kohdetietue tulee asiakkaan kirjoittamana
+ * `guardSites`-kokoelmaan eikä sitä validoida kirjoitushetkellä. Nolla minuuttia
+ * tarkoittaisi hälytystä jokaisesta sekunnista jonka puhelin makaa taskussa, ja
+ * puuttuva yläraja hälytystä jota ei koskaan tule.
+ *
+ * Rajat 5–60 ovat samat kuin selaimen liukusäätimessä oli, jotta siirtymä ei muuta
+ * yhdenkään kohteen käyttäytymistä muuten kuin paikan osalta.
+ */
+export function mandownAsetukset(kohde) {
+  const raaka = kohde && typeof kohde === 'object' ? kohde.mandown : null;
+  const paalla = raaka?.paalla === true;
+  const luku = Number(raaka?.liikkumatonMin);
+  const minuutit = Number.isFinite(luku)
+    ? Math.min(MANDOWN_MAX_MIN, Math.max(MANDOWN_MIN_MIN, Math.round(luku)))
+    : MANDOWN_OLETUS_MIN;
+  return { paalla, liikkumatonMin: minuutit };
+}
+
 export const KUVAUS_MAX = 200;
 export const HUOMIO_MAX = 2000;
 

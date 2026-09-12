@@ -64,11 +64,27 @@ fs.writeFileSync(path.join(DATA, 'roles.json'), JSON.stringify({ roles: [
 
 fs.writeFileSync(path.join(DATA, 'users.json'), JSON.stringify({ users: [
   { username: 'testiadmin', role: 'admin', password_hash: bcrypt.hashSync('salasana123', 4) },
-  { username: 'vartija1', role: 'user', roleId: 'vartijataso', password_hash: bcrypt.hashSync('salasana123', 4) },
+  // tuotteet: ['guard'] on pakollinen. Ilman sitä guardPortti torjuu /api/vuoro/oma:n,
+  // ja natiivisovellus ei saa vuoroaan varmistettua eikä man-down-asetusta lainkaan —
+  // eli vuoro ei käynnisty ja syy näyttäisi verkkovirheeltä.
+  {
+    username: 'vartija1', role: 'user', roleId: 'vartijataso', tuotteet: ['guard'],
+    password_hash: bcrypt.hashSync('salasana123', 4),
+  },
 ] }, null, 2));
 
+// Kohteella ON man-down-asetus. Se siirtyi selaimen localStoragesta tänne 12.9.2026,
+// ja natiivisovelluksen on saatava se jostakin — selaimen tallenteeseen se ei pääse.
 fs.writeFileSync(path.join(DATA, 'guardSites.json'), JSON.stringify([
-  { id: 'kohde-1', name: 'Testikohde' },
+  {
+    id: 'kohde-1',
+    name: 'Testikohde',
+    mandown: { paalla: true, liikkumatonMin: 12 },
+    // Vuorotyyppi ilman kelloaikoja: vuoron saa avata milloin tahansa, eikä testi ala
+    // kaatuilla vuorokaudenajan mukaan.
+    vuorotyypit: [{ id: 'v-lisa', nimi: 'Lisävuoro' }],
+  },
+  { id: 'kohde-ilman', name: 'Kohde ilman asetusta' },
 ], null, 2));
 
 const pari = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -151,6 +167,27 @@ const halytykset = async (evaste) => {
   return Array.isArray(j?.data) ? j.data : [];
 };
 
+/**
+ * Laiteallekirjoitettu GET. Sama nelikko, tyhjä runko.
+ */
+async function laiteHae(polku) {
+  const aika = Date.now();
+  const nonce = crypto.randomUUID();
+  const viesti = kanoninenViesti({
+    laiteId: laite.id, metodi: 'GET', polku, aika, nonce, runko: '',
+  });
+  const vastaus = await fetch(`${PALVELIN}${polku}`, {
+    headers: {
+      'x-turvajohto-laite': laite.id,
+      'x-turvajohto-aika': String(aika),
+      'x-turvajohto-nonce': nonce,
+      'x-turvajohto-allekirjoitus':
+        crypto.sign('sha256', Buffer.from(viesti), pari.privateKey).toString('base64'),
+    },
+  });
+  return { koodi: vastaus.status, json: await vastaus.json().catch(() => null) };
+}
+
 const MANDOWN = {
   tyyppi: 'mandown',
   eventId: 'kohde-1',
@@ -207,7 +244,31 @@ try {
   vaita((await halytykset(evaste)).filter((h) => h?.tyyppi === 'mandown').length === 1,
     'uudelleenyritys ei synnyta toista halytysta');
 
-  // --- 7. Tuntematon tyyppi ----------------------------------------------------------
+  // --- 7. Man-down-asetus kulkee vuoron varmistuksen mukana ---------------------------
+  //
+  // Tämä on erän 12 asetuksen koko kuljetus. Sovellus kysyy /api/vuoro/oma varmistaakseen
+  // että vuoro on oikeasti olemassa, ja SAMASSA vastauksessa tulee kohteen asetus. Ilman
+  // tätä sovelluksen pitäisi arvata onko valvonta päällä — ja arvaus kumpaan tahansa
+  // suuntaan on väärä: päälle arvattuna se herättelee vartijaa yöllä ilman että kukaan on
+  // niin päättänyt, pois arvattuna se ei hälytä silloin kun pitäisi.
+  const aloitus = await fetch(PALVELIN + '/api/vuoro', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', Cookie: evaste },
+    body: JSON.stringify({
+      siteId: 'kohde-1', vuorotyyppiId: 'v-lisa', vartija: 'vartija1', poikkeusSyy: 'e2e-testi',
+    }),
+  });
+  vaita(aloitus.status === 200, 'paivystaja saa avata vuoron vartijalle');
+
+  const oma = await laiteHae('/api/vuoro/oma');
+  vaita(oma.koodi === 200 && oma.json?.vuoro?.siteId === 'kohde-1',
+    'laite nakee oman vuoronsa allekirjoituksella');
+  vaita(oma.json?.mandown?.paalla === true,
+    'kohteen man-down-asetus tulee vuoron mukana');
+  vaita(oma.json?.mandown?.liikkumatonMin === 12,
+    'liikkumattomuusraja tulee kohteelta eika oletuksesta');
+
+  // --- 8. Tuntematon tyyppi ----------------------------------------------------------
   // Allekirjoitus on kelvollinen mutta sisältö ei. Laite on luotettu, sen lähettämä data
   // ei ole: sidottu laite ei saa voida luoda mielivaltaisia hälytystyyppejä.
   const outo = await halyta({ runko: { ...MANDOWN, tyyppi: 'jokumuu' } });

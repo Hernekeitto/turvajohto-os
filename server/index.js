@@ -103,7 +103,7 @@ import {
 import {
   luoAjastin, luoHalytys, jatka as jatkaHalytysta, laukaise as laukaiseHalytys,
   peru as peruHalytys, kuittaa as kuittaaHalytys, eraantyneet, eskaloitavat,
-  merkitseEskaloitu, viestiTeksti, TYYPIT as HALYTYSTYYPIT,
+  merkitseEskaloitu, viestiTeksti, TYYPIT as HALYTYSTYYPIT, mandownAsetukset,
 } from './halytys.js';
 import { arvioi as arvioiVyohykkeet } from './geofence.js';
 import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti, parsiJson } from './bulksms.js';
@@ -1677,7 +1677,17 @@ function kerroVuorosta(vuoro, action) {
 // palvelimella, ja laitteen localStorage on vain kopio jonka voi menettää.
 app.get('/api/vuoro/oma', requireAuth, guardPortti, (req, res) => {
   const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
-  res.json({ ok: true, vuoro });
+  // Man-down-asetus kulkee TÄSSÄ vastauksessa eikä omassa päätepisteessään.
+  //
+  // Natiivisovellus kysyy tämän joka tapauksessa vuoron alussa varmistaakseen että vuoro
+  // on oikeasti olemassa (ks. SiltaActivity), joten asetus tulee ilman yhtään uutta
+  // kutsua, ilman uutta allekirjoitusta ja täsmälleen samalla hetkellä kuin vuoro
+  // vahvistetaan. Oma päätepiste olisi toinen pyyntö joka voi epäonnistua erikseen — ja
+  // silloin sovelluksen pitäisi päättää mitä tehdä vuorolla jonka asetusta se ei tiedä.
+  const kohde = vuoro
+    ? (readCollection('guardSites') || []).find((k) => k?.id === vuoro.siteId)
+    : null;
+  res.json({ ok: true, vuoro, mandown: vuoro ? mandownAsetukset(kohde) : null });
 });
 
 // Vuoron aloitus.
