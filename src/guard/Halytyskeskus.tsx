@@ -129,6 +129,29 @@ export const Halytyskeskus = ({
   // Kenen tarkistusta ollaan pyytämässä. Yksi kerrallaan riittää: nappi on rivikohtainen
   // ja pyyntö kestää vain yhden verkkokutsun verran.
   const [tarkistettava, setTarkistettava] = useState<string | null>(null);
+  // Kesken olevat vuorot. ERI LISTA kuin "Kentällä juuri nyt", joka johdetaan
+  // kirjauksista: vartija joka ei ole kirjannut mitään ei näy siinä, ja juuri hänestä
+  // päivystäjä on huolissaan.
+  const [vuorossa, setVuorossa] = useState<
+    { id: string; vartija: string; siteId: string; alkoi: string; vuorotyyppiNimi: string | null }[]
+  >([]);
+
+  useEffect(() => {
+    let voimassa = true;
+    const hae = async () => {
+      try {
+        const v = await fetch('/api/vuoro/kaynnissa', { credentials: 'include' });
+        const data = await v.json().catch(() => null);
+        if (voimassa && data?.ok) setVuorossa(data.vuorot || []);
+      } catch {
+        // Verkkovirhe: lista jää ennalleen. Tyhjentäminen näyttäisi siltä että
+        // kukaan ei ole vuorossa, ja se on väärä tieto eikä puuttuva tieto.
+      }
+    };
+    hae();
+    const ajastin = window.setInterval(hae, 60_000);
+    return () => { voimassa = false; window.clearInterval(ajastin); };
+  }, []);
 
   // Pakotettu tarkistus: "vastaa nyt".
   //
@@ -696,6 +719,57 @@ export const Halytyskeskus = ({
         )}
       </Osio>
 
+      {/* --- Vuorossa nyt --------------------------------------------------------
+
+          ERI LISTA KUIN "Kentällä juuri nyt", ja ero on tämän osion koko olemassaolon syy.
+          Se lista johdetaan kirjauksista: vartija joka ei ole kirjannut mitään ei näy
+          siinä. Tämä lista tulee vuoroista, eli siinä on myös se hiljainen vartija —
+          ja juuri hänestä päivystäjä on huolissaan.
+
+          Pakotettu tarkistus on siksi TÄSSÄ eikä siellä. */}
+      <Osio otsikko="Vuorossa nyt" ikoni={ShieldCheck} maara={vuorossa.length}>
+        <p className="text-xs text-ink-subtle mb-3">
+          Kesken olevat vuorot. Tarkistuspyyntö kysyy vartijalta "oletko kunnossa" ja
+          hälyttää jos kuittausta ei tule kahdessa minuutissa — <b>myös silloin kun puhelin
+          ei ole verkossa</b>, koska ajastin erääntyy palvelimella.
+        </p>
+        {vuorossa.length === 0 ? (
+          <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
+            Yhtään vuoroa ei ole käynnissä.
+          </p>
+        ) : (
+          <ul className="divide-y divide-line-soft border border-line rounded-lg overflow-hidden">
+            {vuorossa.map((v) => (
+              <li key={v.id} className="px-4 py-3 bg-surface flex flex-wrap items-center gap-3">
+                <ShieldCheck size={16} className="text-ink-subtle shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-ink-strong">
+                    {v.vartija}
+                    <span className="text-ink-muted font-normal">
+                      {' · '}{kohdeNimi(v.siteId)}
+                    </span>
+                  </p>
+                  <p className="text-xs text-ink-muted mt-0.5">
+                    {v.vuorotyyppiNimi ? `${v.vuorotyyppiNimi} · ` : ''}
+                    alkoi {ikaTekstina(Math.max(0, nyt - Date.parse(v.alkoi)))} sitten
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => pakotaTarkistus(v.vartija)}
+                  disabled={tarkistettava === v.vartija}
+                  className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-line-strong bg-sunken text-ink-body hover:bg-surface disabled:opacity-50 transition-colors"
+                  title="Pyydä vartijaa kuittaamaan nyt"
+                >
+                  <BellRing size={13} />
+                  {tarkistettava === v.vartija ? 'Pyydetään…' : 'Pyydä tarkistus'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Osio>
+
       {/* --- Kentällä nyt -------------------------------------------------------- */}
       <Osio otsikko="Kentällä juuri nyt" ikoni={Users} maara={kentallaNyt.length}>
         <p className="text-xs text-ink-subtle mb-3">
@@ -724,22 +798,6 @@ export const Halytyskeskus = ({
                       {v.mita} · {ikaTekstina(Math.max(0, nyt - Date.parse(v.viimeksi)))}
                     </p>
                   </div>
-                  {/* Pakotettu tarkistus.
-
-                      TOIMII MYOS SAMMUNEELLA PUHELIMELLA: palvelin siirtaa vartijan
-                      kuittausajastimen eraantymaan kahden minuutin paahan, ja
-                      kanavaviesti on vain nopea tie kyselyyn. Jos puhelin ei ole
-                      verkossa, vastaus kertoo sen - ja ajastin eraantyy silti. */}
-                  <button
-                    type="button"
-                    onClick={() => pakotaTarkistus(v.vartija)}
-                    disabled={tarkistettava === v.vartija}
-                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-line-strong bg-sunken text-ink-body hover:bg-surface disabled:opacity-50 transition-colors"
-                    title="Pyydä vartijaa kuittaamaan nyt"
-                  >
-                    <BellRing size={13} />
-                    {tarkistettava === v.vartija ? 'Pyydetään…' : 'Pyydä tarkistus'}
-                  </button>
                   {v.ajastin && (
                     <span
                       className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-bold border tabular-nums shrink-0 ${

@@ -1690,6 +1690,36 @@ function kerroVuorosta(vuoro, action) {
 // laitetta. Vastaus kertoo montako avointa yhteyttä viesti tavoitti, jotta päivystäjä
 // näkee heti onko puhelin verkossa — nolla ei tarkoita että tarkistus epäonnistui, vaan
 // että vastausta kannattaa odottaa hitaammin.
+
+// Kesken olevat vuorot päivystäjälle.
+//
+// TÄMÄ ON ERI LISTA KUIN "Kentällä juuri nyt", ja ero on koko syy sille että tämä on
+// olemassa. Se lista johdetaan KIRJAUKSISTA, eli vartija joka ei ole kirjannut mitään ei
+// näy siinä — ja juuri hänestä päivystäjä on huolissaan. 13.9.2026 pakotettu tarkistus
+// laitettiin ensin siihen listaan, ja se oli hyödytön täsmälleen siinä tilanteessa jota
+// varten se rakennettiin.
+//
+// Palauttaa vain sen mitä päivystäjä tarvitsee: kuka, missä, mistä asti. Ei vuoron
+// sisältöä eikä tehtäviä.
+app.get('/api/vuoro/kaynnissa', requireAuth, guardPortti, (req, res) => {
+  const kaikki = (readCollection('guardShifts') || []).filter((v) => v?.tila === 'kesken');
+  // Näkyvyys kohteittain: päivystäjä näkee ne vuorot joiden kohteeseen hänellä on
+  // hälytysoikeus. Sama sääntö kuin hälytysten katselussa, koska tästä listasta
+  // pääsee pakottamaan tarkistuksen.
+  const vuorot = kaikki.filter((v) => {
+    if (req.role === 'admin') return true;
+    if (!eventAllowed(req.eventAccess, v.siteId)) return false;
+    return canView(req.permissions, v.siteId, 'alarms')
+      || canView(req.permissions, v.siteId, 'guard_alarms');
+  });
+  res.json({
+    ok: true,
+    vuorot: vuorot.map((v) => ({
+      id: v.id, vartija: v.vartija, siteId: v.siteId, alkoi: v.alkoi,
+      vuorotyyppiNimi: v.vuorotyyppiNimi || null,
+    })),
+  });
+});
 app.post('/api/vuoro/tarkistus', requireAuth, guardPortti, (req, res) => {
   const vartija = typeof req.body?.vartija === 'string' ? req.body.vartija.trim() : '';
   if (!vartija) return res.status(400).json({ ok: false, error: 'Vartija puuttuu.' });
