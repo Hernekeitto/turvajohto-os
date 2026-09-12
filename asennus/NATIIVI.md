@@ -981,6 +981,44 @@ suodatusta rivinvaihdon sisältävä arvo antaisi ulkopuoliselle keinon kirjoitt
 vuorolokiin haluamiaan — myös uskottavia — rivejä. Väärennettävissä oleva mittari on
 huonompi kuin rikkinäinen, koska se näyttää ehjältä.
 
+#### v11 12.9.2026: loki antoi vahtikoiralle kunnian ihmisen työstä
+
+v10:n asennus paljasti heti toisen vian, ja se löytyi juuri siksi että lokia luettiin
+tarkasti. Asennus tappoi palvelun, valvonta palasi 76 sekunnin kuluttua, ja loki sanoi:
+
+```
+09:40:26 sovellus_paivitettiin vuoro_kesken kohde=b1020fdc-…
+09:41:42 palvelu_luotu
+09:41:42 vahti_jatkoi_vuoroa      ← vahtikoira ei ollut ajanut kertaakaan
+```
+
+**Vahtikoira ei elvyttänyt mitään.** Sen elvytyspolku kirjoittaa aina ensin
+`vahti_havaitsi_kuolleen` ja sen jälkeen `vahti_kaynnisti_uudelleen`; kumpaakaan ei ollut.
+Herätys oli yhä jonossa ja ajastettiin uudelleen vasta kello 09:41:42 — eli palvelun oman
+käynnistyksen toimesta (`VuoroService:235`), ei vahdin. Todellinen elvyttäjä oli ihminen,
+joka napautti "Sovellus päivitettiin" -ilmoitusta.
+
+Syy: `ACTION_JATKA`-komennolla oli **kaksi lähettäjää**, `Vahtikoira` ja
+`Ilmoitukset`in `PendingIntent`, ja molemmat tuottivat saman lokirivin.
+
+**Miksi tämä on pahempi kuin edellinen vika.** Puuttuvasta rivistä tietää ettei tiedä;
+väärä nimi luetaan luottavaisesti. Käytännön seuraus on suora: kysymykseen "kuinka monta
+kertaa vahtikoira pelasti vuoron" olisi saatu liian suuri luku, ja juuri sillä luvulla
+perustellaan tarvitaanko vahtikoiraa lainkaan. Yön yli -ajon luvut ovat kunnossa, koska
+kukaan ei nukkuessaan napauttanut mitään — mutta se on tuuria eikä rakennetta.
+
+Korjaus: ilmoitus lähettää `ACTION_JATKA_ILMOITUKSESTA` ja kirjaa
+**`ihminen_jatkoi_vuoroa`**. Sama lopputulos, eri syy, eri nimi. Perustelu on koodissa
+vakion vieressä eikä vain tässä, koska seuraava lukija näkee ensin kaksi vakiota jotka
+tekevät saman asian ja kysyy miksi.
+
+**Sivutuote: päivitys ja bootti eivät ole sama vikatila.** Pakettia vaihdettaessa
+vahtikoiran herätys **säilyy** jonossa (mitattu: yliaikainen, ikkuna +11 min), kun taas
+uudelleenkäynnistyksessä herätykset peruuntuvat. `Kaynnistys`in kuvaus sanoo ne
+samanlaisiksi, ja se pitää paikkansa vain palvelun kuoleman osalta — ei elpymisen.
+Päivityksestä valvonta palaa itsestään viimeistään vahdin ikkunan sisällä, bootista ei
+palaa ilman napautusta.
+
 ### Erä 12 — Man-down ja täysruutuhälytys
 
 | Osa | Uutta |
