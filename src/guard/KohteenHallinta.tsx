@@ -494,6 +494,68 @@ export const KohteenHallinta = ({
             )}
           </div>
 
+          {/* Vuoron kuittausväli.
+
+              ERI ASIA KUIN MAN-DOWN, ja ero on syytä ymmärtää ennen kuin näitä säätää.
+              Man-down kysyy kun laite ei liiku; tämä kysyy riippumatta liikkeestä. Siksi
+              tämä tavoittaa myös sen vartijan joka istuu paikallaan koko vuoron — hänelle
+              man-downin liikkumattomuussääntö ei kerro mitään muuta kuin että hän istuu.
+
+              Erääntyminen tapahtuu palvelimella, joten kuollut puhelin laukaisee tämän
+              itsestään. Se on koko toiminnon tarkoitus. */}
+          <div className="border-t border-line-soft pt-4">
+            <h3 className="text-sm font-bold text-ink-strong mb-2">Vuoron kuittausväli</h3>
+            <p className="text-xs text-ink-muted mb-3">
+              Puhelin kysyy vartijalta säännöllisin välein onko hän kunnossa, myös silloin
+              kun laite on liikkeessä. Kuittaamatta jäänyt kysely tekee hälytyksen — myös
+              silloin kun puhelimen akku on loppunut tai sovellus on suljettu.
+            </p>
+
+            <label className="flex items-center gap-2 text-sm text-ink-body mb-3">
+              <input
+                type="checkbox"
+                checked={kohde.kuittaus?.paalla === true}
+                onChange={(e) => onChange({
+                  ...kohde,
+                  kuittaus: {
+                    paalla: e.target.checked,
+                    valiMin: kohde.kuittaus?.valiMin || 60,
+                  },
+                })}
+                disabled={!saaMuokata}
+                className="rounded border-line-soft"
+              />
+              Kuittausvalvonta käytössä
+            </label>
+
+            {kohde.kuittaus?.paalla === true ? (
+              <label className="flex flex-wrap items-center gap-2 text-sm text-ink-body">
+                Kysy vartijalta
+                <select
+                  value={kohde.kuittaus?.valiMin || 60}
+                  onChange={(e) => onChange({
+                    ...kohde,
+                    kuittaus: { paalla: true, valiMin: Number(e.target.value) },
+                  })}
+                  disabled={!saaMuokata}
+                  className="rounded-lg border border-line-soft p-2 text-sm"
+                >
+                  {/* Alaraja 15 min: tiheämmin kysyvä automaatti ei ole valvontaa vaan
+                      häiriö, ja turhaan toistuva kysymys opetetaan ohittamaan. Yksittäisiin
+                      riskitehtäviin on käsin käynnistettävä ajastin, joka sallii minuutin.
+                      Yläraja 180 min: ks. server/halytys.js. */}
+                  {[15, 30, 45, 60, 90, 120, 180].map((m) => (
+                    <option key={m} value={m}>{m} minuutin välein</option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <p className="text-xs text-ink-muted">
+                Pois käytöstä. Vartijalta ei kysytä mitään vuoron aikana.
+              </p>
+            )}
+          </div>
+
           {/* Pohjakartta ja vyöhykkeet. Sama malli kuin tapahtumapuolella: kartta on
               kohteen kenttä, ja vyöhykkeet piirretään sen päälle osuuskoordinaatteina. */}
           <div className="border-t border-line-soft pt-4">

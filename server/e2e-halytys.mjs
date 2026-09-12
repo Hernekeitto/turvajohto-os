@@ -80,6 +80,7 @@ fs.writeFileSync(path.join(DATA, 'guardSites.json'), JSON.stringify([
     id: 'kohde-1',
     name: 'Testikohde',
     mandown: { paalla: true, liikkumatonMin: 12 },
+    kuittaus: { paalla: true, valiMin: 30 },
     // Vuorotyyppi ilman kelloaikoja: vuoron saa avata milloin tahansa, eikä testi ala
     // kaatuilla vuorokaudenajan mukaan.
     vuorotyypit: [{ id: 'v-lisa', nimi: 'Lisävuoro' }],
@@ -188,6 +189,29 @@ async function laiteHae(polku) {
   return { koodi: vastaus.status, json: await vastaus.json().catch(() => null) };
 }
 
+/** Laiteallekirjoitettu POST mielivaltaiseen polkuun. */
+async function laitePosta(polku, runko) {
+  const teksti = JSON.stringify(runko);
+  const aika = Date.now();
+  const nonce = crypto.randomUUID();
+  const viesti = kanoninenViesti({
+    laiteId: laite.id, metodi: 'POST', polku, aika, nonce, runko: teksti,
+  });
+  const vastaus = await fetch(`${PALVELIN}${polku}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-turvajohto-laite': laite.id,
+      'x-turvajohto-aika': String(aika),
+      'x-turvajohto-nonce': nonce,
+      'x-turvajohto-allekirjoitus':
+        crypto.sign('sha256', Buffer.from(viesti), pari.privateKey).toString('base64'),
+    },
+    body: teksti,
+  });
+  return { koodi: vastaus.status, json: await vastaus.json().catch(() => null) };
+}
+
 const MANDOWN = {
   tyyppi: 'mandown',
   eventId: 'kohde-1',
@@ -268,7 +292,64 @@ try {
   vaita(oma.json?.mandown?.liikkumatonMin === 12,
     'liikkumattomuusraja tulee kohteelta eika oletuksesta');
 
-  // --- 8. Tuntematon tyyppi ----------------------------------------------------------
+  vaita(oma.json?.kuittaus?.paalla === true && oma.json?.kuittaus?.valiMin === 30,
+    'kuittausvaliasetus tulee vuoron mukana');
+
+  // --- 8. Kuittausajastin: luonti, nollaus, peruminen ---------------------------------
+  //
+  // Sovellus luo ajastimen vuoron alussa ja nollaa sen jokaisella kuittauksella. Kesto
+  // on kuittausvali + vastausaika, jotta vartijalla on aikaa vastata kyselyyn ennen kuin
+  // ajastin eraantyy.
+  const luonti = await laitePosta('/api/halytys/ajastin', {
+    minuutit: 32, eventId: 'kohde-1', kuvaus: 'Vuoron kuittausvalvonta',
+  });
+  vaita(luonti.koodi === 200 && luonti.json?.halytys?.tyyppi === 'ajastin',
+    'laite saa luoda kuittausajastimen allekirjoituksella');
+  const ajastinId = luonti.json?.halytys?.id;
+
+  const nollaus = await laitePosta(`/api/halytys/${ajastinId}/jatka`, { minuutit: 32 });
+  vaita(nollaus.koodi === 200 && nollaus.json?.halytys?.tila === 'kaynnissa',
+    'laite saa nollata ajastimen kuittauksella');
+  vaita(Date.parse(nollaus.json?.halytys?.eraantyy) > Date.parse(luonti.json?.halytys?.eraantyy)
+    || nollaus.json?.halytys?.eraantyy > luonti.json?.halytys?.eraantyy,
+    'kuittaus siirtaa eraantymista eteenpain');
+
+  // --- 9. KUOLLUT PUHELIN LAUKAISEE ITSESTAAN ----------------------------------------
+  //
+  // Taman takia ajastin on palvelimella eika laitteessa. Jos akku loppuu, sovellus
+  // tapetaan tai verkko katoaa pysyvasti, kuittausta ei tule ja ajastin eraantyy
+  // itsestaan. Laitteessa juokseva ajastin kuolisi laitteen mukana - eli juuri siina
+  // tilanteessa jota vastaan se on olemassa.
+  //
+  // Kelloa siirretaan levylla eika odoteta oikeaa minuuttia: mitattava asia on
+  // palvelimen halytyskierros, ei Date.now():n kyky edeta.
+  const polku = path.join(DATA, 'alerts.json');
+  const ennen = JSON.parse(fs.readFileSync(polku, 'utf8'));
+  const lista2 = Array.isArray(ennen) ? ennen : ennen.alerts;
+  for (const h of lista2) {
+    // eraantyy on LUKU (ms) eika ISO-merkkijono: luoAjastin kirjoittaa sen
+    // aritmetiikkana (nyt + min * 60000) vaikka alkoi on ISO. Merkkijono ei vertaudu
+    // lukuun, ja eraantyneet-vertailu jaisi hiljaa epatodeksi.
+    if (h.id === ajastinId) h.eraantyy = Date.now() - 1000;
+  }
+  fs.writeFileSync(polku, JSON.stringify(Array.isArray(ennen) ? lista2 : ennen, null, 2));
+
+  let laukesi = null;
+  for (let i = 0; i < 40 && !laukesi; i += 1) {
+    await new Promise((r) => setTimeout(r, 500));
+    laukesi = (await halytykset(evaste)).find((h) => h?.id === ajastinId && h?.tila === 'lauennut') || null;
+  }
+  vaita(!!laukesi, 'kuittaamaton ajastin laukeaa palvelimella ilman laitteen apua');
+
+  // --- 10. Vuoron paattyessa ajastin perutaan ----------------------------------------
+  const toinen = await laitePosta('/api/halytys/ajastin', {
+    minuutit: 32, eventId: 'kohde-1', kuvaus: 'Vuoron kuittausvalvonta',
+  });
+  const peruminen = await laitePosta(`/api/halytys/${toinen.json?.halytys?.id}/peru`, {});
+  vaita(peruminen.koodi === 200 && peruminen.json?.halytys?.tila === 'peruttu',
+    'laite saa perua ajastimen vuoron paattyessa');
+
+  // --- 11. Tuntematon tyyppi ----------------------------------------------------------
   // Allekirjoitus on kelvollinen mutta sisältö ei. Laite on luotettu, sen lähettämä data
   // ei ole: sidottu laite ei saa voida luoda mielivaltaisia hälytystyyppejä.
   const outo = await halyta({ runko: { ...MANDOWN, tyyppi: 'jokumuu' } });

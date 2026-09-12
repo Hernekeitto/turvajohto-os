@@ -104,6 +104,7 @@ import {
   luoAjastin, luoHalytys, jatka as jatkaHalytysta, laukaise as laukaiseHalytys,
   peru as peruHalytys, kuittaa as kuittaaHalytys, eraantyneet, eskaloitavat,
   merkitseEskaloitu, viestiTeksti, TYYPIT as HALYTYSTYYPIT, mandownAsetukset,
+  kuittausAsetukset,
 } from './halytys.js';
 import { arvioi as arvioiVyohykkeet } from './geofence.js';
 import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti, parsiJson } from './bulksms.js';
@@ -1687,7 +1688,12 @@ app.get('/api/vuoro/oma', requireAuth, guardPortti, (req, res) => {
   const kohde = vuoro
     ? (readCollection('guardSites') || []).find((k) => k?.id === vuoro.siteId)
     : null;
-  res.json({ ok: true, vuoro, mandown: vuoro ? mandownAsetukset(kohde) : null });
+  res.json({
+    ok: true,
+    vuoro,
+    mandown: vuoro ? mandownAsetukset(kohde) : null,
+    kuittaus: vuoro ? kuittausAsetukset(kohde) : null,
+  });
 });
 
 // Vuoron aloitus.

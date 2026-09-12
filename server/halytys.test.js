@@ -11,9 +11,11 @@ import assert from 'node:assert/strict';
 
 import {
   mandownAsetukset, MANDOWN_MIN_MIN, MANDOWN_MAX_MIN, MANDOWN_OLETUS_MIN,
+  kuittausAsetukset, KUITTAUS_MIN_MIN, KUITTAUS_MAX_MIN, KUITTAUS_OLETUS_MIN,
+  KUITTAUS_VASTAUSAIKA_MIN,
   luoAjastin, luoHalytys, jatka, laukaise, peru, kuittaa,
   eraantyneet, eskaloitavat, merkitseEskaloitu, viestiTeksti,
-  puhdistaGps, onAvoin, TYYPIT, AJASTIN_MAX_MIN, VIESTIN_MAX,
+  puhdistaGps, onAvoin, TYYPIT, AJASTIN_MAX_MIN, AJASTIN_MIN_MIN, VIESTIN_MAX,
 } from './halytys.js';
 
 const T0 = Date.parse('2026-09-03T22:00:00Z');
@@ -266,4 +268,37 @@ test('raja palautuu myos kun man-down on pois paalta', () => {
   // Arvon on oltava mielekäs silloinkin kun sitä ei käytetä: käyttöliittymä näyttää
   // liukusäätimen myös pois päältä olevalle kohteelle, eikä siinä saa lukea NaN.
   assert.equal(mandownAsetukset({ mandown: { paalla: false, liikkumatonMin: 12 } }).liikkumatonMin, 12);
+});
+
+// --- Vuoron automaattinen kuittausväli ------------------------------------------------
+
+test('kohde ilman asetusta: kuittausvali on pois paalta', () => {
+  const oletus = { paalla: false, valiMin: KUITTAUS_OLETUS_MIN, vastausaikaMin: KUITTAUS_VASTAUSAIKA_MIN };
+  assert.deepEqual(kuittausAsetukset({ id: 'k1' }), oletus);
+  assert.deepEqual(kuittausAsetukset(null), oletus);
+});
+
+test('kuittausvali pysyy rajoissa', () => {
+  const v = (m) => kuittausAsetukset({ kuittaus: { paalla: true, valiMin: m } }).valiMin;
+  assert.equal(v(60), 60);
+  // Alaraja on 15 min eika ajastimen oma minuutti: neljan minuutin valein kysyva
+  // automaatti ei ole valvontaa vaan hairio.
+  assert.equal(v(4), KUITTAUS_MIN_MIN);
+  assert.equal(v(0), KUITTAUS_MIN_MIN);
+  assert.equal(v(999), KUITTAUS_MAX_MIN);
+  assert.equal(v('tunti'), KUITTAUS_OLETUS_MIN);
+});
+
+test('paalla vaatii tasan tosiarvon myos kuittauksessa', () => {
+  assert.equal(kuittausAsetukset({ kuittaus: { paalla: true } }).paalla, true);
+  assert.equal(kuittausAsetukset({ kuittaus: { paalla: '1' } }).paalla, false);
+});
+
+test('ajastimen kesto mahtuu ajastimen omiin rajoihin kuittausvalin ylarajalla', () => {
+  // Sovellus luo ajastimen kestolla vali + vastausaika. Jos summa ylittaisi
+  // AJASTIN_MAX_MIN:n, ajastimen luonti epaonnistuisi 400:lla juuri siina kohteessa
+  // jossa valvontavali on pisin - eli kuittausvalvonta katoaisi hiljaa.
+  assert.ok(KUITTAUS_MAX_MIN + KUITTAUS_VASTAUSAIKA_MIN <= AJASTIN_MAX_MIN,
+    `kuittausvalin ylaraja ${KUITTAUS_MAX_MIN} + vastausaika ${KUITTAUS_VASTAUSAIKA_MIN} ei mahdu ajastimeen ${AJASTIN_MAX_MIN}`);
+  assert.ok(KUITTAUS_MIN_MIN + KUITTAUS_VASTAUSAIKA_MIN >= AJASTIN_MIN_MIN);
 });

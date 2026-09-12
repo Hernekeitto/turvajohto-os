@@ -120,6 +120,18 @@ export type Kohde = {
   //
   // Puuttuva kenttä tarkoittaa pois päältä. Ks. server/halytys.js mandownAsetukset.
   mandown?: { paalla: boolean; liikkumatonMin: number };
+
+  // Vuoron automaattinen kuittausväli (erä 12 jatko). ERI ASIA KUIN MAN-DOWN: tämä kysyy
+  // "oletko kunnossa" riippumatta siitä liikkuuko laite, joten paikallaan istuva ja maassa
+  // makaava vartija kohdellaan samoin. Man-downin liikkumattomuussääntö ei kysy istuvalta
+  // vartijalta muuta kuin sen että hän istuu.
+  //
+  // Toteutuksena on olemassa oleva ajastinhälytys: sovellus luo sen vuoron alussa ja
+  // nollaa jokaisella kuittauksella. Erääntyminen tapahtuu PALVELIMELLA, joten kuolleen
+  // puhelimen ei tarvitse lähettää mitään — ks. server/halytys.js kuittausAsetukset.
+  //
+  // Puuttuva kenttä tarkoittaa pois päältä.
+  kuittaus?: { paalla: boolean; valiMin: number };
 };
 
 // Kohteen tiedosto (guardFiles). Oma kokoelmansa eikä kohteen kenttä, koska liitetiedosto

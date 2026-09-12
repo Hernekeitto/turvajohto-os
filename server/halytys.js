@@ -122,6 +122,81 @@ export function mandownAsetukset(kohde) {
   return { paalla, liikkumatonMin: minuutit };
 }
 
+// --- Vuoron automaattinen kuittausväli -------------------------------------------------
+//
+// "Oletko kunnossa" -kysely joka toistuu vuoron ajan RIIPPUMATTA LIIKKEESTÄ.
+//
+// --- Miksi tämä on eri asia kuin man-down --------------------------------------------
+//
+// Man-downin liikkumattomuussääntö kysyy "onko laite ollut epätavallisen kauan
+// liikkumatta". Se ei kysy mitään paikallaan istuvalta vartijalta muuta kuin sen, että
+// hän istuu paikallaan — ja porttikopissa tai valvomossa se on koko työ. Lyhyt raja
+// tuottaa kyselyn muutaman minuutin välein, ja turhaan toistuva "oletko kunnossa"
+// opettaa painamaan sitä katsomatta. Juuri sitä ei saa tapahtua.
+//
+// Tämä kysyy "onko vartija kunnossa", eikä vastaus riipu siitä liikkuuko hän. Paikallaan
+// istuva ja maassa makaava vartija kohdellaan samoin, eikä kuittausta voi ohittaa
+// pöytätyöllä.
+//
+// --- Miksi ajastin on PALVELIMELLA eikä laitteessa -----------------------------------
+//
+// Tämä käyttää olemassa olevaa `ajastin`-hälytystä: sovellus luo sen vuoron alussa ja
+// nollaa sen jokaisella kuittauksella. Erääntyminen ja eskalointi tapahtuvat
+// hälytyskierroksella palvelimella (10 s välein).
+//
+// Se on koko toiminnon tärkein ominaisuus: **kuolleen puhelimen ei tarvitse lähettää
+// mitään.** Jos akku loppuu, sovellus tapetaan tai verkko katoaa pysyvästi, kuittausta ei
+// tule ja ajastin erääntyy itsestään. Laitteessa juokseva ajastin kuolisi laitteen
+// mukana, eli juuri siinä tilanteessa jota vastaan tämä on olemassa.
+//
+// Ajastimen kesto on kuittausväli PLUS vastausaika, jotta vartijalla on aikaa vastata
+// kyselyyn ennen kuin se erääntyy. Sovellus kysyy välin kohdalla; erääntyminen on
+// vastausajan verran myöhemmin.
+
+export const KUITTAUS_MIN_MIN = 15;
+
+// Yläraja 180 eikä ajastimen oma 240.
+//
+// Sovellus luo ajastimen kestolla `vali + vastausaika`, joten kuittausvälin yläraja ei voi
+// olla ajastimen yläraja — 240 + 2 ei mahdu 240:een, ja ajastimen luonti epäonnistuisi
+// 400:lla juuri siinä kohteessa jossa valvontaväli on pisin. Valvonta katoaisi hiljaa.
+// Testi "ajastimen kesto mahtuu ajastimen omiin rajoihin" vartioi tätä.
+//
+// Kolme tuntia on myös sinänsä jo hyvin pitkä automaattiselle elonmerkille: sitä pidempi
+// väli ei enää vastaa kysymykseen "onko vartija kunnossa" vaan "oliko hän kunnossa joskus".
+export const KUITTAUS_MAX_MIN = 180;
+export const KUITTAUS_OLETUS_MIN = 60;
+
+// Kuinka kauan vartijalla on aikaa vastata kyselyyn ennen kuin ajastin erääntyy.
+//
+// Kaksi minuuttia eikä man-downin puoli minuuttia: man-down herää epäilystä että jotain
+// on jo tapahtunut, tämä on rutiinikysymys kesken työn. Vartija voi olla kädet täynnä,
+// portilla tai puhelimessa, eikä rutiinikysymys saa muuttua hälytykseksi siksi että hän
+// sattui olemaan kiireinen puoli minuuttia.
+export const KUITTAUS_VASTAUSAIKA_MIN = 2;
+
+/**
+ * Kohteen kuittausväliasetus turvallisessa muodossa.
+ *
+ * Oletus on POIS PÄÄLTÄ samasta syystä kuin man-downissa: hiljainen käyttöönotto
+ * jokaisessa olemassa olevassa kohteessa alkaisi kysellä vartijoilta ilman että kukaan on
+ * niin päättänyt. Pois päältä oleminen tehdään näkyväksi sovelluksen lokissa.
+ *
+ * Alaraja on 15 minuuttia eikä ajastimen oma minuutti: tämä on koko vuoron mittainen
+ * automaatti, ja neljän minuutin välein kysyvä automaatti ei ole valvontaa vaan häiriö.
+ * Lyhyempää tarvitaan yksittäisissä riskitehtävissä, ja siihen on käsin käynnistettävä
+ * ajastin joka sallii yhden minuutin.
+ */
+export function kuittausAsetukset(kohde) {
+  const raaka = kohde && typeof kohde === 'object' ? kohde.kuittaus : null;
+  const paalla = raaka?.paalla === true;
+  const luku = Number(raaka?.valiMin);
+  const minuutit = Number.isFinite(luku)
+    ? Math.min(KUITTAUS_MAX_MIN, Math.max(KUITTAUS_MIN_MIN, Math.round(luku)))
+    : KUITTAUS_OLETUS_MIN;
+  return { paalla, valiMin: minuutit, vastausaikaMin: KUITTAUS_VASTAUSAIKA_MIN };
+}
+
 export const KUVAUS_MAX = 200;
 export const HUOMIO_MAX = 2000;
 
