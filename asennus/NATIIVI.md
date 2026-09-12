@@ -936,6 +936,51 @@ Vahtikoiran suurin väli oli **26 min 16 s** — sekunnilleen sama kuin edellise
 Se ei siis ollut sattuma vaan Dozen todellinen katto, ja 35 minuutin raja on mitoitettu
 oikein.
 
+#### v10 12.9.2026: sillan hiljainen kieltäytyminen
+
+Yön lokia lukiessa löytyi oma virhe, jota mikään mittaus ei ollut tarkoitus löytää.
+**`SiltaActivity` torjui hiljaa.** Epäonnistunut vuoron aloitus näytti Toastin, joka
+katosi muutamassa sekunnissa, eikä jättänyt vuorolokiin riviäkään — ja yksi polku (tyhjä
+kohdetunnus) ei näyttänyt edes Toastia.
+
+Miksi tämä on pahempi kuin miltä kuulostaa: koko vuoroloki on rakennettu sitä vastaan,
+että valvonnan puuttuminen näyttäisi samalta kuin valvonnan sujuminen. Torjuttu vuoro
+näytti jälkikäteen **täsmälleen samalta kuin vuoro jota ei koskaan yritetty aloittaa.**
+Kysymykseen "miksi hälytys ei tullut" ei olisi ollut vastausta juuri siinä tapauksessa
+jossa vastaus oli olemassa. Aukko oli lokin omassa etuovessa.
+
+v10 kirjaa jokaisen polun joka päättyy johonkin muuhun kuin tehtyyn työhön:
+
+| Tapahtuma | Syyt |
+|---|---|
+| `aloitus_hylatty` | `kohde_puuttuu` · `ei_sidontaa` · `ei_varmistusta` · `sidonta_purettu` · `palvelin_<koodi>` · `vuoroa_ei_palvelimella` · `vaara_kohde` · `vastaus_lukukelvoton` |
+| `sidonta_hylatty` | `koodi_puuttuu` · `sidonta_voimassa` · `ei_varmistusta` · `ei_yhteytta` · `palvelin_<koodi>` |
+| `hallinnan_purku_hylatty` | `ei_omistaja` · `ei_sidontaa` · `ei_varmistusta` · `yha_kaytossa` |
+| `silta_tuntematon_komento` | vieras osoite — havainto, ei vika |
+| `paatos_ohitettu` | `ei_tallennettua_vuoroa` |
+| `sidonta_onnistui` | — |
+
+Tapahtumanimi `aloitus_hylatty` on **sama jota `VuoroService` jo käytti** omasta
+torjunnastaan. Yksi haku löytää siis kaikki torjutut aloitukset riippumatta kerroksesta,
+ja se on tärkeämpää kuin että lokista näkisi kerroksen — kerroksen kertoo syy.
+
+Kolme yksityiskohtaa jotka ratkaistiin samalla:
+
+**Syy ja perustelu samassa oliossa.** Lokitunnus ja vartijalle näytettävä lause kulkevat
+yhtenä `Este`-oliona. Luokan koko vika oli se, että toinen niistä puuttui; yhtenä oliona
+uutta torjuntaa ei voi lisätä kirjaamatta sitä, koska kääntäjä vaatii molemmat. Lokiin ei
+kirjoiteta lausetta: sen sanamuodon korjaus rikkoisi jokaisen vanhaan lokiin tehdyn haun.
+
+**Torjunta kirjataan taustasäikeessä**, ei pääsäikeen takaisinkutsussa. Torjunta on
+tapahtunut riippumatta siitä ehtiikö activity elää siihen asti että Toast näytetään — ja
+juuri se ehto tekisi lokista epäluotettavan.
+
+**Vieraat arvot siivotaan ennen lokiin kirjoittamista.** Lokiin päätyvät kohdetunnukset ja
+osoitteet tulevat intentistä, jonka voi lähettää mikä tahansa laitteen sovellus. Ilman
+suodatusta rivinvaihdon sisältävä arvo antaisi ulkopuoliselle keinon kirjoittaa
+vuorolokiin haluamiaan — myös uskottavia — rivejä. Väärennettävissä oleva mittari on
+huonompi kuin rikkinäinen, koska se näyttää ehjältä.
+
 ### Erä 12 — Man-down ja täysruutuhälytys
 
 | Osa | Uutta |
