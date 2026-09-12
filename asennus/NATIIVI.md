@@ -549,6 +549,13 @@ mieleisekseen:
 Luku on **alaraja** eikä lopullinen: erä 10 ei käytä verkkoa eikä GPS:ää lainkaan, ja
 varsinaiset kuluttajat tulevat erässä 11.
 
+**Tulos 12.9.2026: 3,81 %/h, ja sääntöä EI noudatettu.** Perustelu on kirjattu erän 11
+kohtaan "Akku: päätössääntö oli oikea, mutta sen premissi oli väärä" — sääntö oletti
+koko kulutuksen johtuvan herätelukosta, ja vertailumittaus osoitti puhelimen kuluttavan
+2,25 %/h ilman valvontaa lainkaan. Sääntö kirjattiin etukäteen juuri siksi ettei tulosta
+tulkittaisi jälkikäteen mieleisekseen, joten poikkeaminen siitä kuuluu kirjata yhtä
+näkyvästi kuin sääntö itse.
+
 #### Päivätesti 10.9.2026: kierros onnistui, valvonta ei käynnistynyt
 
 Viiden ja puolen tunnin päivätesti tuotti näennäisen täydellisen tuloksen: kierros
@@ -874,25 +881,60 @@ on käynnissä, valvonnan käynnistäminen on oikein riippumatta siitä kuka int
 Verkkovirhe torjutaan, eikä se estä kenttäkäyttöä: laillinen polku on juuri käynyt
 palvelimella luomassa vuoron, joten ilman verkkoa sitä ei olisi syntynyt lainkaan.
 
-##### Akun avoin kysymys
+#### Yön yli -ajo 11.–12.9.2026: kaikki neljä lukua
 
-Ensimmäinen mitattu tarkkuus oli **100 m**, ja `geofence.js`:n
-`MAX_TARKKUUS_M = 50` hylkää koko vyöhykearvioinnin sitä huonommalla. Vyöhykesäännöt
-eivät siis vielä laukea, vaikka vartija näkyy kartalla.
+Ensimmäinen täysimittainen ajo laitteen hallinnan kanssa, sijainti ja kanava mukana.
+**13 h 41 min, yhä käynnissä lopetettaessa.**
 
-Syy on tietoinen valinta `Sijainti.java`:ssa:
-`PRIORITY_BALANCED_POWER_ACCURACY` nojaa verkkoon ja solumastoihin eikä sytytä
-GPS-radiota. Sata metriä on täsmälleen se mitä siltä odottaa ilman näkyvyyttä taivaalle.
+| Mittari | Tulos |
+|---|---|
+| Lyöntejä | 822, **kaikki `vali_s=60`**, epäonnistuneita 0 |
+| Vahtikoiran laukeamisia | 32, ja jokaisesta `vahti_lyonti palvelin=200` |
+| Kuoleman merkkejä | ei yhtään |
+| Kanavan katkoja | **0** |
+| `uni_s` | 291 s koko yön — ei muuttunut kertaakaan |
+| Akku | 85 % → 33 % = **3,81 %/h** |
 
-`PRIORITY_HIGH_ACCURACY` ratkaisisi tarkkuuden mutta pitäisi GPS:n päällä koko vuoron.
-Mittakaava: 11.9.2026 valvonta kulutti **3,0 %/h ilman sijaintia lainkaan**, ja
-kahdeksan tunnin vuoro on silloin jo 24 prosenttiyksikköä. GPS päälle koko vuoroksi on
-eri suuruusluokan kysymys, eikä sitä saa päättää yhdestä sisätilamittauksesta.
+##### Kanava kesti yön — FCM:ää ei tarvita
 
-**Halvin koe ensin:** vuoro lähettää sijaintia minuutin välein joka tapauksessa, joten
-ulkona mitattu tarkkuus kertyy itsestään. Jos balanced antaa ulkona 50 m tai parempaa,
-nykyinen asetus riittää — vyöhykkeet ovat joka tapauksessa ulkotiloja. Vasta jos ei
-anna, vaihto on perusteltu ja se tehdään tietäen mitä se maksaa.
+Tämä oli yön suurin tuntematon. WebSocket pysyi auki 13 tuntia 41 minuuttia Dozessa
+**ilman yhtään katkoa**, eikä `Kanava.java`:n peräytymislogiikkaa tarvittu lainkaan.
+Alassuunta kantoi 822 viestiä. Erän 12 täysruutuhälytys ja erän 4 pakotetut ilmoitukset
+voivat siis nojata kanavaan, ja FCM jää pois — mikä oli erän 10 alkuperäinen toive mutta
+vasta nyt mitattu.
+
+##### Akku: päätössääntö oli oikea, mutta sen premissi oli väärä
+
+Sääntö asetettiin ennen datan näkemistä: *yli 1 %/h → herätelukko vaihdetaan.* Mitattu
+luku 3,81 %/h ylittää sen kolminkertaisesti. **Sääntö oletti kuitenkin että koko kulutus
+on herätelukon syytä, ja nyt on ensimmäistä kertaa vertailukelpoinen mittaus:**
+
+| | %/h |
+|---|---|
+| Puhelin ilman valvontaa (yö 10.–11.9.) | 2,25 |
+| Valvonta + sijainti + kanava (yö 11.–12.9.) | 3,81 |
+| **Valvonnan oma osuus** | **1,56** |
+
+Kahdeksan tunnin vuoro maksaa 30 prosenttiyksikköä, josta valvonnan osuus on 12,5.
+Kahdentoista tunnin vuoro 46 prosenttiyksikköä. Molemmat mahtuvat täyteen akkuun
+varalla, joten **herätelukko jää.**
+
+Poistaminen säästäisi osan tuosta 1,56:sta — `uni_s` ei kasvanut kertaakaan, eli lukko
+esti syvän unen koko yön ja juuri siitä kustannus syntyy. Mutta se venyttäisi lyönnit
+Dozen armoille, pakottaisi mittaamaan `VALVONTA_HILJENEE_MS`:n uudelleen ja veisi
+sijaintipäivitykset saman venymän alle. Kauppa on huono, ja päätös on siksi **pitää
+lukko** vaikka kirjaimellinen sääntö sanoisi toisin.
+
+##### Hiljenemisraja todistettu
+
+| | Väärät `elossa=false` |
+|---|---|
+| 3 min raja, 84 min ajoa (11.9.) | **11** |
+| 35 min raja, 13,7 h ajoa (11.–12.9.) | **0** |
+
+Vahtikoiran suurin väli oli **26 min 16 s** — sekunnilleen sama kuin edellisenä päivänä.
+Se ei siis ollut sattuma vaan Dozen todellinen katto, ja 35 minuutin raja on mitoitettu
+oikein.
 
 ### Erä 12 — Man-down ja täysruutuhälytys
 
@@ -965,5 +1007,6 @@ Kalenterin määrää käytännössä juridiikka, ei koodi.
 
 1. **Apupyynnön kuittauksen merkitys.** Onko "Olen tulossa" pelkkä kuittaus vai pitääkö
    saapumisesta jäädä erillinen merkintä jälkiraporttiin?
-2. **Sijaintiväli.** 60 s vastaa nykyistä web-väliä. Vuoron kesto ja akun kesto
-   ratkaisevat, onko se oikea — mitattava laitteella ennen lukitsemista.
+2. ~~**Sijaintiväli.**~~ **Ratkaistu 12.9.2026:** 60 s jää. Yön yli -ajossa valvonnan
+   oma kulutus oli 1,56 %/h, eli kahdeksan tunnin vuoro maksaa 12,5 prosenttiyksikköä.
+   Ks. "Yön yli -ajo 11.–12.9.2026".
