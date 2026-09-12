@@ -104,7 +104,7 @@ import {
   luoAjastin, luoHalytys, jatka as jatkaHalytysta, laukaise as laukaiseHalytys,
   peru as peruHalytys, kuittaa as kuittaaHalytys, eraantyneet, eskaloitavat,
   merkitseEskaloitu, viestiTeksti, TYYPIT as HALYTYSTYYPIT, mandownAsetukset,
-  kuittausAsetukset,
+  kuittausAsetukset, KUITTAUS_VASTAUSAIKA_MIN,
 } from './halytys.js';
 import { arvioi as arvioiVyohykkeet } from './geofence.js';
 import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti, parsiJson } from './bulksms.js';
@@ -1676,6 +1676,84 @@ function kerroVuorosta(vuoro, action) {
 
 // Oma kesken oleva vuoro. Selain kysyy tämän käynnistyessään: vuoron totuus on
 // palvelimella, ja laitteen localStorage on vain kopio jonka voi menettää.
+
+// Hälytyskeskuksen pakottama tarkistus: "vastaa nyt".
+//
+// TOTEUTUS ON VUORON KUITTAUSAJASTIN, ei uusi mekanismi. Vartijan käynnissä oleva
+// ajastin siirretään erääntymään vastausajan päähän; jos ajastinta ei ole (kohteella ei
+// ole kuittausvalvontaa päällä), sellainen luodaan. Seuraus on siis täsmälleen sama kuin
+// tavallisessa kuittauksessa, ja päivystäjä näkee sen samassa listassa samana
+// hälytystyyppinä.
+//
+// TÄMÄ TOIMII MYÖS SAMMUNEELLA PUHELIMELLA. Kanavaviesti on nopea tie kyselyyn, mutta
+// se ei ole ehto: ajastin erääntyy palvelimella riippumatta siitä tavoittiko viesti
+// laitetta. Vastaus kertoo montako avointa yhteyttä viesti tavoitti, jotta päivystäjä
+// näkee heti onko puhelin verkossa — nolla ei tarkoita että tarkistus epäonnistui, vaan
+// että vastausta kannattaa odottaa hitaammin.
+app.post('/api/vuoro/tarkistus', requireAuth, guardPortti, (req, res) => {
+  const vartija = typeof req.body?.vartija === 'string' ? req.body.vartija.trim() : '';
+  if (!vartija) return res.status(400).json({ ok: false, error: 'Vartija puuttuu.' });
+
+  const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], vartija);
+  if (!vuoro) {
+    return res.status(409).json({ ok: false, error: 'Vartijalla ei ole vuoroa käynnissä.' });
+  }
+  // Oikeus on sama kuin hälytyksen kuittaamiseen: pakotettu tarkistus voi päätyä
+  // hälytykseksi, eikä sitä saa laukaista kuka tahansa joka näkee vuoron.
+  const saa = req.role === 'admin'
+    || canEdit(req.permissions, vuoro.siteId, 'alarms')
+    || canEdit(req.permissions, vuoro.siteId, 'guard_alarms');
+  if (!saa) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta pakottaa tarkistusta.' });
+  }
+
+  const nyt = Date.now();
+  const lista = readCollection('alerts') || [];
+  const auki = lista.find(
+    (h) => h?.tyyppi === 'ajastin' && h?.tila === 'kaynnissa' && h?.vartija === vartija
+  );
+
+  let halytys;
+  if (auki) {
+    halytys = {
+      ...auki,
+      eraantyy: nyt + KUITTAUS_VASTAUSAIKA_MIN * 60000,
+      historia: [
+        ...(auki.historia || []),
+        {
+          laji: 'tarkistus',
+          user: req.username,
+          teksti: 'Hälytyskeskus pyysi tarkistusta',
+          aika: new Date(nyt).toISOString(),
+        },
+      ],
+    };
+    writeCollection('alerts', lista.map((h) => (h.id === auki.id ? halytys : h)));
+  } else {
+    const tulos = luoAjastin({
+      id: crypto.randomUUID(),
+      vartija,
+      eventId: vuoro.siteId,
+      minuutit: KUITTAUS_VASTAUSAIKA_MIN,
+      kuvaus: 'Hälytyskeskuksen pyytämä tarkistus',
+      nyt,
+    });
+    if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+    halytys = tulos.halytys;
+    writeCollection('alerts', [halytys, ...lista]);
+  }
+
+  kerroHalytyksesta(halytys, auki ? 'update' : 'create');
+  const laitteita = lahetaViesti(
+    { tyyppi: 'tarkistus' },
+    { suodatin: (istunto) => istunto?.username === vartija }
+  );
+  logAudit({
+    user: req.username, action: 'guard_forced_check', collection: 'alerts',
+    recordId: halytys.id, eventId: vuoro.siteId, targetUser: vartija,
+  });
+  res.json({ ok: true, halytys, laitteita });
+});
 app.get('/api/vuoro/oma', requireAuth, guardPortti, (req, res) => {
   const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
   // Man-down-asetus kulkee TÄSSÄ vastauksessa eikä omassa päätepisteessään.

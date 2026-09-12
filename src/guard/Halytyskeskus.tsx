@@ -22,7 +22,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Siren, Timer, Radio, MapPin, Phone, Check, Users, Route, KeyRound, Megaphone,
   TriangleAlert, Activity, Volume2, VolumeX, Building2, ShieldCheck, MessageSquare,
-  History, Wifi, WifiOff,
+  History, Wifi, WifiOff, BellRing,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
@@ -126,6 +126,45 @@ export const Halytyskeskus = ({
   const [huomiot, setHuomiot] = useState<Record<string, string>>({});
   const [lahimmat, setLahimmat] = useState<Record<string, 'ei' | { username: string; etaisyysM: number; ikaMs: number }[]>>({});
   const [aani, setAani] = useState(false);
+  // Kenen tarkistusta ollaan pyytämässä. Yksi kerrallaan riittää: nappi on rivikohtainen
+  // ja pyyntö kestää vain yhden verkkokutsun verran.
+  const [tarkistettava, setTarkistettava] = useState<string | null>(null);
+
+  // Pakotettu tarkistus: "vastaa nyt".
+  //
+  // Palvelin siirtää vartijan kuittausajastimen erääntymään kahden minuutin päähän ja
+  // työntää kanavaa pitkin kyselyn puhelimeen. TOIMII MYÖS SAMMUNEELLA PUHELIMELLA:
+  // kanavaviesti on nopea tie, mutta ajastin erääntyy palvelimella riippumatta siitä
+  // tavoittiko viesti laitetta.
+  //
+  // `laitteita: 0` ei siis tarkoita epäonnistumista vaan sitä, että puhelin ei ole
+  // juuri nyt verkossa — ja se on päivystäjälle tieto eikä virhe.
+  const pakotaTarkistus = async (vartija: string) => {
+    setTarkistettava(vartija);
+    setVirhe(null);
+    try {
+      const vastaus = await fetch('/api/vuoro/tarkistus', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ vartija }),
+      });
+      const data = await vastaus.json().catch(() => null);
+      if (!vastaus.ok || !data?.ok) {
+        setVirhe(data?.error || 'Tarkistuspyyntö ei onnistunut.');
+      } else if (data.laitteita === 0) {
+        setVirhe(
+          `${vartija}: puhelin ei ole juuri nyt verkossa. Tarkistus on silti voimassa ja `
+          + 'hälyttää jos kuittausta ei tule kahdessa minuutissa.'
+        );
+      }
+      onVirkista();
+    } catch {
+      setVirhe('Tarkistuspyyntö ei onnistunut: yhteys palvelimeen ei toimi.');
+    } finally {
+      setTarkistettava(null);
+    }
+  };
   const [smsTila, setSmsTila] = useState<{ konfiguroitu: boolean; dryRun: boolean; saldo: number | null; varoitusraja: number | null; virhe: string | null } | null>(null);
 
   const nimet = useMemo(() => new Map(kohteet.map((k) => [k.id, k.name])), [kohteet]);
@@ -685,6 +724,22 @@ export const Halytyskeskus = ({
                       {v.mita} · {ikaTekstina(Math.max(0, nyt - Date.parse(v.viimeksi)))}
                     </p>
                   </div>
+                  {/* Pakotettu tarkistus.
+
+                      TOIMII MYOS SAMMUNEELLA PUHELIMELLA: palvelin siirtaa vartijan
+                      kuittausajastimen eraantymaan kahden minuutin paahan, ja
+                      kanavaviesti on vain nopea tie kyselyyn. Jos puhelin ei ole
+                      verkossa, vastaus kertoo sen - ja ajastin eraantyy silti. */}
+                  <button
+                    type="button"
+                    onClick={() => pakotaTarkistus(v.vartija)}
+                    disabled={tarkistettava === v.vartija}
+                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-line-strong bg-sunken text-ink-body hover:bg-surface disabled:opacity-50 transition-colors"
+                    title="Pyydä vartijaa kuittaamaan nyt"
+                  >
+                    <BellRing size={13} />
+                    {tarkistettava === v.vartija ? 'Pyydetään…' : 'Pyydä tarkistus'}
+                  </button>
                   {v.ajastin && (
                     <span
                       className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-bold border tabular-nums shrink-0 ${
