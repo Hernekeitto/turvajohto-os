@@ -1774,8 +1774,19 @@ app.post('/api/vuoro/tarkistus', requireAuth, guardPortti, (req, res) => {
   }
 
   kerroHalytyksesta(halytys, auki ? 'update' : 'create');
+  // AJASTIMEN TUNNUS ON MUKANA VIESTISSÄ, ja se on pakollinen eikä lisätieto.
+  //
+  // Sovellus tallentaa tunnuksen vasta luodessaan ajastimen itse (Kuittaus.aloita), eli
+  // vain kun kohteella on kuittausvalvonta päällä. Pakotettu tarkistus toimii myös ilman
+  // sitä — palvelin luo ajastimen tässä — mutta silloin puhelin ei tiedä mitä ajastinta
+  // se kuittaa.
+  //
+  // Mitattu 13.9.2026 ensimmäisellä kokeilulla: vartija painoi "Kuittaa", sovellus
+  // kirjasi `kuittaus_kuitattu ei_ajastinta` eikä lähettänyt mitään, ja ajastin erääntyi
+  // puolitoista minuuttia myöhemmin. Vartija teki oikein ja järjestelmä hälytti silti —
+  // se on tämän toiminnon pahin mahdollinen vikatila.
   const laitteita = lahetaViesti(
-    { tyyppi: 'tarkistus' },
+    { tyyppi: 'tarkistus', id: halytys.id },
     { suodatin: (istunto) => istunto?.username === vartija }
   );
   logAudit({
