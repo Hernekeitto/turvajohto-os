@@ -1110,23 +1110,90 @@ siitä tiedä kukaan.
 Vartijan kytkin muuttui **tilanäytöksi** sekä hälytysnäkymässä että mobiilivalikossa. Tila
 näytetään silti, koska vartijan on tiedettävä valvotaanko häntä — tyhjä kohta olisi arvaus.
 
-##### Auki: kaksi mittausta
-
-**Man-downin akkuhinta.** Puhelin on ollut kaapelissa koko todennuksen ajan, joten 4 Hz:n
-anturikuuntelun kustannus on tuntematon. Vertailuluku on olemassa: valvonta ilman
-man-downia kuluttaa 1,56 %/h.
-
-**Anturi Dozessa.** Jatkaako anturi näytteiden toimittamista ruudun ollessa sammuksissa
-tuntikausia? Näytelaskuri kulkee sydämenlyönnin mukana (`lyonti anturi=N`) juuri tätä
-varten — normaali on **190–240 näytettä minuutissa**, ja pysähtynyt luku on man-downin
-hiljainen kuolema.
-
-Molemmat ratkeavat samalla yön yli -ajolla.
-
 ##### Testaamatta laitteella
 
-Kaatumissääntö (isku + liikkumattomuus) ja koko ketju hälytykseen asti. Jälkimmäinen
-synnyttää oikean hälytyksen tuotantoon, joten se tehdään tietoisesti eikä ohimennen.
+Kaatumissääntö (isku + liikkumattomuus). Koko ketju hälytykseen asti testattiin
+päiväajossa 12.9. — ks. alla.
+
+#### Päiväajo 12.–13.9.2026: 13 h 36 min vartijan mukana
+
+Puhelin v13:lla mukana tavallisessa päivässä, kaapeli irti 12:00, kytketty takaisin
+01:36. Tarkoitus oli vastata neljään kysymykseen; **kaksi sai vastauksen, kaksi ei**, ja
+syy näkyy samassa datassa.
+
+| | |
+|---|---|
+| Kesto | 13 h 36 min |
+| Lyöntejä | 817, **nolla palvelun kuolemaa**, nolla vahdin elvytystä |
+| Kanavakatkoja | 1, korjautui itsestään |
+| Anturinäytteitä | 173 917 eli ~11 000/h (~183/min), tasaisena koko ajon |
+| Akku | 97 % → 33 % = **4,70 %/h** |
+
+##### Vastasi: anturi ei pysähdy, ja hälytysketju toimii
+
+Näytelaskuri kulki tasaisena alusta loppuun. Se oli lokissa juuri tätä varten, ja
+pysähtynyt luku olisi ollut man-downin hiljainen kuolema.
+
+Hälytysketju todistui **vahingossa** kello 13:03 — kyselyyn ei ehditty vastata:
+
+```
+13:03:06 anturi_epaily laji=liikkumaton
+13:03:06 kysely_alkoi vastausaika_s=30
+13:03:36 kysely_vastaamatta
+13:03:36 halytys_lahetetty tyyppi=mandown syy=liikkumaton
+```
+
+##### Tärkein löydös: liikkumattomuussääntö valvoo työasentoa, ei vartijaa
+
+| Klo | Epäilyjä |
+|---|---|
+| 12:10–13:03 | **14** |
+| 13:03–01:36 | **0** |
+
+Neljätoista kyselyä 53 minuutissa pöydän ääressä, sitten ei yhtäkään 12,5 tuntiin
+liikkeessä. Sääntö ei siis erottele vaarassa olevaa vartijaa turvallisesta vaan istuvan
+kävelevästä — ja porttikopissa tai valvomossa istuminen on koko työ.
+
+Turhaan toistuva "oletko kunnossa" opetetaan painamaan katsomatta, ja se on tämän
+toiminnon pahin mahdollinen lopputulos. **Viiden minuutin oletus on väärä.** Oikea rakenne
+on kolme kerrosta eri kysymyksillä (päätetty 12.9., ks. "Vuoron kuittausväli"):
+
+| Kerros | Mihin vastaa | Aika |
+|---|---|---|
+| `kaatuminen` | Iskeytyikö vartija maahan | 12 s |
+| Kuittausväli | Onko vartija kunnossa ylipäätään | 60 min, säädettävä |
+| `liikkumaton` | Onko laite ollut epätavallisen kauan liikkumatta | **30–60 min, varmistin** |
+
+##### EI vastannut: Doze eikä man-downin akkuhinta
+
+**Puhelin ei ollut Dozessa kertaakaan.** Kaikissa 2 580 lokirivissä kello 12:n jälkeen
+lukee `doze=ei`; yön yli -ajossa 11.–12.9. luki `doze=kylla`. Ajo ei siis kerro mitään
+siitä kestääkö anturi Dozen — sitä tilaa ei syntynyt.
+
+Sama havainto selittää epäilyjen puuttumisen illalla: puhelin oli liikkeessä tai
+käsittelyssä. **Kaksi toisistaan riippumatonta mittaria sanovat samaa**, ja siksi selitys
+kelpaa.
+
+Akkuluku on siksi ylälaidan arvio eikä mittaus:
+
+| Ikkuna | Kulutus |
+|---|---|
+| Koko ajo 12:00–01:36 | 4,70 %/h |
+| Rauhoittunut 15:00–22:00 | 4,00 %/h |
+| Ilta 22:00–01:30 | 5,14 %/h |
+| **Vertailu:** yön yli -ajo ilman man-downia | 3,81 %/h |
+
+Vertailuluku mitattiin liikkumattomasta puhelimesta ruutu sammuksissa, tämä mukana
+kannetusta. Ero 0,2–0,9 %/h on siis man-downin hinta **plus käyttäjän oma käyttö**, eikä
+niitä voi tästä datasta erottaa. Man-downin oma kustannus näyttää pieneltä — mutta sitä ei
+ole mitattu, eikä sitä pidä esittää mitattuna.
+
+##### Yhä auki: yksi kontrolloitu ajo
+
+Puhelin pöydälle, ruutu kiinni, ei koskea, yön yli, man-down päällä. Sama koe kuin
+11.–12.9. yhdellä muuttujalla. Se ratkaisee molemmat avoimet luvut kerralla — ja jos
+`doze=ei` toistuu silloinkin, syy ei ole liikkeessä vaan anturikuuntelussa, ja silloin
+man-downin todellinen hinta on Dozen menetys eikä anturin virta.
 
 #### v13 12.9.2026: anturin lepolukema ei ole 9,81
 
