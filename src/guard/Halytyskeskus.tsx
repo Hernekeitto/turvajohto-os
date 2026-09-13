@@ -22,7 +22,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Siren, Timer, MapPin, Phone, Check, Users, Route, KeyRound, Megaphone,
   TriangleAlert, Activity, Volume2, VolumeX, Building2, ShieldCheck, MessageSquare,
-  History, Wifi, WifiOff, BellRing,
+  History, Wifi, WifiOff, BellRing, Search, X,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
@@ -32,6 +32,7 @@ import {
 } from '../shared/halytykset';
 import { AVAIMEN_TILA } from '../shared/kalusto';
 import { onVoimassa } from '../shared/tiedotteet';
+import { osuu } from '../shared/haku';
 import { ikaTekstina } from '../shared/sijainninLahetys';
 import {
   kentalla, kohteenTilanne, tapahtumavirta, type Kiireys, type Lahteet,
@@ -111,6 +112,70 @@ function tarkistuksenTulos(h: Halytys, pyynto: Halytys['historia'][number]) {
     vastausaika: paattyiMs === null ? null : paattyiMs - new Date(pyynto.ts).getTime(),
   };
 }
+
+/**
+ * Listan hakukenttä.
+ *
+ * <p><b>Piilotettujen määrä sanotaan aina ääneen.</b> Suodatettu lista näyttää samalta
+ * kuin lyhyt lista, ja päivystäjän ruudulla ero on ratkaiseva: "ei lauenneita hälytyksiä"
+ * ja "hakuehto piilottaa kolme lauennutta hälytystä" ovat eri tilanteita. Unohtunut
+ * hakusana ei saa hiljentää valvomoa.
+ *
+ * <p>Siksi myös {@code kiire}: hälytyslistassa piilotettujen rivi on varoitusvärinen eikä
+ * harmaa. Se on ainoa lista jossa suodatin voi piilottaa jotain jota katsotaan juuri nyt.
+ */
+const Hakukentta = ({
+  arvo, muuta, paikanpitaja, piilotettu, kiire = false,
+}: {
+  arvo: string;
+  muuta: (arvo: string) => void;
+  paikanpitaja: string;
+  piilotettu: number;
+  kiire?: boolean;
+}) => (
+  <div className="mb-2 flex flex-wrap items-center gap-2">
+    <div className="relative flex-1 min-w-[12rem] max-w-sm">
+      <Search
+        size={14}
+        className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-subtle pointer-events-none"
+        aria-hidden="true"
+      />
+      <input
+        type="search"
+        value={arvo}
+        onChange={(e) => muuta(e.target.value)}
+        placeholder={paikanpitaja}
+        aria-label={paikanpitaja}
+        className="w-full rounded-lg border border-line bg-surface pl-8 pr-8 py-1.5 text-xs text-ink-body placeholder:text-ink-subtle"
+      />
+      {arvo !== '' && (
+        <button
+          type="button"
+          onClick={() => muuta('')}
+          aria-label="Tyhjennä haku"
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-ink-subtle hover:text-ink-strong hover:bg-sunken"
+        >
+          <X size={13} />
+        </button>
+      )}
+    </div>
+    {piilotettu > 0 && (
+      <span
+        className={`text-xs font-medium ${kiire ? 'text-warning-ink' : 'text-ink-muted'}`}
+      >
+        Hakuehto piilottaa {piilotettu}
+      </span>
+    )}
+  </div>
+);
+
+/** Haku ei osunut. Eri viesti kuin tyhjä lista — ks. Hakukentta. */
+const EiOsumia = ({ haku }: { haku: string }) => (
+  <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
+    Hakuehto <b>{haku}</b> ei osu yhteenkään riviin. Lista ei siis ole tyhjä — tyhjennä
+    haku nähdäksesi kaikki.
+  </p>
+);
 
 type Merkkitila = 'ok' | 'varoitus' | 'neutraali';
 
@@ -295,6 +360,12 @@ export const Halytyskeskus = ({
   // tapahtui, ja neljänkymmenen rivin mittaisena se työntää kaiken muun pois ruudulta.
   // Pidemmät valinnat ovat siellä missä ne tarvitaan — listan alla, kun kymmenen ei
   // riittänyt.
+  // Hakuehdot listoittain yhdessä oliossa. Erilliset useStatet kuudelle listalle olisi
+  // kuusi kertaa sama koodi, ja seitsemäs lista unohtuisi lisäämättä.
+  const [haut, setHaut] = useState<Record<string, string>>({});
+  const haku = (avain: string) => haut[avain] || '';
+  const asetaHaku = (avain: string, arvo: string) => setHaut((v) => ({ ...v, [avain]: arvo }));
+
   const [virtaMaara, setVirtaMaara] = useState(10);
   const virta = useMemo(() => tapahtumavirta(lahteet, virtaMaara), [lahteet, virtaMaara]);
 
@@ -517,6 +588,30 @@ export const Halytyskeskus = ({
   });
   const tilahuomiot = tilamerkit.filter((t) => t.tila === 'varoitus');
 
+  // --- Suodatetut listat --------------------------------------------------------------
+  //
+  // Kentät valitaan sen mukaan mitä päivystäjä kirjoittaa hakukenttään kun jotain on
+  // tapahtunut: vartijan nimimerkki, kohteen nimi, tai se sana jonka hän näki rivillä.
+  // Kohde haetaan NIMELLÄ eikä tunnuksella — tunnus on uuid, jota kukaan ei kirjoita.
+  const lauenneetNakyvat = lauenneet.filter(
+    (h) => osuu([h.vartija, h.kuvaus, kohdeNimi(h.eventId), TYYPPI_LABEL[h.tyyppi]], haku('lauenneet'))
+  );
+  const ajastimetNakyvat = ajastimet.filter(
+    (h) => osuu([h.vartija, h.kuvaus, kohdeNimi(h.eventId)], haku('ajastimet'))
+  );
+  const tarkistuksetNakyvat = tarkistukset.filter(
+    ({ halytys: h, pyynto }) => osuu([h.vartija, pyynto.user, kohdeNimi(h.eventId)], haku('tarkistukset'))
+  );
+  const vuorossaNakyvat = vuorossa.filter(
+    (v) => osuu([v.vartija, v.vuorotyyppiNimi, kohdeNimi(v.siteId)], haku('vuorossa'))
+  );
+  const kentallaNakyvat = kentallaNyt.filter(
+    (v) => osuu([v.vartija, v.mita, ...(v.kohteet || []).map(kohdeNimi)], haku('kentalla'))
+  );
+  const virtaNakyva = virta.filter(
+    (t) => osuu([t.otsikko, t.teksti, t.kuka, kohdeNimi(t.kohdeId)], haku('virta'))
+  );
+
   return (
     <div>
       <TakaisinLinkki onClick={onTakaisin}>Takaisin etusivulle</TakaisinLinkki>
@@ -623,13 +718,22 @@ export const Halytyskeskus = ({
 
       {/* --- Lauenneet hälytykset ------------------------------------------------ */}
       <Osio otsikko="Lauenneet hälytykset" ikoni={Siren} maara={lauenneet.length} kiire={lauenneet.length > 0}>
+        <Hakukentta
+          arvo={haku('lauenneet')}
+          muuta={(v) => asetaHaku('lauenneet', v)}
+          paikanpitaja="Hae vartija, kohde tai kuvaus"
+          piilotettu={lauenneet.length - lauenneetNakyvat.length}
+          kiire
+        />
         {lauenneet.length === 0 ? (
           <p className="text-sm text-success-ink bg-success-soft border border-success/30 rounded-lg px-4 py-3">
             Ei lauenneita hälytyksiä.
           </p>
+        ) : lauenneetNakyvat.length === 0 ? (
+          <EiOsumia haku={haku('lauenneet')} />
         ) : (
           <div className="space-y-3">
-            {lauenneet.map((h) => {
+            {lauenneetNakyvat.map((h) => {
               const kohde = kohteet.find((k) => k.id === h.eventId) || null;
               const kulunut = h.laukesi ? nyt - Date.parse(h.laukesi) : null;
               return (
@@ -779,14 +883,22 @@ export const Halytyskeskus = ({
           tarkistukset päättyivät. Vierekkäin ne luetaan yhtenä kysymyksenä. */}
       <div className="grid gap-6 lg:grid-cols-2 mb-8">
       <Osio pari otsikko="Käynnissä olevat ajastimet" ikoni={Timer} maara={ajastimet.length}>
+        <Hakukentta
+          arvo={haku('ajastimet')}
+          muuta={(v) => asetaHaku('ajastimet', v)}
+          paikanpitaja="Hae vartija tai kohde"
+          piilotettu={ajastimet.length - ajastimetNakyvat.length}
+        />
         {ajastimet.length === 0 ? (
           <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
             Kukaan ei ole käynnistänyt ajastinta. Yksin työskentelevä käynnistää sen omalta
             laitteeltaan.
           </p>
+        ) : ajastimetNakyvat.length === 0 ? (
+          <EiOsumia haku={haku('ajastimet')} />
         ) : (
           <ul className="space-y-2">
-            {ajastimet.map((h) => {
+            {ajastimetNakyvat.map((h) => {
               const aikaa = jaljella(h, nyt);
               const kohta = aikaa !== null && aikaa <= KOHTA_MS;
               return (
@@ -817,13 +929,21 @@ export const Halytyskeskus = ({
       </Osio>
 
       <Osio pari otsikko="Pyydetyt tarkistukset" ikoni={ShieldCheck} maara={tarkistukset.length}>
+        <Hakukentta
+          arvo={haku('tarkistukset')}
+          muuta={(v) => asetaHaku('tarkistukset', v)}
+          paikanpitaja="Hae vartija, pyytäjä tai kohde"
+          piilotettu={tarkistukset.length - tarkistuksetNakyvat.length}
+        />
         {tarkistukset.length === 0 ? (
           <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
             Kukaan ei ole pyytänyt tarkistusta kuluneen kahdentoista tunnin aikana.
           </p>
+        ) : tarkistuksetNakyvat.length === 0 ? (
+          <EiOsumia haku={haku('tarkistukset')} />
         ) : (
           <ul className="space-y-2">
-            {tarkistukset.map(({ halytys: h, pyynto }) => {
+            {tarkistuksetNakyvat.map(({ halytys: h, pyynto }) => {
               const tulos = tarkistuksenTulos(h, pyynto);
               return (
                 <li
@@ -946,13 +1066,21 @@ export const Halytyskeskus = ({
           hälyttää jos kuittausta ei tule kahdessa minuutissa — <b>myös silloin kun puhelin
           ei ole verkossa</b>, koska ajastin erääntyy palvelimella.
         </p>
+        <Hakukentta
+          arvo={haku('vuorossa')}
+          muuta={(v) => asetaHaku('vuorossa', v)}
+          paikanpitaja="Hae vartija tai kohde"
+          piilotettu={vuorossa.length - vuorossaNakyvat.length}
+        />
         {vuorossa.length === 0 ? (
           <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
             Yhtään vuoroa ei ole käynnissä.
           </p>
+        ) : vuorossaNakyvat.length === 0 ? (
+          <EiOsumia haku={haku('vuorossa')} />
         ) : (
           <ul className="divide-y divide-line-soft border border-line rounded-lg overflow-hidden">
-            {vuorossa.map((v) => (
+            {vuorossaNakyvat.map((v) => (
               <li key={v.id} className="px-4 py-3 bg-surface flex flex-wrap items-center gap-3">
                 <ShieldCheck size={16} className="text-ink-subtle shrink-0" />
                 <div className="min-w-0 flex-1">
@@ -988,13 +1116,21 @@ export const Halytyskeskus = ({
           Johdettu siitä mitä sovellukseen on kirjattu viimeisen kahdeksan tunnin aikana.
           EI vuorolista: vartija joka ei ole kirjannut mitään ei näy tässä.
         </p>
+        <Hakukentta
+          arvo={haku('kentalla')}
+          muuta={(v) => asetaHaku('kentalla', v)}
+          paikanpitaja="Hae vartija, kohde tai toiminto"
+          piilotettu={kentallaNyt.length - kentallaNakyvat.length}
+        />
         {kentallaNyt.length === 0 ? (
           <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
             Kukaan ei ole kirjannut mitään kuluneen kahdeksan tunnin aikana.
           </p>
+        ) : kentallaNakyvat.length === 0 ? (
+          <EiOsumia haku={haku('kentalla')} />
         ) : (
           <ul className="divide-y divide-line-soft border border-line rounded-lg overflow-hidden">
-            {kentallaNyt.map((v) => {
+            {kentallaNakyvat.map((v) => {
               const aikaa = v.ajastin ? jaljella(v.ajastin, nyt) : null;
               return (
                 <li key={v.vartija} className="px-4 py-3 bg-surface flex flex-wrap items-center gap-3">
@@ -1159,13 +1295,21 @@ export const Halytyskeskus = ({
           Viimeisimmät merkinnät kaikista kohteista aikajärjestyksessä. Näyttää vain sen
           mihin sinulla on lukuoikeus.
         </p>
+        <Hakukentta
+          arvo={haku('virta')}
+          muuta={(v) => asetaHaku('virta', v)}
+          paikanpitaja="Hae tapahtuma, vartija tai kohde"
+          piilotettu={virta.length - virtaNakyva.length}
+        />
         {virta.length === 0 ? (
           <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
             Ei merkintöjä.
           </p>
+        ) : virtaNakyva.length === 0 ? (
+          <EiOsumia haku={haku('virta')} />
         ) : (
           <ul className="divide-y divide-line-soft border border-line rounded-lg overflow-hidden">
-            {virta.map((t) => (
+            {virtaNakyva.map((t) => (
               <li key={t.id} className="px-4 py-2.5 bg-surface flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <span className="text-xs text-ink-subtle tabular-nums shrink-0 w-12">{kellonaika(t.ts)}</span>
                 <span className={`text-sm font-medium ${VIRRAN_TYYLI[t.taso]}`}>{t.otsikko}</span>
