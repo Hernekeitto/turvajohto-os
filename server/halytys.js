@@ -90,9 +90,25 @@ export const AJASTIN_MAX_MIN = 240;
 //
 // Nyt asetus on kohteen tietueessa, päivystäjän asettama ja auditlokin piirissä.
 
-export const MANDOWN_MIN_MIN = 5;
+// --- Rajat 30–60 min, oletusarvo 60 ---------------------------------------------------
+//
+// Alaraja oli 5 minuuttia 12.9.2026 asti. Se mitattiin kelvottomaksi saman päivän
+// kenttäajossa: puhelin taskussa liikkuvalla vartijalla tuotti 0 kyselyä 12,5 tunnissa,
+// mutta sama puhelin pöydällä tuotti 14 kyselyä 53 minuutissa. Toistuva "oletko kunnossa"
+// ei ole valvontaa vaan sen vastakohta — se opettaa painamaan nappia katsomatta, ja
+// katsomatta painettu kuittaus on täsmälleen yhtä arvokas kuin kuittaamaton hälytys.
+//
+// Liikkumattomuus on nyt VARAJÄRJESTELMÄ eikä ensisijainen mittari. Ensisijainen on
+// vuoron kuittausväli (ks. kuittausAsetukset): se kysyy säännöllisesti riippumatta siitä
+// onko puhelin liikkeessä, eikä siis rankaise porttikopissa istumisesta. Tämä sääntö
+// vastaa eri kysymykseen: onko laite maannut niin kauan liikkumatta, ettei kyse voi olla
+// työnteosta. Siihen kysymykseen 30–60 minuuttia on oikea suuruusluokka, 5 ei ollut.
+//
+// Iskun jälkeinen sääntö (12 s) EI muutu tämän mukana. Kaatuminen tunnistetaan
+// kiihtyvyyspiikistä eikä ajasta, ja siinä minuuttien odottaminen olisi vaarallista.
+export const MANDOWN_MIN_MIN = 30;
 export const MANDOWN_MAX_MIN = 60;
-export const MANDOWN_OLETUS_MIN = 5;
+export const MANDOWN_OLETUS_MIN = 60;
 
 /**
  * Kohteen man-down-asetus turvallisessa muodossa.
@@ -109,17 +125,35 @@ export const MANDOWN_OLETUS_MIN = 5;
  * tarkoittaisi hälytystä jokaisesta sekunnista jonka puhelin makaa taskussa, ja
  * puuttuva yläraja hälytystä jota ei koskaan tule.
  *
- * Rajat 5–60 ovat samat kuin selaimen liukusäätimessä oli, jotta siirtymä ei muuta
- * yhdenkään kohteen käyttäytymistä muuten kuin paikan osalta.
+ * Rajat ovat 30–60 minuuttia, ks. perustelu vakioiden yhteydessä. Kiinnitä huomiota
+ * siihen mitä tämä tekee vanhoille tietueille: kohde jolle on tallennettu 5 minuuttia saa
+ * nyt 30, koska alaraja nostetaan lukuhetkellä eikä tietuetta muuteta. Se on tarkoitus.
+ * Vaihtoehto olisi kunnioittaa vanhaa arvoa, eli jättää tunnetusti liian tiheä kysely
+ * voimaan niissä kohteissa jotka ehtivät sen tallentaa.
  */
 export function mandownAsetukset(kohde) {
   const raaka = kohde && typeof kohde === 'object' ? kohde.mandown : null;
   const paalla = raaka?.paalla === true;
-  const luku = Number(raaka?.liikkumatonMin);
-  const minuutit = Number.isFinite(luku)
-    ? Math.min(MANDOWN_MAX_MIN, Math.max(MANDOWN_MIN_MIN, Math.round(luku)))
-    : MANDOWN_OLETUS_MIN;
+  const minuutit = minuutitRajoissa(
+    raaka?.liikkumatonMin, MANDOWN_MIN_MIN, MANDOWN_MAX_MIN, MANDOWN_OLETUS_MIN);
   return { paalla, liikkumatonMin: minuutit };
+}
+
+/**
+ * Minuuttiluku rajojen sisällä, tai oletus jos arvoa ei ole.
+ *
+ * <b>Vain luku kelpaa luvuksi.</b> Aiempi versio kirjoitti {@code Number(arvo)}, ja
+ * {@code Number(null)} on nolla eikä NaN — puuttuva asetus puristui siis alarajaan sen
+ * sijaan että olisi pudonnut oletukseen. Niin kauan kuin alaraja ja oletus olivat sama
+ * luku, virhe ei näkynyt missään; se paljastui vasta kun ne erosivat toisistaan
+ * 13.9.2026. Ero on merkityksellinen juuri turva-asetuksessa: tallentamaton arvo ei saa
+ * näyttää tarkoituksella valitulta tiheimmältä rajalta.
+ */
+function minuutitRajoissa(arvo, min, max, oletus) {
+  if (typeof arvo !== 'number' || !Number.isFinite(arvo)) {
+    return oletus;
+  }
+  return Math.min(max, Math.max(min, Math.round(arvo)));
 }
 
 // --- Vuoron automaattinen kuittausväli -------------------------------------------------
@@ -190,10 +224,8 @@ export const KUITTAUS_VASTAUSAIKA_MIN = 2;
 export function kuittausAsetukset(kohde) {
   const raaka = kohde && typeof kohde === 'object' ? kohde.kuittaus : null;
   const paalla = raaka?.paalla === true;
-  const luku = Number(raaka?.valiMin);
-  const minuutit = Number.isFinite(luku)
-    ? Math.min(KUITTAUS_MAX_MIN, Math.max(KUITTAUS_MIN_MIN, Math.round(luku)))
-    : KUITTAUS_OLETUS_MIN;
+  const minuutit = minuutitRajoissa(
+    raaka?.valiMin, KUITTAUS_MIN_MIN, KUITTAUS_MAX_MIN, KUITTAUS_OLETUS_MIN);
   return { paalla, valiMin: minuutit, vastausaikaMin: KUITTAUS_VASTAUSAIKA_MIN };
 }
 

@@ -230,9 +230,10 @@ test('kohde ilman asetusta: man-down on pois paalta', () => {
   // Oletus on pois päältä eikä päälle. Hiljainen käyttöönotto jokaisessa olemassa
   // olevassa kohteessa tarkoittaisi yöllisiä kyselyitä ilman että kukaan on niin
   // päättänyt. Ks. mandownAsetukset.
-  assert.deepEqual(mandownAsetukset({ id: 'k1' }), { paalla: false, liikkumatonMin: 5 });
-  assert.deepEqual(mandownAsetukset(null), { paalla: false, liikkumatonMin: 5 });
-  assert.deepEqual(mandownAsetukset(undefined), { paalla: false, liikkumatonMin: 5 });
+  const oletus = { paalla: false, liikkumatonMin: MANDOWN_OLETUS_MIN };
+  assert.deepEqual(mandownAsetukset({ id: 'k1' }), oletus);
+  assert.deepEqual(mandownAsetukset(null), oletus);
+  assert.deepEqual(mandownAsetukset(undefined), oletus);
 });
 
 test('paalla vaatii tasan tosiarvon', () => {
@@ -246,13 +247,13 @@ test('paalla vaatii tasan tosiarvon', () => {
 
 test('liikkumattomuusraja pysyy rajoissa', () => {
   const min = (m) => mandownAsetukset({ mandown: { paalla: true, liikkumatonMin: m } }).liikkumatonMin;
-  assert.equal(min(20), 20);
+  assert.equal(min(45), 45);
   // Nolla tarkoittaisi hälytystä jokaisesta sekunnista jonka puhelin makaa taskussa.
   assert.equal(min(0), MANDOWN_MIN_MIN);
   assert.equal(min(-5), MANDOWN_MIN_MIN);
   // Ilman ylärajaa hälytystä ei tulisi koskaan.
   assert.equal(min(10_000), MANDOWN_MAX_MIN);
-  assert.equal(min(7.4), 7);
+  assert.equal(min(44.4), 44);
 });
 
 test('kelvoton raja putoaa oletukseen eika kaada', () => {
@@ -267,7 +268,23 @@ test('kelvoton raja putoaa oletukseen eika kaada', () => {
 test('raja palautuu myos kun man-down on pois paalta', () => {
   // Arvon on oltava mielekäs silloinkin kun sitä ei käytetä: käyttöliittymä näyttää
   // liukusäätimen myös pois päältä olevalle kohteelle, eikä siinä saa lukea NaN.
-  assert.equal(mandownAsetukset({ mandown: { paalla: false, liikkumatonMin: 12 } }).liikkumatonMin, 12);
+  assert.equal(mandownAsetukset({ mandown: { paalla: false, liikkumatonMin: 45 } }).liikkumatonMin, 45);
+});
+
+test('vanha viiden minuutin arvo nostetaan alarajaan', () => {
+  // Alaraja nousi 5 -> 30 minuuttiin 13.9.2026 kenttämittauksen jälkeen (ks.
+  // server/halytys.js). Tämä testi on nimenomaan siitä muutoksesta: jo tallennettu 5 EI
+  // jää voimaan, vaan se luetaan 30:ksi. Jos tämä joskus kaatuu siihen että arvo on taas
+  // 5, joku on palauttanut liian tiheän kyselyn huomaamattaan.
+  assert.equal(
+    mandownAsetukset({ mandown: { paalla: true, liikkumatonMin: 5 } }).liikkumatonMin, 30);
+});
+
+test('man-downin rajat ovat keskenaan mielekkaat', () => {
+  // Oletus ei saa olla rajojen ulkopuolella. Sama vartioina kuin kuittausvälillä, joka
+  // kerran päästi läpi 240 + 2 > 240.
+  assert.ok(MANDOWN_MIN_MIN <= MANDOWN_OLETUS_MIN);
+  assert.ok(MANDOWN_OLETUS_MIN <= MANDOWN_MAX_MIN);
 });
 
 // --- Vuoron automaattinen kuittausväli ------------------------------------------------

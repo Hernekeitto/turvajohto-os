@@ -444,7 +444,9 @@ export const KohteenHallinta = ({
               Laite kysyy vartijalta "oletko kunnossa" jos se havaitsee iskun tai pitkän
               liikkumattomuuden. Vastaamatta jäänyt kysely tekee hälytyksen. Asetus koskee
               kaikkia tämän kohteen vuoroja, ja vartija näkee sen mutta ei voi kytkeä sitä
-              pois.
+              pois. Tämä on varajärjestelmä pitkälle liikkumattomuudelle — säännölliseen
+              elossaolon varmistamiseen käytä alla olevaa vuoron kuittausväliä, joka kysyy
+              myös liikkeessä olevalta vartijalta.
             </p>
 
             <label className="flex items-center gap-2 text-sm text-ink-body mb-3">
@@ -455,7 +457,7 @@ export const KohteenHallinta = ({
                   ...kohde,
                   mandown: {
                     paalla: e.target.checked,
-                    liikkumatonMin: kohde.mandown?.liikkumatonMin || 5,
+                    liikkumatonMin: kohde.mandown?.liikkumatonMin || 60,
                   },
                 })}
                 disabled={!saaMuokata}
@@ -468,7 +470,8 @@ export const KohteenHallinta = ({
               <label className="flex flex-wrap items-center gap-2 text-sm text-ink-body">
                 Hälytä jos laite ei ole liikkunut
                 <select
-                  value={kohde.mandown?.liikkumatonMin || 5}
+                  value={Math.min(60, Math.max(30,
+                    Math.round(Number(kohde.mandown?.liikkumatonMin) || 60)))}
                   onChange={(e) => onChange({
                     ...kohde,
                     mandown: { paalla: true, liikkumatonMin: Number(e.target.value) },
@@ -476,10 +479,14 @@ export const KohteenHallinta = ({
                   disabled={!saaMuokata}
                   className="rounded-lg border border-line-soft p-2 text-sm"
                 >
-                  {/* Alaraja 5 min: lyhyempi hälyttäisi lomakkeen täyttämisestä puhelin
-                      pöydällä. Yläraja 60 min: pidempi ei enää valvo mitään. Samat rajat
-                      palvelimella (server/halytys.js), joka ei luota tähän valikkoon. */}
-                  {[5, 10, 15, 20, 30, 45, 60].map((m) => (
+                  {/* Alaraja 30 min: lyhyempi hälyttää työnteosta. Mitattu 12.9.2026 —
+                      pöydällä maannut puhelin tuotti 14 kyselyä 53 minuutissa, ja
+                      turhaan toistuva kysely opettaa painamaan nappia katsomatta.
+                      Yläraja 60 min: pidempi ei enää valvo mitään. Samat rajat
+                      palvelimella (server/halytys.js), joka ei luota tähän valikkoon.
+                      Kohteelle aiemmin tallennettu lyhyempi arvo näytetään ja luetaan
+                      30:na — vanha asetus ei jää voimaan hiljaisesti. */}
+                  {[30, 45, 60].map((m) => (
                     <option key={m} value={m}>{m} minuuttiin</option>
                   ))}
                 </select>

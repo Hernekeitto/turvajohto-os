@@ -63,9 +63,14 @@ export const ISKUN_JALKEEN_MS = 12_000;
 // Kuinka pian iskun jälkeen liikkumattomuuden on alettava, jotta se liittyy iskuun.
 export const ISKUN_IKKUNA_MS = 3_000;
 
-// Liikkumattomuus ilman iskua. Viisi minuuttia on valittu niin, että se on selvästi
-// pidempi kuin lomakkeen täyttäminen puhelin pöydällä.
-export const LIIKKUMATON_MS = 5 * 60_000;
+// Liikkumattomuus ilman iskua. Tunti eikä viisi minuuttia: raja nostettiin 13.9.2026
+// kenttämittauksen jälkeen, jossa pöydällä maannut puhelin tuotti 14 kyselyä 53
+// minuutissa. Tämä sääntö ei ole ensisijainen elossaolomittari vaan varajärjestelmä —
+// sen tehtävä on huomata laite joka on maannut liikkumatta niin kauan ettei kyse voi
+// olla työnteosta. Säännöllinen kysyminen kuuluu vuoron kuittausvälille, joka ei
+// rankaise porttikopissa istumisesta. Todellinen arvo tulee kohteen asetuksesta;
+// ks. server/halytys.js mandownAsetukset (rajat 30–60).
+export const LIIKKUMATON_MS = 60 * 60_000;
 
 // Näytteenoton väli. Anturi tarjoaa dataa noin 60 kertaa sekunnissa, mikä on tähän
 // tarkoitukseen sata kertaa liikaa: neljä näytettä sekunnissa riittää sekä iskuun että

@@ -1232,6 +1232,104 @@ iskun, eikä kaatumista voisi havaita koskaan.
 esitettävä heiluvana arvona. Vanhoissa vektoreissa liikettä esitettiin antamalla arvo
 kaukana 9,81:stä — mikä on vanhan säännön virhe pienoiskoossa.
 
+#### v20 13.9.2026: hälytysääni ei ollut koskaan herätysäänellä
+
+Ääni oli kentällä hiljainen, vaikka herätyskanava nostettiin kyselyn ajaksi täysille.
+Mittarit sulkivat pois väärän selityksen ennen kuin koodiin koskettiin:
+`kysely_aanta_ei_voitu_korottaa` esiintyi lokissa **0 kertaa** ja `dumpsys audio` näytti
+tason palautuneen kyselyn jälkeen. Nosto siis toimi. Vika oli muualla.
+
+Vika oli kutsujärjestyksessä:
+
+```java
+aani = MediaPlayer.create(this, R.raw.halytys);   // valmistelee soittimen (prepare)
+aani.setAudioAttributes(... USAGE_ALARM ...);     // liian myöhään
+```
+
+`create()` kutsuu `prepare()`:n ennen kuin se palaa, ja äänen määreet on asetettava
+**ennen** valmistelua. `USAGE_ALARM` ei siis päätynyt soittimeen kertaakaan: ääni kulki
+mediakanavaa, noudatti median voimakkuutta eikä ohittanut äänetöntä tilaa.
+
+**Tämä tarkoittaa, ettei äänettömän tilan ohitus ollut koskaan toiminut.** Se oli
+kirjattuna koodin kommentteihin ominaisuutena koko erän 12 ajan, ja se oli koko ajan
+olettamus. Ilmoituskanava (`halytys2`) oli määritelty oikein — kanavan määreet asetetaan
+eri rajapinnan kautta — joten ilmoituksen ääni tuli herätyskanavaa ja näkymän ääni ei.
+Kaksi ääntä samasta kyselystä kulki siis eri kanavia, mikä selittää myös sen miksi ne
+kuulostivat erilaisilta.
+
+Soitin rakennetaan nyt käsin siinä järjestyksessä jonka rajapinta vaatii: `new
+MediaPlayer()` → `setAudioAttributes` → `setDataSource` → `prepare()` → `start()`.
+
+##### Todennus laitteella
+
+| Mittari | Arvo |
+|---|---|
+| `dumpsys audio` aktiivinen soitin | `MediaPlayer state:started` **`usage=USAGE_ALARM`** |
+| Lokirivi | `kysely_aani_alkoi kanava=halytys taso=15/15` |
+| Puhelimen tila kokeen aikana | äänetön |
+| Vartijan havainto | ääni soi kovaa |
+
+Kolme riippumatonta mittaria ja yksi korvin tehty havainto. Aiemmin sama `dumpsys`-rivi
+olisi lukenut `usage=USAGE_MEDIA`; se on se yksi merkkijono joka erottaa korjatun
+toteutuksen rikkinäisestä, eikä sitä ollut katsottu kertaakaan.
+
+##### Onnistuminen kirjataan, ei vain epäonnistuminen
+
+`kysely_aani_alkoi` on uusi rivi. Perustelu on sama kuin muuallakin: "ääni ei kuulunut" on
+kentältä tuleva havainto joka voi tarkoittaa kolmea eri asiaa — soitin ei käynnistynyt,
+taso oli nollassa, tai ääni soi mutta puhelin oli laukussa. Ilman tätä riviä niitä ei
+pysty erottamaan jälkikäteen. Eilen ei pystynyt.
+
+Samalla `vapautaSoitin()` ajetaan ennen uuden soittimen luomista. Ääni käynnistetään
+kahdesta paikasta — näkymän luonnista ja epäonnistuneen tunnistuksen jälkeen — ja
+päällekkäin soivat soittimet olivat se mikä kentällä kuultiin kahtena äänenä.
+
+#### v20 13.9.2026: liikkumattomuusraja 5 min → 30–60 min
+
+Edellisen päivän kenttäajo (yllä) osoitti viiden minuutin rajan kelvottomaksi. Muutos
+tehtiin molempiin kieliin ja palvelimeen:
+
+| | Ennen | Nyt |
+|---|---|---|
+| Alaraja | 5 min | **30 min** |
+| Yläraja | 60 min | 60 min |
+| Oletus | 5 min | **60 min** |
+| Valikko käyttöliittymässä | 5/10/15/20/30/45/60 | **30/45/60** |
+
+Iskun jälkeinen 12 sekuntia **ei** muuttunut. Kaatuminen tunnistetaan kiihtyvyyspiikistä
+eikä ajasta, ja siinä minuuttien odottaminen olisi vaarallista.
+
+**Jo tallennettu 5 luetaan 30:ksi.** Alaraja nostetaan lukuhetkellä eikä tietuetta
+muuteta. Vaihtoehto olisi ollut kunnioittaa vanhaa arvoa, eli jättää tunnetusti liian
+tiheä kysely voimaan niissä kohteissa jotka ehtivät sen tallentaa. Tästä on oma testi,
+jotta muutos ei katoa myöhemmässä siivouksessa.
+
+Todennettu laitteessa asti: `anturi_alkoi vali_ms=250 liikkumaton_min=30`.
+
+##### Sivulöydös: `Number(null)` on nolla eikä NaN
+
+Rajojen muuttaminen paljasti virheen joka oli ollut olemassa alusta asti:
+
+```js
+const luku = Number(raaka?.liikkumatonMin);   // Number(null) === 0
+```
+
+Puuttuva asetus puristui **alarajaan** sen sijaan että olisi pudonnut oletukseen. Niin
+kauan kuin alaraja ja oletus olivat sama luku 5, virhe ei näkynyt missään — testi
+`min(null) === MANDOWN_OLETUS_MIN` meni läpi väärästä syystä. Se paljastui vasta sinä
+hetkenä kun luvut erosivat toisistaan.
+
+Ero on merkityksellinen juuri turva-asetuksessa: tallentamaton arvo ei saa näyttää
+tarkoituksella valitulta tiheimmältä rajalta. Korjattu yhteiseen `minuutitRajoissa`-
+apuriin, joka kattaa myös kuittausvälin — samassa funktiossa oli sama virhe.
+
+##### Jäljellä erän 12 avoimista kohdista
+
+Kontrolloitu yön yli -ajo on yhä tekemättä: puhelin pöydälle, ruutu kiinni, ei koskea,
+man-down päällä. Se ratkaisee molemmat mittaamatta jääneet luvut — kestääkö anturi Dozen
+ja mikä on man-downin todellinen akkuhinta. Muuttunut liikkumattomuusraja ei vaikuta
+kokeeseen: 30 minuuttia täyttyy yön aikana yhtä varmasti kuin viisi.
+
 ### Erä 13 — Hätäpainike sovelluksen ulkopuolelta
 
 | Osa | Uutta |

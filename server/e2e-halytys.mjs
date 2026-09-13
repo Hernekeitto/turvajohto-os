@@ -79,7 +79,7 @@ fs.writeFileSync(path.join(DATA, 'guardSites.json'), JSON.stringify([
   {
     id: 'kohde-1',
     name: 'Testikohde',
-    mandown: { paalla: true, liikkumatonMin: 12 },
+    mandown: { paalla: true, liikkumatonMin: 45 },
     kuittaus: { paalla: true, valiMin: 30 },
     // Vuorotyyppi ilman kelloaikoja: vuoron saa avata milloin tahansa, eikä testi ala
     // kaatuilla vuorokaudenajan mukaan.
@@ -289,7 +289,7 @@ try {
     'laite nakee oman vuoronsa allekirjoituksella');
   vaita(oma.json?.mandown?.paalla === true,
     'kohteen man-down-asetus tulee vuoron mukana');
-  vaita(oma.json?.mandown?.liikkumatonMin === 12,
+  vaita(oma.json?.mandown?.liikkumatonMin === 45,
     'liikkumattomuusraja tulee kohteelta eika oletuksesta');
 
   vaita(oma.json?.kuittaus?.paalla === true && oma.json?.kuittaus?.valiMin === 30,

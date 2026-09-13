@@ -21,7 +21,7 @@ import { Halytyskeskus } from './Halytyskeskus';
 import { Kohdenakyma } from './Kohdenakyma';
 import { kohteenToiminnot, type Toiminto } from './tilannekuva';
 import { Halytysvahti } from '../shared/komponentit/Halytysvahti';
-import { haeOmaTila, natiiviValvoo, NATIIVI_TUORE_MS } from '../shared/laitteet';
+import { haeOmaTila, natiiviValvoo } from '../shared/laitteet';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { haeHalytykset, TYYPPI_LABEL, type Halytys } from '../shared/halytykset';
 import { LIIKKUMATON_MS } from '../shared/mandown';
@@ -533,7 +533,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Rajat tarkistetaan täälläkin, koska tietue tulee palvelimelta kokoelmana eikä
   // validoituna arvona — sama sääntö kuin server/halytys.js mandownAsetukset.
   const mandown = vuoroKohde?.mandown?.paalla === true;
-  const mandownMin = Math.min(60, Math.max(5, Math.round(
+  const mandownMin = Math.min(60, Math.max(30, Math.round(
     Number(vuoroKohde?.mandown?.liikkumatonMin) || LIIKKUMATON_MS / 60000
   )));
 
