@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Siren, Timer, Radio, MapPin, Phone, Check, Users, Route, KeyRound, Megaphone,
+  Siren, Timer, MapPin, Phone, Check, Users, Route, KeyRound, Megaphone,
   TriangleAlert, Activity, Volume2, VolumeX, Building2, ShieldCheck, MessageSquare,
   History, Wifi, WifiOff, BellRing,
 } from 'lucide-react';
@@ -111,6 +111,20 @@ function tarkistuksenTulos(h: Halytys, pyynto: Halytys['historia'][number]) {
     vastausaika: paattyiMs === null ? null : paattyiMs - new Date(pyynto.ts).getTime(),
   };
 }
+
+type Merkkitila = 'ok' | 'varoitus' | 'neutraali';
+
+const MERKKITYYLI: Record<Merkkitila, string> = {
+  ok: 'bg-success-soft text-success-ink border-success/30',
+  varoitus: 'bg-warning-soft text-warning-ink border-warning/40',
+  neutraali: 'bg-surface text-ink-body border-line',
+};
+
+const MERKKIPISTE: Record<Merkkitila, string> = {
+  ok: 'bg-success',
+  varoitus: 'bg-warning',
+  neutraali: 'bg-ink-subtle',
+};
 
 const KIIREYS_TYYLI: Record<Kiireys, { reuna: string; merkki: string }> = {
   kriittinen: { reuna: 'border-danger/50 bg-danger-soft', merkki: 'bg-danger' },
@@ -277,7 +291,12 @@ export const Halytyskeskus = ({
     [kohteet, lahteet]
   );
   const kentallaNyt = useMemo(() => kentalla(lahteet, nyt), [lahteet, nyt]);
-  const virta = useMemo(() => tapahtumavirta(lahteet), [lahteet]);
+  // Tapahtumavirran pituus. Oletus 10 eikä 40: virta on silmäiltävä lista siitä mitä juuri
+  // tapahtui, ja neljänkymmenen rivin mittaisena se työntää kaiken muun pois ruudulta.
+  // Pidemmät valinnat ovat siellä missä ne tarvitaan — listan alla, kun kymmenen ei
+  // riittänyt.
+  const [virtaMaara, setVirtaMaara] = useState(10);
+  const virta = useMemo(() => tapahtumavirta(lahteet, virtaMaara), [lahteet, virtaMaara]);
 
   const kierroksetKesken = useMemo(
     () => lahteet.kierrokset
@@ -441,6 +460,63 @@ export const Halytyskeskus = ({
   const kohteetKriittisia = tilanteet.filter((t) => t.tilanne.kiireys === 'kriittinen').length;
   const kohteetVaroitus = tilanteet.filter((t) => t.tilanne.kiireys === 'varoitus').length;
 
+  // --- Järjestelmän tila, tiiviinä ----------------------------------------------------
+  //
+  // Nämä olivat sivun pohjalla omana osionaan, kokonaisin virkkein. Väärä paikka: ne
+  // kertovat voiko ruutuun luottaa, ja sen on näyttävä samalla silmäyksellä kuin ruutu
+  // itse — ei kahden vierityksen päässä.
+  //
+  // TIIVISTYS EI SAA HILJENTÄÄ VIKAA. Lyhyt merkki riittää kun kaikki on kunnossa, mutta
+  // ongelmatilassa koko selite näkyy merkkien alla sellaisenaan. Muuten "Tekstiviestit
+  // pois" näyttäisi ruudulla yhtä rauhalliselta kuin "Tekstiviestit käytössä", ja ero
+  // niiden välillä on se lähteekö hälytyksestä viesti kenellekään.
+  const tilamerkit: { avain: string; tila: Merkkitila; teksti: string; selite: string }[] = [
+    {
+      avain: 'yhteys',
+      tila: yhteys ? 'ok' : 'varoitus',
+      teksti: yhteys ? 'Yhteys auki' : 'YHTEYS POIKKI',
+      selite: yhteys
+        ? 'Hälytykset ja kirjaukset päivittyvät ruudulle itsestään.'
+        : 'Ruudulla voi olla vanhaa tietoa. Yhteyttä yritetään uudelleen automaattisesti.',
+    },
+  ];
+  if (smsTila) {
+    const saldoVahissa = smsTila.saldo !== null && smsTila.varoitusraja !== null
+      && smsTila.saldo <= smsTila.varoitusraja;
+    const smsKunnossa = smsTila.konfiguroitu && !smsTila.dryRun && !smsTila.virhe && !saldoVahissa;
+    tilamerkit.push({
+      avain: 'sms',
+      tila: smsKunnossa ? 'ok' : 'varoitus',
+      teksti: !smsTila.konfiguroitu
+        ? 'VIESTIT POIS'
+        : smsTila.dryRun
+          ? 'VIESTIT KUIVANA'
+          : smsTila.virhe
+            ? 'VIESTIEN TILA EPÄSELVÄ'
+            : saldoVahissa
+              ? 'VIESTISALDO VÄHISSÄ'
+              : 'Viestit käytössä',
+      selite: !smsTila.konfiguroitu
+        ? 'Lauennut hälytys näkyy vain sovelluksessa — kohteen hälytysnumeroihin ei lähde viestiä.'
+        : smsTila.dryRun
+          ? 'Viestejä ei lähetetä oikeasti. Hälytys näkyy vain sovelluksessa.'
+          : smsTila.virhe
+            ? smsTila.virhe
+            : smsTila.saldo !== null
+              ? `Saldo ${smsTila.saldo} viestiä${saldoVahissa ? ' — alle varoitusrajan' : ''}.`
+              : 'Saldoa ei ole vielä tarkistettu.',
+    });
+  }
+  tilamerkit.push({
+    avain: 'sijainti',
+    tila: sijaintiseuranta ? 'ok' : 'neutraali',
+    teksti: sijaintiseuranta ? 'Sijainti seurannassa' : 'Ei sijaintiseurantaa',
+    selite: sijaintiseuranta
+      ? '"Kuka on lähinnä?" toimii niiden osalta joiden laite on lähettänyt sijainnin.'
+      : 'Hälytykseen liitetty kertaluonteinen sijainti näkyy silti, jos vartijan laite sai sen.',
+  });
+  const tilahuomiot = tilamerkit.filter((t) => t.tila === 'varoitus');
+
   return (
     <div>
       <TakaisinLinkki onClick={onTakaisin}>Takaisin etusivulle</TakaisinLinkki>
@@ -453,32 +529,53 @@ export const Halytyskeskus = ({
             hälytyksiä ei tarvitse hakea.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium ${
-              yhteys
-                ? 'bg-success-soft text-success-ink border-success/30'
-                : 'bg-danger-soft text-danger-ink border-danger/40'
-            }`}
-            title={yhteys
-              ? 'Yhteys palvelimeen on auki: muutokset näkyvät heti.'
-              : 'Yhteys palvelimeen on poikki. Näytöllä voi olla vanhaa tietoa.'}
-          >
-            {yhteys ? <Wifi size={14} /> : <WifiOff size={14} />}
-            {yhteys ? 'Yhteys auki' : 'YHTEYS POIKKI'}
-          </span>
-          <button
-            type="button"
-            onClick={vaihdaAani}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-              aani
-                ? 'bg-accent-soft text-accent-ink border-accent/40'
-                : 'bg-surface text-ink-body border-line hover:bg-sunken'
-            }`}
-          >
-            {aani ? <Volume2 size={14} /> : <VolumeX size={14} />}
-            {aani ? 'Äänimerkki päällä' : 'Äänimerkki pois'}
-          </button>
+        {/* Järjestelmän tila ja äänimerkki samassa laatikossa. Äänimerkki on painike eikä
+            merkki, koska se on ainoa näistä jonka päivystäjä voi itse muuttaa. */}
+        <div className="rounded-xl border border-line bg-surface p-2.5 shrink-0 max-w-full">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {tilamerkit.map((t) => (
+              <span
+                key={t.avain}
+                title={t.selite}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${
+                  MERKKITYYLI[t.tila]
+                }`}
+              >
+                {t.avain === 'yhteys'
+                  ? (yhteys ? <Wifi size={13} /> : <WifiOff size={13} />)
+                  : (
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${MERKKIPISTE[t.tila]}`}
+                      aria-hidden="true"
+                    />
+                  )}
+                {t.teksti}
+              </span>
+            ))}
+            <button
+              type="button"
+              onClick={vaihdaAani}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                aani
+                  ? 'bg-accent-soft text-accent-ink border-accent/40'
+                  : 'bg-surface text-ink-body border-line hover:bg-sunken'
+              }`}
+              title={aani
+                ? 'Uusi lauennut hälytys soittaa äänimerkin myös silloin kun ikkuna on taustalla.'
+                : 'Uusi hälytys näkyy vain ruudulla. Kytke äänimerkki päälle jos et katso tätä näkymää jatkuvasti.'}
+            >
+              {aani ? <Volume2 size={13} /> : <VolumeX size={13} />}
+              {aani ? 'Ääni päällä' : 'Ääni pois'}
+            </button>
+          </div>
+          {/* Ongelmatilan selite näkyy kokonaisuudessaan. Ks. tilamerkit. */}
+          {tilahuomiot.length > 0 && (
+            <ul className="mt-2 space-y-1 border-t border-line-soft pt-2">
+              {tilahuomiot.map((t) => (
+                <li key={t.avain} className="text-xs text-warning-ink max-w-prose">{t.selite}</li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
 
@@ -677,8 +774,11 @@ export const Halytyskeskus = ({
         )}
       </Osio>
 
-      {/* --- Ajastimet ----------------------------------------------------------- */}
-      <Osio otsikko="Käynnissä olevat ajastimet" ikoni={Timer} maara={ajastimet.length}>
+      {/* --- Ajastimet ja tarkistukset vierekkäin --------------------------------
+          Sama aihe kahdesta suunnasta: mikä ajastin juoksee nyt ja miten pyydetyt
+          tarkistukset päättyivät. Vierekkäin ne luetaan yhtenä kysymyksenä. */}
+      <div className="grid gap-6 lg:grid-cols-2 mb-8">
+      <Osio pari otsikko="Käynnissä olevat ajastimet" ikoni={Timer} maara={ajastimet.length}>
         {ajastimet.length === 0 ? (
           <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
             Kukaan ei ole käynnistänyt ajastinta. Yksin työskentelevä käynnistää sen omalta
@@ -716,8 +816,7 @@ export const Halytyskeskus = ({
         )}
       </Osio>
 
-      {/* --- Pyydetyt tarkistukset ------------------------------------------------ */}
-      <Osio otsikko="Pyydetyt tarkistukset" ikoni={ShieldCheck} maara={tarkistukset.length}>
+      <Osio pari otsikko="Pyydetyt tarkistukset" ikoni={ShieldCheck} maara={tarkistukset.length}>
         {tarkistukset.length === 0 ? (
           <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
             Kukaan ei ole pyytänyt tarkistusta kuluneen kahdentoista tunnin aikana.
@@ -762,6 +861,8 @@ export const Halytyskeskus = ({
           </ul>
         )}
       </Osio>
+
+      </div>
 
       {/* --- Kohdetaulu ---------------------------------------------------------- */}
       <Osio otsikko="Kohteet" ikoni={Building2} maara={kohteet.length}>
@@ -838,7 +939,8 @@ export const Halytyskeskus = ({
           ja juuri hänestä päivystäjä on huolissaan.
 
           Pakotettu tarkistus on siksi TÄSSÄ eikä siellä. */}
-      <Osio otsikko="Vuorossa nyt" ikoni={ShieldCheck} maara={vuorossa.length}>
+      <div className="grid gap-6 lg:grid-cols-2 mb-8">
+      <Osio pari otsikko="Vuorossa nyt" ikoni={ShieldCheck} maara={vuorossa.length}>
         <p className="text-xs text-ink-subtle mb-3">
           Kesken olevat vuorot. Tarkistuspyyntö kysyy vartijalta "oletko kunnossa" ja
           hälyttää jos kuittausta ei tule kahdessa minuutissa — <b>myös silloin kun puhelin
@@ -881,8 +983,7 @@ export const Halytyskeskus = ({
         )}
       </Osio>
 
-      {/* --- Kentällä nyt -------------------------------------------------------- */}
-      <Osio otsikko="Kentällä juuri nyt" ikoni={Users} maara={kentallaNyt.length}>
+      <Osio pari otsikko="Kentällä juuri nyt" ikoni={Users} maara={kentallaNyt.length}>
         <p className="text-xs text-ink-subtle mb-3">
           Johdettu siitä mitä sovellukseen on kirjattu viimeisen kahdeksan tunnin aikana.
           EI vuorolista: vartija joka ei ole kirjannut mitään ei näy tässä.
@@ -928,8 +1029,11 @@ export const Halytyskeskus = ({
         )}
       </Osio>
 
-      {/* --- Kierrokset ---------------------------------------------------------- */}
-      <Osio otsikko="Kierrokset kesken" ikoni={Route} maara={oikeudet.kierrokset ? kierroksetKesken.length : null}>
+      </div>
+
+      {/* --- Kierrokset ja kalusto vierekkäin ------------------------------------ */}
+      <div className="grid gap-6 lg:grid-cols-2 mb-8">
+      <Osio pari otsikko="Kierrokset kesken" ikoni={Route} maara={oikeudet.kierrokset ? kierroksetKesken.length : null}>
         {!oikeudet.kierrokset ? (
           <EiOikeutta mita="kierroksiin" />
         ) : kierroksetKesken.length === 0 ? (
@@ -969,8 +1073,8 @@ export const Halytyskeskus = ({
         )}
       </Osio>
 
-      {/* --- Kalusto ------------------------------------------------------------- */}
       <Osio
+        pari
         otsikko="Avoimet poikkeamat ja kadonneet avaimet"
         ikoni={KeyRound}
         maara={oikeudet.kalusto ? avoimetPoikkeamat.length + kadonneetAvaimet.length : null}
@@ -1011,6 +1115,8 @@ export const Halytyskeskus = ({
           </ul>
         )}
       </Osio>
+
+      </div>
 
       {/* --- Tiedotteet ---------------------------------------------------------- */}
       <Osio otsikko="Voimassa olevat tiedotteet" ikoni={Megaphone} maara={oikeudet.tiedotteet ? voimassaTiedotteet.length : null}>
@@ -1072,62 +1178,33 @@ export const Halytyskeskus = ({
             ))}
           </ul>
         )}
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-xs text-ink-subtle">Näytä viimeisimmät</span>
+          {[10, 20, 30].map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => setVirtaMaara(n)}
+              aria-pressed={virtaMaara === n}
+              className={`rounded-lg border px-2.5 py-1 text-xs font-medium tabular-nums transition-colors ${
+                virtaMaara === n
+                  ? 'bg-accent-soft text-accent-ink border-accent/40'
+                  : 'bg-surface text-ink-body border-line hover:bg-sunken'
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+          {/* Sanotaan ääneen kun lista on lyhyempi kuin valinta. Muuten "30" valittuna ja
+              kaksitoista riviä näkyvissä näyttäisi siltä että loput jäivät piiloon. */}
+          {virta.length < virtaMaara && (
+            <span className="text-xs text-ink-subtle">
+              — merkintöjä on {virta.length}
+            </span>
+          )}
+        </div>
       </Osio>
 
-      {/* --- Järjestelmän tila --------------------------------------------------- */}
-      <Osio otsikko="Järjestelmän tila" ikoni={Radio} maara={null}>
-        <ul className="space-y-2">
-          <Tilarivi
-            kunnossa={yhteys}
-            otsikko={yhteys ? 'Yhteys palvelimeen auki' : 'Yhteys palvelimeen poikki'}
-            teksti={yhteys
-              ? 'Hälytykset ja kirjaukset päivittyvät ruudulle itsestään.'
-              : 'Ruudulla voi olla vanhaa tietoa. Yhteyttä yritetään uudelleen automaattisesti.'}
-          />
-          {smsTila && (
-            <Tilarivi
-              kunnossa={smsTila.konfiguroitu && !smsTila.dryRun && !smsTila.virhe
-                && (smsTila.saldo === null || smsTila.varoitusraja === null || smsTila.saldo > smsTila.varoitusraja)}
-              otsikko={
-                !smsTila.konfiguroitu
-                  ? 'Tekstiviestieskalointi ei ole käytössä'
-                  : smsTila.dryRun
-                    ? 'Tekstiviestit kuivaharjoittelutilassa'
-                    : smsTila.virhe
-                      ? 'Tekstiviestien tila epäselvä'
-                      : smsTila.saldo !== null && smsTila.varoitusraja !== null && smsTila.saldo <= smsTila.varoitusraja
-                        ? 'Tekstiviestien saldo vähissä'
-                        : 'Tekstiviestieskalointi käytössä'
-              }
-              teksti={
-                !smsTila.konfiguroitu
-                  ? 'Lauennut hälytys näkyy vain sovelluksessa — kohteen hälytysnumeroihin ei lähde viestiä.'
-                  : smsTila.virhe
-                    ? smsTila.virhe
-                    : smsTila.saldo !== null
-                      ? `Saldo ${smsTila.saldo} viestiä${smsTila.varoitusraja !== null && smsTila.saldo <= smsTila.varoitusraja ? ' — alle varoitusrajan' : ''}.`
-                      : 'Saldoa ei ole vielä tarkistettu.'
-              }
-            />
-          )}
-          <Tilarivi
-            kunnossa={sijaintiseuranta}
-            neutraali={!sijaintiseuranta}
-            otsikko={sijaintiseuranta ? 'Sijaintiseuranta käytössä' : 'Sijaintiseuranta ei ole käytössä'}
-            teksti={sijaintiseuranta
-              ? '"Kuka on lähinnä?" toimii niiden osalta joiden laite on lähettänyt sijainnin.'
-              : 'Hälytykseen liitetty kertaluonteinen sijainti näkyy silti, jos vartijan laite sai sen.'}
-          />
-          <Tilarivi
-            kunnossa={aani}
-            neutraali={!aani}
-            otsikko={aani ? 'Äänimerkki ja työpöytäilmoitus päällä' : 'Äänimerkki pois päältä'}
-            teksti={aani
-              ? 'Uusi lauennut hälytys soittaa äänimerkin myös silloin kun ikkuna on taustalla.'
-              : 'Uusi hälytys näkyy vain ruudulla. Kytke äänimerkki päälle jos et katso tätä näkymää jatkuvasti.'}
-          />
-        </ul>
-      </Osio>
     </div>
   );
 };
@@ -1156,17 +1233,20 @@ const Luku = ({
 );
 
 const Osio = ({
-  otsikko, ikoni: Ikoni, maara, kiire = false, children,
+  otsikko, ikoni: Ikoni, maara, kiire = false, pari = false, children,
 }: {
   otsikko: string;
   ikoni: LucideIcon;
   maara: number | null;
   kiire?: boolean;
+  // Osio on vierekkäisparissa: alamarginaali pois, koska väli tulee ruudukon gapista.
+  // Ilman tätä parin osiot saisivat ylimääräisen 2 rem:n hännän toistensa alle.
+  pari?: boolean;
   children: ReactNode;
 }) => (
-  <section className="mb-8">
-    <h3 className={`text-lg font-bold mb-3 flex items-center gap-2 ${kiire ? 'text-danger-ink' : 'text-ink-strong'}`}>
-      <Ikoni size={18} />
+  <section className={pari ? 'min-w-0' : 'mb-8'}>
+    <h3 className={`text-base font-bold mb-2 flex items-center gap-2 ${kiire ? 'text-danger-ink' : 'text-ink-strong'}`}>
+      <Ikoni size={17} />
       {otsikko}
       {maara !== null && maara > 0 && (
         <span className={`font-normal ${kiire ? 'text-danger-ink' : 'text-ink-muted'}`}>({maara})</span>
@@ -1199,34 +1279,3 @@ const Merkki = ({ taso, children }: { taso: 'kriittinen' | 'varoitus' | 'perus';
   </span>
 );
 
-const Tilarivi = ({
-  kunnossa, neutraali = false, otsikko, teksti,
-}: {
-  kunnossa: boolean;
-  neutraali?: boolean;
-  otsikko: string;
-  teksti: string;
-}) => (
-  <li
-    className={`flex items-start gap-3 rounded-lg border px-4 py-3 ${
-      neutraali
-        ? 'bg-surface border-line'
-        : kunnossa
-          ? 'bg-success-soft border-success/30'
-          : 'bg-warning-soft border-warning/40'
-    }`}
-  >
-    <span
-      className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${
-        neutraali ? 'bg-ink-subtle' : kunnossa ? 'bg-success' : 'bg-warning'
-      }`}
-      aria-hidden="true"
-    />
-    <div className="min-w-0">
-      <p className={`text-sm font-medium ${neutraali ? 'text-ink-strong' : kunnossa ? 'text-success-ink' : 'text-warning-ink'}`}>
-        {otsikko}
-      </p>
-      <p className="text-xs text-ink-muted mt-0.5">{teksti}</p>
-    </div>
-  </li>
-);
