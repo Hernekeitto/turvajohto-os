@@ -1330,6 +1330,77 @@ man-down päällä. Se ratkaisee molemmat mittaamatta jääneet luvut — kestä
 ja mikä on man-downin todellinen akkuhinta. Muuttunut liikkumattomuusraja ei vaikuta
 kokeeseen: 30 minuuttia täyttyy yön aikana yhtä varmasti kuin viisi.
 
+#### v21 13.9.2026: yksi tapahtuma, yksi nimi
+
+Päivystäjä pyysi tarkistuksen, vartija kuittasi yhdessätoista sekunnissa, ja
+hälytyskeskus näytti tyhjää. Kysymys kuului: meninkö minä pieleen vai järjestelmä?
+Kumpikaan ei ollut mennyt — mutta sen selvittäminen vaati laitteen lokin lukemista, eikä
+se ole vastaus jonka päivystäjä voi saada kello kolme yöllä.
+
+Taustalla oli kaksi erillistä vikaa, molemmat samaa lajia: **sama asia oli nimetty
+kahdella eri tavalla.**
+
+##### 1. Lokirivin nimi vaihtui haaran mukaan
+
+| Tilanne | Rivi ennen | Rivi nyt |
+|---|---|---|
+| Rutiinikuittaus | `kuittaus_kuitattu vali_min=60` | `kuittaus_kuitattu jatkui=kylla vali_min=60` |
+| Pakotettu tarkistus | `tarkistus_kuitattu ajastin_peruttu` | `kuittaus_kuitattu jatkui=ei ajastin_peruttu` |
+
+Haku `kuittaus_` löysi vain puolet kuittauksista. **Minä itse tein juuri sen virheen
+saman päivän aikana**: hain lokista `kuittaus_|halytys_|kysely_`, vartijan kuittaus ei
+osunut hakuun, ja ilmoitin käyttäjälle että kaksi hälytystä oli jäänyt auki. Ne eivät
+olleet. Väärä nimi ei ole tyylivirhe vaan se, ettei tapahtumaa löydä silloin kun sitä
+etsitään — ja se on tämän lokin ainoa tehtävä.
+
+Työnjako on nyt kirjattu koodiin: `tarkistus_*` kertoo pyynnön saapumisesta
+palvelimelta, `kuittaus_*` kyselyn koko elinkaaresta. Haara on kentässä `jatkui=` eikä
+rivin nimessä. Kenttä kertoo mitä kuittaus **teki ajastimelle** eikä kuka kyselyn
+aiheutti — pakotettu tarkistus kohteessa jolla on rutiinivalvonta jatkaa rutiinia, ja
+silloin `jatkui=kylla` on totta riippumatta siitä että päivystäjä painoi nappia.
+
+##### 2. Historiamerkinnällä oli kaksi muotoa
+
+`/api/vuoro/tarkistus` kokosi oman historiamerkintänsä käsin ja käytti eri avainnimiä
+kuin `halytys.js`:n `merkinta()`: `laji` eikä `tapahtuma`, `aika` eikä `ts`. Selaimen
+`Halytys`-tyyppi lupaa `{ ts, tapahtuma, user, teksti }`, joten nämä merkinnät **eivät
+vastanneet omaa tyyppiään** — mikään ei kaatunut, ne vain eivät löytyneet sieltä mistä
+niitä olisi etsitty. `merkinta` on nyt viety ulos ja endpoint käyttää sitä.
+
+##### 3. Onnistunut tarkistus ei näkynyt hälytyskeskuksessa
+
+Käynnissä oleva ajastin näkyy omassa osiossaan, mutta vain niin kauan kuin se on
+käynnissä. Nopeasti kuitattu tarkistus on ruudulla kymmenen sekuntia, ja peruttu tietue
+putoaa sen jälkeen kaikista listoista. Päivystäjän näkökulmasta **onnistunut tarkistus
+näytti täsmälleen samalta kuin tarkistus jota ei koskaan pyydetty.**
+
+Uusi osio "Pyydetyt tarkistukset" listaa kahdentoista tunnin ajalta jokaisen pyydetyn
+tarkistuksen lopputuloksineen ja vastausaikoineen. Kaksitoista tuntia kattaa yhden
+vuoron: vuoron alussa pyydetyn tarkistuksen on näyttävä vielä sen lopussa.
+
+Kolme yksityiskohtaa joilla on merkitys:
+
+**Tunnistus historiamerkinnästä eikä tilasta.** `peruttu` syntyy myös vuoron päättyessä,
+eikä sitä pidä esittää tarkistuksena.
+
+**Lopputulos luetaan historian viimeisestä merkinnästä.** Jos ajastimen lopetti joku muu
+kuin vartija itse, rivillä lukee kuka — ei "Vartija kuittasi". Sama sääntö kuin
+lokiriveissä: väärä nimi on pahempi kuin puuttuva tieto.
+
+**Vastausaika lasketaan pyynnöstä eikä ajastimen alusta.** Pakotettu tarkistus siirtää jo
+olemassa olevaa ajastinta, jonka `alkoi` voi olla tuntien takaa.
+
+Todennettu esikatselussa kuudella tietueella, joista neljän kuuluu näkyä ja kahden ei:
+
+| Tapaus | Rivi |
+|---|---|
+| Kuittasi 11 s | `Vartija kuittasi · vastasi 0:11` |
+| Kesken | `Odottaa vastausta` |
+| Ei vastannut | `Ei vastannut — hälytys lähti` |
+| Muu lopetti | `paivystaja.koski lopetti ajastimen` |
+| Ajastin ilman tarkistuspyyntöä | ei listalla |
+| Tarkistus 13 h sitten | ei listalla |
+
 ### Erä 13 — Hätäpainike sovelluksen ulkopuolelta
 
 | Osa | Uutta |

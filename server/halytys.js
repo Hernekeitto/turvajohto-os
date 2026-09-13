@@ -236,7 +236,12 @@ const iso = (nyt) => new Date(nyt).toISOString();
 
 const lyhenna = (arvo, max) => String(arvo ?? '').trim().slice(0, max);
 
-const merkinta = (tapahtuma, { user = null, teksti = '' } = {}, nyt) => ({
+// Viety ulos, jotta index.js kirjoittaa historiaan samassa muodossa kuin tämä moduuli.
+// 13.9.2026 asti /api/vuoro/tarkistus rakensi oman merkintänsä käsin ja käytti eri
+// avainnimiä samoille asioille — `laji` eikä `tapahtuma`, `aika` eikä `ts`. Selain
+// ilmoittaa historian tyypissään `{ ts, tapahtuma, ... }`, joten kyseiset merkinnät eivät
+// vastanneet omaa tyyppiään eikä niitä löytänyt sieltä mistä niitä etsi.
+export const merkinta = (tapahtuma, { user = null, teksti = '' } = {}, nyt) => ({
   ts: iso(nyt),
   tapahtuma,
   user: user || null,

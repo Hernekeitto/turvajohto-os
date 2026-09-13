@@ -72,6 +72,46 @@ type Props = {
 // itsestään.
 const KOHTA_MS = 2 * 60 * 1000;
 
+// Kuinka kauas taaksepäin pyydetyt tarkistukset näkyvät. Kaksitoista tuntia kattaa yhden
+// vuoron: päivystäjän on voitava nähdä vuoron alussa pyytämänsä tarkistus vielä sen
+// lopussa, koska juuri siitä syntyy kuva siitä onko vartija ollut tavoitettavissa.
+const TARKISTUS_IKKUNA_MS = 12 * 60 * 60 * 1000;
+
+// Mitä pyydetylle tarkistukselle lopulta tapahtui.
+//
+// Lopputulos luetaan historian viimeisestä merkinnästä eikä pelkästä tilasta. `peruttu`
+// syntyy kahdesta eri syystä — vartija kuittasi, tai joku muu lopetti ajastimen vuoron
+// päättyessä — ja niiden esittäminen samalla tekstillä olisi väärä nimi tapahtumalle,
+// mikä on tässä järjestelmässä pahempi vika kuin puuttuva tieto.
+//
+// Vastausaika lasketaan PYYNNÖSTÄ eikä ajastimen alusta: pakotettu tarkistus siirtää jo
+// olemassa olevaa ajastinta, jonka alkoi-aika voi olla tuntien takaa.
+function tarkistuksenTulos(h: Halytys, pyynto: Halytys['historia'][number]) {
+  if (h.tila === 'kaynnissa') {
+    return { teksti: 'Odottaa vastausta', hatainen: false, vastausaika: null };
+  }
+  if (h.tila === 'lauennut') {
+    return { teksti: 'Ei vastannut — hälytys lähti', hatainen: true, vastausaika: null };
+  }
+  const paattyiMs = h.paattyi ? new Date(h.paattyi).getTime() : null;
+  const lopetti = [...(h.historia || [])]
+    .reverse()
+    .find((m) => m.tapahtuma === 'peruttu' || m.tapahtuma === 'kuitattu');
+  const vartijaItse = !!lopetti && lopetti.user === h.vartija;
+  if (!vartijaItse) {
+    return {
+      teksti: lopetti?.user ? `${lopetti.user} lopetti ajastimen` : 'Ajastin päättyi',
+      hatainen: false,
+      vastausaika: null,
+    };
+  }
+  return {
+    teksti: h.tila === 'peruttu' ? 'Vartija kuittasi' : 'Vartija kuittasi hälytyksen',
+    hatainen: false,
+    vastausaika: paattyiMs === null ? null : paattyiMs - new Date(pyynto.ts).getTime(),
+  };
+}
+
 const KIIREYS_TYYLI: Record<Kiireys, { reuna: string; merkki: string }> = {
   kriittinen: { reuna: 'border-danger/50 bg-danger-soft', merkki: 'bg-danger' },
   varoitus: { reuna: 'border-warning/40 bg-warning-soft', merkki: 'bg-warning' },
@@ -208,6 +248,30 @@ export const Halytyskeskus = ({
       .sort((a, b) => (a.eraantyy || 0) - (b.eraantyy || 0)),
     [lahteet.halytykset]
   );
+  // Pyydetyt tarkistukset, myös päättyneet.
+  //
+  // Käynnissä oleva ajastin näkyy yllä, mutta VAIN niin kauan kuin se on käynnissä.
+  // Nopeasti kuitattu tarkistus on ruudulla kymmenen sekuntia eikä jätä sen jälkeen
+  // mitään jälkeä, ja peruttu tietue putoaa kaikista listoista. Mitattu 13.9.2026:
+  // onnistunut tarkistus näytti tästä näkymästä katsottuna täsmälleen samalta kuin
+  // tarkistus jota ei koskaan pyydetty — päivystäjä ei voinut erottaa "vartija vastasi
+  // yhdessätoista sekunnissa" tilanteesta "painallukseni ei mennyt perille".
+  //
+  // Tunnistetaan historiamerkinnästä eikä tilasta, koska tila ei kerro kuka kysyi:
+  // `peruttu` syntyy myös vuoron päättyessä, eikä sitä pidä esittää tarkistuksena.
+  const minuutti = Math.floor(nyt / 60_000);
+  const tarkistukset = useMemo(() => {
+    const raja = minuutti * 60_000 - TARKISTUS_IKKUNA_MS;
+    return lahteet.halytykset
+      .map((h) => ({
+        halytys: h,
+        pyynto: [...(h.historia || [])].reverse().find((m) => m.tapahtuma === 'tarkistus'),
+      }))
+      .filter((r): r is { halytys: Halytys; pyynto: Halytys['historia'][number] } =>
+        !!r.pyynto && new Date(r.pyynto.ts).getTime() >= raja)
+      .sort((a, b) => String(b.pyynto.ts).localeCompare(String(a.pyynto.ts)));
+  }, [lahteet.halytykset, minuutti]);
+
   const tilanteet = useMemo(
     () => kohteet.map((kohde) => ({ kohde, tilanne: kohteenTilanne(kohde.id, lahteet) })),
     [kohteet, lahteet]
@@ -644,6 +708,53 @@ export const Halytyskeskus = ({
                   </div>
                   <span className={`font-bold tabular-nums shrink-0 ${kohta ? 'text-warning-ink' : 'text-ink-strong'}`}>
                     {aikaa !== null && aikaa > 0 ? ajastinTeksti(aikaa) : 'Määräaika umpeutui'}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Osio>
+
+      {/* --- Pyydetyt tarkistukset ------------------------------------------------ */}
+      <Osio otsikko="Pyydetyt tarkistukset" ikoni={ShieldCheck} maara={tarkistukset.length}>
+        {tarkistukset.length === 0 ? (
+          <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
+            Kukaan ei ole pyytänyt tarkistusta kuluneen kahdentoista tunnin aikana.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {tarkistukset.map(({ halytys: h, pyynto }) => {
+              const tulos = tarkistuksenTulos(h, pyynto);
+              return (
+                <li
+                  key={h.id}
+                  className={`flex flex-wrap items-center gap-3 rounded-lg border p-4 ${
+                    tulos.hatainen ? 'bg-danger-soft border-danger/40' : 'bg-surface border-line'
+                  }`}
+                >
+                  <ShieldCheck size={18} className="text-ink-muted shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-ink-strong">
+                      {h.vartija}{' '}
+                      <span className="text-ink-muted font-normal">· {kohdeNimi(h.eventId)}</span>
+                    </p>
+                    <p className="text-xs text-ink-muted mt-0.5">
+                      {pyynto.user || 'Hälytyskeskus'} pyysi klo {kellonaika(pyynto.ts)}
+                      {' · '}
+                      {tulos.teksti}
+                    </p>
+                  </div>
+                  {/* Vastausaika on tämän listan koko tarkoitus: se on ainoa mittari
+                      siitä onko vartija oikeasti tavoitettavissa. */}
+                  <span
+                    className={`font-bold tabular-nums shrink-0 ${
+                      tulos.hatainen ? 'text-danger-ink' : 'text-ink-strong'
+                    }`}
+                  >
+                    {tulos.vastausaika !== null
+                      ? `vastasi ${ajastinTeksti(tulos.vastausaika)}`
+                      : kellonaika(h.paattyi || h.laukesi)}
                   </span>
                 </li>
               );

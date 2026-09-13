@@ -104,7 +104,7 @@ import {
   luoAjastin, luoHalytys, jatka as jatkaHalytysta, laukaise as laukaiseHalytys,
   peru as peruHalytys, kuittaa as kuittaaHalytys, eraantyneet, eskaloitavat,
   merkitseEskaloitu, viestiTeksti, TYYPIT as HALYTYSTYYPIT, mandownAsetukset,
-  kuittausAsetukset, KUITTAUS_VASTAUSAIKA_MIN,
+  kuittausAsetukset, KUITTAUS_VASTAUSAIKA_MIN, merkinta,
 } from './halytys.js';
 import { arvioi as arvioiVyohykkeet } from './geofence.js';
 import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti, parsiJson } from './bulksms.js';
@@ -1748,15 +1748,15 @@ app.post('/api/vuoro/tarkistus', requireAuth, guardPortti, (req, res) => {
     halytys = {
       ...auki,
       eraantyy: nyt + KUITTAUS_VASTAUSAIKA_MIN * 60000,
-      historia: [
-        ...(auki.historia || []),
-        {
-          laji: 'tarkistus',
-          user: req.username,
-          teksti: 'Hälytyskeskus pyysi tarkistusta',
-          aika: new Date(nyt).toISOString(),
-        },
-      ],
+      // merkinta() eikä käsin koottu olio. Tässä oli 13.9.2026 asti oma muotonsa —
+      // `laji` eikä `tapahtuma`, `aika` eikä `ts` — eli sama tapahtumalaji kirjattiin
+      // kahdella eri avainnimellä sen mukaan kuka sen kirjoitti. Selaimen Halytys-tyyppi
+      // lupaa `{ ts, tapahtuma }`, joten nämä merkinnät eivät vastanneet omaa tyyppiään
+      // eikä niitä löytänyt sieltä mistä niitä etsi.
+      historia: [...(auki.historia || []), merkinta('tarkistus', {
+        user: req.username,
+        teksti: 'Hälytyskeskus pyysi tarkistusta',
+      }, nyt)],
     };
     writeCollection('alerts', lista.map((h) => (h.id === auki.id ? halytys : h)));
   } else {
