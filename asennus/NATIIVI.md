@@ -1444,6 +1444,57 @@ Kolme eri syytä, sama oire, eikä mitään tapaa erottaa niitä ilman dataa.
 Testi todennettiin poistamalla korjaus hetkeksi: kaikki kolme merkintäväitettä kaatuvat
 ilman sitä. Läpimenevä testi jota ei ole nähty kaatumassa ei todista mitään.
 
+#### v22 13.9.2026: mittaustila — koe ei ollut mahdollinen sellaisenaan
+
+Erän 12 avoin kohta kuului: "puhelin pöydälle, ruutu kiinni, ei koskea, yön yli, man-down
+päällä". Kun ajoa oltiin aloittamassa, kävi ilmi ettei se voi mitata sitä mitä sen on
+tarkoitus mitata.
+
+Paikallaan makaava puhelin laukaisee liikkumattomuussäännön noin 32 minuutin välein
+(30 min raja + 2 min vastausaika). Yön aikana se tarkoittaa noin **19 kyselyä**, ja
+jokainen niistä
+
+- sytyttää ruudun ja soittaa hälytysäänen täysillä → **estää Dozen ja kuluttaa akkua**,
+  eli tuhoaa molemmat mittaukset,
+- jää vastaamatta → **on oikea hälytys**. Eskaloinnin tila tarkistettiin ennen ajoa:
+  `dryRun: false`. Tekstiviestit olisivat lähteneet oikeasti, noin 19 kappaletta yön
+  aikana, saldosta 177.
+
+Suunnitelma kirjoitettiin kun raja oli 5 minuuttia, jolloin sama ristiriita olisi ollut
+vielä pahempi — mitattuna 14 kyselyä 53 minuutissa. Ristiriitaa ei huomattu silloin.
+
+**Mitattavat asiat ovat anturikuuntelun ominaisuuksia, eivät säännön.** Kestääkö anturi
+Dozen ja paljonko se maksaa akkua — kumpikaan ei riipu siitä laukeaako sääntö. Sääntö ei
+siis ole mittauksen kohde vaan sen este.
+
+##### Mittaustila
+
+`Mittaustila`-kytkin diagnostiikkanäkymässä. Anturi käy normaalisti — näytteenotto,
+näytelaskuri, iskun tunnistus — ja vain liikkumattomuussääntö vaimennetaan.
+
+Iskun tunnistus jää päälle tarkoituksella. Se ei laukea paikallaan makaavasta puhelimesta
+eikä siis häiritse mittausta, ja sen sammuttaminen tekisi kytkimestä vaarallisemman kuin
+se on.
+
+**Kolme suojaa sitä vastaan että kytkin jää huomaamatta päälle.** Turva-asetuksen hiljainen
+poiskytkentä on pahempi vika kuin mikään mitä sillä mitataan:
+
+| Suoja | |
+|---|---|
+| `mittaustila=kylla\|ei` **jokaisella** lokirivillä | Puuttuva kenttä kertoisi vain että versio on vanha. Aina läsnä oleva kenttä kertoo tilan yksiselitteisesti. |
+| `anturi_epaily_vaimennettu laji=liikkumaton` | Kirjataan silloin kun vaimennus tapahtuu. Jälkiselvityksessä näkyy mitkä kyselyt jäivät tekemättä ja milloin — ja se on itsessään mittaustulos. |
+| Vuoron päättyminen sammuttaa | Kytkin ei elä yli vuoron. Unohtaminen maksaa korkeintaan yhden vuoron. |
+
+Lisäksi diagnostiikkanäkymässä on rivi `Mittaustila` myös pois päältä ollessa, ja napissa
+lukee nykyinen tila eikä pelkkä toiminto.
+
+##### Mitä ajo EI vastaa
+
+Tämä ajo mittaa anturikuuntelun hinnan ja Doze-kestävyyden. Se **ei** vastaa siihen
+lähteekö man-down-hälytys dozeavasta puhelimesta kello kolme yöllä — se on eri koe, ja se
+on yhä tekemättä. Se vaatii eskaloinnin kuivaharjoitteluun ja valmiuden siihen että
+puhelin soi puolen tunnin välein.
+
 ### Erä 13 — Hätäpainike sovelluksen ulkopuolelta
 
 | Osa | Uutta |
