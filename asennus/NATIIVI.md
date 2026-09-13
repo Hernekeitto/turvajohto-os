@@ -1554,3 +1554,9 @@ Kalenterin määrää käytännössä juridiikka, ei koodi.
 2. ~~**Sijaintiväli.**~~ **Ratkaistu 12.9.2026:** 60 s jää. Yön yli -ajossa valvonnan
    oma kulutus oli 1,56 %/h, eli kahdeksan tunnin vuoro maksaa 12,5 prosenttiyksikköä.
    Ks. "Yön yli -ajo 11.–12.9.2026".
+3. **Diagnostiikkanäkymään ei pääse sovelluksesta.** `DiagnostiikkaActivity` on
+   `exported="false"` eikä sillä ole omaa intent-suodatinta, joten se avautuu vain
+   napautetusta `turvajohto-guard://tila` -linkistä. Selaimen osoiteriville kirjoitettuna
+   Chrome tekee siitä haun, eikä koko web-käyttöliittymässä ole linkkiä siihen. Näkymä on
+   rakennettu vastaamaan vartijan ja päivystäjän kysymykseen "miksi hälytys ei tullut" —
+   eivätkä he pääse siihen käsiksi. Havaittu 13.9.2026 kun käyttäjä ei saanut sitä auki.
