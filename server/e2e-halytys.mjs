@@ -349,7 +349,48 @@ try {
   vaita(peruminen.koodi === 200 && peruminen.json?.halytys?.tila === 'peruttu',
     'laite saa perua ajastimen vuoron paattyessa');
 
-  // --- 11. Tuntematon tyyppi ----------------------------------------------------------
+  // --- 11. Paivystajan pakottama tarkistus, MOLEMMAT haarat --------------------------
+  //
+  // Hälytyskeskus tunnistaa tarkistuksen HISTORIAMERKINNASTA eika tilasta: `peruttu`
+  // syntyy myos vuoron paattyessa, eika sita saa esittaa tarkistuksena. Merkinnan on
+  // siksi synnyttava kummassakin haarassa - silloin kun vartijalla on ajastin jota
+  // siirretaan, ja silloin kun sellaista ei ole ja uusi luodaan.
+  //
+  // Tama testi kirjoitettiin jalkikateen 13.9.2026. Uusi haara ei kirjannut merkintaa
+  // lainkaan, ja koska `luoAjastin` merkitsee luojaksi VARTIJAN, tietueesta ei voinut
+  // paatella kuka tarkistuksen pyysi. Neljä perakkaista tarkistusta tuotannossa jäi siten
+  // hälytyskeskuksen listalta pois - ja kayttoliittyma naytti tyhjaa, eli tasmalleen
+  // samalta kuin ennen koko korjausta. Vika loytyi vasta tuotannon tietueita lukemalla.
+  const pyydaTarkistus = async () => {
+    const v = await fetch(PALVELIN + '/api/vuoro/tarkistus', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Cookie: evaste },
+      body: JSON.stringify({ vartija: 'vartija1' }),
+    });
+    return { koodi: v.status, json: await v.json().catch(() => null) };
+  };
+  const tarkistusMerkinnat = (h) => (h?.historia || []).filter((m) => m.tapahtuma === 'tarkistus');
+
+  // Tassa kohtaa vartijalla EI ole kaynnissa olevaa ajastinta: kohdan 9 ajastin laukesi ja
+  // kohdan 10 perutttiin. Uusi luodaan.
+  const tarkistus1 = await pyydaTarkistus();
+  vaita(tarkistus1.koodi === 200, 'paivystaja saa pyytaa tarkistusta');
+  vaita(tarkistusMerkinnat(tarkistus1.json?.halytys).length === 1,
+    'UUSI ajastin saa tarkistusmerkinnan (haara: ei kaynnissa olevaa ajastinta)');
+  const eka = tarkistusMerkinnat(tarkistus1.json?.halytys)[0];
+  vaita(eka?.user === 'testiadmin' && typeof eka?.ts === 'string',
+    'merkinnasta selviaa kuka pyysi ja milloin - kentat ts ja user, ei aika ja laji');
+
+  // Nyt ajastin on kaynnissa, joten sama pyynto siirtaa sen.
+  const tarkistus2 = await pyydaTarkistus();
+  vaita(tarkistus2.json?.halytys?.id === tarkistus1.json?.halytys?.id,
+    'toinen pyynto siirtaa saman ajastimen eika luo uutta');
+  vaita(tarkistusMerkinnat(tarkistus2.json?.halytys).length === 2,
+    'SIIRRETTY ajastin saa oman tarkistusmerkintansa (haara: ajastin jo kaynnissa)');
+
+  await laitePosta(`/api/halytys/${tarkistus2.json?.halytys?.id}/peru`, {});
+
+  // --- 12. Tuntematon tyyppi ----------------------------------------------------------
   // Allekirjoitus on kelvollinen mutta sisältö ei. Laite on luotettu, sen lähettämä data
   // ei ole: sidottu laite ei saa voida luoda mielivaltaisia hälytystyyppejä.
   const outo = await halyta({ runko: { ...MANDOWN, tyyppi: 'jokumuu' } });

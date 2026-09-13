@@ -1769,7 +1769,23 @@ app.post('/api/vuoro/tarkistus', requireAuth, guardPortti, (req, res) => {
       nyt,
     });
     if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
-    halytys = tulos.halytys;
+    // Sama merkintä kuin siirtohaarassa, ja tämä on se haara joka oikeasti ajetaan
+    // useimmiten: kohteella jolla ei ole rutiinikuittausta ei ole ajastinta siirrettäväksi,
+    // joten pakotettu tarkistus luo aina uuden. Ilman tätä riviä tietueessa ei lue
+    // missään että kyse oli päivystäjän pyytämästä tarkistuksesta — `luoAjastin` merkitsee
+    // luojaksi VARTIJAN, koska ajastin on hänen nimissään.
+    //
+    // Mitattu 13.9.2026: neljä peräkkäistä tarkistusta tallentui tietueina joista ei voinut
+    // päätellä kuka ne pyysi, eivätkä ne siksi näkyneet hälytyskeskuksen tarkistuslistalla.
+    // Vika löytyi vasta kun tuotannon tietueet luettiin — käyttöliittymä näytti vain tyhjää,
+    // eli täsmälleen samalta kuin ennen koko korjausta.
+    halytys = {
+      ...tulos.halytys,
+      historia: [...(tulos.halytys.historia || []), merkinta('tarkistus', {
+        user: req.username,
+        teksti: 'Hälytyskeskus pyysi tarkistusta',
+      }, nyt)],
+    };
     writeCollection('alerts', [halytys, ...lista]);
   }
 

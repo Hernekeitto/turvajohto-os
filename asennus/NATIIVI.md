@@ -1401,6 +1401,49 @@ Todennettu esikatselussa kuudella tietueella, joista neljän kuuluu näkyä ja k
 | Ajastin ilman tarkistuspyyntöä | ei listalla |
 | Tarkistus 13 h sitten | ei listalla |
 
+##### Ensimmäinen julkaisu ei korjannut mitään — ja vain tuotannon data kertoi sen
+
+Osio julkaistiin, ja se näytti tyhjää. Käyttöliittymä oli oikein; **palvelin ei kirjoita
+tarkistusmerkintää siinä haarassa joka oikeasti ajetaan.**
+
+`/api/vuoro/tarkistus` toimii kahdella tavalla. Jos vartijalla on ajastin käynnissä, se
+siirretään — ja siihen haaraan merkintä oli kirjoitettu. Jos ajastinta ei ole, luodaan
+uusi, eikä siihen haaraan kirjoitettu mitään. Kohteella jolla ei ole rutiinikuittausta
+**ei koskaan ole ajastinta siirrettäväksi**, joten käytännössä ajetaan aina jälkimmäinen.
+
+Pahempi seuraus kuin puuttuva rivi listalla: `luoAjastin` merkitsee luojaksi **vartijan**,
+koska ajastin on hänen nimissään. Päivystäjän pyytämä tarkistus tallentui siis tietueena
+josta ei voinut päätellä kuka sen pyysi. Neljä peräkkäistä tarkistusta 13.9. näyttää
+tietokannassa tältä:
+
+```
+{"ts":"...11:36:09Z","tapahtuma":"luotu","user":"Turva051","teksti":"Ajastin 2 min"}
+{"ts":"...11:36:24Z","tapahtuma":"peruttu","user":"Turva051","teksti":""}
+```
+
+Vartija näyttää luoneen ja peruneen oman ajastimensa. Päivystäjää ei mainita missään.
+
+**Vian löysi vain tuotannon tietueiden lukeminen.** Käyttöliittymä näytti tyhjää listaa,
+mikä on täsmälleen sama havainto kuin ennen koko korjausta — jos olisin kysynyt
+käyttäjältä "näkyykö rivi", vastaus "ei" olisi ollut yhtä yhteensopiva sen kanssa että
+julkaisu ei ollut mennyt läpi, että selain oli välimuistissa, tai että osio on rikki.
+Kolme eri syytä, sama oire, eikä mitään tapaa erottaa niitä ilman dataa.
+
+##### Testi joka olisi estänyt tämän
+
+`/api/vuoro/tarkistus` ei ollut e2e-ajossa lainkaan. Nyt on, molemmat haarat erikseen:
+
+| Väite | |
+|---|---|
+| `paivystaja saa pyytaa tarkistusta` | 200 |
+| `UUSI ajastin saa tarkistusmerkinnan` | haara: ei käynnissä olevaa ajastinta |
+| `merkinnasta selviaa kuka pyysi ja milloin` | kentät `ts` ja `user`, ei `aika` ja `laji` |
+| `toinen pyynto siirtaa saman ajastimen` | ei luo uutta |
+| `SIIRRETTY ajastin saa oman tarkistusmerkintansa` | haara: ajastin jo käynnissä |
+
+Testi todennettiin poistamalla korjaus hetkeksi: kaikki kolme merkintäväitettä kaatuvat
+ilman sitä. Läpimenevä testi jota ei ole nähty kaatumassa ei todista mitään.
+
 ### Erä 13 — Hätäpainike sovelluksen ulkopuolelta
 
 | Osa | Uutta |
