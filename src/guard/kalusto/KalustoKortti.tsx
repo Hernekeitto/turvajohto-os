@@ -487,15 +487,20 @@ export const KalustoKortti = ({
               <QrKoodi teksti={tarranOsoite(esine.tunnus)} koko={110} alt={`QR-koodi ${esine.tunnus}`} />
               <p className="text-[11px] text-ink-muted mt-1 font-mono">{esine.tunnus}</p>
             </div>
+            {/* Historia näytetään VAIN jos palvelin lähetti sen. Vartijalta ketju
+                karsitaan (server/kalusto.js: vuoronKalusto), ja tyhjä "Historia (0)"
+                -painike väittäisi esineellä olevan menneisyys jota ei ole. */}
             <div className="flex-1 min-w-[12rem]">
+              {esine.historia && (
               <button
                 type="button"
                 onClick={() => setHistoriaAuki((a) => !a)}
                 className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-body hover:text-accent"
               >
                 <History size={15} />
-                {historiaAuki ? 'Piilota historia' : `Historia (${esine.historia?.length || 0})`}
+                {historiaAuki ? 'Piilota historia' : `Historia (${esine.historia.length})`}
               </button>
+              )}
               {historiaAuki && (
                 <ul className="mt-3 space-y-2">
                   {[...(esine.historia || [])].reverse().map((rivi, i) => (

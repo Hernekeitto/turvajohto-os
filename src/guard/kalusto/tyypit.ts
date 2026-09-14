@@ -56,11 +56,15 @@ export type KalustoTietue = Sijoitus & {
   sarjanumero: string;
   tila: KalustonTila;
   lisatiedot: Record<string, string | boolean | undefined>;
-  pyynto: Kalustopyynto | null;
+  // VALINNAISIA, koska palvelin karsii ne vartijan näkymästä (server/kalusto.js:
+  // vuoronKalusto). Luovutusketju — kuka on pitänyt esinettä ja kenen päätöksellä — on
+  // henkilötietoa jota kentällä olevan ei kuulu nähdä. Tyyppi kertoo sen ääneen, jottei
+  // kukaan kirjoita näkymää joka olettaa ketjun olevan aina mukana.
+  pyynto?: Kalustopyynto | null;
+  historia?: KalustonHistoria[];
+  luoja?: string | null;
   kadonnut?: string | null;
   luotu: string;
-  luoja: string | null;
-  historia: KalustonHistoria[];
 };
 
 export const TILAN_SELITE: Record<KalustonTila, string> = {

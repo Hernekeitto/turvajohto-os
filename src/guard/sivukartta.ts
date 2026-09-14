@@ -73,6 +73,18 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // havainnon puutteesta saa tehdä se joka sen huomaa, päätöksen yrityksen omaisuudesta
   // ei. Oletuksena Vartioesimiehellä on luku, pääkäyttäjällä molemmat (server/roles.js).
   { id: 'guard_assets', label: 'Kalustopankki (muokkausoikeus = oikeus jyvittää ja hyväksyä pyynnöt)' },
+  // Vartijan kalustonäkyvyys. OMA SOLMUNSA eikä guard_assets kapeampana, ja ero on koko
+  // oikeuden pointti: tämä ei näytä pankkia lainkaan vaan sen kaluston joka on kirjattu
+  // siihen kohteeseen jossa vartija on JUURI NYT vuorossa. Ilman vuoroa ei näy mitään.
+  //
+  // Luovutusketju — historia, pyynnöt ja kirjaaja — karsitaan palvelimella (kalusto.js:
+  // vuoronKalusto). Avaimen historia kertoo kuka pääsi sisään ja milloin, ja se on samaa
+  // henkilötietoa jonka takia keys.historia[].haltija on levyllä salattu.
+  //
+  // Rajaus tulee vuorosta eikä tapahtumarajauksesta: eventAccess kertoo mihin kohteisiin
+  // tunnus saa koskea joskus, vuoro kertoo missä ihminen on nyt. Muokkausoikeutta ei
+  // käytetä — tämä on lukuoikeus, ja kaluston kirjaaminen vaatii aina guard_assets-solmun.
+  { id: 'guard_site_assets', label: 'Vuoron kohteen kalusto (vain luku, ei luovutusketjua)' },
   // HUOM: erillistä 'guard_keys'-solmua EI enää ole. GUARD-puolen avaimet ovat pankissa
   // lajina 'avain', ja tyhjä solmu lupaisi oikeuseditorissa sivun jota ei ole. EVENT-
   // puolen avainrekisteri ('keys'-solmu, server/avaimet.js) jatkaa ennallaan.

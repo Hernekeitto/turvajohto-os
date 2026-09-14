@@ -50,6 +50,11 @@ const GLOBAL_NODES = new Set([
   // kaluston" olisi sama kuin ei pankkia lainkaan — ja juuri siksi solmua ei anneta
   // vartijalle oletuksena (ks. roles.js).
   'guard_assets',
+  // Vartijan kalustonäkyvyys. Globaali samasta syystä kuin guard_assets, vaikka se
+  // näyttää vain yhden kohteen: rajaus EI tule tästä solmusta vaan kesken olevasta
+  // vuorosta (index.js). Kohdekohtainen oikeus olisi harhaanjohtava — se lupaisi että
+  // näkyvyyttä säädetään kohteittain, kun sen ratkaisee se missä vartija on juuri nyt.
+  'guard_site_assets',
   'global_reports',
   'global_archived_events',
   'global_employee_bank',
@@ -339,7 +344,12 @@ const COLLECTIONS = {
   // yritykselle; kohde on vain yksi paikka jossa esine voi olla. Kohderajaus tehdään
   // näkymässä sijoituksen perusteella (src/guard/kalusto/KohteenKalusto.tsx).
   assets: {
-    view: ['guard_assets'],
+    // KAKSI SOLMUA, KAKSI ERI NÄKYMÄÄ SAMAAN KOKOELMAAN. `guard_assets` on koko pankki;
+    // `guard_site_assets` päästää kokoelmaan mutta rivit ja kentät rajataan vuoron
+    // mukaan vasta reitillä (index.js: vuoronKalusto). Rajausta EI voi tehdä täällä,
+    // koska se riippuu kesken olevasta vuorosta — tilasta jota permissions.js ei näe
+    // eikä saa nähdä; tämä moduuli tuntee vain oikeudet, ei sitä missä kukin on.
+    view: ['guard_assets', 'guard_site_assets'],
     touch: () => [],
     eventScoped: false,
     // Kalustopankki on vartioimisliikkeen rekisteri eikä tapahtumapuolen asia, joten

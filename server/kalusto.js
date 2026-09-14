@@ -517,3 +517,51 @@ export const kadonneet = (kalusto) =>
 export const sijoitetut = (kalusto, sijoitusLaji, sijoitusId) =>
   (Array.isArray(kalusto) ? kalusto : [])
     .filter((e) => e?.sijoitusLaji === sijoitusLaji && e?.sijoitusId === sijoitusId && e?.tila !== 'poistettu');
+
+// --- Vartijan näkymä kohteen kalustoon (erä 20b) ------------------------------------
+//
+// Vartija näkee VAIN sen kohteen kaluston jossa hän on juuri nyt vuorossa, ja siitäkin
+// vain esineen — ei sen luovutusketjua. Kaksi rajausta, kaksi eri syytä:
+//
+// 1. RIVIT: kohde tulee kesken olevasta vuorosta (vuorot.js: keskenOlevaVuoro) eikä
+//    käyttäjän eventAccess-listasta. Ero on olennainen: eventAccess kertoo mihin
+//    kohteisiin tunnus saa koskea joskus, vuoro kertoo missä ihminen on nyt. Ilman
+//    vuoroa ei näy mitään — se on oikea lopputulos eikä puute, koska silloin ei ole
+//    kohdetta jonka kalustoa katsottaisiin.
+//
+//    HUOM: hyväksytty tehtäväsiirto EI avaa toisen kohteen kalustoa, toisin kuin se
+//    avaa kohdelistan (index.js: siirtojenAvaamatKohteet). Päätös 14.9.2026: piiri on
+//    oma kohteensa jolla on oma kalustonsa, eikä piirivartija lainaa hälytystehtävällä
+//    kohteen tavaroita.
+//
+// 2. KENTÄT: `historia`, `pyynto` ja `luoja` karsitaan. Avaimen historia kertoo kuka
+//    pääsi sisään ja milloin — samaa henkilötietoa jonka takia keys.historia[].haltija
+//    on levyllä salattu (store.js). Sama periaate kuin hälytyskeskuksen omalla solmulla:
+//    kentällä olevan ei kuulu nähdä kuka on missäkin ollut.
+//
+// Karsinta tehdään PALVELIMELLA eikä käyttöliittymässä. Piilotettu kenttä joka kulkee
+// verkon yli on näkyvä kenttä.
+//
+// SALLITTUJEN KENTTIEN LISTA, ei poissuljettujen. Ero ratkaisee sen mitä tapahtuu kun
+// tietueeseen lisätään myöhemmin kenttä: poissulkulista päästäisi uuden kentän läpi
+// hiljaa, tämä jättää sen pois kunnes joku lisää sen tähän tietoisesti. Väärään suuntaan
+// erehtyminen tarkoittaisi henkilötiedon vuotamista kentälle.
+const NAKYVAT_KENTAT = [
+  'id', 'tunnus', 'laji', 'alalaji', 'nimi', 'kuvaus', 'sarjanumero', 'tila',
+  'sijoitusLaji', 'sijoitusId', 'sijoitusNimi', 'lisatiedot', 'luotu', 'kadonnut',
+];
+
+const ilmanKetjua = (esine) => {
+  const julkinen = {};
+  for (const kentta of NAKYVAT_KENTAT) {
+    if (esine[kentta] !== undefined) julkinen[kentta] = esine[kentta];
+  }
+  return julkinen;
+};
+
+export function vuoronKalusto(kalusto, siteId) {
+  if (!siteId) return [];
+  return (Array.isArray(kalusto) ? kalusto : [])
+    .filter((e) => e?.sijoitusLaji === 'kohde' && e?.sijoitusId === siteId && e?.tila !== 'poistettu')
+    .map(ilmanKetjua);
+}

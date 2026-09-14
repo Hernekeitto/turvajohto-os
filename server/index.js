@@ -657,6 +657,22 @@ app.get('/api/data/:name', requireAuth, (req, res) => {
     const nakyvat = new Set(perehdytetyt.map((k) => k.id));
     data = (data || []).filter((k) => nakyvat.has(k?.id) || avatut.has(k?.id));
   }
+
+  // Vartijan kalustonäkyvyys (erä 20b). Sama kuvio kuin kohdelistalla yllä: readableData
+  // päästi kokoelmaan, ja tässä rajataan se mitä KYSEINEN käyttäjä siitä saa nähdä.
+  //
+  // Ehto on `guard_assets`-solmun PUUTTUMINEN eikä `guard_site_assets`-solmun olemassaolo.
+  // Ero ratkaisee sen mitä tapahtuu kun tunnuksella on molemmat: pankkioikeus voittaa,
+  // eikä pääkäyttäjä menetä historiaa siksi että hänelle sattuu olemaan annettu myös
+  // vartijan solmu. Toisin päin kirjoitettuna kahden oikeuden summa olisi vähemmän kuin
+  // toinen niistä yksin.
+  //
+  // Rivit ja kentät rajataan kalusto.js:ssä, jotta sääntö on testattavissa ilman
+  // palvelinta. Täällä on vain se mitä se tarvitsee: kenen vuoro on kesken ja missä.
+  if (name === 'assets' && req.role !== 'admin' && !canView(req.permissions, null, 'guard_assets')) {
+    const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
+    data = kalusto.vuoronKalusto(data, vuoro?.siteId || null);
+  }
   res.json({ ok: true, data });
 });
 
@@ -3513,8 +3529,16 @@ const saaHallitaPankkia = (req) =>
 // oikeustarkistetulta listahaulta, kuten muissakin kokoelmissa.
 function kerroKalustopankista(esine, action) {
   lahetaKanavalle('assets', [{ action, id: esine.id, eventId: null }], {
-    saaNahda: (istunto) =>
-      istunto?.role === 'admin' || canView(rolePermissions(istunto?.roleId), null, 'guard_assets'),
+    // Myös vartija (guard_site_assets) herätetään. Viesti kuljettaa vain id:n, ja sisältö
+    // haetaan oikeustarkistetulta listahaulta joka rajaa rivit hänen vuoronsa kohteeseen —
+    // joten tästä ei vuoda mitään. Vaihtoehto olisi jättää vartija herättämättä, mutta
+    // silloin kesken vuoron jyvitetty avain ei ilmestyisi hänen listalleen lainkaan, ja
+    // vanhentunut avainrekisteri on pahempi kuin turha haku.
+    saaNahda: (istunto) => {
+      if (istunto?.role === 'admin') return true;
+      const oikeudet = rolePermissions(istunto?.roleId);
+      return canView(oikeudet, null, 'guard_assets') || canView(oikeudet, null, 'guard_site_assets');
+    },
   });
 }
 

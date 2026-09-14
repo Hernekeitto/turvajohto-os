@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import {
   LAJIT, seuraavaNumero, muotoileTunnus, luoKalusto, paivitaTiedot, siirra,
   pyydaKalustoa, peruPyynto, ratkaisePyynto, merkitseKadonneeksi, merkitseHuoltoon,
-  palautaKayttoon, poistaKaytosta, avoimetPyynnot, kadonneet, sijoitetut,
+  palautaKayttoon, poistaKaytosta, avoimetPyynnot, kadonneet, sijoitetut, vuoronKalusto,
 } from './kalusto.js';
 
 const T0 = Date.parse('2026-09-14T09:00:00Z');
@@ -334,6 +334,94 @@ test('aseen sarjanumeroa tai lupanumeroa ei voi tyhjentaa muokkaamalla', () => {
 });
 
 // --- Koosteet ---------------------------------------------------------------------
+
+// --- Vartijan näkymä: vain vuoron kohde, ilman luovutusketjua ----------------------
+
+test('ilman vuoroa ei nay mitaan', () => {
+  // Tyhjä lista on oikea vastaus eikä puute: ilman vuoroa ei ole kohdetta jonka
+  // kalustoa katsottaisiin. Jos tämä palauttaisi koko pankin, vartija näkisi kaiken
+  // heti kun vuoro päättyy.
+  assert.deepEqual(vuoronKalusto([esine()], null), []);
+  assert.deepEqual(vuoronKalusto([esine()], ''), []);
+});
+
+test('vartija nakee vain oman vuoronsa kohteen kaluston', () => {
+  const kohteella = (id, siteId) => siirra({
+    esine: esine({ id }), sijoitus: { laji: 'kohde', id: siteId, nimi: `Kohde ${siteId}` },
+    user: 'a', nyt: T0,
+  }).esine;
+
+  const pankki = [
+    kohteella('k1', 'kohde-1'),
+    kohteella('k2', 'kohde-2'),
+    // Varastossa oleva ei ole kenenkään kohteella.
+    esine({ id: 'k3' }),
+    // Toiselle vartijalle luovutettu ei näy vaikka hän olisi samassa kohteessa.
+    siirra({ esine: esine({ id: 'k4' }), sijoitus: { laji: 'henkilo', id: 'emp-9', nimi: 'Korhonen' }, user: 'a', nyt: T0 }).esine,
+  ];
+
+  const nakyvat = vuoronKalusto(pankki, 'kohde-1');
+  assert.deepEqual(nakyvat.map((e) => e.id), ['k1']);
+});
+
+test('poistettu ei nay vartijalle vaikka se olisi kirjattu kohteelle', () => {
+  const kohteella = siirra({
+    esine: esine(), sijoitus: { laji: 'kohde', id: 'kohde-1', nimi: 'Kohde 1' }, user: 'a', nyt: T0,
+  }).esine;
+  const poistettu = poistaKaytosta({ esine: kohteella, user: 'a', syy: 'Repesi', nyt: T0 }).esine;
+  assert.deepEqual(vuoronKalusto([poistettu], 'kohde-1'), []);
+});
+
+test('luovutusketju karsitaan: ei historiaa, pyyntoa eika luojaa', () => {
+  const kohteella = siirra({
+    esine: esine(), sijoitus: { laji: 'kohde', id: 'kohde-1', nimi: 'Kohde 1' },
+    user: 'paakayttaja', huomio: 'Sopimuksen mukaan', nyt: T0,
+  }).esine;
+  const pyydetty = pyydaKalustoa({
+    esine: kohteella, id: 'p1', pyytaja: 'esimies',
+    kohde: { id: 'kohde-2', nimi: 'Kohde 2' }, perustelu: 'Tarvitaan muualla', nyt: T0,
+  }).esine;
+
+  // Lähtötilanteessa kaikki kolme ovat olemassa — muuten testi ei todistaisi mitään.
+  assert.ok(pyydetty.historia.length > 0);
+  assert.ok(pyydetty.pyynto);
+  assert.equal(pyydetty.luoja, 'paakayttaja');
+
+  const [nakyva] = vuoronKalusto([pyydetty], 'kohde-1');
+  assert.equal(nakyva.historia, undefined);
+  assert.equal(nakyva.pyynto, undefined);
+  assert.equal(nakyva.luoja, undefined);
+  // Esineen omat tiedot säilyvät: ilman niitä näkymä ei kerro mitä kohteessa on.
+  assert.equal(nakyva.tunnus, 'TJ-ASU-0001');
+  assert.equal(nakyva.nimi, 'Talvitakki L');
+  assert.equal(nakyva.sijoitusNimi, 'Kohde 1');
+  assert.equal(nakyva.tila, 'kaytossa');
+});
+
+test('karsinta on sallittujen kenttien lista: tuntematon kentta ei paase lapi', () => {
+  // Tämä on koko karsinnan turvaverkko. Jos tietueeseen lisätään myöhemmin kenttä eikä
+  // sitä lisätä NAKYVAT_KENTAT-listaan, sen on jäätävä POIS vartijan näkymästä — ei
+  // mennä läpi hiljaa. Poissulkulistalla tämä testi menisi rikki juuri väärään suuntaan.
+  const kohteella = siirra({
+    esine: esine(), sijoitus: { laji: 'kohde', id: 'kohde-1', nimi: 'Kohde 1' }, user: 'a', nyt: T0,
+  }).esine;
+  const laajennettu = { ...kohteella, salainenUusiKentta: 'vartijan henkilotunnus' };
+
+  const [nakyva] = vuoronKalusto([laajennettu], 'kohde-1');
+  assert.equal(nakyva.salainenUusiKentta, undefined);
+});
+
+test('karsinta ei muuta alkuperaista tietuetta', () => {
+  // Karsinta ajetaan juuri ennen vastausta samalle taulukolle joka on luettu levyltä.
+  // Jos se muokkaisi paikallaan, seuraava pääkäyttäjän haku palauttaisi historiattoman
+  // tietueen — ja tallennus kirjoittaisi sen takaisin levylle.
+  const kohteella = siirra({
+    esine: esine(), sijoitus: { laji: 'kohde', id: 'kohde-1', nimi: 'Kohde 1' }, user: 'a', nyt: T0,
+  }).esine;
+  vuoronKalusto([kohteella], 'kohde-1');
+  assert.ok(Array.isArray(kohteella.historia));
+  assert.equal(kohteella.historia.length, 2);
+});
 
 test('sijoitetut suodattaa paikan mukaan ja jattaa poistetut pois', () => {
   const kohteella = siirra({

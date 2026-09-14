@@ -29,12 +29,18 @@ type Props = {
   // olisi jonoon jäävä rivi jonka hän hyväksyisi seuraavassa klikkauksessa, ja se
   // näyttäisi ulospäin siltä kuin päätöksen olisi tehnyt joku muu.
   saaHallita: boolean;
+  // Pääsy pankkiin (guard_assets luku). Ilman tätä näkymä on PELKKÄ LISTA: vartija näkee
+  // mitä kohteessa on, muttei voi hakea pankista eikä pyytää. Hänen palvelimelta saamansa
+  // aineisto on jo rajattu oman vuoronsa kohteeseen (server/kalusto.js: vuoronKalusto),
+  // joten pankkihaku ei edes löytäisi mitään muuta — ja hakukenttä joka ei löydä mitään
+  // on huonompi kuin ei hakukenttää.
+  saaPyytaa: boolean;
   onMuuttui: () => void;
   onAvaa: (esine: KalustoTietue) => void;
 };
 
 export const KohteenKalusto = ({
-  kohde, kalusto, ladattu, omaTunnus, saaHallita, onMuuttui, onAvaa,
+  kohde, kalusto, ladattu, omaTunnus, saaHallita, saaPyytaa, onMuuttui, onAvaa,
 }: Props) => {
   const [pyyntoAuki, setPyyntoAuki] = useState(false);
   const [haku, setHaku] = useState('');
@@ -103,7 +109,9 @@ export const KohteenKalusto = ({
           Kalustopankista tälle kohteelle jyvitetty tavara.
           {saaHallita
             ? ' Puuttuvan kaluston voi siirtää pankista suoraan.'
-            : ' Puuttuvasta kalustosta tehdään pyyntö, jonka pääkäyttäjä hyväksyy.'}
+            : saaPyytaa
+              ? ' Puuttuvasta kalustosta tehdään pyyntö, jonka pääkäyttäjä hyväksyy.'
+              : ' Puuttuvasta kalustosta ilmoitetaan esimiehelle.'}
         </p>
       </div>
 
@@ -147,8 +155,13 @@ export const KohteenKalusto = ({
         <div className="bg-sunken border border-line-soft rounded-xl p-6 text-center">
           <p className="font-medium text-ink-strong mb-1">Kohteelle ei ole jyvitetty kalustoa</p>
           <p className="text-sm text-ink-muted">
-            {saaHallita ? 'Siirrä' : 'Pyydä'} pankista se mitä kohteessa tarvitaan — avaimet,
-            voimankäyttövälineet, avainkaappi tai tietotekniikka.
+            {saaPyytaa
+              ? `${saaHallita ? 'Siirrä' : 'Pyydä'} pankista se mitä kohteessa tarvitaan — avaimet, voimankäyttövälineet, avainkaappi tai tietotekniikka.`
+              /* Vartijalle lista on tyhjä kahdesta syystä: kohteelle ei ole jyvitetty
+                 mitään, TAI vuoro ei ole käynnissä eikä palvelin siksi palauta mitään
+                 (server/kalusto.js: vuoronKalusto). Jälkimmäinen on tavallisempi ja se on
+                 sanottava ääneen — muuten vartija luulee kohteen olevan tyhjä. */
+              : 'Kalusto näkyy sen kohteen osalta jossa olet vuorossa. Jos vuoro ei ole käynnissä, lista on tyhjä.'}
           </p>
         </div>
       ) : (
@@ -182,8 +195,9 @@ export const KohteenKalusto = ({
         </ul>
       )}
 
-      {/* --- Pyyntö pankista --- */}
-      {pyyntoAuki ? (
+      {/* --- Pyyntö tai siirto pankista. Pelkällä vuoro-oikeudella tätä ei ole
+             lainkaan: vartija katsoo listaa eikä kirjaa kalustoa. --- */}
+      {!saaPyytaa ? null : pyyntoAuki ? (
         <div className="border border-line rounded-xl p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <h4 className="font-medium text-ink-strong">

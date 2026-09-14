@@ -70,7 +70,11 @@ const KATSELU_NAKYVA = [
 // perehdytysmerkinnät ja tehtäväpohjat — ne ovat esimiehen työtä, joten vartijalle jää
 // niihin vain katseluoikeus. Ilman guard_sites-näkyvyyttä hän ei pääsisi yhteenkään
 // kohteeseen, koska kohdevalinta on ainoa reitti sinne.
-const VARTIJA_KATSELU = ['guard_sites', 'guard_site_info', 'guard_reporting'];
+// `guard_site_assets` on tässä eikä ESIMIES_KATSELUssa: vartija näkee kaluston mutta
+// VAIN sen kohteen jossa hän on juuri nyt vuorossa, ja ilman luovutusketjua (rajaus
+// tehdään index.js:ssä, sääntö kalusto.js:ssä). Se on eri oikeus kuin pankin selaaminen
+// — siksi oma solmunsa eikä guard_assets kapeampana.
+const VARTIJA_KATSELU = ['guard_sites', 'guard_site_info', 'guard_reporting', 'guard_site_assets'];
 // Työvuoron tekeminen: tehtävien kuittaus ja omien raporttien kirjaaminen. Tapahtumailmoitus
 // on mukana, koska sen kirjaa se joka toimenpiteen teki — jos kirjaus kuuluu jossain
 // organisaatiossa vain esimiehelle, oikeus otetaan pois Sovellusasetuksista.

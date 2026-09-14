@@ -171,6 +171,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // tämä vain piilottaa napit joita ei saisi painaa.
   const saaNahdaPankin = isAdmin || canView(perms, null, 'guard_assets');
   const saaHallitaPankkia = isAdmin || canEdit(perms, null, 'guard_assets');
+  // Vartijan kalustonäkyvyys (erä 20b). Eri solmu ja eri näkymä: ei pankkia vaan sen
+  // kohteen kalusto jossa vartija on vuorossa. RAJAUS ON PALVELIMELLA (index.js +
+  // kalusto.js) — tämä lippu päättää vain mitä käyttöliittymässä näytetään, eikä sen
+  // varaan saa laskea mitään. Selain saa jo valmiiksi rajatun listan.
+  const saaNahdaVuoronKaluston = saaNahdaPankin || canView(perms, null, 'guard_site_assets');
   // Varustepoikkeama on vikailmoitus eikä omaisuuskirjanpito, joten sillä on yhä oma
   // solmunsa. ILMOITTAMINEN riittää lukuoikeudella — sen huomaa se joka käyttää
   // varustetta; sulkeminen on väite siitä että asia on kunnossa.
@@ -178,7 +183,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Kohteen Kalusto-näkymä näyttää molemmat: kohteelle jyvitetyn kaluston ja
   // varustepoikkeamat. Kumpi tahansa oikeus riittää valikkopainikkeen näkymiseen, koska
   // näkymän sisällä välilehdet ovat omien oikeuksiensa takana.
-  const saaNahdaKalustoa = saaNahdaPankin || canView(perms, null, 'guard_equipment');
+  const saaNahdaKalustoa = saaNahdaVuoronKaluston || canView(perms, null, 'guard_equipment');
   // Mittaristo ja jaksoraportit (erä 9). Erilliset oikeudet: mittaristo näyttää lukuja,
   // jaksoraportti on dokumentti joka lähtee toimeksiantajalle. Palvelin laskee luvut vain
   // niistä tietueista jotka käyttäjä saisi lukea rivinä, joten mittariston lukuoikeus ei
@@ -481,13 +486,13 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // `pankkiLadattu` erottaa tyhjän pankin epäonnistuneesta hausta: ilman sitä "ei
   // kalustoa" näkyisi myös silloin kun haku kaatui.
   const paivitaPankki = useCallback(() => {
-    if (!saaNahdaPankin) return;
+    if (!saaNahdaVuoronKaluston) return;
     haeKalusto().then((lista) => {
       if (!lista) return;
       setPankki(lista);
       setPankkiLadattu(true);
     });
-  }, [saaNahdaPankin]);
+  }, [saaNahdaVuoronKaluston]);
 
   useEffect(() => { paivitaPankki(); }, [paivitaPankki]);
 
@@ -1692,13 +1697,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             onPoikkeamatMuuttui={paivitaPoikkeamat}
             aloitusValilehti="avaimet"
             avainOtsikko="Kohteen kalusto"
-            avainNakyma={saaNahdaPankin ? (
+            avainNakyma={saaNahdaVuoronKaluston ? (
               <KohteenKalusto
                 kohde={{ id: kalustoKohde.id, nimi: kalustoKohde.name }}
                 kalusto={pankki}
                 ladattu={pankkiLadattu}
                 omaTunnus={session?.username || ''}
                 saaHallita={saaHallitaPankkia}
+                saaPyytaa={saaNahdaPankin}
                 onMuuttui={paivitaPankki}
                 onAvaa={setKohteenEsine}
               />
