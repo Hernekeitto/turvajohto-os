@@ -678,6 +678,8 @@ app.get('/api/data/:name', requireAuth, (req, res) => {
   //
   // Rivit ja kentät rajataan kalusto.js:ssä, jotta sääntö on testattavissa ilman
   // palvelinta. Täällä on vain se mitä se tarvitsee: kenen vuoro on kesken ja missä.
+  // Kaikille: vanha 'varasto' luetaan holviksi ennen vastausta (kalusto.js).
+  if (name === 'assets') data = kalusto.normalisoiRivit(data);
   if (name === 'assets' && req.role !== 'admin' && !canView(req.permissions, null, 'guard_assets')) {
     const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
     data = kalusto.vuoronKalusto(data, {
@@ -3620,6 +3622,8 @@ app.post('/api/kalusto', requireAuth, guardPortti, (req, res) => {
   // Numerointi lasketaan KERRAN ja kasvatetaan silmukassa. Jos jokainen kappale kysyisi
   // numeronsa erikseen samasta muuttumattomasta listasta, koko erä saisi saman tunnuksen.
   const numero = kalusto.seuraavaNumero(pankki, laji);
+  // Sama koskee holvipaikkaa: avaimet saavat peräkkäiset koukut.
+  const holviPaikka = kalusto.seuraavaHolviPaikka(pankki);
 
   const uudet = [];
   for (let i = 0; i < kappaletta; i += 1) {
@@ -3636,9 +3640,77 @@ app.post('/api/kalusto', requireAuth, guardPortti, (req, res) => {
       lisatiedot: req.body?.lisatiedot,
       sijoitus,
       numero: numero + i,
+      holviPaikka: laji === 'avain' ? holviPaikka + i : null,
       user: req.username,
     });
     if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+    uudet.push(tulos.esine);
+  }
+
+  writeCollection('assets', [...uudet, ...pankki]);
+  for (const esine of uudet) {
+    logAudit({ user: req.username, action: 'asset_create', collection: 'assets', recordId: esine.id });
+    kerroKalustopankista(esine, 'create');
+  }
+  res.json({ ok: true, esineet: uudet });
+});
+
+// Avainerä taulukkosyötöstä (erä 20d).
+//
+// ERILLINEN REITTI eikä POST /api/kalusto kappalemäärällä, ja ero on olennainen:
+// kappalemäärä luo N SAMANLAISTA tietuetta, tämä luo N ERILAISTA. Avaimet tulevat
+// toimeksiantajalta erissä joissa jokaisella on oma tyyppinsä, sarjanumeronsa ja
+// sopimusviitteensä — yksi lomake kerrallaan olisi kymmeniä lomakkeita.
+//
+// Kaikki rivit tai ei mitään: jos yksikin rivi on virheellinen, mitään ei kirjoiteta.
+// Osittain onnistunut erä jättäisi käyttäjän selvittämään mitkä rivit menivät läpi, ja
+// hän syöttäisi loput uudelleen — jolloin osa avaimista olisi pankissa kahdesti.
+app.post('/api/kalusto/era', requireAuth, guardPortti, (req, res) => {
+  if (!saaHallitaPankkia(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta kalustopankin ylläpitoon.' });
+  }
+  const rivit = Array.isArray(req.body?.rivit) ? req.body.rivit : null;
+  if (!rivit || rivit.length === 0) {
+    return res.status(400).json({ ok: false, error: 'Erässä ei ole yhtään riviä.' });
+  }
+  if (rivit.length > kalusto.KAPPALEITA_MAX) {
+    return res.status(400).json({
+      ok: false,
+      error: `Erässä voi olla enintään ${kalusto.KAPPALEITA_MAX} riviä.`,
+    });
+  }
+
+  const pankki = readCollection('assets') || [];
+  const numero = kalusto.seuraavaNumero(pankki, 'avain');
+  const holviPaikka = kalusto.seuraavaHolviPaikka(pankki);
+
+  const uudet = [];
+  for (let i = 0; i < rivit.length; i += 1) {
+    const rivi = rivit[i] || {};
+    const tulos = kalusto.luoKalusto({
+      id: crypto.randomUUID(),
+      laji: 'avain',
+      alalaji: rivi.alalaji,
+      nimi: rivi.nimi,
+      kuvaus: rivi.kuvaus,
+      sarjanumero: rivi.sarjanumero,
+      lisatiedot: {
+        avaintyyppi: rivi.avaintyyppi,
+        kohdeNimi: rivi.kohdeNimi,
+        sarjanumerointi: rivi.sarjanumerointi,
+        luovutussopimus: rivi.luovutussopimus,
+      },
+      // Erä syntyy aina holviin: avain kirjataan vastaanotetuksi ennen kuin se
+      // jyvitetään mihinkään. Rivinumero virheeseen, jotta käyttäjä löytää sen
+      // taulukosta ilman arvailua.
+      sijoitus: { laji: 'holvi' },
+      numero: numero + i,
+      holviPaikka: holviPaikka + i,
+      user: req.username,
+    });
+    if (!tulos.ok) {
+      return res.status(400).json({ ok: false, error: `Rivi ${i + 1}: ${tulos.error}`, rivi: i });
+    }
     uudet.push(tulos.esine);
   }
 

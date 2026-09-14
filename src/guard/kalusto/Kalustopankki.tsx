@@ -15,7 +15,7 @@
 // kaksi paikkaa jossa oikeus voi mennä väärin.
 import { useMemo, useState, type ReactNode } from 'react';
 import {
-  Boxes, ClipboardList, Plus, Printer, Search, TriangleAlert, Users, X,
+  Boxes, ClipboardList, Plus, Printer, Search, Table2, TriangleAlert, Users, X,
 } from 'lucide-react';
 
 import { haeQrKoodi } from '../../shared/komponentit/QrKoodi';
@@ -25,6 +25,7 @@ import { muotoileTunniste } from '../../shared/tunnisteet';
 import { kilpimerkkiDokumentti, tulostaDokumentti, type TulostettavaKilpimerkki } from '../../shared/tuloste';
 import { KalustoKortti } from './KalustoKortti';
 import { KilpiEsikatselu } from './KilpiEsikatselu';
+import { AVAINERAPOLKU } from '../../shared/laitevalinta';
 import { LAJIJARJESTYS, LAJIT } from './lajit';
 import { tulostaLuovutuslomake } from './luovutuslomake';
 import {
@@ -64,7 +65,7 @@ const TYHJA_LOMAKE = {
   kuvaus: '',
   sarjanumero: '',
   lisatiedot: {} as Record<string, string | boolean>,
-  sijoitusLaji: 'varasto' as SijoitusLaji,
+  sijoitusLaji: 'holvi' as SijoitusLaji,
   sijoitusId: '',
   kappaletta: 1,
 };
@@ -172,7 +173,7 @@ export const Kalustopankki = ({
         lisatiedot: lomake.lisatiedot,
         sijoitus: {
           laji: lomake.sijoitusLaji,
-          id: lomake.sijoitusLaji === 'varasto' ? null : lomake.sijoitusId,
+          id: lomake.sijoitusLaji === 'holvi' ? null : lomake.sijoitusId,
         },
         kappaletta: lomake.kappaletta,
       };
@@ -339,6 +340,19 @@ export const Kalustopankki = ({
                 Lisää kalustoa
               </button>
             )}
+            {saaHallita && (
+              <button
+                type="button"
+                // Uusi selainvälilehti eikä näkymänvaihto: taulukko tarvitsee koko
+                // ruudun leveyden, ja pankki jää auki taustalle. Palattaessa lista on
+                // yhä siinä mihin se jäi, ja uudet avaimet ilmestyvät kanavan kautta.
+                onClick={() => window.open(AVAINERAPOLKU, '_blank', 'noopener')}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-line text-ink-body hover:bg-sunken"
+              >
+                <Table2 size={15} />
+                Kirjaa avainerä
+              </button>
+            )}
             {valitut.size > 0 && (
               <>
                 <button
@@ -472,7 +486,7 @@ export const Kalustopankki = ({
                     }))}
                     className="w-full px-3 py-2 rounded-lg border border-line bg-surface text-sm text-ink-body"
                   >
-                    <option value="varasto">Varasto</option>
+                    <option value="holvi">Holvi</option>
                     <option value="kohde">Kohde</option>
                   </select>
                 </LomakeKentta>
@@ -545,7 +559,12 @@ export const Kalustopankki = ({
                       <Ikoni size={18} className="text-ink-muted shrink-0" />
                       <span className="min-w-0 flex-1">
                         <span className="block font-medium text-ink-strong truncate">{esine.nimi}</span>
-                        <span className="block text-xs text-ink-muted font-mono">{esine.tunnus}</span>
+                        <span className="block text-xs text-ink-muted font-mono">
+                          {esine.tunnus}
+                          {/* Holvipaikka on avaimen tunnus kirjanpidossa, ja se on se
+                              numero jolla avainta puhelimessa etsitään. */}
+                          {typeof esine.holviPaikka === 'number' && (' · holvi ' + esine.holviPaikka)}
+                        </span>
                       </span>
                       <span className="hidden sm:block text-sm text-ink-body shrink-0 max-w-[10rem] truncate">
                         {sijainti(esine)}
@@ -700,6 +719,7 @@ export const Kalustopankki = ({
           kohteet={kohteet}
           tyontekijat={tyontekijat}
           kantajat={kantajat}
+          kalusto={kalusto}
           saaHallita={saaHallita}
           omaTunnus={omaTunnus}
           onMuuttui={onMuuttui}

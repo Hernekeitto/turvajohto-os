@@ -1779,6 +1779,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
               kantajat={pankki
                 .filter((e) => (e.laji === 'ajoneuvo' || e.laji === 'avainkaappi') && e.tila !== 'poistettu')
                 .map((e) => ({ id: e.id, nimi: `${e.nimi} (${e.tunnus})`, laji: e.laji as SijoitusLaji }))}
+              kalusto={pankki}
               saaHallita={saaHallitaPankkia}
               omaTunnus={session?.username || ''}
               onMuuttui={paivitaPankki}

@@ -103,7 +103,7 @@ export const LAJIT: Record<Laji, Lajimaarittely> = {
         avain: 'henkilokohtainen',
         otsikko: 'Henkilökohtainen',
         totuusarvo: true,
-        vihje: 'Luovutetaan vain nimetylle henkilölle, ei kohteelle eikä varastoon. Tunnukset ovat aina henkilökohtaisia.',
+        vihje: 'Luovutetaan vain nimetylle henkilölle, ei kohteelle eikä holviin. Tunnukset ovat aina henkilökohtaisia.',
       },
     ],
   },

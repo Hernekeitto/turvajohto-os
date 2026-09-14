@@ -19,12 +19,16 @@ import { PaivitysKehote } from './shared/komponentit/PaivitysKehote.tsx'
 import { JonoTila } from './shared/komponentit/JonoTila.tsx'
 import { rekisteroiPalvelutyontekija } from './shared/palvelutyontekija.ts'
 import { asetaKuvakkeetJaManifesti } from './shared/kuvakkeet.ts'
-import { lueLaitevalinta, MOBIILIPOLKU, TYOPOYTAPOLKU } from './shared/laitevalinta.ts'
+import { lueLaitevalinta, AVAINERAPOLKU, MOBIILIPOLKU, TYOPOYTAPOLKU } from './shared/laitevalinta.ts'
 
 // Tuotekohtaiset osat ladataan vasta tarvittaessa: mainossivu on julkinen ja sen
 // pitää aueta heti, eikä sen kuulu vetää mukanaan koko sovellusnippua.
 const EventApp = lazy(() => import('./App.tsx'))
 const GuardApp = lazy(() => import('./guard/GuardApp.tsx'))
+// Avainerän taulukkosyöttö on oma sivunsa omassa selainvälilehdessään, ei näkymä
+// GuardAppin sisällä: se ei jaa mitään tilaa pankin kanssa eikä sitä tarvitse ladata
+// ennen kuin se avataan.
+const AvainEra = lazy(() => import('./guard/kalusto/AvainEra.tsx').then((m) => ({ default: m.AvainEra })))
 
 type Tuote = 'landing' | 'event' | 'guard'
 
@@ -53,6 +57,13 @@ function ratkaiseTuote(pathname: string): Tuote {
 // sovellus käynnistyy aina /guard-polkuun (manifestin start_url), joten ilman tätä
 // mobiiliversion valinnut vartija päätyisi työpöytäversioon joka ainoa kerta.
 // Nimenomainen /guard/mobile voittaa aina tallennetun valinnan.
+// Onko osoite avainerän taulukkosivu. Oma haaransa eikä GuardAppin sisäinen näkymä,
+// koska sivu avataan window.openilla omaan välilehteensä — silloin se on osoite, ja
+// osoitteet tulkitaan tässä tiedostossa.
+function onAvainEra(pathname: string): boolean {
+  return pathname.replace(LOPUN_KENOVIIVAT, '').toLowerCase() === AVAINERAPOLKU
+}
+
 function ratkaiseGuardMobiili(pathname: string): boolean {
   const polku = pathname.replace(LOPUN_KENOVIIVAT, '').toLowerCase()
   if (polku === MOBIILIPOLKU) return true
@@ -63,7 +74,10 @@ function ratkaiseGuardMobiili(pathname: string): boolean {
 // Siivoaa osoiterivin kanoniseen muotoon ilman uudelleenlatausta: /Guard/ -> /guard,
 // ja kaikki tuntemattomat polut mainossivulle (/), jotta kirjoitusvirhe ei jätä
 // käyttäjää katsomaan mainossivua väärässä osoitteessa.
-function normalisoiPolku(tuote: Tuote, guardMobiili: boolean) {
+function normalisoiPolku(tuote: Tuote, guardMobiili: boolean, avainEra: boolean) {
+  // Avainerän osoite on kanoninen sellaisenaan: ilman tätä haaraa normalisointi
+  // kirjoittaisi sen /guard:ksi ja välilehti näyttäisi pankin taulukon sijaan.
+  if (avainEra) return
   const kanoninen = tuote === 'landing' ? '/' : guardMobiili ? MOBIILIPOLKU : `/${tuote}`
   if (window.location.pathname !== kanoninen) {
     window.history.replaceState(null, '', kanoninen + window.location.search + window.location.hash)
@@ -71,11 +85,12 @@ function normalisoiPolku(tuote: Tuote, guardMobiili: boolean) {
 }
 
 const tuote = ratkaiseTuote(window.location.pathname)
-const guardMobiili = tuote === 'guard' && ratkaiseGuardMobiili(window.location.pathname)
+const avainEra = tuote === 'guard' && onAvainEra(window.location.pathname)
+const guardMobiili = tuote === 'guard' && !avainEra && ratkaiseGuardMobiili(window.location.pathname)
 // replaceState eikä uudelleenohjaus: sovellusnippu on jo ladattu, ja koko ero on siinä
 // mikä komponentti renderöidään. Uudelleenlataus tässä kohdassa maksaisi vartijalle
 // yhden ylimääräisen latauksen jokaisella käynnistyksellä.
-normalisoiPolku(tuote, guardMobiili)
+normalisoiPolku(tuote, guardMobiili, avainEra)
 
 // Väritokenien arvot ratkeavat juuren data-tuote-attribuutista (ks. index.css), jolloin
 // sama komponentti näyttää EVENT-puolella slate/indigo-ilmeeltä ja GUARD-puolella
@@ -122,7 +137,9 @@ createRoot(document.getElementById('root')!).render(
     ) : (
       <Suspense fallback={Latautuu}>
         <PasswordGate tuote={tuote}>
-          {tuote === 'guard' ? <GuardApp mobiili={guardMobiili} /> : <EventApp />}
+          {tuote === 'guard'
+            ? (avainEra ? <AvainEra /> : <GuardApp mobiili={guardMobiili} />)
+            : <EventApp />}
         </PasswordGate>
       </Suspense>
     )}

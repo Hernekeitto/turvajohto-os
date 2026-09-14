@@ -23,8 +23,13 @@
 //     tietue ilman lupanumeroa ja sarjanumeroa näyttäisi kirjanpidolta olematta sitä.
 //     Tämä on syy siihen miksi ase on oma lajinsa eikä voimankäyttöväline.
 //
-//  4. HENKILÖKOHTAINEN ESINE MENEE VAIN HENKILÖLLE. Vartijan tunnus kohteen varastossa
-//     on tunnus jota kuka tahansa voi käyttää.
+//  4. HENKILÖKOHTAINEN ESINE MENEE VAIN HENKILÖLLE. Vartijan tunnus holvissa on tunnus
+//     jota kuka tahansa voi käyttää.
+//
+//  6. AVAIMELLA ON HOLVIPAIKKA, JA SE ON VARATTU. Jokaiselle avaimelle varataan holvista
+//     numeroitu paikka (1000→), ja se pysyy avaimen omana myös silloin kun avain on
+//     kohteella tai avainkaapissa — tyhjä koukku kertoo että avain on jossain muualla.
+//     Paikan numero on samalla avaimen tunnus vartioimisliikkeen kirjanpidossa.
 //
 //  5. PYYNTÖ EI OHITA PÄÄTÖSTÄ. Vuoroesimies pyytää, pääkäyttäjä jyvittää. Pyyntö on
 //     esineessä ja avoimia on kerrallaan yksi — kaksi rinnakkaista pyyntöä samaan
@@ -46,10 +51,19 @@ export const LAJIT = {
   tietotekniikka: { koodi: 'ATK' },
 };
 
-// Missä esine voi olla. 'varasto' on oletus ja ainoa jolla ei ole kohdetta johon se
+// Missä esine voi olla. 'holvi' on oletus ja ainoa jolla ei ole kohdetta johon se
 // viittaa — kaikki muut osoittavat johonkin joka on olemassa (kohde, työntekijä, toinen
 // kalustotietue).
-export const SIJOITUSLAJIT = ['varasto', 'kohde', 'henkilo', 'ajoneuvo', 'avainkaappi'];
+//
+// NIMI ON 'holvi' EIKÄ 'varasto' (päätös 14.9.2026). Vartioimisliikkeen avainsäilytys on
+// holvi, ja termi on sama sekä kirjanpidossa että puheessa. Nimeäminen todellisuuden
+// mukaan on halvempaa nyt kuin sitten kun tietueita on tuhansia.
+export const SIJOITUSLAJIT = ['holvi', 'kohde', 'henkilo', 'ajoneuvo', 'avainkaappi'];
+
+// Ennen nimenmuutosta kirjatut rivit sanovat 'varasto'. Luku sietää sen, jotta vanha data
+// ei jää näkymättömiin eikä tarvita erillistä migraatioajoa: nimi on esitystapa, ja
+// tietueen merkitys ei muuttunut. Kirjoitus tuottaa aina 'holvi'.
+export const normalisoiSijoitusLaji = (laji) => (laji === 'varasto' ? 'holvi' : laji);
 
 export const TILAT = ['kaytossa', 'huollossa', 'kadonnut', 'poistettu'];
 
@@ -129,6 +143,42 @@ export function seuraavaNumero(kalusto, laji) {
   return suurin + 1;
 }
 
+// --- Holvipaikka -------------------------------------------------------------------
+//
+// Avaimen holvipaikka on NUMEROITU KOUKKU HOLVISSA ja samalla avaimen tunnus
+// vartioimisliikkeen kirjanpidossa. Yksi kenttä eikä kaksi, koska paikka varataan
+// avaimelle pysyvästi: se ei vapaudu silloinkaan kun avain on kohteella tai
+// avainkaapissa, ja juuri siksi numero kelpaa tunnisteeksi.
+//
+// Numerointi alkaa 1000:sta samasta syystä kuin henkilön tunnistenumero
+// (shared/tunnisteet.ts): nelinumeroinen luku erottuu puheessa ja paperilla
+// järjestysnumerosta, eikä kukaan luule sitä riviksi listalla.
+//
+// EI VAPAUDU POISTETULTA AVAIMELTA. Sama sääntö kuin kilpimerkin tunnuksella: vanhat
+// luovutusmerkinnät viittaavat numeroon, ja uudelleenkäyttö tekisi kahdesta eri
+// avaimesta saman avaimen jälkikäteen luettuna. Fyysinen koukku voidaan toki ottaa
+// uudelleen käyttöön — se on eri asia kuin numero.
+//
+// VAIN AVAIMILLA. Takilla ja patukalla ei ole holvipaikkaa; ne ovat varusteita joita
+// säilytetään missä sattuu olemaan tilaa, eikä niiden sijainti ole turvallisuuskysymys
+// samalla tavalla.
+export const HOLVIPAIKKA_ALKU = 1000;
+
+export function seuraavaHolviPaikka(kalusto) {
+  let suurin = HOLVIPAIKKA_ALKU - 1;
+  for (const esine of Array.isArray(kalusto) ? kalusto : []) {
+    const paikka = Number(esine?.holviPaikka);
+    if (Number.isInteger(paikka) && paikka > suurin) suurin = paikka;
+  }
+  return suurin + 1;
+}
+
+// Onko paikka jo toisella avaimella. Kutsuja antaa oman id:n, jottei esineen oma paikka
+// näytä varatulta sitä muokattaessa.
+export const holviPaikkaVarattu = (kalusto, paikka, omaId = null) =>
+  (Array.isArray(kalusto) ? kalusto : [])
+    .some((e) => e?.holviPaikka === paikka && e?.id !== omaId);
+
 // --- Sijoitus ----------------------------------------------------------------------
 //
 // LITTEÄT KENTÄT EIVÄTKÄ SISÄKKÄINEN OLIO, ja syy on levyllä: store.js:n kenttäsalaus
@@ -136,17 +186,18 @@ export function seuraavaNumero(kalusto, laji) {
 // listalle läpi mutta ei salaisi mitään, eikä siitä kerrottaisi mitenkään — ja
 // sijoituksen nimi on vartijan nimi silloin kun esine on vartijalla.
 const sijoitusKentat = (sijoitus) => {
-  const laji = SIJOITUSLAJIT.includes(sijoitus?.laji) ? sijoitus.laji : 'varasto';
+  const pyydetty = normalisoiSijoitusLaji(sijoitus?.laji);
+  const laji = SIJOITUSLAJIT.includes(pyydetty) ? pyydetty : 'holvi';
   return {
     sijoitusLaji: laji,
-    sijoitusId: laji === 'varasto' ? null : siivoa(sijoitus?.id, NIMEN_MAX) || null,
-    sijoitusNimi: siivoa(sijoitus?.nimi, NIMEN_MAX) || (laji === 'varasto' ? 'Varasto' : ''),
+    sijoitusId: laji === 'holvi' ? null : siivoa(sijoitus?.id, NIMEN_MAX) || null,
+    sijoitusNimi: siivoa(sijoitus?.nimi, NIMEN_MAX) || (laji === 'holvi' ? 'Holvi' : ''),
   };
 };
 
 const tarkistaSijoitus = (esine, sijoitus) => {
   const kentat = sijoitusKentat(sijoitus);
-  if (kentat.sijoitusLaji !== 'varasto' && !kentat.sijoitusId) {
+  if (kentat.sijoitusLaji !== 'holvi' && !kentat.sijoitusId) {
     return { ok: false, error: 'Valitse mihin esine sijoitetaan.' };
   }
   if (!kentat.sijoitusNimi) {
@@ -157,7 +208,7 @@ const tarkistaSijoitus = (esine, sijoitus) => {
   if (esine?.lisatiedot?.henkilokohtainen === true && kentat.sijoitusLaji !== 'henkilo') {
     return {
       ok: false,
-      error: 'Esine on merkitty henkilökohtaiseksi. Se luovutetaan nimetylle henkilölle, ei kohteelle tai varastoon.',
+      error: 'Esine on merkitty henkilökohtaiseksi. Se luovutetaan nimetylle henkilölle, ei kohteelle eikä holviin.',
     };
   }
   return { ok: true, kentat };
@@ -180,7 +231,7 @@ const lisaaHistoria = (esine, rivi) => [...(Array.isArray(esine.historia) ? esin
 
 export function luoKalusto({
   id, laji, alalaji, nimi, kuvaus, sarjanumero, lisatiedot, sijoitus,
-  numero, user, nyt = Date.now(),
+  numero, holviPaikka = null, user, nyt = Date.now(),
 }) {
   if (!LAJIT[laji]) return { ok: false, error: 'Tuntematon kalustolaji.' };
 
@@ -202,10 +253,16 @@ export function luoKalusto({
   }
 
   const alku = { ...sijoitusKentat(sijoitus) };
-  // Henkilökohtaiseksi merkitty esine voi syntyä varastoon: se luovutetaan vasta kun
+  // Henkilökohtaiseksi merkitty esine voi syntyä holviin: se luovutetaan vasta kun
   // tiedetään kenelle. Rajoitus koskee siirtoa, ei syntymää.
-  if (alku.sijoitusLaji !== 'varasto' && !alku.sijoitusId) {
+  if (alku.sijoitusLaji !== 'holvi' && !alku.sijoitusId) {
     return { ok: false, error: 'Valitse mihin esine sijoitetaan.' };
+  }
+
+  // Holvipaikka on pakollinen avaimelle ja kielletty muilta. Kutsuja (index.js) laskee
+  // numeron, koska se vaatii koko pankin — sääntömoduuli ei lue levyä.
+  if (laji === 'avain' && !Number.isInteger(holviPaikka)) {
+    return { ok: false, error: 'Avaimelle on varattava holvipaikka.' };
   }
 
   return {
@@ -213,6 +270,7 @@ export function luoKalusto({
     esine: {
       id,
       tunnus: muotoileTunnus(laji, numero),
+      ...(laji === 'avain' ? { holviPaikka } : {}),
       laji,
       alalaji: siivoa(alalaji, LISATIEDON_MAX),
       nimi: puhdasNimi,
@@ -247,7 +305,7 @@ export function paivitaTiedot({ esine, muutokset, user, nyt = Date.now() }) {
     return { ok: false, error: 'Aseen sarjanumeroa ja luvan numeroa ei voi tyhjentää.' };
   }
   // Henkilökohtaiseksi merkitseminen kesken kaiken: esine ei saa jäädä sääntöä rikkovaan
-  // tilaan, eli varastossa oleva tavara ei muutu henkilökohtaiseksi vahingossa.
+  // tilaan, eli holvissa oleva tavara ei muutu henkilökohtaiseksi vahingossa.
   if (puhtaatLisatiedot.henkilokohtainen === true && esine.sijoitusLaji !== 'henkilo') {
     return {
       ok: false,
@@ -560,6 +618,9 @@ export const sijoitetut = (kalusto, sijoitusLaji, sijoitusId) =>
 const NAKYVAT_KENTAT = [
   'id', 'tunnus', 'laji', 'alalaji', 'nimi', 'kuvaus', 'sarjanumero', 'tila',
   'sijoitusLaji', 'sijoitusId', 'sijoitusNimi', 'lisatiedot', 'luotu', 'kadonnut',
+  // Holvipaikka on avaimen tunnus kirjanpidossa, ei henkilötieto: vartijan on voitava
+  // sanoa esimiehelle kumpi avain on kyseessä.
+  'holviPaikka',
 ];
 
 const ilmanKetjua = (esine) => {
@@ -579,6 +640,16 @@ const ilmanKetjua = (esine) => {
  * Molemmat null tarkoittaa tyhjää listaa. Se on tarkoitus: ilman vuoroa ja ilman
  * työntekijäkytkentää ei ole mitään mitä tämä näkymä voisi kertoa.
  */
+// Rivien normalisointi LUETTAESSA. Ennen nimenmuutosta kirjatut tietueet sanovat levyllä
+// yhä 'varasto', eikä niitä varten ajeta migraatiota: nimi on esitystapa eikä tietueen
+// merkitys muuttunut. Ilman tätä selain saisi lajin jota sen tyyppi ei tunne, ja
+// sijoituksen selite jäisi tyhjäksi — vika joka näkyy vain vanhoilla riveillä ja jonka
+// huomaa vasta tuotannossa.
+export const normalisoiRivit = (kalusto) =>
+  (Array.isArray(kalusto) ? kalusto : []).map((e) => (e?.sijoitusLaji === 'varasto'
+    ? { ...e, sijoitusLaji: 'holvi' }
+    : e));
+
 export function vuoronKalusto(kalusto, { siteId = null, employeeId = null } = {}) {
   if (!siteId && !employeeId) return [];
   return (Array.isArray(kalusto) ? kalusto : [])

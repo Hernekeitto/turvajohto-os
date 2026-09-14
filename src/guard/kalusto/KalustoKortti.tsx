@@ -10,6 +10,7 @@
 import { useState, type ReactNode } from 'react';
 import {
   ArrowRightLeft, History, Printer, TriangleAlert, Wrench, Ban, Undo2, Pencil, X, Check,
+  Plus, Search,
 } from 'lucide-react';
 
 import { QrKoodi } from '../../shared/komponentit/QrKoodi';
@@ -31,6 +32,10 @@ type Props = {
   kohteet: SiirtoKohde[];
   tyontekijat: SiirtoKohde[];
   kantajat: { id: string; nimi: string; laji: SijoitusLaji }[];
+  // Koko pankki. Tarvitaan kun avattu esine on SÄILYTIN (avainkaappi tai ajoneuvo):
+  // silloin kortin on näytettävä mitä sen sisällä on. Laskenta tehdään täällä eikä
+  // kutsujassa, koska kortti on ainoa joka tietää minkä esineen se avasi.
+  kalusto: KalustoTietue[];
   saaHallita: boolean;
   omaTunnus: string;
   onMuuttui: () => void;
@@ -38,10 +43,15 @@ type Props = {
   onTulostaKilpi: (esine: KalustoTietue) => void;
 };
 
-const SIIRTOVAIHTOEHDOT: SijoitusLaji[] = ['varasto', 'kohde', 'henkilo', 'ajoneuvo', 'avainkaappi'];
+const SIIRTOVAIHTOEHDOT: SijoitusLaji[] = ['holvi', 'kohde', 'henkilo', 'ajoneuvo', 'avainkaappi'];
+
+// Lajit joihin voi sijoittaa muuta kalustoa. Avainkaappi ei ole pelkkä esine vaan
+// PAIKKA: siihen siirretään avaimia holvista, ja kortin on kerrottava mitä siellä on.
+// Ajoneuvo on sama asia liikkuvana — piiriauton kaappi on auton sisällä.
+const SAILYTTIMET = new Set(['avainkaappi', 'ajoneuvo']);
 
 export const KalustoKortti = ({
-  esine, kohteet, tyontekijat, kantajat, saaHallita, omaTunnus,
+  esine, kohteet, tyontekijat, kantajat, kalusto, saaHallita, omaTunnus,
   onMuuttui, onSulje, onTulostaKilpi,
 }: Props) => {
   // HUOM: takaisin-napin este EI ole täällä vaan kutsujassa
@@ -67,6 +77,9 @@ export const KalustoKortti = ({
   const [syyLomake, setSyyLomake] = useState<'kadonnut' | 'poista' | null>(null);
   const [syy, setSyy] = useState('');
   const [hylkaysSyy, setHylkaysSyy] = useState('');
+  const [lisaysAuki, setLisaysAuki] = useState(false);
+  const [lisaysHaku, setLisaysHaku] = useState('');
+  const [lisattavat, setLisattavat] = useState<Set<string>>(new Set());
 
   const maar = LAJIT[esine.laji];
   const Ikoni = maar?.ikoni;
@@ -102,14 +115,63 @@ export const KalustoKortti = ({
       : kantajat.filter((k) => k.laji === kohdeLaji && k.id !== esine.id);
 
   const teeSiirto = () => {
-    if (kohdeLaji !== 'varasto' && !kohdeId) {
+    if (kohdeLaji !== 'holvi' && !kohdeId) {
       setVirhe('Valitse mihin esine siirretään.');
       return;
     }
     kutsu(
-      () => siirraKalusto(esine.id, { laji: kohdeLaji, id: kohdeLaji === 'varasto' ? null : kohdeId }, siirtoHuomio),
+      () => siirraKalusto(esine.id, { laji: kohdeLaji, id: kohdeLaji === 'holvi' ? null : kohdeId }, siirtoHuomio),
       () => { setSiirtoAuki(false); setKohdeId(''); setSiirtoHuomio(''); }
     );
+  };
+
+  // Mitä tässä säilyttimessä on nyt. Poistetut jätetään pois: ne eivät ole kaapissa
+  // vaan rekisterissä.
+  const onSailytin = SAILYTTIMET.has(esine.laji);
+  const sisalto = onSailytin
+    ? kalusto.filter((e) => e.sijoitusId === esine.id && e.tila !== 'poistettu')
+    : [];
+
+  // Mitä kaappiin voi lisätä: käytössä oleva kalusto joka ei ole jo täällä eikä ole
+  // henkilökohtainen (server/kalusto.js estää henkilökohtaisen siirron muualle kuin
+  // henkilölle). Säilytin itse ei voi mennä itsensä sisään.
+  const lisattavissa = onSailytin
+    ? kalusto
+      .filter((e) => e.tila === 'kaytossa' && e.id !== esine.id && e.sijoitusId !== esine.id)
+      .filter((e) => e.lisatiedot?.henkilokohtainen !== true)
+      .filter((e) => !SAILYTTIMET.has(e.laji))
+      .filter((e) => {
+        const kysely = lisaysHaku.trim().toLowerCase();
+        if (!kysely) return true;
+        return [e.tunnus, e.nimi, e.alalaji, String(e.holviPaikka ?? '')]
+          .some((k) => String(k || '').toLowerCase().includes(kysely));
+      })
+      .sort((a, b) => a.tunnus.localeCompare(b.tunnus))
+      .slice(0, 40)
+    : [];
+
+  // Lisäys on N siirtoa peräkkäin. Yksi kutsu per esine eikä eräsiirtoa: jokainen siirto
+  // on oma historiarivinsä, ja juuri se on luovutusketjun sisältö. Ensimmäinen virhe
+  // pysäyttää, jolloin loput jäävät siirtämättä eikä tilaa tarvitse arvailla.
+  const lisaaKaappiin = async () => {
+    if (lisattavat.size === 0) return;
+    setVirhe(null);
+    setTyoskentelee(true);
+    try {
+      for (const id of lisattavat) {
+        const tulos = await siirraKalusto(id, { laji: esine.laji as SijoitusLaji, id: esine.id });
+        if (!tulos.ok) {
+          setVirhe(tulos.error || 'Siirto epäonnistui.');
+          return;
+        }
+      }
+      setLisattavat(new Set());
+      setLisaysHaku('');
+      setLisaysAuki(false);
+      onMuuttui();
+    } finally {
+      setTyoskentelee(false);
+    }
   };
 
   // Pyynnön voi perua pyytäjä itse tai pääkäyttäjä (server/index.js). Painike näkyy vain
@@ -151,7 +213,7 @@ export const KalustoKortti = ({
             </span>
             <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border bg-sunken text-ink-body border-line">
               {SIJOITUKSEN_SELITE[esine.sijoitusLaji]}
-              {esine.sijoitusLaji !== 'varasto' && esine.sijoitusNimi ? `: ${esine.sijoitusNimi}` : ''}
+              {esine.sijoitusLaji !== 'holvi' && esine.sijoitusNimi ? `: ${esine.sijoitusNimi}` : ''}
             </span>
             {maar && (
               <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border bg-sunken text-ink-body border-line">
@@ -294,6 +356,9 @@ export const KalustoKortti = ({
             </div>
           ) : (
             <dl className="grid sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+              {typeof esine.holviPaikka === 'number' && (
+                <Tieto otsikko="Holvipaikka" arvo={String(esine.holviPaikka)} mono />
+              )}
               {esine.sarjanumero && <Tieto otsikko="Sarjanumero" arvo={esine.sarjanumero} mono />}
               {(maar?.lisakentat || []).map((kentta) => {
                 const arvo = esine.lisatiedot?.[kentta.avain];
@@ -331,7 +396,7 @@ export const KalustoKortti = ({
                     </button>
                   ))}
                 </div>
-                {kohdeLaji !== 'varasto' && (
+                {kohdeLaji !== 'holvi' && (
                   <select
                     value={kohdeId}
                     onChange={(e) => setKohdeId(e.target.value)}
@@ -478,6 +543,105 @@ export const KalustoKortti = ({
                   Peruuta
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* --- Säilyttimen sisältö. Avainkaappi ei ole pelkkä yksilöity esine vaan
+                 paikka johon avaimia sijoitetaan holvista. --- */}
+          {onSailytin && !muokkausAuki && (
+            <div className="border-t border-line-soft pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <h4 className="font-medium text-ink-strong">
+                  {esine.laji === 'avainkaappi' ? 'Kaapissa nyt' : 'Ajoneuvossa nyt'}
+                  <span className="text-ink-muted font-normal"> ({sisalto.length})</span>
+                </h4>
+                {saaHallita && esine.tila === 'kaytossa' && !lisaysAuki && (
+                  <button
+                    type="button"
+                    onClick={() => setLisaysAuki(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-accent text-white hover:brightness-95"
+                  >
+                    <Plus size={14} />
+                    Lisää avaimia
+                  </button>
+                )}
+              </div>
+
+              {sisalto.length === 0 ? (
+                <p className="text-sm text-ink-muted">
+                  Tyhjä. Avaimet siirretään tänne holvista tai muualta.
+                </p>
+              ) : (
+                <ul className="space-y-1 mb-3">
+                  {sisalto.map((rivi) => (
+                    <li key={rivi.id} className="flex items-center gap-2 text-sm">
+                      <span className="font-mono text-xs text-ink-muted shrink-0">{rivi.tunnus}</span>
+                      <span className="text-ink-body truncate">{rivi.nimi}</span>
+                      {typeof rivi.holviPaikka === 'number' && (
+                        <span className="text-xs text-ink-muted shrink-0">· holvi {rivi.holviPaikka}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {lisaysAuki && (
+                <div className="border border-line rounded-lg p-3 space-y-3">
+                  <div className="relative">
+                    <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
+                    <input
+                      value={lisaysHaku}
+                      onChange={(e) => setLisaysHaku(e.target.value)}
+                      placeholder="Hae tunnuksella, nimellä tai holvipaikalla"
+                      className="w-full pl-9 pr-3 py-2 rounded-lg border border-line bg-surface text-sm text-ink-body"
+                    />
+                  </div>
+                  {lisattavissa.length === 0 ? (
+                    <p className="text-sm text-ink-muted">Ei siirrettävissä olevaa kalustoa.</p>
+                  ) : (
+                    <ul className="max-h-56 overflow-y-auto space-y-0.5">
+                      {lisattavissa.map((rivi) => (
+                        <li key={rivi.id}>
+                          <label className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-sunken cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={lisattavat.has(rivi.id)}
+                              onChange={() => setLisattavat((edellinen) => {
+                                const uusi = new Set(edellinen);
+                                if (uusi.has(rivi.id)) uusi.delete(rivi.id);
+                                else uusi.add(rivi.id);
+                                return uusi;
+                              })}
+                            />
+                            <span className="font-mono text-xs text-ink-muted shrink-0">{rivi.tunnus}</span>
+                            <span className="text-sm text-ink-body truncate flex-1">{rivi.nimi}</span>
+                            <span className="text-xs text-ink-muted shrink-0 max-w-[8rem] truncate">
+                              {rivi.sijoitusLaji === 'holvi' ? 'Holvi' : rivi.sijoitusNimi}
+                            </span>
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={tyoskentelee || lisattavat.size === 0}
+                      onClick={lisaaKaappiin}
+                      className="px-3 py-1.5 rounded-lg text-sm font-medium bg-accent text-white hover:brightness-95 disabled:opacity-50"
+                    >
+                      Siirrä {lisattavat.size > 0 ? lisattavat.size : ''} tähän
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setLisaysAuki(false); setLisattavat(new Set()); setLisaysHaku(''); }}
+                      className="px-3 py-1.5 rounded-lg text-sm font-medium border border-line text-ink-body hover:bg-sunken"
+                    >
+                      Peruuta
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

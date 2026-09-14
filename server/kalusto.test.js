@@ -15,15 +15,27 @@ import {
   LAJIT, seuraavaNumero, muotoileTunnus, luoKalusto, paivitaTiedot, siirra,
   pyydaKalustoa, peruPyynto, ratkaisePyynto, merkitseKadonneeksi, merkitseHuoltoon,
   palautaKayttoon, poistaKaytosta, avoimetPyynnot, kadonneet, sijoitetut, vuoronKalusto,
+  HOLVIPAIKKA_ALKU, seuraavaHolviPaikka, holviPaikkaVarattu, normalisoiSijoitusLaji,
+  normalisoiRivit,
 } from './kalusto.js';
 
 const T0 = Date.parse('2026-09-14T09:00:00Z');
 
 const luo = (yli = {}) => luoKalusto({
   id: 'k1', laji: 'asuste', alalaji: 'takki', nimi: 'Talvitakki L',
-  kuvaus: '', sarjanumero: '', lisatiedot: {}, sijoitus: { laji: 'varasto' },
+  kuvaus: '', sarjanumero: '', lisatiedot: {}, sijoitus: { laji: 'holvi' },
   numero: 1, user: 'paakayttaja', nyt: T0, ...yli,
 });
+
+// Avain tarvitsee holvipaikan; muut lajit eivät saa sitä. Oma apurinsa, jottei jokaiseen
+// avaintestiin tarvitse muistaa lisätä numeroa.
+const avain = (yli = {}) => luo({
+  laji: 'avain', alalaji: 'Yleisavain', nimi: 'Hansa pääovi', holviPaikka: 1000, ...yli,
+});
+
+// Sama valmiina tietueena: luo() palauttaa { ok, esine }, ja useimmat testit tarvitsevat
+// vain tietueen.
+const avainEsine = (yli = {}) => avain(yli).esine;
 
 const esine = (yli = {}) => luo(yli).esine;
 
@@ -64,9 +76,11 @@ test('esine syntyy varastoon ja historia alkaa luonnista', () => {
   assert.equal(tulos.ok, true);
   assert.equal(tulos.esine.tunnus, 'TJ-ASU-0001');
   assert.equal(tulos.esine.tila, 'kaytossa');
-  assert.equal(tulos.esine.sijoitusLaji, 'varasto');
+  assert.equal(tulos.esine.sijoitusLaji, 'holvi');
   assert.equal(tulos.esine.sijoitusId, null);
   assert.equal(tulos.esine.pyynto, null);
+  // Holvipaikka on VAIN avaimilla: takkia ei säilytetä numeroidulla koukulla.
+  assert.equal(tulos.esine.holviPaikka, undefined);
   assert.equal(tulos.esine.historia.length, 1);
   assert.equal(tulos.esine.historia[0].tapahtuma, 'luotu');
 });
@@ -156,7 +170,7 @@ test('SAANTO 4: henkilokohtainen esine menee vain henkilolle', () => {
   assert.equal(henkilokohtainen.lisatiedot.henkilokohtainen, true);
 
   const varastoon = siirra({
-    esine: henkilokohtainen, sijoitus: { laji: 'varasto' }, user: 'a', nyt: T0,
+    esine: henkilokohtainen, sijoitus: { laji: 'holvi' }, user: 'a', nyt: T0,
   });
   assert.equal(varastoon.ok, false);
   assert.match(varastoon.error, /henkilökohtaise/i);
@@ -238,7 +252,7 @@ test('hylkays vaatii syyn ja jattaa esineen paikalleen', () => {
     perustelu: 'Viimeinen takki, pidetaan varastossa', nyt: T0,
   });
   assert.equal(tulos.ok, true);
-  assert.equal(tulos.esine.sijoitusLaji, 'varasto');
+  assert.equal(tulos.esine.sijoitusLaji, 'holvi');
   assert.equal(tulos.esine.pyynto, null);
   assert.equal(tulos.esine.historia.at(-1).tapahtuma, 'pyynto_hylatty');
 });
@@ -399,6 +413,77 @@ test('luovutusketju karsitaan: ei historiaa, pyyntoa eika luojaa', () => {
   assert.equal(nakyva.tila, 'kaytossa');
 });
 
+// --- Holvipaikka -------------------------------------------------------------------
+
+test('vanha varasto-sijoitus luetaan holviksi', () => {
+  // Ennen nimenmuutosta kirjatut rivit eivät saa jäädä näkymättömiin, eikä niitä varten
+  // ajeta migraatiota: nimi on esitystapa eikä tietueen merkitys muuttunut.
+  assert.equal(normalisoiSijoitusLaji('varasto'), 'holvi');
+  assert.equal(normalisoiSijoitusLaji('kohde'), 'kohde');
+  const vanhalla = siirra({
+    esine: avainEsine({ id: 'k1' }), sijoitus: { laji: 'varasto' }, user: 'a', nyt: T0,
+  });
+  // Siirto holvista holviin on sama paikka, eli se estyy — juuri se todistaa että
+  // 'varasto' tulkittiin holviksi eikä tuntemattomaksi lajiksi.
+  assert.equal(vanhalla.ok, false);
+  assert.match(vanhalla.error, /jo täällä/i);
+});
+
+test('luettaessa vanha varasto-rivi muuttuu holviksi', () => {
+  // Levyllä olevaa dataa ei migratoida, joten normalisointi on tehtävä LUKUPOLULLA.
+  // Ilman tätä selain saisi lajin jota sen tyyppi ei tunne ja selite jäisi tyhjäksi.
+  const vanhat = [{ id: 'k1', sijoitusLaji: 'varasto', sijoitusNimi: 'Varasto' }, { id: 'k2', sijoitusLaji: 'kohde' }];
+  const luetut = normalisoiRivit(vanhat);
+  assert.equal(luetut[0].sijoitusLaji, 'holvi');
+  assert.equal(luetut[1].sijoitusLaji, 'kohde');
+  // Alkuperäistä ei muuteta paikallaan: sama taulukko on luettu levyltä ja se
+  // kirjoitetaan takaisin sellaisenaan muissa poluissa.
+  assert.equal(vanhat[0].sijoitusLaji, 'varasto');
+});
+
+test('avain ei synny ilman holvipaikkaa, muut lajit eivat saa sita', () => {
+  const ilman = luo({ laji: 'avain', nimi: 'Pääovi' });
+  assert.equal(ilman.ok, false);
+  assert.match(ilman.error, /holvipaikka/i);
+
+  assert.equal(avain().ok, true);
+  assert.equal(avain().esine.holviPaikka, 1000);
+  // Muu laji: holviPaikka jätetään pois vaikka se annettaisiin.
+  assert.equal(luo({ holviPaikka: 1234 }).esine.holviPaikka, undefined);
+});
+
+test('numerointi alkaa 1000:sta ja jatkuu suurimmasta', () => {
+  assert.equal(seuraavaHolviPaikka([]), HOLVIPAIKKA_ALKU);
+  assert.equal(seuraavaHolviPaikka([{ holviPaikka: 1000 }, { holviPaikka: 1007 }]), 1008);
+  // Muut lajit eivät häiritse laskentaa: niillä ei ole kenttää lainkaan.
+  assert.equal(seuraavaHolviPaikka([{ tunnus: 'TJ-ASU-0001' }]), HOLVIPAIKKA_ALKU);
+});
+
+test('paikka EI vapaudu poistetulta avaimelta', () => {
+  // Sama sääntö kuin kilpimerkin tunnuksella: vanhat luovutusmerkinnät viittaavat
+  // numeroon, ja uudelleenkäyttö tekisi kahdesta avaimesta saman jälkikäteen luettuna.
+  const poistettu = poistaKaytosta({ esine: avainEsine(), user: 'a', syy: 'Lukitus vaihdettu', nyt: T0 }).esine;
+  assert.equal(seuraavaHolviPaikka([poistettu]), 1001);
+});
+
+test('paikka pysyy avaimella myos kohteella ja avainkaapissa', () => {
+  // Varattu koukku ei vapaudu kun avain lähtee liikkeelle — tyhjä koukku on tieto siitä
+  // että avain on jossain muualla, ei siitä että paikka olisi vapaa.
+  const kohteella = siirra({
+    esine: avainEsine(), sijoitus: { laji: 'kohde', id: 'kohde-1', nimi: 'Hansa' }, user: 'a', nyt: T0,
+  }).esine;
+  assert.equal(kohteella.holviPaikka, 1000);
+  assert.equal(seuraavaHolviPaikka([kohteella]), 1001);
+});
+
+test('varattu paikka tunnistetaan, oma paikka ei nayta varatulta', () => {
+  const pankki = [avainEsine({ id: 'k1' }), avainEsine({ id: 'k2', holviPaikka: 1001 })];
+  assert.equal(holviPaikkaVarattu(pankki, 1001), true);
+  assert.equal(holviPaikkaVarattu(pankki, 1009), false);
+  // Esinettä muokattaessa sen oma paikka ei saa näyttää varatulta.
+  assert.equal(holviPaikkaVarattu(pankki, 1001, 'k2'), false);
+});
+
 // --- Omat varusteet ----------------------------------------------------------------
 
 const henkilolle = (id, empId, nimi = 'Virtanen') => siirra({
@@ -492,5 +577,5 @@ test('sijoitetut suodattaa paikan mukaan ja jattaa poistetut pois', () => {
 
   assert.equal(sijoitetut([kohteella, muualla], 'kohde', 'kohde-1').length, 1);
   assert.equal(sijoitetut([romutettu, muualla], 'kohde', 'kohde-1').length, 0);
-  assert.equal(sijoitetut([kohteella, muualla], 'varasto', null).length, 0);
+  assert.equal(sijoitetut([kohteella, muualla], 'holvi', null).length, 0);
 });

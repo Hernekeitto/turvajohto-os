@@ -31,6 +31,21 @@ async function kutsu(polku: string, runko?: unknown, metodi: 'POST' | 'PUT' = 'P
   }
 }
 
+// Yksi rivi avainerän taulukkosyötöstä. Kentät vastaavat avaimen omia lisätietoja
+// (lajit.ts: LAJIT.avain.lisakentat) — tunnus ja holvipaikka tulevat palvelimelta.
+export type AvainRivi = {
+  nimi: string;
+  alalaji: string;
+  avaintyyppi: string;
+  kohdeNimi: string;
+  sarjanumero: string;
+  sarjanumerointi: string;
+  luovutussopimus: string;
+  kuvaus: string;
+};
+
+export const luoAvainEra = (rivit: AvainRivi[]) => kutsu('/api/kalusto/era', { rivit });
+
 export type UusiKalusto = {
   laji: Laji;
   alalaji: string;
@@ -96,7 +111,12 @@ export const aikaleima = (iso: string | null | undefined) => {
 
 // Missä esine on, yhtenä lauseena. Varastolla ei ole omaa nimeä joka kannattaisi toistaa.
 export const sijainti = (esine: KalustoTietue) =>
-  esine.sijoitusLaji === 'varasto' ? 'Varasto' : esine.sijoitusNimi || '—';
+  esine.sijoitusLaji === 'holvi' ? 'Holvi' : esine.sijoitusNimi || '—';
+
+// Avaimen holvipaikka luettavassa muodossa. Tyhjä muille lajeille, koska niillä ei ole
+// varattua koukkua — ks. server/kalusto.js.
+export const holviPaikka = (esine: KalustoTietue) =>
+  (typeof esine.holviPaikka === 'number' ? 'Holvi ' + esine.holviPaikka : '');
 
 // Haku kohdistuu siihen mitä ihminen muistaa: tunnus kilpimerkistä, nimi, sarjanumero ja
 // se kenellä esine on. Lisätiedot ovat mukana, koska rekisteritunnus on ajoneuvon nimi
@@ -106,6 +126,9 @@ export function osuuHakuun(esine: KalustoTietue, haku: string) {
   if (!kysely) return true;
   const kentat = [
     esine.tunnus, esine.nimi, esine.alalaji, esine.kuvaus, esine.sarjanumero, esine.sijoitusNimi,
+    // Holvipaikalla haetaan yhtä usein kuin tunnuksella: se on se numero joka lukee
+    // avainlätkässä ja jonka esimies sanoo puhelimessa.
+    esine.holviPaikka != null ? String(esine.holviPaikka) : '',
     ...Object.values(esine.lisatiedot || {}).filter((a): a is string => typeof a === 'string'),
   ];
   return kentat.some((k) => String(k || '').toLowerCase().includes(kysely));

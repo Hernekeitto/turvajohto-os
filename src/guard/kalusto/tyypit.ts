@@ -12,7 +12,9 @@ export type Laji =
   | 'ase'
   | 'tietotekniikka';
 
-export type SijoitusLaji = 'varasto' | 'kohde' | 'henkilo' | 'ajoneuvo' | 'avainkaappi';
+// 'holvi' oli aiemmin 'varasto'. Palvelin lukee vanhan nimen holviksi
+// (server/kalusto.js: normalisoiSijoitusLaji), joten selain näkee vain uuden.
+export type SijoitusLaji = 'holvi' | 'kohde' | 'henkilo' | 'ajoneuvo' | 'avainkaappi';
 
 export type KalustonTila = 'kaytossa' | 'huollossa' | 'kadonnut' | 'poistettu';
 
@@ -60,6 +62,10 @@ export type KalustoTietue = Sijoitus & {
   // vuoronKalusto). Luovutusketju — kuka on pitänyt esinettä ja kenen päätöksellä — on
   // henkilötietoa jota kentällä olevan ei kuulu nähdä. Tyyppi kertoo sen ääneen, jottei
   // kukaan kirjoita näkymää joka olettaa ketjun olevan aina mukana.
+  // Avaimen varattu koukku holvissa (1000→) ja samalla sen tunnus vartioimisliikkeen
+  // kirjanpidossa. VAIN avaimilla — muilla lajeilla kenttää ei ole lainkaan. Paikka
+  // pysyy avaimen omana myös silloin kun avain on kohteella tai avainkaapissa.
+  holviPaikka?: number | null;
   pyynto?: Kalustopyynto | null;
   historia?: KalustonHistoria[];
   luoja?: string | null;
@@ -82,7 +88,7 @@ export const TILAN_VARI: Record<KalustonTila, string> = {
 };
 
 export const SIJOITUKSEN_SELITE: Record<SijoitusLaji, string> = {
-  varasto: 'Varasto',
+  holvi: 'Holvi',
   kohde: 'Kohde',
   henkilo: 'Henkilö',
   ajoneuvo: 'Ajoneuvo',
