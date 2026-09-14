@@ -1188,12 +1188,17 @@ kannetusta. Ero 0,2–0,9 %/h on siis man-downin hinta **plus käyttäjän oma k
 niitä voi tästä datasta erottaa. Man-downin oma kustannus näyttää pieneltä — mutta sitä ei
 ole mitattu, eikä sitä pidä esittää mitattuna.
 
-##### Yhä auki: yksi kontrolloitu ajo
+##### ~~Yhä auki: yksi kontrolloitu ajo~~ — AJETTU 13.–14.9.2026
 
 Puhelin pöydälle, ruutu kiinni, ei koskea, yön yli, man-down päällä. Sama koe kuin
 11.–12.9. yhdellä muuttujalla. Se ratkaisee molemmat avoimet luvut kerralla — ja jos
 `doze=ei` toistuu silloinkin, syy ei ole liikkeessä vaan anturikuuntelussa, ja silloin
 man-downin todellinen hinta on Dozen menetys eikä anturin virta.
+
+**Ajo tehtiin 13.–14.9.2026 ja se vastasi molempiin kysymyksiin. Ks. "Kontrolloitu yön
+yli -ajo" alempana.** Lyhyesti: Doze käynnistyi tunnissa eikä anturi katkennut, ja
+akkuhinta jäi yön vaihtelun alle eli sitä ei saatu mitattua lainkaan. Yllä oleva epäilys
+`doze=ei`:n toistumisesta ei toteutunut — se johtui liikkeestä, kuten oletettiin.
 
 #### v13 12.9.2026: anturin lepolukema ei ole 9,81
 
@@ -1495,6 +1500,76 @@ lähteekö man-down-hälytys dozeavasta puhelimesta kello kolme yöllä — se o
 on yhä tekemättä. Se vaatii eskaloinnin kuivaharjoitteluun ja valmiuden siihen että
 puhelin soi puolen tunnin välein.
 
+#### Kontrolloitu yön yli -ajo 13.–14.9.2026: erän 12 kaksi avointa lukua
+
+Puhelin pöydällä, ruutu sammuksissa, kaapeli irti, ei koskettu. Mittaustila päällä, joten
+liikkumattomuussääntö ei laukaissut kyselyitä. Ajo 13.9. klo 20:22 – 14.9. klo 05:11,
+**8,82 tuntia**. Vuoro pysyi pystyssä koko ajan: ei palvelun uudelleenkäynnistyksiä, ei
+kanavakatkoja, ei hälytyksiä. Palvelin vahvisti erikseen: **0 hälytystä**.
+
+##### Lukijalle: loki kiertyi kesken ajon
+
+Loki ylitti 512 kt:n rajan klo 00:32, joten ajo on kahdessa tiedostossa —
+`vuoroloki.txt` ja `vuoroloki.vanha.txt`. **Pelkän `vuoroloki.txt`:n lukeminen antaa
+alkuhetkeksi 00:32 ja yhdeksän vaimennusta, ja molemmat ovat vääriä.** Näin kävi tämän
+ajon ensimmäisellä luennalla. Puuttuva alkuosa ei näytä puuttuvalta, koska tiedosto alkaa
+siististi kokonaisesta rivistä.
+
+##### VASTAUS 1: anturi kestää Dozen — mutta syy on kirjattava
+
+| | |
+|---|---|
+| Ensimmäinen `doze=kylla` | 21:27:01, 65 min kaapelin irrotuksesta |
+| Doze-rivejä | 1 439 / 1 649 |
+| Näytteenotto Dozen aikana | keskeytymätön |
+
+**`uni_s` pysyi koko yön arvossa 14 866 — prosessori ei nukkunut kertaakaan.** Laite meni
+Dozeen, mutta sovelluksen oma herätyslukko piti CPU:n hereillä. Anturi siis selviää
+Dozesta *siksi että estämme syvän unen*, ei siksi että Doze sallisi anturikuuntelun. Tämä
+on eri väite kuin "anturi kestää Dozen", ja ero on olennainen jos herätyslukosta joskus
+luovutaan akun säästämiseksi: silloin tämä tulos ei enää päde.
+
+##### VASTAUS 2: man-downin akkuhintaa ei voi mitata — se on pienempi kuin yön vaihtelu
+
+| Ajo | Kulutus |
+|---|---|
+| 13.–14.9., man-down **päällä** | **3,29 %/h** (99 % → 70 %) |
+| sama 95 %:sta laskettuna | 3,35 %/h |
+| 11.–12.9., man-down **pois** | 3,81 %/h |
+
+**Man-down-ajo kulutti vähemmän kuin vertailuajo ilman man-downia.** Se ei tarkoita että
+anturi tuottaisi virtaa, vaan että anturikuuntelun hinta jää kahden yön välisen vaihtelun
+alle eikä ole tästä datasta erotettavissa. Oikea johtopäätös on siis kielteinen tulos:
+**hintaa ei saatu mitattua, koska se on liian pieni.**
+
+Käytännön vastaus kysymykseen on silti selvä: man-down ei muuta akunkestoa havaittavasti.
+Kahdeksan tunnin vuoro maksaa noin **26 prosenttiyksikköä** valvonta päällä.
+
+##### SIVUTULOS: 17 kyselyä olisi lähtenyt yhden yön aikana
+
+`anturi_epaily_vaimennettu` kirjautui **17 kertaa**, tasaisesti noin 31 minuutin välein
+(20:54, 21:24, 21:54 … 04:54) — eli 30 minuutin raja plus havaitsemisviive.
+
+Ilman mittaustilaa yö olisi tuottanut 17 hälytysääntä täydellä voimakkuudella, 17
+vastaamatta jäänyttä kyselyä, 17 oikeaa hälytystä ja 17 tekstiviestiä. Ennakkoarvio oli
+noin 19. Mittaustilan rakentaminen ei siis ollut varotoimi vaan edellytys.
+
+##### UUSI LÖYDÖS: näytetahti putoaa ruudun sammuessa
+
+| Olosuhde | Tahti |
+|---|---|
+| Ruutu päällä (41 min, 13.9.) | 3,89 Hz |
+| **Ruutu pois (529 min, 13.–14.9.)** | **3,34 Hz** |
+
+Koodi tähtää 250 ms:n väliin eli 4 Hz:iin; ruudun sammuessa todellinen väli on 300 ms. Ero
+oli vakaa läpi yön **eikä liity Dozeen** — se alkoi heti kaapelin irrotuksesta, tuntia
+ennen ensimmäistä `doze=kylla`-riviä.
+
+**Syytä ei ole todennettu.** Liikkumattomuussääntöön tällä ei ole vaikutusta, koska sääntö
+mittaa kestoa eikä näytemäärää. Iskun tunnistukseen voi olla: harvempi näytteistys
+pienentää mahdollisuutta osua lyhyen kiihtyvyyspiikin huippuun. Se osuu samaan kohtaan
+joka on muutenkin yhä testaamatta laitteella (ks. avoimet kohdat).
+
 ### Erä 13 — Hätäpainike sovelluksen ulkopuolelta
 
 | Osa | Uutta |
@@ -1560,3 +1635,9 @@ Kalenterin määrää käytännössä juridiikka, ei koodi.
    Chrome tekee siitä haun, eikä koko web-käyttöliittymässä ole linkkiä siihen. Näkymä on
    rakennettu vastaamaan vartijan ja päivystäjän kysymykseen "miksi hälytys ei tullut" —
    eivätkä he pääse siihen käsiksi. Havaittu 13.9.2026 kun käyttäjä ei saanut sitä auki.
+4. **Anturin näytetahti putoaa ruudun sammuessa.** Mitattu 13.–14.9.2026: 3,89 Hz ruutu
+   päällä, 3,34 Hz ruutu pois — koodi tähtää 4 Hz:iin (250 ms). Ero ei liity Dozeen vaan
+   alkaa heti ruudun sammuessa, eikä syytä ole todennettu. Liikkumattomuussääntöön ei
+   vaikutusta (se mittaa kestoa), mutta iskun tunnistukseen voi olla: harvempi näyte
+   pienentää mahdollisuutta osua lyhyen piikin huippuun. Iskusääntö on muutenkin yhä
+   testaamatta laitteella.
