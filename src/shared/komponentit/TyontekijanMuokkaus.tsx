@@ -13,6 +13,8 @@
 import { BadgeCheck, Briefcase, CheckCircle, Contact, HardHat, Home, IdCard, Info,
   KeyRound, Landmark, Languages, Plus, Trash2, UserCheck, UserPlus } from 'lucide-react';
 
+import type { ReactNode } from 'react';
+
 import { muotoileEuro, laskeKokonaispalkka } from '../../shared/muotoilu';
 import { paikallinenPaiva } from '../../shared/ajat';
 import { muotoileTunniste } from '../../shared/tunnisteet';
@@ -39,6 +41,12 @@ type Props = {
   // pääkäyttäjän, ja tunnuksen luonti on hallintaa eikä henkilöstötietojen ylläpitoa.
   // Oletus true, jotta tapahtumapuolen kutsu ei muutu.
   saaLuodaTunnuksen?: boolean;
+  // Mihin tunnistenumeroa käytetään. TULEE KUTSUJALTA, koska vastaus on eri puolilla eri:
+  // EVENTissä numero liitetään raportin kirjaajaan tapahtumakohtaisen nimimerkin perään
+  // (App.tsx: kirjaajanTunniste), GUARDissa kirjaajana on tunnuksen oma nimimerkki eikä
+  // numeroa liitetä lainkaan — siellä numero yksilöi henkilön perehdytysmerkinnöissä ja
+  // kaluston luovutustositteissa. Yksi yhteinen lause olisi väärin toisella puolella.
+  tunnisteVihje?: ReactNode;
   onAvaaTunnus: () => void;
   // Kielitaitorivien muokkaus; rivit ovat lomake.languages-taulukossa.
   onLisaaKieli: () => void;
@@ -49,6 +57,7 @@ type Props = {
 export const TyontekijanMuokkaus = ({
   lomake, onKentta, muokattava, saaMuokata, onTallenna, onPeruuta, onPoista,
   kayttajatunnus, olemassaOlevaTunnus, onAvaaTunnus, saaLuodaTunnuksen = true,
+  tunnisteVihje,
   onLisaaKieli, onPoistaKieli, onMuutaKieli,
 }: Props) => (
 <div className="bg-surface rounded-xl shadow-sm border border-line-soft p-6 md:p-8 max-w-5xl">
@@ -684,9 +693,7 @@ export const TyontekijanMuokkaus = ({
               : <span className="text-ink-subtle">annetaan kun työntekijä tallennetaan</span>}
           </p>
           <p className="text-xs text-ink-muted pt-1 leading-relaxed">
-            Raporteissa kirjaajana näkyy tapahtumakohtainen nimimerkki ja tämä numero,
-            esim. "Ensiapu 1 {muotoileTunniste(lomake.displayId || 1028)}". Nimimerkki annetaan
-            kun henkilö lisätään tapahtumaan.
+            {tunnisteVihje ?? 'Numero annetaan kerran tallennettaessa eikä sitä muuteta jälkikäteen: jo tallennetut merkinnät viittaavat siihen.'}
           </p>
         </div>
         {saaMuokata && saaLuodaTunnuksen && (

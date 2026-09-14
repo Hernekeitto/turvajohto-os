@@ -10107,6 +10107,11 @@ export default function App() {
                 onPoista={handleDeleteEmployee}
                 kayttajatunnus={empFormUsername}
                 olemassaOlevaTunnus={empFormExistingUser}
+                tunnisteVihje={<>
+                  Raporteissa kirjaajana näkyy tapahtumakohtainen nimimerkki ja tämä numero,
+                  esim. "Ensiapu 1 {muotoileTunniste(empForm.displayId || 1028)}". Nimimerkki annetaan
+                  kun henkilö lisätään tapahtumaan.
+                </>}
                 onAvaaTunnus={avaaTunnusModaali}
                 onLisaaKieli={addEmpLanguage}
                 onPoistaKieli={removeEmpLanguage}

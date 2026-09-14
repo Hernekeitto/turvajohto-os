@@ -71,9 +71,10 @@ export const Tyontekijapankki = ({
             ...lomake,
             id: `emp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             name,
-            // Tunnistenumero annetaan KERRAN luontihetkellä eikä sitä muuteta: tallennetut
-            // raportit viittaavat siihen kirjaajatiedossaan. Numero lasketaan koko
-            // listasta, joten poistetun numero ei palaa kiertoon.
+            // Tunnistenumero annetaan KERRAN luontihetkellä eikä sitä muuteta: jo
+            // tallennetut merkinnät — perehdytykset ja kaluston luovutustositteet —
+            // viittaavat siihen. Numero lasketaan koko listasta, joten poistetun
+            // numero ei palaa kiertoon.
             displayId: seuraavaTunnisteNumero(tyontekijat),
           },
         ];
@@ -119,6 +120,13 @@ export const Tyontekijapankki = ({
           // vaatii pääkäyttäjän, ja tunnuksen luonti on hallintaa eikä henkilöstötietojen
           // ylläpitoa. Se tehdään tapahtumapuolen pankista tai käyttäjähallinnasta.
           saaLuodaTunnuksen={false}
+          // GUARDissa kirjaajana on tunnuksen oma nimimerkki eikä numeroa liitetä siihen
+          // (GuardApp.tsx: author = session.nickname). Numero yksilöi henkilön muualla,
+          // ja vihje kertoo missä — tapahtumapuolen sanasto olisi täällä väärin.
+          tunnisteVihje={
+            'Numero yksilöi henkilön perehdytysmerkinnöissä ja kaluston luovutustositteissa. '
+            + 'Se annetaan kerran tallennettaessa eikä sitä muuteta jälkikäteen.'
+          }
           kayttajatunnus=""
           olemassaOlevaTunnus={null}
           onAvaaTunnus={() => {}}
