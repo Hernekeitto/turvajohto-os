@@ -233,6 +233,11 @@ export function aloitaVuoro({
       siteNimi: kohde.name || '',
       vuorotyyppiId: vuorotyyppi.id,
       vuorotyyppiNimi: vuorotyyppi.nimi || '',
+      // Onko tämä piirivuoro (erä 22). Kopioidaan vuorotyypistä samasta syystä kuin nimi:
+      // hälytystehtävien kohdennus lukee tämän vuorosta, ja vuorotyypin myöhempi muokkaus
+      // ei saa muuttaa sitä millä perusteella kesken olevalle vuorolle on lähetetty
+      // hälytyksiä. Ks. halytystehtava.js: nakeeTehtavan.
+      piiri: vuorotyyppi.piiri === true,
       vartija: username,
       alkoi: new Date(nyt).toISOString(),
       paattyi: null,

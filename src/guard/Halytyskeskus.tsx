@@ -38,6 +38,8 @@ import {
   kentalla, kohteenTilanne, tapahtumavirta, type Kiireys, type Lahteet,
 } from './tilannekuva';
 import type { Kohde } from './tyypit';
+import { KeskuksenTehtavat } from './KeskuksenTehtavat';
+import type { Halytystehtava } from './halytystehtavat';
 
 // Osioiden lukuoikeudet. Hälytyskeskus ei myönnä yhtään uutta lukuoikeutta: se näyttää
 // saman datan jonka käyttäjä näkee muutenkin, kootusti. Lipuilla osio osaa sanoa eron
@@ -60,6 +62,11 @@ type Props = {
   // tarkoittaa että ruutu näyttää menneisyyttä, ja juuri sitä ei saa tapahtua huomaamatta.
   yhteys: boolean;
   sijaintiseuranta: boolean;
+  // Hälytystehtävät (erä 22): hälytyskeskuksen kentälle antamat keikat. Haetaan
+  // GuardAppissa kuten muukin data, jotta kanavan päivitys osuu yhteen paikkaan.
+  tehtavat: Halytystehtava[];
+  saaMuokataTehtavia: boolean;
+  onTehtavaMuutos: () => void;
   onMuutos: (halytys: Halytys) => void;
   onVirkista: () => void;
   // Kohteen tietoihin siirtyminen. null jos käyttäjällä ei ole siihen oikeutta — silloin
@@ -237,6 +244,7 @@ const AANI_AVAIN = 'turvajohto-halke-aani';
 
 export const Halytyskeskus = ({
   kohteet, lahteet, kayttaja, saaKuitata, oikeudet, yhteys, sijaintiseuranta,
+  tehtavat, saaMuokataTehtavia, onTehtavaMuutos,
   onMuutos, onVirkista, onAvaaKohde, onTakaisin,
 }: Props) => {
   const [nyt, setNyt] = useState(Date.now());
@@ -713,6 +721,19 @@ export const Halytyskeskus = ({
           arvo={`${kohteetKriittisia + kohteetVaroitus}/${kohteet.length}`}
           nimi="Kohdetta huomiolla"
           korosta={kohteetKriittisia > 0 ? 'kriittinen' : kohteetVaroitus > 0 ? 'varoitus' : 'rauhallinen'}
+        />
+      </div>
+
+      {/* --- Hälytystehtävät (erä 22) --------------------------------------------
+          Ennen lauenneita hälytyksiä, ja ero on siinä kumpaan päivystäjä voi vaikuttaa:
+          lauennut hälytys on tapahtunut asia, hälytystehtävä on työ jota hän parhaillaan
+          johtaa — ja jossa vartija odottaa hänen päätöstään päästäkseen pois. */}
+      <div className="mb-8">
+        <KeskuksenTehtavat
+          tehtavat={tehtavat}
+          kohteet={kohteet}
+          saaMuokata={saaMuokataTehtavia}
+          onMuutos={onTehtavaMuutos}
         />
       </div>
 

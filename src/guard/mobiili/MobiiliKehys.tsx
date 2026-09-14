@@ -15,7 +15,7 @@
 // vaaka-asennossa on 915 px leveä, ja silloin leveyteen sidottu kehys puristi sovelluksen
 // 164 pikselin levyiseksi malliksi keskelle ruutua. Ks. index.css.
 import { useEffect, useState, type ReactNode } from 'react';
-import { Bell, BellRing, Camera, ChevronRight, LogOut, Menu, Monitor, MoreVertical, Send, TriangleAlert, X } from 'lucide-react';
+import { ArrowLeft, Bell, BellRing, Camera, ChevronRight, LogOut, Menu, Monitor, MoreVertical, Send, TriangleAlert, X } from 'lucide-react';
 
 export type MobiiliIlmoitus = {
   id: string;
@@ -25,6 +25,15 @@ export type MobiiliIlmoitus = {
 };
 
 export type MobiiliLinkki = { id: string; label: string };
+
+// Näkymäkohtainen rivi kolmen pisteen valikossa (erä 22).
+//
+// Pikavalikko oli tähän asti sovelluksen laajuinen (kamera, tilatieto, uloskirjaus).
+// Hälytystehtävän toiminnot — ota vastaan, lähde ajoon, olen paikalla — kuuluvat
+// käyttäjän määrittelyn mukaan samaan valikkoon, ja se on oikein: ne ovat näytön ainoat
+// peruuttamattomat painallukset, eivätkä ne saa olla siinä mihin peukalo osuu kun sivua
+// rullataan autossa.
+export type MobiiliPikavalinta = { id: string; label: string; vaara?: boolean };
 
 type Props = {
   otsikko: string;
@@ -47,6 +56,13 @@ type Props = {
   onPaataVuoro: (() => void) | null;
   onTyopoyta: () => void;
   onLogout: () => void;
+  // Näkymäkohtaiset rivit pikavalikon yläosassa. Tyhjä lista = valikko on ennallaan.
+  pikavalinnat?: MobiiliPikavalinta[];
+  onPikavalinta?: (id: string) => void;
+  // Kun tämä on annettu, vasen painike on paluunuoli eikä sivuvalikko. Alanäkymässä
+  // (esimerkiksi avattu hälytystehtävä) hampurilaisvalikko veisi pois sivulta jolta
+  // vartija yrittää palata — ja paluu on se toiminto jota siellä painetaan.
+  onTakaisin?: (() => void) | null;
   children: ReactNode;
 };
 
@@ -60,7 +76,8 @@ const kellonaika = (iso: string) => {
 export const MobiiliKehys = ({
   otsikko, vuoro, ilmoitukset, onIlmoitus, linkit, onLinkki,
   mandown, mandownMin, liikelupa, natiivi,
-  onKamera, onTilatieto, onPaataVuoro, onTyopoyta, onLogout, children,
+  onKamera, onTilatieto, onPaataVuoro, onTyopoyta, onLogout,
+  pikavalinnat = [], onPikavalinta, onTakaisin = null, children,
 }: Props) => {
   // Yksi paneeli kerrallaan auki: kolme päällekkäistä paneelia puhelimen ruudulla
   // tarkoittaisi että käyttäjä sulkee niitä sen sijaan että tekisi työtä.
@@ -98,15 +115,26 @@ export const MobiiliKehys = ({
       <div className="mobiili-kehys text-ink">
         {/* --- Yläpalkki --- */}
         <header className="relative z-30 shrink-0 bg-surface-dark text-ink-on-dark flex items-center gap-2 px-3 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-          <button
-            type="button"
-            onClick={() => vaihda('valikko')}
-            aria-label="Valikko"
-            aria-expanded={auki === 'valikko'}
-            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors"
-          >
-            {auki === 'valikko' ? <X size={26} /> : <Menu size={26} />}
-          </button>
+          {onTakaisin ? (
+            <button
+              type="button"
+              onClick={() => { setAuki(null); onTakaisin(); }}
+              aria-label="Takaisin"
+              className="w-11 h-11 shrink-0 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors"
+            >
+              <ArrowLeft size={26} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => vaihda('valikko')}
+              aria-label="Valikko"
+              aria-expanded={auki === 'valikko'}
+              className="w-11 h-11 shrink-0 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors"
+            >
+              {auki === 'valikko' ? <X size={26} /> : <Menu size={26} />}
+            </button>
+          )}
           <p className="flex-1 min-w-0 truncate text-base font-medium text-ink-on-dark-muted">{otsikko}</p>
           <button
             type="button"
@@ -183,6 +211,21 @@ export const MobiiliKehys = ({
               className="absolute inset-0 z-20 bg-black/30"
             />
             <div className="absolute z-30 right-0 top-[calc(env(safe-area-inset-top)+3.25rem)] w-64 bg-surface-dark text-ink-on-dark shadow-xl rounded-bl-xl overflow-hidden">
+              {/* Näkymän omat toiminnot ylimmäksi: ne ovat se syy jonka takia valikko
+                  tässä näkymässä avataan, eikä niitä pidä joutua etsimään kameran alta. */}
+              {pikavalinnat.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => { setAuki(null); onPikavalinta?.(v.id); }}
+                  className={`w-full px-4 py-3.5 text-left text-base hover:bg-white/10 transition-colors ${
+                    v.vaara ? 'text-danger' : ''
+                  }`}
+                >
+                  {v.label}
+                </button>
+              ))}
+              {pikavalinnat.length > 0 && <div className="border-t border-white/10" />}
               <PikaRivi ikoni={<Camera size={18} />} onClick={() => { setAuki(null); onKamera(); }}>
                 Avaa kamera
               </PikaRivi>

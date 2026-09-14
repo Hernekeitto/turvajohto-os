@@ -10,7 +10,7 @@ import { Tehtavat } from './Tehtavat';
 import { Raportit } from './Raportit';
 import { KohteenTiedot } from './KohteenTiedot';
 import { Asetukset } from './Asetukset';
-import { avaaJono, kaynnistaAutomatiikka, lisaaJonoon } from '../shared/jono';
+import { avaaJono, kaynnistaAutomatiikka, kuunteleLahetyksia, lisaaJonoon } from '../shared/jono';
 import { lueVuorodata, tallennaVuorodata, unohdaVuorodata } from '../shared/vuorodata';
 import { unohdaIstunto } from '../shared/istunto';
 import { Kierrospohjat } from './Kierrospohjat';
@@ -26,7 +26,9 @@ import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { haeHalytykset, TYYPPI_LABEL, type Halytys } from '../shared/halytykset';
 import { LIIKKUMATON_MS } from '../shared/mandown';
 import { tallennaLaitevalinta, TYOPOYTAPOLKU } from '../shared/laitevalinta';
-import { MobiiliKehys, type MobiiliIlmoitus, type MobiiliLinkki } from './mobiili/MobiiliKehys';
+import {
+  MobiiliKehys, type MobiiliIlmoitus, type MobiiliLinkki, type MobiiliPikavalinta,
+} from './mobiili/MobiiliKehys';
 import { MobiiliEtusivu } from './mobiili/MobiiliEtusivu';
 import { Vuorovalinta } from './mobiili/Vuorovalinta';
 import { SiirtoValinta } from './mobiili/SiirtoValinta';
@@ -35,6 +37,14 @@ import { PakotettuTehtava } from './mobiili/PakotettuTehtava';
 import { Tehtavanjako } from './Tehtavanjako';
 import { Skanneri } from './mobiili/Skanneri';
 import { Tilatieto } from './mobiili/Tilatieto';
+import { HalytystehtavaNakyma } from './mobiili/HalytysTehtava';
+import {
+  LAJIN_NIMI as TEHTAVAN_LAJI,
+  haeKaikkiTehtavat, haeMasterkoodi, haeOmatTehtavat,
+  kieltaydy as kieltaydyTehtavasta, lahetaRaportti as sidoRaporttiTehtavaan,
+  merkitseVaihe as merkitseTehtavanVaihe, vastaanota as vastaanotaTehtava,
+  type Halytystehtava,
+} from './halytystehtavat';
 import { lueVuoro, tallennaVuoro, unohdaVuoro, type Vuoro } from './mobiili/vuoro';
 import {
   aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, haeVuoronKooste, lisaaVuoroon,
@@ -242,7 +252,12 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // olla auki joko hallintaa tai kuittausta varten, eikä niitä pidä sekoittaa.
   const [tehtavaKohde, setTehtavaKohde] = useState<Kohde | null>(null);
   const [raportit, setRaportit] = useState<GuardRaportti[]>([]);
-  const [raporttiKohde, setRaporttiKohde] = useState<{ kohde: Kohde; tyyppi: RaporttiTyyppi } | null>(null);
+  // `tehtavaId` on mukana kun raportti kirjoitetaan hälytystehtävälle (erä 22): silloin
+  // tallennuksen jälkeen pyydetään lupa poistua. Ilman sitä raportti on tavallinen
+  // kirjaus eikä poistumispyyntö, ja ero on vartijalle olennainen.
+  const [raporttiKohde, setRaporttiKohde] = useState<
+    { kohde: Kohde; tyyppi: RaporttiTyyppi; tehtavaId?: string } | null
+  >(null);
   const [tietoKohde, setTietoKohde] = useState<Kohde | null>(null);
   const [asetuksissa, setAsetuksissa] = useState(false);
   // Kierrospohjat ja kierrokset. Kumpaakaan ei tallenneta täältä kokoelmareitin kautta:
@@ -255,6 +270,28 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // ja jokainen muutos tehdään /api/halytys-reiteillä.
   const [halytykset, setHalytykset] = useState<Halytys[]>([]);
   const [halytysKohde, setHalytysKohde] = useState<Kohde | null>(null);
+  // Hälytystehtävät (erä 22). ERI ASIA KUIN `halytykset` yllä: ne ovat vartijan omia
+  // turvahälytyksiä, nämä ovat hälytyskeskuksen antamia keikkoja. Oma kokoelmansa, oma
+  // reittinsä ja oma näkymänsä — ks. halytystehtavat.ts.
+  const [tehtavat, setTehtavat] = useState<Halytystehtava[]>([]);
+  // Millä nimellä vastaanotto kirjautuu hälytyskeskuksen ruudulle. Vuoron nimi jos vuoro
+  // on, muuten nimimerkki. Näytetään etukäteen: on hyvä tietää ennen kuin painaa.
+  const [yksikonNimi, setYksikonNimi] = useState('');
+  const [avattuTehtava, setAvattuTehtava] = useState<string | null>(null);
+  const [tehtavaTyoskentelee, setTehtavaTyoskentelee] = useState(false);
+  const [tehtavaVirhe, setTehtavaVirhe] = useState<string | null>(null);
+  // Poistumispyyntö joka odottaa raportin lähtemistä jonosta. Kirjaus menee jonon kautta
+  // (erä 6), pyyntö ei — joten verkottomassa tilassa raportti on tehty mutta lupaa ei voi
+  // vielä pyytää. Pyyntö lähtee itsestään heti kun raportti on perillä.
+  const [odottavaSidonta, setOdottavaSidonta] = useState<
+    { tehtavaId: string; raporttiId: string } | null
+  >(null);
+  // Hälytyskeskuksen oma lista: KAIKKI tehtävät kaikista kohteista, ei vain omat.
+  // Erillinen `tehtavat`-tilasta, koska ne ovat eri kysymys: vartijan lista on "mitä
+  // minun pitää tehdä", päivystäjän "mitä on menossa". Sama lista molemmille tarkoittaisi
+  // että päivystäjä näkee vain ne keikat joihin hänet on kohdennettu.
+  const [keskuksenTehtavat, setKeskuksenTehtavat] = useState<Halytystehtava[]>([]);
+  const [saaMuokataTehtavia, setSaaMuokataTehtavia] = useState(false);
   // Pohjanäkymä (erä 8): sama näkymä kahdelle lajille, joten tilassa on myös laji.
   const [pohjaNakyma, setPohjaNakyma] = useState<{ kohde: Kohde; laji: 'guide' | 'play' } | null>(null);
   // Pohjien suoritukset. Nimi on eri kuin tehtäväsuorituksilla (`suoritukset`), koska ne
@@ -576,6 +613,54 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
   useEffect(() => { paivitaHalytykset(); }, [paivitaHalytykset]);
 
+  // Hälytystehtävät. Oma reittinsä eikä kokoelmahaku, koska kohdennus (vuoro, piirivuoro,
+  // etäisyys) lasketaan palvelimella pyyntökohtaisesti — kokoelmahaku rajaisi vartijan
+  // kohdeoikeuksien mukaan ja sulkisi ulos juuri sen jolle hälytys on tarkoitettu.
+  //
+  // EI OIKEUSEHTOA. Hälytystehtävä tulee kaikille joille se on kohdennettu, eikä
+  // sivukartan solmu ratkaise sitä — palvelin päättää kenelle lista on tyhjä.
+  const paivitaTehtavat = useCallback(() => {
+    haeOmatTehtavat().then((tulos) => {
+      if (!tulos) return;
+      setTehtavat(tulos.tehtavat);
+      setYksikonNimi(tulos.yksikko);
+    });
+  }, []);
+
+  useEffect(() => { paivitaTehtavat(); }, [paivitaTehtavat]);
+
+  // Hälytyskeskuksen lista. Oma hakunsa ja oma oikeusehtonsa: se palauttaa kaikki
+  // tehtävät kaikista kohteista, mikä on päivystäjän oikeus eikä vartijan.
+  const paivitaKeskuksenTehtavat = useCallback(() => {
+    if (!saaNahdaHalytyskeskus) return;
+    haeKaikkiTehtavat().then((tulos) => {
+      if (!tulos) return;
+      setKeskuksenTehtavat(tulos.tehtavat);
+      setSaaMuokataTehtavia(tulos.saaMuokata);
+    });
+  }, [saaNahdaHalytyskeskus]);
+
+  useEffect(() => { paivitaKeskuksenTehtavat(); }, [paivitaKeskuksenTehtavat]);
+
+  // Odottava poistumispyyntö lähtee heti kun sen raportti on mennyt jonosta perille.
+  // Ilman tätä vartija jäisi kohteeseen odottamaan lupaa jota kukaan ei ole pyytänyt.
+  useEffect(() => {
+    if (!odottavaSidonta) return undefined;
+    return kuunteleLahetyksia((ilmoitus) => {
+      if (ilmoitus.polku !== '/api/kirjaa/guardReports') return;
+      if ((ilmoitus.runko as { id?: string } | null)?.id !== odottavaSidonta.raporttiId) return;
+      setOdottavaSidonta(null);
+      sidoRaporttiTehtavaan(odottavaSidonta.tehtavaId, odottavaSidonta.raporttiId).then((tulos) => {
+        if (tulos.ok) {
+          setTehtavaVirhe(null);
+          paivitaTehtavat();
+        } else {
+          setTehtavaVirhe(tulos.error || 'Poistumisluvan pyyntö epäonnistui.');
+        }
+      });
+    });
+  }, [odottavaSidonta, paivitaTehtavat]);
+
   // Kanava. GUARD-puoli ei ole tähän asti tarvinnut sitä, mutta hälytys on juuri se
   // tieto jota ei voi jäädä odottamaan seuraavaa sivunlatausta: lauennut ajastin on
   // näytettävä vartijalle heti, ja valvomon kuittaus on näytettävä hänelle heti.
@@ -584,6 +669,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const { laheta: lahetaKanavalle, yhdistetty } = useKanava({
     onMuutos: (kokoelma) => {
       if (kokoelma === 'alerts') paivitaHalytykset();
+      if (kokoelma === 'guardDispatch') {
+        paivitaTehtavat();
+        paivitaKeskuksenTehtavat();
+      }
       if (kokoelma === 'patrolRuns') haeKierrokset();
       if (kokoelma === 'templates') haePohjat();
       if (kokoelma === 'templateRuns') paivitaPohjaSuoritukset();
@@ -865,6 +954,104 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     return true;
   };
 
+  // --- Hälytystehtävien toiminnot (erä 22) ------------------------------------------
+
+  const avattu = tehtavat.find((t) => t.id === avattuTehtava) || null;
+
+  // Yksi kutsupaikka kaikille tehtävän muutoksille.
+  //
+  // Onnistuneen muutoksen jälkeen lista HAETAAN UUDELLEEN eikä palvelimen palauttamaa
+  // tietuetta liitetä tilaan. Muutosreitit palauttavat raa'an tietueen ilman kohdennuksen
+  // kenttiä (peruste, toiminnot, kohde), jotka syntyvät vasta listareitillä — liitettynä
+  // ne katoaisivat ja näkymä väittäisi ettei kohteella ole avaimia.
+  const tehtavaToiminto = async (
+    kutsu: () => Promise<{ ok: boolean; error?: string }>
+  ) => {
+    setTehtavaVirhe(null);
+    setTehtavaTyoskentelee(true);
+    try {
+      const tulos = await kutsu();
+      if (tulos.ok) {
+        paivitaTehtavat();
+        paivitaKeskuksenTehtavat();
+      }
+      else setTehtavaVirhe(tulos.error || 'Toiminto epäonnistui.');
+      return tulos.ok;
+    } finally {
+      setTehtavaTyoskentelee(false);
+    }
+  };
+
+  // Avatun hälytystehtävän toiminnot. PALVELIN PÄÄTTÄÄ MITKÄ RIVIT OVAT MAHDOLLISIA
+  // (`toiminnot`), ja tämä vain piirtää ne — valikon rivi joka tuottaa 400-virheen on
+  // huonompi kuin puuttuva rivi.
+  //
+  // "Ota vastaan" ja "Ota vastaan ja lähde ajoon" ovat molemmat listassa samasta syystä
+  // kuin esimerkkikuvassa: auton ratissa toista painallusta ei ole.
+  const tehtavanValinnat: MobiiliPikavalinta[] = avattu?.toiminnot
+    ? [
+      ...(avattu.toiminnot.vastaanota
+        ? [
+          { id: 'tehtava-vastaanota', label: 'Ota tehtävä vastaan' },
+          { id: 'tehtava-vastaanota-ajoon', label: 'Ota vastaan ja lähde ajoon' },
+        ]
+        : []),
+      ...(avattu.toiminnot.ajoon && !avattu.toiminnot.vastaanota
+        ? [{ id: 'tehtava-ajoon', label: 'Lähde ajoon' }] : []),
+      ...(avattu.toiminnot.paikalla && !avattu.toiminnot.vastaanota
+        ? [{ id: 'tehtava-paikalla', label: 'Olen paikalla' }] : []),
+      // Kieltäytyminen on peruutettavissa: kieltäytynyt voi yhä ottaa tehtävän vastaan,
+      // joten erillistä vahvistusta ei tarvita. Punainen riittää.
+      ...(avattu.toiminnot.kieltaydy
+        ? [{ id: 'tehtava-kieltaydy', label: 'Kieltäydy tehtävästä', vaara: true }] : []),
+    ]
+    : [];
+
+  const tehtavanValinta = (id: string) => {
+    if (!avattu) return;
+    if (id === 'tehtava-vastaanota') tehtavaToiminto(() => vastaanotaTehtava(avattu.id));
+    else if (id === 'tehtava-vastaanota-ajoon') tehtavaToiminto(() => vastaanotaTehtava(avattu.id, true));
+    else if (id === 'tehtava-ajoon') tehtavaToiminto(() => merkitseTehtavanVaihe(avattu.id, 'ajoon'));
+    else if (id === 'tehtava-paikalla') tehtavaToiminto(() => merkitseTehtavanVaihe(avattu.id, 'paikalla'));
+    else if (id === 'tehtava-kieltaydy') tehtavaToiminto(() => kieltaydyTehtavasta(avattu.id));
+  };
+
+  const avaaTehtava = (id: string) => {
+    nollaaAlanakymat();
+    setTehtavaVirhe(null);
+    setAvattuTehtava(id);
+  };
+
+  // Raportti hälytystehtävälle.
+  //
+  // KIRJAUS MENEE JONON KAUTTA kuten kaikki muukin kentällä tehty (erä 6): raporttia ei
+  // saa hukata siihen että verkko oli poikki. Poistumispyyntö sen sijaan EI mene jonoon —
+  // se on hälytysliikennettä, ja jonoon jäänyt "olen valmis, saanko lähteä" näyttäisi
+  // onnistuneen ja lähtisi ehkä puolen tunnin päästä.
+  //
+  // Näistä kahdesta seuraa kolmas tilanne: raportti on jonossa eikä pyyntöä voi vielä
+  // tehdä. Se SANOTAAN ääneen ja sidonta jää odottamaan lähetystä (odottavaSidonta),
+  // jolloin lupa pyydetään itsestään heti kun yhteys palaa.
+  const tallennaTehtavanRaportti = async (raportti: GuardRaportti, tehtavaId: string) => {
+    setRaportit((edelliset) => [...edelliset, raportti]);
+    const tulos = await lisaaJonoon({
+      polku: '/api/kirjaa/guardReports',
+      runko: raportti,
+      kuvaus: `${raportti.type}: ${raportti.place || ''}`.trim(),
+      tunniste: `guardReport:${raportti.id}`,
+    });
+    if (!tulos.lahetetty) {
+      setOdottavaSidonta({ tehtavaId, raporttiId: raportti.id });
+      setTehtavaVirhe(
+        'Raportti odottaa lähetystä. Poistumislupaa ei voi pyytää ennen kuin yhteys palaa — '
+        + 'älä poistu kohteesta.'
+      );
+      return true;
+    }
+    await tehtavaToiminto(() => sidoRaporttiTehtavaan(tehtavaId, raportti.id));
+    return true;
+  };
+
   // Tehtäväsuoritus lisätään aina uutena tietueena eikä koskaan korvaa aiempaa: sama
   // kierros ajetaan joka vuorossa uudelleen, ja jokainen kerta on oma merkintänsä lokissa.
   // Sama kuin raporteilla: yksi tietue jonon kautta. Tehtäväsuoritus on jo valmiiksi
@@ -1077,6 +1264,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     setKohteenEsine(null);
     setMittariKohde(null);
     setJaksoKohde(null);
+    setAvattuTehtava(null);
   };
 
   // Nollaa myös valitun kohteen: käytetään silloin kun poistutaan koko kohteesta
@@ -1091,6 +1279,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // ruudulla on.
   const nakyma =
     asetuksissa ? 'asetukset'
+      : avattuTehtava ? 'halytystehtava'
       : osio === 'halytyskeskus' ? 'halytyskeskus'
       : osio === 'kalusto' ? 'kalustopankki'
       : osio === 'tyontekijat' ? 'tyontekijapankki'
@@ -1436,7 +1625,19 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
   // Ilmoituskello: avoimet hälytykset. Oma hälytys näkyy myös toisesta kohteesta —
   // vartija on voinut painaa hätäpainiketta ennen kuin vaihtoi vuoron kohdetta.
-  const mobiiliIlmoitukset: MobiiliIlmoitus[] = saaNahdaHalytykset
+  //
+  // Hälytystehtävät (erä 22) ovat listan kärjessä eivätkä oikeusehdon takana: hälytys
+  // tulee kaikille joille se on kohdennettu, ja palvelin on jo päättänyt kenelle lista
+  // on tyhjä. Murtohälytys erottuu versaaleilla — se on ainoa laji joka on
+  // määritelmällisesti kiireellinen, kun vartijakutsu ja ovenavaus ovat sovittua työtä.
+  const tehtavaIlmoitukset: MobiiliIlmoitus[] = tehtavat.map((t) => ({
+    id: `tehtava:${t.id}`,
+    otsikko: t.laji === 'murto' ? TEHTAVAN_LAJI[t.laji].toUpperCase() : TEHTAVAN_LAJI[t.laji],
+    kuvaus: `Kohde: ${t.siteNimi}`,
+    taso: t.laji === 'murto' ? ('kriittinen' as const) : ('varoitus' as const),
+  }));
+
+  const omatHalytysIlmoitukset: MobiiliIlmoitus[] = saaNahdaHalytykset
     ? halytykset
       .filter((h) => (h.tila === 'lauennut' || h.tila === 'kaynnissa')
         && (h.eventId === vuoroKohde?.id || h.vartija === session?.username))
@@ -1448,7 +1649,13 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       }))
     : [];
 
+  const mobiiliIlmoitukset: MobiiliIlmoitus[] = [...tehtavaIlmoitukset, ...omatHalytysIlmoitukset];
+
   const avaaIlmoitus = (id: string) => {
+    if (id.startsWith('tehtava:')) {
+      avaaTehtava(id.slice('tehtava:'.length));
+      return;
+    }
     const halytys = halytykset.find((h) => h.id === id);
     const kohde = kohteet.find((k) => k.id === halytys?.eventId) || vuoroKohde;
     if (!kohde) return;
@@ -1517,6 +1724,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Näkymän nimi palkkiin. Sama järjestys kuin renderöintiketjussa alla — jos ne
   // eroaisivat, palkissa lukisi eri näkymä kuin ruudulla on.
   const nakymanNimi = asetuksissa ? 'Sovellusasetukset'
+    : avattu ? `${TEHTAVAN_LAJI[avattu.laji]} — ${avattu.siteNimi}`
     : osio === 'halytyskeskus' ? 'Hälytyskeskus'
     : osio === 'kalusto' ? 'Kalustopankki'
     : osio === 'tyontekijat' ? 'Työntekijäpankki'
@@ -1662,6 +1870,40 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onHavita={havitaVanhentuneet}
           onTakaisin={() => setAsetuksissa(false)}
         />
+      ) : avattu ? (
+        <HalytystehtavaNakyma
+          tehtava={avattu}
+          kayttaja={session?.username || ''}
+          yksikko={yksikonNimi}
+          tyoskentelee={tehtavaTyoskentelee}
+          virhe={tehtavaVirhe}
+          // Raportointi on tapahtumailmoitus, ja sen kirjaaminen on oma oikeutensa
+          // (guard_report_jv). Ilman oikeutta painiketta ei näytetä — näkymä kertoo sen
+          // itse, koska muuten vartija etsisi puuttuvaa nappia.
+          onRaportoi={saaKirjataIlmoituksen && avattu.kohde
+            ? () => {
+                const kohde = kohteet.find((k) => k.id === avattu.siteId);
+                setAvattuTehtava(null);
+                setRaporttiKohde({
+                  // Hälytys voi tulla kohteesta jonka tietueeseen vartijalla ei ole
+                  // pääsyä, jolloin `kohteet` ei sisällä sitä. Lomake tarvitsee kohteesta
+                  // vain id:n ja nimen, ja ne tulevat tehtävältä.
+                  kohde: kohde || { ...tyhjaKohde(), id: avattu.siteId, name: avattu.siteNimi },
+                  tyyppi: 'guard_jvreport',
+                  tehtavaId: avattu.id,
+                });
+              }
+            : null}
+          onMasterkoodi={async () => {
+            const tulos = await haeMasterkoodi(avattu.id);
+            if (!tulos.ok) setTehtavaVirhe(tulos.error || 'Koodia ei saatu.');
+            return tulos.masterkoodi ?? null;
+          }}
+          // Työpöytäversiossa toiminnot ovat sivulla, koska kolmen pisteen valikkoa ei
+          // ole. Mobiilissa tyhjä: siellä ne ovat valikossa.
+          toiminnot={mobiili ? [] : tehtavanValinnat}
+          onToiminto={tehtavanValinta}
+        />
       ) : osio === 'tyontekijat' ? (
         <Tyontekijapankki
           tyontekijat={tyontekijat}
@@ -1704,6 +1946,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           }}
           yhteys={yhdistetty}
           sijaintiseuranta={session?.sijaintiseuranta === true}
+          tehtavat={keskuksenTehtavat}
+          saaMuokataTehtavia={saaMuokataTehtavia}
+          onTehtavaMuutos={() => { paivitaKeskuksenTehtavat(); paivitaTehtavat(); }}
           onMuutos={paivitaHalytys}
           onVirkista={paivitaHalytykset}
           // Kohderivistä pääsee kohteen valikkoon. Osio vaihtuu samalla kohteisiin,
@@ -1719,8 +1964,17 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           kohde={raporttiKohde.kohde}
           tyyppi={raporttiKohde.tyyppi}
           vartija={session?.nickname || ''}
-          onTallenna={tallennaRaportti}
-          onTakaisin={() => setRaporttiKohde(null)}
+          // Hälytystehtävälle kirjoitettu raportti on samalla poistumispyyntö: sen
+          // jälkeen odotetaan hälytyskeskuksen hyväksyntää eikä palata kohdevalikkoon.
+          onTallenna={raporttiKohde.tehtavaId
+            ? (r) => tallennaTehtavanRaportti(r, raporttiKohde.tehtavaId as string)
+            : tallennaRaportti}
+          tallennaLabel={raporttiKohde.tehtavaId ? 'Lähetä raportti ja poistu' : undefined}
+          onTakaisin={() => {
+            const tehtavaId = raporttiKohde.tehtavaId;
+            setRaporttiKohde(null);
+            if (tehtavaId) setAvattuTehtava(tehtavaId);
+          }}
         />
       ) : tietoKohde ? (
         <KohteenTiedot
@@ -1941,6 +2195,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             pohjat={pohjat}
             kierrokset={kierrokset}
             halytykset={halytykset}
+            halytystehtavat={tehtavat}
+            kayttaja={session?.username || ''}
+            onHalytystehtava={avaaTehtava}
             suoritukset={suoritukset}
             sallitut={{
               kierrokset: saaNahdaKierrokset,
@@ -2082,6 +2339,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         onPaataVuoro={vuoro ? paataVuoro : null}
         onTyopoyta={vaihdaTyopoydalle}
         onLogout={kirjauduUlos}
+        pikavalinnat={tehtavanValinnat}
+        onPikavalinta={tehtavanValinta}
+        // Avatusta hälytystehtävästä palataan, ei avata sivuvalikkoa.
+        onTakaisin={avattu ? () => setAvattuTehtava(null) : null}
       >
         {runko}
         {kameraAuki && (

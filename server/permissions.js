@@ -468,6 +468,27 @@ const COLLECTIONS = {
     eventScoped: true,
     eventIdOf: (item) => item?.eventId,
   },
+  // Hälytystehtävät (erä 22). KOKOELMAN LISTAHAKU ON PÄIVYSTÄJÄN OIKEUS, ei vartijan:
+  // tämä reitti palauttaa kaikki tehtävät kaikista kohteista, ja se on hälytyskeskuksen
+  // näkymä.
+  //
+  // Vartija ei lue tätä kokoelmaa lainkaan vaan oman reittinsä kautta
+  // (/api/halytystehtavat/omat), samasta syystä kuin siirroissa: hälytys kohdennetaan
+  // vuoron, piirivuoron ja etäisyyden perusteella eikä kohdeoikeuden, joten
+  // kohdesidonnainen listahaku rajaisi ulos juuri sen vartijan jolle hälytys on
+  // tarkoitettu. Kohdennus on siksi reitin logiikkaa eikä tämän taulukon riviä.
+  //
+  // eventScoped: false, koska tehtävä ei ole kohteen alainen tietue vaikka sillä on
+  // siteId — tehtävän näkeminen ei seuraa kohdeoikeudesta kumpaankaan suuntaan.
+  guardDispatch: {
+    view: ['guard_dispatch'],
+    // Palvelimen ylläpitämä: kirjoitus tapahtuu vain /api/halytystehtava-reiteillä, jotka
+    // tarkistavat guard_dispatchin MUOKKAUSoikeuden erikseen. Tyhjä touch estää
+    // kokoelman kirjoittamisen suoraan.
+    touch: () => [],
+    eventScoped: false,
+    tuote: 'guard',
+  },
   checkins: {
     view: ['overview', 'tike_form_in', 'tike_form_out', 'tike_form_jvaction', 'planning_employees', 'global_archived_events'],
     // Ei tietuekohtaista erottelua mahdollista (ei typeId-kenttää) — samat kolme solmua

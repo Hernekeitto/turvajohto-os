@@ -75,6 +75,19 @@ type Props = {
   saaMuokata: boolean;
 };
 
+// Kaksi tekstikenttää yhdeksi koordinaatiksi (erä 22). Molempien on oltava luettavissa,
+// muuten arvo on undefined: puolikas koordinaatti osoittaisi päiväntasaajalle eikä
+// kohteeseen, ja väärä sijainti on pahempi kuin puuttuva — se kohdentaisi hälytyksiä
+// vartijoille jotka ovat satojen kilometrien päässä.
+function lueKoordinaatit(lat: string, lon: string) {
+  const a = Number(String(lat).replace(',', '.'));
+  const b = Number(String(lon).replace(',', '.'));
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return undefined;
+  if (String(lat).trim() === '' || String(lon).trim() === '') return undefined;
+  if (Math.abs(a) > 90 || Math.abs(b) > 180) return undefined;
+  return { lat: a, lon: b };
+}
+
 export const KohteenHallinta = ({
   kohde,
   onChange,
@@ -427,6 +440,171 @@ export const KohteenHallinta = ({
                   </li>
                 ))}
               </ul>
+            )}
+          </div>
+
+          {/* Avaintiedot (erä 22).
+
+              Nämä näkyvät hälytystehtävän avainvälilehdellä sille vartijalle joka on
+              OTTANUT TEHTÄVÄN VASTAAN — ei kaikille jotka hälytyksen näkevät. Hälytyksen
+              näkeminen on hälytys, ei pääsy kohteen avaimiin.
+
+              Avainten lisätiedot ja master-koodi salataan levylle (server/store.js), ja
+              koodin katsominen kirjataan auditlokiin. */}
+          <div className="border-t border-line-soft pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+              <h3 className="text-sm font-bold text-ink-strong">Avaintiedot</h3>
+              {saaMuokata && (
+                <button
+                  type="button"
+                  onClick={() => onChange({
+                    ...kohde,
+                    avaimet: [...(kohde.avaimet || []), { numero: '', lisatieto: '' }],
+                  })}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-line-soft hover:bg-surface-muted rounded-lg text-xs font-medium text-ink-body transition-colors"
+                >
+                  <Plus size={13} />
+                  Lisää avain
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-ink-muted mb-3">
+              Avainnumerot näkyvät hälytystehtävän avainvälilehdellä. Lisätieto
+              (&rdquo;käy pääoveen&rdquo;) ja master-koodi tallennetaan salattuina.
+            </p>
+            {(kohde.avaimet || []).length > 0 && (
+              <ul className="space-y-2 mb-4">
+                {(kohde.avaimet || []).map((rivi, i) => (
+                  <li key={i} className="flex flex-wrap gap-2 items-center">
+                    <input
+                      type="text"
+                      value={rivi.numero || ''}
+                      onChange={(e) => onChange({
+                        ...kohde,
+                        avaimet: (kohde.avaimet || []).map((r, j) => (
+                          j === i ? { ...r, numero: e.target.value } : r
+                        )),
+                      })}
+                      disabled={!saaMuokata}
+                      placeholder="Avaimen numero (esim. 1084)"
+                      className="w-44 rounded-lg border border-line-soft p-2 text-sm"
+                    />
+                    <input
+                      type="text"
+                      value={rivi.lisatieto || ''}
+                      onChange={(e) => onChange({
+                        ...kohde,
+                        avaimet: (kohde.avaimet || []).map((r, j) => (
+                          j === i ? { ...r, lisatieto: e.target.value } : r
+                        )),
+                      })}
+                      disabled={!saaMuokata}
+                      placeholder="Lisätieto (esim. käy pääoveen – 10.2.26)"
+                      className="flex-1 min-w-[180px] rounded-lg border border-line-soft p-2 text-sm"
+                    />
+                    {saaMuokata && (
+                      <button
+                        type="button"
+                        onClick={() => onChange({
+                          ...kohde,
+                          avaimet: (kohde.avaimet || []).filter((_, j) => j !== i),
+                        })}
+                        title="Poista avain"
+                        className="p-2 text-ink-muted hover:text-danger"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Kentta
+                label="Hälytysjärjestelmä"
+                arvo={kohde.halytysjarjestelma || ''}
+                onChange={(v) => onChange({ ...kohde, halytysjarjestelma: v })}
+                placeholder="esim. AJAX"
+              />
+              <Kentta
+                label="Avainten ja koodipaneelin sijainti"
+                arvo={kohde.avaintenSailytys || ''}
+                onChange={(v) => onChange({ ...kohde, avaintenSailytys: v })}
+                placeholder="esim. Pääaulassa, tuulikaapissa"
+              />
+            </div>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-ink-body mb-1.5">Master-koodi</label>
+              <input
+                type="password"
+                value={kohde.masterkoodi || ''}
+                onChange={(e) => onChange({ ...kohde, masterkoodi: e.target.value })}
+                disabled={!saaMuokata}
+                autoComplete="new-password"
+                placeholder="Hälytysjärjestelmän ohituskoodi"
+                className="w-full rounded-lg border border-line-soft p-2 text-sm"
+              />
+              <p className="text-xs text-ink-muted mt-1.5">
+                Kentällä koodi avataan erikseen silmäkuvakkeesta, ja jokainen avaaminen jää
+                auditlokiin.
+              </p>
+            </div>
+          </div>
+
+          {/* Hälytystehtävien kohdennus (erä 22).
+
+              Hälytys menee kohteen omille vartijoille ja piirivartijoille aina. Nämä
+              kentät ratkaisevat KOLMANNEN reitin: ketkä ovat kohteen lähellä.
+
+              SÄDE EI TOIMI ILMAN SIJAINTISEURANTAA. Seuranta on oletuksena pois päältä
+              (SIJAINTISEURANTA=1), ja silloin kolmas reitti ei tuo ketään. Se sanotaan
+              tässä ääneen — muuten säde näyttää asetukselta joka toimii. */}
+          <div className="border-t border-line-soft pt-4">
+            <h3 className="text-sm font-bold text-ink-strong mb-2">Hälytystehtävien kohdennus</h3>
+            <p className="text-xs text-ink-muted mb-3">
+              Hälytys näkyy aina kohteen vuorossa oleville ja piirivuorossa oleville. Sen
+              lisäksi se näkyy niille jotka ovat alla olevalla säteellä — mutta vain jos
+              sijaintiseuranta on käytössä. Ilman seurantaa säde ei tuo ketään.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Kentta
+                label="Leveysaste"
+                arvo={kohde.gps ? String(kohde.gps.lat) : ''}
+                onChange={(v) => onChange({
+                  ...kohde,
+                  gps: lueKoordinaatit(v, kohde.gps ? String(kohde.gps.lon) : ''),
+                })}
+                placeholder="61.4978"
+              />
+              <Kentta
+                label="Pituusaste"
+                arvo={kohde.gps ? String(kohde.gps.lon) : ''}
+                onChange={(v) => onChange({
+                  ...kohde,
+                  gps: lueKoordinaatit(kohde.gps ? String(kohde.gps.lat) : '', v),
+                })}
+                placeholder="23.7610"
+              />
+              <Kentta
+                label="Säde (km)"
+                arvo={kohde.halytysSadeKm === undefined ? '' : String(kohde.halytysSadeKm)}
+                onChange={(v) => {
+                  const luku = Number(v.replace(',', '.'));
+                  onChange({
+                    ...kohde,
+                    halytysSadeKm: v.trim() === '' || !Number.isFinite(luku) || luku <= 0
+                      ? undefined
+                      : luku,
+                  });
+                }}
+                placeholder="5"
+              />
+            </div>
+            {!kohde.gps && (
+              <p className="text-xs text-ink-muted mt-2">
+                Ilman koordinaatteja säde lasketaan pohjakartan ensimmäisestä
+                kalibrointipisteestä. Jos sitäkään ei ole, säde ei kohdenna kenellekään.
+              </p>
             )}
           </div>
 
@@ -825,6 +1003,11 @@ export const KohteenHallinta = ({
                       ) : (
                         <span className="text-ink-subtle font-normal"> · ei kellonaikaa</span>
                       )}
+                      {v.piiri && (
+                        <span className="ml-2 rounded bg-accent-soft px-1.5 py-0.5 text-xs font-medium text-accent-ink">
+                          Piirivuoro
+                        </span>
+                      )}
                     </p>
                     <p className="text-xs text-ink-muted">
                       {lkm((v.tehtavaIdt || []).length, 'tehtävä', 'tehtävää')}
@@ -895,6 +1078,33 @@ export const KohteenHallinta = ({
                 jälkeen. Jätä ajat tyhjiksi jos vuoro ei ole sidottu kellonaikaan — tyhjä
                 aika ei rajoita mitään.
               </p>
+
+              {/* Piirivuoro (erä 22). Lippu on VUOROTYYPILLÄ eikä tunnuksella, koska sama
+                  ihminen ajaa piiriä maanantaina ja seisoo kohteessa tiistaina. Se
+                  kopioidaan vuoron tietueeseen vuoron alkaessa, joten kesken vuoron tehty
+                  muutos ei muuta sitä millä perusteella tälle vuorolle on jo lähetetty
+                  hälytyksiä.
+
+                  Vuoron nimi on myös se tunnus jolla yksikkö näkyy hälytyskeskukselle
+                  ("Piiri 301"), joten se kannattaa nimetä sen mukaan. */}
+              <label className="flex items-start gap-2 text-sm text-ink-body">
+                <input
+                  type="checkbox"
+                  checked={muokattavaVuoro.piiri === true}
+                  onChange={() => setMuokattavaVuoro({
+                    ...muokattavaVuoro,
+                    piiri: !muokattavaVuoro.piiri,
+                  })}
+                  className="mt-0.5 rounded border-line-strong"
+                />
+                <span>
+                  Piirivuoro
+                  <span className="block text-xs text-ink-muted">
+                    Tässä vuorossa oleva saa hälytystehtävät myös muista kohteista. Vuoron
+                    nimi on se tunnus jolla yksikkö näkyy hälytyskeskuksen tapahtumalokissa.
+                  </span>
+                </span>
+              </label>
 
               <div>
                 <span className="block text-sm font-medium text-ink-body mb-2">Vuoron tehtävät</span>

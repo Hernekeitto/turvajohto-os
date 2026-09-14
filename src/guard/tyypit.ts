@@ -58,6 +58,14 @@ export type Vuorotyyppi = {
   tehtavaIdt?: string[];
   pohjaIdt?: string[];
   arkistoitu?: boolean;
+  // Onko tämä piirivuoro (erä 22). Piirivartija ajaa kohteesta toiseen, joten hänelle
+  // kohdennetaan hälytystehtävät MYÖS muista kohteista kuin siitä johon hän on
+  // kirjautunut — ilman tätä lippua kohdesidonnainen kohdennus sulkisi hänet ulos juuri
+  // siitä työstä jota hän tekee. Ks. server/halytystehtava.js: nakeeTehtavan.
+  //
+  // Lippu on VUOROTYYPILLÄ eikä tunnuksella, koska sama ihminen ajaa piiriä maanantaina
+  // ja seisoo kohteessa tiistaina. Se kopioidaan vuoron tietueeseen vuoron alkaessa.
+  piiri?: boolean;
 };
 
 // Kohteelle määritelty tehtävä työvuoroon. Kaksi muotoa:
@@ -132,6 +140,36 @@ export type Kohde = {
   //
   // Puuttuva kenttä tarkoittaa pois päältä.
   kuittaus?: { paalla: boolean; valiMin: number };
+
+  // --- Hälytystehtävien tarvitsemat kentät (erä 22) ---------------------------------
+
+  // Kohteen sijainti. TÄMÄ EI OLE KARTTAKALIBROINTI (mapRef): se kertoo missä kohde on
+  // maailmassa, ja sen ainoa käyttö on hälytystehtävien sädekohdennus — ketkä ovat
+  // tarpeeksi lähellä. Puuttuessaan luetaan mapRefin ensimmäinen kalibrointipiste
+  // (server/halytystehtava.js: kohteenSijainti), koska kalibroitu kohde ilman erikseen
+  // syötettyä sijaintia olisi muuten kohde jonka säde ei osu koskaan keneenkään.
+  gps?: { lat: number; lon: number };
+  // Kuinka läheltä hälytys kohdennetaan. Puuttuva = 5 km. Kohteen kenttä eikä vakio:
+  // keskustakohde jonka ympärillä on kymmenen partiota tarvitsee eri säteen kuin
+  // maaseutukohde jonka lähin partio on 40 km päässä.
+  halytysSadeKm?: number;
+
+  // Avaintiedot. Nämä näkyvät hälytystehtävän avainvälilehdellä ja avautuvat vasta kun
+  // tehtävä on otettu vastaan — hälytyksen näkeminen ei ole pääsy kohteen avaimiin.
+  //
+  // `lisatieto` ("1084 käy pääoveen") on SALATTU levylle (server/store.js): se kertoo
+  // mikä avain avaa minkä oven, mikä on sama tieto kuin avain itse. Pelkkä numero jää
+  // selväkieliseksi — numero ilman lisätietoa ei avaa mitään.
+  avaimet?: { numero: string; lisatieto?: string }[];
+  // Kohteen hälytysjärjestelmän merkki ("AJAX"). Tuotenimi, ei salaisuus.
+  halytysjarjestelma?: string;
+  // Missä avaimet ja koodipaneeli ovat ("Pääaulassa, tuulikaapissa").
+  avaintenSailytys?: string;
+  // Hälytysjärjestelmän ohituskoodi. SALATTU levylle ja EI koskaan mukana listahaussa:
+  // se haetaan erikseen (/api/halytystehtava/:id/masterkoodi), ja jokainen haku jää
+  // auditlokiin. Koodi joka tulisi listan mukana tuottaisi merkinnän jokaisesta listan
+  // avaamisesta eikä kertoisi kuka koodin oikeasti luki.
+  masterkoodi?: string;
 };
 
 // Kohteen tiedosto (guardFiles). Oma kokoelmansa eikä kohteen kenttä, koska liitetiedosto

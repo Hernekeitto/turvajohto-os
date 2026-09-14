@@ -48,9 +48,16 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // kalusto, tiedotteet — vaatii oman solmunsa: hälytyskeskus KOKOAA sen mitä käyttäjä
   // saa muutenkin nähdä eikä avaa mitään uutta.
   //
-  // Muokkausoikeutta ei käytetä: hälytyksen kuittaus on guard_alarmsin muokkausoikeus,
-  // eikä sitä pidä voida antaa kahdesta paikasta.
-  { id: 'guard_dispatch', label: 'Hälytyskeskus (kaikkien kohteiden tilannekuva)' },
+  // MUOKKAUSOIKEUS on erässä 22 otettu käyttöön: se on oikeus LÄHETTÄÄ hälytystehtäviä
+  // kentälle ja ratkaista poistumispyyntöjä (server/index.js: saaPaivystaa). Se ei ole
+  // hälytyksen kuittaus — se on yhä guard_alarmsin muokkausoikeus, eikä sitä pidä voida
+  // antaa kahdesta paikasta.
+  //
+  // Jako on sama kuin muuallakin: LUKU = näet kaikkien kohteiden tilanteen ja
+  // hälytystehtävät, MUOKKAUS = lähetät keikan ja päätät saako vartija poistua kohteesta.
+  // Vartija ei tarvitse tätä solmua lainkaan nähdäkseen hänelle kohdennetun
+  // hälytystehtävän: kohdennus (vuoro, piirivuoro, säde) on portti, ei sivukartta.
+  { id: 'guard_dispatch', label: 'Hälytyskeskus (muokkausoikeus = oikeus lähettää hälytystehtäviä ja hyväksyä poistumiset)' },
   // Pohjamoottorin lajit (erä 8). Omat solmunsa EVENT-puolen vastaavista samasta syystä
   // kuin muutkin GUARD-solmut: oikeudet tallennetaan yhteiseen olioon, joten sama nimi
   // molemmilla puolilla jakaisi vahingossa saman oikeuden.

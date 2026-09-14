@@ -36,6 +36,11 @@ import {
   joSiirrossa, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto, omatSiirrot, peruSiirto,
   siirtojenAvaamatKohteet, vastaaSiirtoon,
 } from './siirto.js';
+import {
+  AVOIMET_TILAT,
+  kieltaydy, lahetaRaportti, lisaaHavainto, luoTehtava, merkitseVaihe, nakeeTehtavan,
+  omatToiminnot, peruTehtava, ratkaiseHyvaksynta, vastaanota,
+} from './halytystehtava.js';
 import { vuoronKooste } from './kooste.js';
 import { listRoles, findRole, createRole, updateRole, deleteRole, rolePermissions, ROLE_ADMIN } from './roles.js';
 import {
@@ -569,7 +574,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'assets']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -2315,6 +2320,346 @@ app.post('/api/siirto/:id/kuittaa', requireAuth, guardPortti, (req, res) => {
   res.json({ ok: true, siirto: tulos.siirto });
 });
 
+// ====================== HÄLYTYSTEHTÄVÄT (erä 22) ======================
+//
+// Hälytyskeskuksen kentälle antama keikka. Säännöt ovat halytystehtava.js:ssä; täällä on
+// vain se mitä sääntömoduuli ei voi tietää: kuka kutsuja on, mitä levyllä on ja kenelle
+// muutoksesta kerrotaan.
+//
+// KOHDENNUS ON REITIN LOGIIKKAA EIKÄ OIKEUSTAULUKON RIVI. Vartija ei saa lukea
+// guardDispatch-kokoelmaa listahaulla — se on päivystäjän näkymä kaikkiin kohteisiin.
+// Vartija lukee oman reittinsä, joka kysyy jokaisesta tehtävästä erikseen näkeekö hän
+// sen (vuoro / piirivuoro / säde). Sama syy kuin siirroissa: hälytys kohdennetaan sen
+// perusteella missä ihminen on, ei sen perusteella mihin kohteisiin hänen tunnuksellaan
+// on pääsy.
+
+// Päivystäjän oikeus. Sama ehto kuin kertaluvan myöntämisessä (saaMyontaaKertaluvan) ja
+// tarkoituksella: se joka voi avata vuoron perehdyttämättömälle vartijalle on sama joka
+// hälyttää hänet kohteeseen. Erillinen nimi siksi, että lukija näkee kumpaa oikeutta
+// reitillä tarkoitetaan.
+const saaPaivystaa = (req) => req.role === 'admin' || canEdit(req.permissions, null, 'guard_dispatch');
+
+// Se konteksti jota vastaan kohdennus lasketaan. Kootaan kerran per pyyntö: sadan
+// tehtävän lista ei saa lukea vuorokokoelmaa sata kertaa.
+function kohdennusKonteksti(username) {
+  return {
+    vuoro: keskenOlevaVuoro(readCollection('guardShifts') || [], username) || null,
+    // Sijaintiseuranta on oletuksena pois päältä, jolloin tämä on aina null ja
+    // sädekohdennus ei tuo ketään. Ks. halytystehtava.js: nakeeTehtavan.
+    sijainti: haeSijainti(username),
+    kohteet: readCollection('guardSites') || [],
+  };
+}
+
+// Mitä tehtävästä kerrotaan vartijalle. Kohteen osoite, yhteystiedot ja avaintiedot
+// tulevat mukaan VASTA kun tehtävä on otettu vastaan (ks. kohteenOtsikko alla) — tehtävän
+// näkeminen on hälytys, ei pääsy kohteen tietoihin.
+function vartijanTehtava(tehtava, { kohde, username, peruste, etaisyys }) {
+  const mukana = (tehtava.yksikot || []).some((y) => y?.vartija === username && !y.kieltaytyi);
+  return {
+    ...tehtava,
+    // Kohdennuksen peruste näytetään vartijalle. "Miksi minulle tuli hälytys kohteesta
+    // jossa en ole koskaan käynyt" on kysymys johon on saatava vastaus näkymästä.
+    peruste,
+    etaisyysKm: etaisyys,
+    toiminnot: omatToiminnot({ tehtava, vartija: username }),
+    kohde: mukana ? kohteenTiedotHalytykseen(kohde) : null,
+  };
+}
+
+// Kohteen ne tiedot jotka hälytystehtävä avaa: osoite, yhteystiedot, kulkuohje ja
+// avaintiedot. EI koko kohdetietuetta — perehdytykset, vuorotyypit, tehtävät ja
+// kierrospohjat eivät kuulu tähän, eikä niitä saisi avata sivutuotteena hälytyksestä.
+//
+// Master-koodi on mukana. Se on tarkoituksellinen: ovenavaus ilman koodia ei ole
+// ovenavaus, ja koodi on juuri se tieto jonka takia välilehti on olemassa. Sen avaaminen
+// kirjataan auditlokiin omalla reitillään (/api/halytystehtava/:id/masterkoodi), joten
+// tässä palautetaan vain tieto siitä ONKO koodi olemassa.
+function kohteenTiedotHalytykseen(kohde) {
+  if (!kohde) return null;
+  return {
+    id: kohde.id,
+    name: kohde.name || '',
+    address: kohde.address || '',
+    contactName: kohde.contactName || '',
+    contactPhone: kohde.contactPhone || '',
+    notes: kohde.notes || '',
+    halytysNumerot: Array.isArray(kohde.halytysNumerot) ? kohde.halytysNumerot : [],
+    avaimet: Array.isArray(kohde.avaimet) ? kohde.avaimet : [],
+    halytysjarjestelma: kohde.halytysjarjestelma || '',
+    avaintenSailytys: kohde.avaintenSailytys || '',
+    onMasterkoodi: Boolean(kohde.masterkoodi),
+  };
+}
+
+// Kanavaviesti hälytystehtävästä.
+//
+// Suodatin laskee kohdennuksen samalla funktiolla kuin listahaku. Ilman sitä kanava
+// kertoisi jokaiselle vartijalle että jossain tapahtui jotain — ja juuri se on se vuoto
+// jonka takia kanava ei muutenkaan kuljeta sisältöä.
+function kerroTehtavasta(tehtava) {
+  const kohde = (readCollection('guardSites') || []).find((k) => k?.id === tehtava.siteId);
+  const vuorot = readCollection('guardShifts') || [];
+  lahetaKanavalle('guardDispatch', [{ action: 'update', id: tehtava.id, eventId: tehtava.siteId }], {
+    saaNahda: (istunto) => {
+      if (!istunto || !(istunto.tuotteet || []).includes('guard')) return false;
+      if (istunto.role === 'admin') return true;
+      if (canView(rolePermissions(istunto.roleId), null, 'guard_dispatch')) return true;
+      return nakeeTehtavan({
+        tehtava,
+        kohde,
+        vartija: istunto.username,
+        vuoro: keskenOlevaVuoro(vuorot, istunto.username) || null,
+        sijainti: haeSijainti(istunto.username),
+        sadeKm: kohde?.halytysSadeKm,
+      }).nakee;
+    },
+  });
+}
+
+// Vartijan oma lista. Avoimet tehtävät joihin hän on kohdennettu, uusin ensin.
+app.get('/api/halytystehtavat/omat', requireAuth, guardPortti, (req, res) => {
+  const { vuoro, sijainti, kohteet } = kohdennusKonteksti(req.username);
+  const tehtavat = (readCollection('guardDispatch') || [])
+    .filter((t) => t && AVOIMET_TILAT.has(t.tila))
+    .map((t) => {
+      const kohde = kohteet.find((k) => k?.id === t.siteId) || null;
+      const osuma = nakeeTehtavan({
+        tehtava: t, kohde, vartija: req.username, vuoro,
+        sijainti, sadeKm: kohde?.halytysSadeKm,
+      });
+      return osuma.nakee
+        ? vartijanTehtava(t, {
+            kohde, username: req.username, peruste: osuma.peruste, etaisyys: osuma.etaisyysKm,
+          })
+        : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(b.luotu).localeCompare(String(a.luotu)));
+
+  res.json({
+    ok: true,
+    tehtavat,
+    // Yksikön nimi jolla vastaanotto kirjataan. Näytetään etukäteen, jotta vartija tietää
+    // millä nimellä hän ilmestyy hälytyskeskuksen ruudulle — vuoroton vartija ilmestyy
+    // nimimerkillään, ja se on hyvä tietää ennen kuin painaa.
+    yksikko: vuoro?.vuorotyyppiNimi || findUser(req.username)?.nickname || req.username,
+  });
+});
+
+// Päivystäjän lista: kaikki tehtävät kaikista kohteista. `?kaikki=1` ottaa mukaan myös
+// päättyneet — oletuksena vain auki olevat, koska valvomon ruudulla eilinen keikka on
+// häiriö.
+app.get('/api/halytystehtavat', requireAuth, guardPortti, (req, res) => {
+  if (!(req.role === 'admin' || canView(req.permissions, null, 'guard_dispatch'))) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia hälytyskeskukseen.' });
+  }
+  const kaikki = req.query?.kaikki === '1';
+  const tehtavat = (readCollection('guardDispatch') || [])
+    .filter((t) => t && (kaikki || AVOIMET_TILAT.has(t.tila)))
+    .sort((a, b) => String(b.luotu).localeCompare(String(a.luotu)));
+  res.json({ ok: true, tehtavat, saaMuokata: saaPaivystaa(req) });
+});
+
+// Uusi hälytystehtävä.
+app.post('/api/halytystehtava', requireAuth, guardPortti, (req, res) => {
+  if (!saaPaivystaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Vaatii hälytyskeskuksen muokkausoikeuden.' });
+  }
+  const { laji, siteId, silmukka, havainnot } = req.body || {};
+  const kohde = (readCollection('guardSites') || []).find((k) => k?.id === siteId);
+  if (!kohde) return res.status(404).json({ ok: false, error: 'Kohdetta ei löytynyt.' });
+
+  const tulos = luoTehtava({
+    laji,
+    kohde,
+    silmukka,
+    havainnot: Array.isArray(havainnot) ? havainnot : [],
+    luoja: req.username,
+    id: crypto.randomUUID(),
+    havaintoId: () => crypto.randomUUID(),
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  const tehtavat = readCollection('guardDispatch') || [];
+  writeCollection('guardDispatch', [tulos.tehtava, ...tehtavat]);
+  logAudit({
+    user: req.username, action: 'halytystehtava_luotu', collection: 'guardDispatch',
+    recordId: tulos.tehtava.id, eventId: siteId, laji,
+  });
+  kerroTehtavasta(tulos.tehtava);
+  res.json({ ok: true, tehtava: tulos.tehtava });
+});
+
+// Yhteinen kuori: hae tehtävä, aja sääntö, kirjoita, kerro. Kaikki alla olevat reitit
+// tekevät saman neljä askelta, ja kopioituna ne erkanisivat toisistaan.
+function muutaTehtava(req, res, { tarkista, saanto, action, lisa = {} }) {
+  const tehtavat = readCollection('guardDispatch') || [];
+  const tehtava = tehtavat.find((t) => t?.id === req.params.id);
+  if (!tehtava) return res.status(404).json({ ok: false, error: 'Tehtävää ei löytynyt.' });
+
+  const este = tarkista ? tarkista(tehtava) : null;
+  if (este) return res.status(este.status).json({ ok: false, error: este.error });
+
+  const tulos = saanto(tehtava);
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  if (tulos.duplikaatti) return res.json({ ok: true, tehtava: tulos.tehtava, duplikaatti: true });
+
+  writeCollection('guardDispatch', tehtavat.map((t) => (t.id === tehtava.id ? tulos.tehtava : t)));
+  logAudit({
+    user: req.username, action, collection: 'guardDispatch',
+    recordId: tehtava.id, eventId: tehtava.siteId, ...lisa,
+  });
+  kerroTehtavasta(tulos.tehtava);
+  return res.json({ ok: true, tehtava: tulos.tehtava });
+}
+
+// Päivystäjä lisää havainnon kesken tehtävän.
+app.post('/api/halytystehtava/:id/havainto', requireAuth, guardPortti, (req, res) => {
+  if (!saaPaivystaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Vaatii hälytyskeskuksen muokkausoikeuden.' });
+  }
+  return muutaTehtava(req, res, {
+    saanto: (tehtava) => lisaaHavainto({
+      tehtava, teksti: req.body?.teksti, kirjaaja: req.username, id: crypto.randomUUID(),
+    }),
+    action: 'halytystehtava_havainto',
+  });
+});
+
+// Vartijan yksikön nimi tähän tehtävään. Vuorosta jos vuoro on, muuten nimimerkki.
+function yksikonNimi(username) {
+  const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], username);
+  return vuoro?.vuorotyyppiNimi || findUser(username)?.nickname || username;
+}
+
+// Kohdennuksen tarkistus kirjoitusreiteillä.
+//
+// Tämä EI ole sama asia kuin listahaun suodatin, vaikka se käyttää samaa funktiota:
+// listahaku päättää mitä näytetään, tämä estää sen että hälytyksen id:n arvannut tunnus
+// voisi kirjata itsensä toisen kohteen keikalle. Ilman tätä koko kohdennus olisi
+// käyttöliittymän suositus.
+function kohdennusEstaa(req, tehtava) {
+  if (req.role === 'admin') return null;
+  const { vuoro, sijainti, kohteet } = kohdennusKonteksti(req.username);
+  const kohde = kohteet.find((k) => k?.id === tehtava.siteId) || null;
+  const osuma = nakeeTehtavan({
+    tehtava, kohde, vartija: req.username, vuoro,
+    sijainti, sadeKm: kohde?.halytysSadeKm,
+  });
+  return osuma.nakee
+    ? null
+    : { status: 403, error: 'Tätä hälytystä ei ole kohdennettu sinulle.' };
+}
+
+// Vartija ottaa tehtävän vastaan. `ajoon: true` on valikon rivi "Ota vastaan ja lähde
+// ajoon" — yksi painallus eikä kaksi, koska auton ratissa niitä ei ole toista.
+app.post('/api/halytystehtava/:id/vastaanota', requireAuth, guardPortti, (req, res) => {
+  const nimi = yksikonNimi(req.username);
+  return muutaTehtava(req, res, {
+    tarkista: (tehtava) => kohdennusEstaa(req, tehtava),
+    saanto: (tehtava) => vastaanota({
+      tehtava, vartija: req.username, yksikko: nimi,
+      vuoroId: keskenOlevaVuoro(readCollection('guardShifts') || [], req.username)?.id || null,
+      ajoon: req.body?.ajoon === true,
+    }),
+    action: 'halytystehtava_vastaanotettu',
+    lisa: { yksikko: nimi },
+  });
+});
+
+// Vartija kieltäytyy. Kieltäytyminen kirjataan: "kukaan ei vastannut" ja "kaikki
+// kieltäytyivät" ovat päivystäjälle kaksi eri tilannetta.
+app.post('/api/halytystehtava/:id/kieltaydy', requireAuth, guardPortti, (req, res) => {
+  const nimi = yksikonNimi(req.username);
+  return muutaTehtava(req, res, {
+    tarkista: (tehtava) => kohdennusEstaa(req, tehtava),
+    saanto: (tehtava) => kieltaydy({
+      tehtava, vartija: req.username, yksikko: nimi, syy: req.body?.syy,
+    }),
+    action: 'halytystehtava_kieltaytyminen',
+    lisa: { yksikko: nimi },
+  });
+});
+
+// Vaihe: ajoon tai paikalla.
+app.post('/api/halytystehtava/:id/vaihe', requireAuth, guardPortti, (req, res) => (
+  muutaTehtava(req, res, {
+    saanto: (tehtava) => merkitseVaihe({ tehtava, vartija: req.username, vaihe: req.body?.vaihe }),
+    action: 'halytystehtava_vaihe',
+    lisa: { vaihe: String(req.body?.vaihe || '') },
+  })
+));
+
+// Vartija lähettää raportin ja pyytää lupaa poistua.
+//
+// Raportti itse on jo tallennettu guardReports-kokoelmaan tavallista tietä, ja sen
+// oikeudet ja kenttäsalaus tulevat sieltä. Tänne jää viittaus — kaksi kopiota samasta
+// tekstistä tarkoittaisi kaksi paikkaa joista se pitää poistaa säilytysajan tullessa
+// täyteen, ja toinen niistä unohtuisi.
+app.post('/api/halytystehtava/:id/raportti', requireAuth, guardPortti, (req, res) => {
+  const raporttiId = String(req.body?.raporttiId || '');
+  const raportti = (readCollection('guardReports') || []).find((r) => r?.id === raporttiId);
+  if (!raportti) return res.status(404).json({ ok: false, error: 'Raporttia ei löytynyt.' });
+  if (raportti.author !== req.username && req.role !== 'admin') {
+    return res.status(403).json({ ok: false, error: 'Raportti on toisen kirjaama.' });
+  }
+  return muutaTehtava(req, res, {
+    saanto: (tehtava) => lahetaRaportti({ tehtava, vartija: req.username, raporttiId }),
+    action: 'halytystehtava_raportti',
+    lisa: { raporttiId },
+  });
+});
+
+// Päivystäjä ratkaisee poistumispyynnön. Hylkäys vaatii kommentin (halytystehtava.js).
+app.post('/api/halytystehtava/:id/hyvaksynta', requireAuth, guardPortti, (req, res) => {
+  if (!saaPaivystaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Vaatii hälytyskeskuksen muokkausoikeuden.' });
+  }
+  const hyvaksy = req.body?.hyvaksy === true;
+  return muutaTehtava(req, res, {
+    saanto: (tehtava) => ratkaiseHyvaksynta({
+      tehtava, kasittelija: req.username, hyvaksy, kommentti: req.body?.kommentti,
+    }),
+    action: hyvaksy ? 'halytystehtava_hyvaksytty' : 'halytystehtava_palautettu',
+  });
+});
+
+// Päivystäjä peruu tehtävän (väärä hälytys, asiakas kuittasi itse).
+app.post('/api/halytystehtava/:id/peru', requireAuth, guardPortti, (req, res) => {
+  if (!saaPaivystaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Vaatii hälytyskeskuksen muokkausoikeuden.' });
+  }
+  return muutaTehtava(req, res, {
+    saanto: (tehtava) => peruTehtava({ tehtava, kasittelija: req.username, syy: req.body?.syy }),
+    action: 'halytystehtava_peruttu',
+  });
+});
+
+// Master-koodin paljastaminen.
+//
+// OMA REITTINSÄ eikä kenttä tehtävän tiedoissa, ja syy on auditloki: koodi avaa kohteen
+// kenelle tahansa joka sen tietää, joten sen katsominen on tapahtuma josta on jäätävä
+// merkintä. Jos koodi tulisi listahaun mukana, merkintä syntyisi jokaisesta listan
+// avaamisesta eikä kertoisi kuka koodin oikeasti luki.
+app.post('/api/halytystehtava/:id/masterkoodi', requireAuth, guardPortti, (req, res) => {
+  const tehtava = (readCollection('guardDispatch') || []).find((t) => t?.id === req.params.id);
+  if (!tehtava) return res.status(404).json({ ok: false, error: 'Tehtävää ei löytynyt.' });
+
+  const mukana = (tehtava.yksikot || []).some((y) => y?.vartija === req.username && !y.kieltaytyi);
+  if (!mukana && !saaPaivystaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Ota tehtävä ensin vastaan.' });
+  }
+  const kohde = (readCollection('guardSites') || []).find((k) => k?.id === tehtava.siteId);
+  if (!kohde?.masterkoodi) {
+    return res.status(404).json({ ok: false, error: 'Kohteelle ei ole kirjattu master-koodia.' });
+  }
+  logAudit({
+    user: req.username, action: 'halytystehtava_masterkoodi', collection: 'guardSites',
+    recordId: kohde.id, eventId: kohde.id, tehtavaId: tehtava.id,
+  });
+  res.json({ ok: true, masterkoodi: kohde.masterkoodi });
+});
 
 // Kanavaviesti pohjan muutoksesta. Viesti kuljettaa vain id:n, ja sisältö haetaan
 // oikeustarkistetulta reitiltä. Skenaariopohjan muutos on tieto joka on saatava kentälle

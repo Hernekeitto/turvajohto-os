@@ -1,0 +1,224 @@
+// Hälytystehtävien selainpuoli: tyypit, kutsut ja esitysmuodot (erä 22).
+//
+// Säännöt ovat palvelimella (server/halytystehtava.js). Tämä tiedosto ei päätä mistään —
+// se kysyy ja näyttää. Erityisesti valikon rivit EIVÄT pääty täällä: palvelin palauttaa
+// `toiminnot`-olion, ja käyttöliittymä piirtää sen. Valikon rivi joka tuottaa
+// 400-virheen on huonompi kuin puuttuva rivi.
+//
+// HÄLYTYSTEHTÄVÄ EI OLE HÄLYTYS. `shared/halytykset.ts` on vartijan oma turvahälytys
+// (ajastin, man-down, hätäpainike) — tämä on työ jonka hälytyskeskus antaa vartijalle.
+// Kaksi eri kokoelmaa, kaksi eri moduulia, ja sama sana kansankielessä.
+
+export type HalytysLaji = 'murto' | 'vartijakutsu' | 'ovenavaus';
+export type TehtavanTila = 'avoin' | 'kaynnissa' | 'odottaa' | 'suljettu' | 'peruttu';
+
+// Millä perusteella tehtävä näytettiin tälle vartijalle. Näytetään käyttöliittymässä:
+// "miksi minulle tuli hälytys kohteesta jossa en ole koskaan käynyt" on kysymys johon
+// vartijan on saatava vastaus näkymästä eikä esimieheltä.
+export type Kohdennus = 'oma' | 'vuoro' | 'piiri' | 'sade';
+
+export type Havainto = { id: string; ts: string; teksti: string; kirjaaja: string | null };
+
+export type Yksikko = {
+  vartija: string;
+  // Vuoron nimi ("Piiri 301", "Kohde X"), ei vartijan nimimerkki. Käyttäjän päätös
+  // 14.9.2026: tunnus tapahtumalokissa tulee siitä vuorosta johon vartija on kirjautunut.
+  nimi: string;
+  vuoroId: string | null;
+  vastaanotti: string | null;
+  ajoon: string | null;
+  paikalla: string | null;
+  poistui?: string | null;
+  kieltaytyi: string | null;
+  syy?: string;
+};
+
+export type Hyvaksynta = {
+  tila: 'odottaa' | 'hyvaksytty' | 'palautettu';
+  pyytaja: string | null;
+  pyydetty: string | null;
+  kasittelija: string | null;
+  ratkaistu: string | null;
+  kommentti: string;
+};
+
+export type Toiminnot = {
+  vastaanota: boolean;
+  kieltaydy: boolean;
+  ajoon: boolean;
+  paikalla: boolean;
+  raportoi: boolean;
+  odottaa: boolean;
+};
+
+// Kohteen ne tiedot jotka hälytystehtävä avaa. EI koko kohdetietue: perehdytykset,
+// vuorotyypit ja kierrospohjat eivät kuulu tähän eikä niitä avata sivutuotteena
+// hälytyksestä. null ennen kuin tehtävä on otettu vastaan.
+export type TehtavanKohde = {
+  id: string;
+  name: string;
+  address: string;
+  contactName: string;
+  contactPhone: string;
+  notes: string;
+  halytysNumerot: { nimi?: string; numero: string }[];
+  avaimet: { numero: string; lisatieto?: string }[];
+  halytysjarjestelma: string;
+  avaintenSailytys: string;
+  // Vain tieto siitä ONKO koodi. Itse koodi haetaan erikseen (haeMasterkoodi), jotta
+  // jokainen katsominen jää auditlokiin.
+  onMasterkoodi: boolean;
+};
+
+export type Halytystehtava = {
+  id: string;
+  laji: HalytysLaji;
+  siteId: string;
+  siteNimi: string;
+  silmukka: string;
+  tila: TehtavanTila;
+  luotu: string;
+  luoja: string | null;
+  havainnot: Havainto[];
+  yksikot: Yksikko[];
+  raportit: { raporttiId: string; vartija: string; nimi: string; lahetetty: string }[];
+  hyvaksynta: Hyvaksynta | null;
+  peruminen?: { kasittelija: string | null; syy: string; ts: string } | null;
+  paattyi: string | null;
+  loki: { ts: string; tapahtuma: string; user: string | null; teksti: string }[];
+  // Vain vartijan omalla reitillä (/api/halytystehtavat/omat).
+  peruste?: Kohdennus | null;
+  etaisyysKm?: number | null;
+  toiminnot?: Toiminnot;
+  kohde?: TehtavanKohde | null;
+};
+
+export const LAJIN_NIMI: Record<HalytysLaji, string> = {
+  murto: 'Murtohälytys',
+  vartijakutsu: 'Vartijakutsu',
+  ovenavaus: 'Ovenavaus',
+};
+
+export const LAJIT: HalytysLaji[] = ['murto', 'vartijakutsu', 'ovenavaus'];
+
+export const TILAN_NIMI: Record<TehtavanTila, string> = {
+  avoin: 'Uusi',
+  kaynnissa: 'Käynnissä',
+  odottaa: 'Odottaa hyväksyntää',
+  suljettu: 'Suljettu',
+  peruttu: 'Peruttu',
+};
+
+export const KOHDENNUKSEN_SELITE: Record<Kohdennus, string> = {
+  oma: 'Olet ottanut tehtävän vastaan',
+  vuoro: 'Olet vuorossa tässä kohteessa',
+  piiri: 'Olet piirivuorossa',
+  sade: 'Olet kohteen lähellä',
+};
+
+// HUOM: tilajoukkoa "onko auki" EI ole täällä. Palvelin palauttaa vartijan reitillä vain
+// avoimet tehtävät (AVOIMET_TILAT), joten selaimen ei tarvitse suodattaa niitä uudelleen
+// — ja toisinto tilajoukosta olisi paikka jossa selain ja palvelin voivat erkaantua.
+export const kellonaika = (iso: string | null | undefined) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+};
+
+// Lokirivin aikaleima sekunnin tarkkuudella. Esimerkkikuvien tapahtumaloki näyttää
+// sekunnit, ja syy on vasteaika: minuutin tarkkuudella "vastaanotti" ja "ajoon" ovat
+// usein sama luku, jolloin loki ei kerro kumpi tapahtui ensin.
+export const kellonaikaSek = (iso: string | null | undefined) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+};
+
+// Oma yksikkörivi tehtävällä, tai null. Kieltäytynyt ei ole mukana: hän on tietueessa
+// mutta ei tehtävällä.
+export const omaYksikko = (t: Halytystehtava, kayttaja: string) =>
+  (t.yksikot || []).find((y) => y.vartija === kayttaja && !y.kieltaytyi) || null;
+
+type Vastaus = { ok: boolean; error?: string; tehtava?: Halytystehtava; [k: string]: unknown };
+
+// Yksi kutsupaikka kaikille reiteille. Verkkovirhe palautetaan samassa muodossa kuin
+// palvelimen virhe, jotta kutsuja voi näyttää sen sellaisenaan.
+//
+// TÄMÄ EI MENE LÄHTEVÄÄN JONOON, samasta syystä kuin hälytykset (shared/halytykset.ts):
+// jonoon jäänyt "olen paikalla" näyttäisi onnistuneen ja lähtisi ehkä puolen tunnin
+// päästä, jolloin hälytyskeskus luulisi vartijan olevan kohteessa vaikka hän ei ole.
+async function kutsu(polku: string, runko?: unknown): Promise<Vastaus> {
+  try {
+    const vastaus = await fetch(polku, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(runko ?? {}),
+    });
+    const data = await vastaus.json().catch(() => null);
+    if (!vastaus.ok) {
+      return { ok: false, error: data?.error || `Palvelin vastasi virheellä ${vastaus.status}.`, ...(data || {}) };
+    }
+    return data || { ok: false, error: 'Palvelimen vastausta ei voitu lukea.' };
+  } catch {
+    return { ok: false, error: 'Ei yhteyttä palvelimeen. Tieto EI mennyt hälytyskeskukseen.' };
+  }
+}
+
+export async function haeOmatTehtavat(): Promise<{ tehtavat: Halytystehtava[]; yksikko: string } | null> {
+  try {
+    const vastaus = await fetch('/api/halytystehtavat/omat', { credentials: 'include' });
+    if (!vastaus.ok) return null;
+    const data = await vastaus.json();
+    return data?.ok === true
+      ? { tehtavat: (data.tehtavat || []) as Halytystehtava[], yksikko: String(data.yksikko || '') }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function haeKaikkiTehtavat(kaikki = false): Promise<
+  { tehtavat: Halytystehtava[]; saaMuokata: boolean } | null
+> {
+  try {
+    const vastaus = await fetch(`/api/halytystehtavat${kaikki ? '?kaikki=1' : ''}`, { credentials: 'include' });
+    if (!vastaus.ok) return null;
+    const data = await vastaus.json();
+    return data?.ok === true
+      ? { tehtavat: (data.tehtavat || []) as Halytystehtava[], saaMuokata: data.saaMuokata === true }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export const luoTehtava = (args: {
+  laji: HalytysLaji; siteId: string; silmukka?: string; havainnot?: string[];
+}) => kutsu('/api/halytystehtava', args);
+
+const polku = (id: string, toiminto: string) =>
+  `/api/halytystehtava/${encodeURIComponent(id)}/${toiminto}`;
+
+export const lisaaHavainto = (id: string, teksti: string) => kutsu(polku(id, 'havainto'), { teksti });
+export const vastaanota = (id: string, ajoon = false) => kutsu(polku(id, 'vastaanota'), { ajoon });
+export const kieltaydy = (id: string, syy?: string) => kutsu(polku(id, 'kieltaydy'), { syy });
+export const merkitseVaihe = (id: string, vaihe: 'ajoon' | 'paikalla') =>
+  kutsu(polku(id, 'vaihe'), { vaihe });
+export const lahetaRaportti = (id: string, raporttiId: string) =>
+  kutsu(polku(id, 'raportti'), { raporttiId });
+export const ratkaiseHyvaksynta = (id: string, hyvaksy: boolean, kommentti?: string) =>
+  kutsu(polku(id, 'hyvaksynta'), { hyvaksy, kommentti });
+export const peruTehtava = (id: string, syy?: string) => kutsu(polku(id, 'peru'), { syy });
+
+// Master-koodin paljastaminen. Oma kutsunsa eikä listan kenttä: jokainen katsominen jää
+// auditlokiin, ja listan mukana tuleva koodi tuottaisi merkinnän jokaisesta listan
+// avaamisesta eikä kertoisi kuka koodin oikeasti luki.
+export async function haeMasterkoodi(id: string): Promise<{ ok: boolean; masterkoodi?: string; error?: string }> {
+  const vastaus = await kutsu(polku(id, 'masterkoodi'));
+  return { ok: vastaus.ok, masterkoodi: vastaus.masterkoodi as string | undefined, error: vastaus.error };
+}

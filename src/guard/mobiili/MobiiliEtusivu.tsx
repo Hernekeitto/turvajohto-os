@@ -16,6 +16,8 @@ import {
 import { TYYPPI_LABEL, type Halytys } from '../../shared/halytykset';
 import type { OmatSiirrot } from '../siirrot';
 import type { Kierros as KierrosTietue, Kierrospohja, Kohde, TehtavaSuoritus } from '../tyypit';
+import type { Halytystehtava } from '../halytystehtavat';
+import { TehtavaRivi } from './HalytysTehtava';
 
 type Props = {
   kohde: Kohde;
@@ -39,6 +41,12 @@ type Props = {
   pohjat: Kierrospohja[];
   kierrokset: KierrosTietue[];
   halytykset: Halytys[];
+  // Hälytyskeskuksen antamat keikat (erä 22). ERI ASIA KUIN `halytykset` yllä: ne ovat
+  // vartijan omia turvahälytyksiä, nämä ovat työtä joka on tullut ulkoa. Ei oikeusehtoa
+  // `sallitut`-oliossa — palvelin on jo päättänyt kenelle lista on tyhjä.
+  halytystehtavat: Halytystehtava[];
+  kayttaja: string;
+  onHalytystehtava: (id: string) => void;
   suoritukset: TehtavaSuoritus[];
   sallitut: { kierrokset: boolean; tehtavat: boolean; halytykset: boolean };
   onKierros: () => void;
@@ -70,6 +78,7 @@ const minuutteja = (alkoi: string) => {
 export const MobiiliEtusivu = ({
   kohde, vuoronPohjaIdt, vuoronTehtavaIdt, vuoroKaynnissa, lisataan, lisaysVirhe,
   pohjat, kierrokset, halytykset, suoritukset, sallitut,
+  halytystehtavat, kayttaja, onHalytystehtava,
   siirrot, siirtoVastataan,
   onKierros, onTehtavat, onHalytykset, onLisaaVuoroon, onVastaaSiirtoon, onSiirra,
 }: Props) => {
@@ -131,12 +140,26 @@ export const MobiiliEtusivu = ({
   );
 
   const tyhja =
+    halytystehtavat.length === 0 &&
     (!sallitut.kierrokset || omatPohjat.length === 0) &&
     (!sallitut.tehtavat || tehtavat.length === 0) &&
     avoimet.length === 0;
 
   return (
     <div className="space-y-3">
+      {/* Hälytystehtävät aivan ylimpänä, myös lauenneiden turvahälytysten yläpuolella.
+          Ne ovat ainoa listan kohta jolla on toinen ihminen odottamassa: hälytyskeskus
+          on lähettänyt keikan ja odottaa vastausta. Kaikki muu listalla on työtä joka
+          on jo vartijan omaa. */}
+      {halytystehtavat.map((t) => (
+        <TehtavaRivi
+          key={t.id}
+          tehtava={t}
+          kayttaja={kayttaja}
+          onClick={() => onHalytystehtava(t.id)}
+        />
+      ))}
+
       {/* Lauenneet hälytykset ensimmäisenä ja punaisina. Tämä on tietoinen poikkeama
           luonnoksesta, jossa hälytyskortti oli vihreä ja listan viimeisenä: lauennut
           hälytys on kiireellisin asia ruudulla, ja sen värin on oltava sama kuin muualla

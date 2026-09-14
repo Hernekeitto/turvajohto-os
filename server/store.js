@@ -80,6 +80,16 @@ const COLLECTIONS = {
   // sama tapahtuma eri oikeudella: joku antaa jollekin tehtävän. Ero on `tapa`-kentässä
   // ja siinä mitä saaja voi tehdä. Palvelimen ylläpitämä kuten guardShifts.
   guardAssignments: 'guardAssignments.json',
+  // Hälytystehtävät (erä 22): hälytyskeskuksen kentälle antama keikka — murtohälytys,
+  // vartijakutsu tai ovenavaus. ERI KOKOELMA KUIN `alerts`, ja ero on koko rakenteen syy:
+  // alerts on vartijan oma turvahälytys ("minulla on hätä"), tämä on työ jonka joku antaa
+  // vartijalle ("mene katsomaan"). Samaan kokoelmaan laitettuina "avoimet hälytykset"
+  // tarkoittaisi kahta eri joukkoa samassa listassa.
+  //
+  // Palvelimen ylläpitämä (index.js: PALVELIMEN_YLLAPITAMAT): tilaketju, vastaanotot ja
+  // poistumisen hyväksyntä ovat koko toiminnon sisältö, ja selaimen kirjoitusoikeus
+  // tarkoittaisi että vartija voi merkitä itsensä poistuneeksi kirjoittamalla tietueen.
+  guardDispatch: 'guardDispatch.json',
   // Hälytykset (erä 7): ajastin, man-down, hätäpainike ja vyöhykepoikkeama. YKSI kokoelma
   // kaikille tyypeille samasta syystä kuin templates: tilamalli, kuittaus, eskalointi ja
   // valvomonäkymä ovat samat riippumatta siitä mikä hälytyksen laukaisi. Palvelimen
@@ -251,6 +261,24 @@ const ENCRYPTED_FIELDS = {
   // päätyvät molemmat tiivistettyinä. Sijaintia (gps) EI voi salata: se on numeroita, ja
   // kenttäsalaus toimii vain merkkijonoille — se on tietoinen rajaus, ei unohdus.
   alerts: ['kuvaus', 'kuittausHuomio', 'historia[].teksti'],
+  // Hälytystehtävän vapaat tekstit (erä 22). Hälytyskeskuksen havainto on määritelmällisesti
+  // kuvaus ihmisestä silloin kun kohteessa on ihminen — juuri se on havainnon tarkoitus
+  // ("aulassa näkyy huppupäinen henkilö"). Sama teksti toistuu lokirivillä, ja päivystäjän
+  // palautuskommentti kertoo mitä kohteessa on tekemättä.
+  //
+  // `silmukka` jää selväkieliseksi: se on hälytinjärjestelmän pisteen nimi ("Etuovi mg"),
+  // eli rakennuksen ominaisuus eikä tieto kenestäkään.
+  guardDispatch: [
+    'havainnot[].teksti',
+    'loki[].teksti',
+    'yksikot[].syy',
+  ],
+  // Kohteen master-koodi on hälytysjärjestelmän ohituskoodi: se avaa kohteen kenelle
+  // tahansa joka sen tietää, joten se on salasanaan rinnastuva salaisuus eikä kohteen
+  // ominaisuus. Avainten lisätiedot kertovat mikä avain käy mihinkin oveen, mikä on sama
+  // tieto toisin sanottuna. Avainnumerot ja järjestelmän merkki jäävät selväkielisiksi:
+  // numero ilman lisätietoa ei avaa mitään, ja "AJAX" on tuotenimi.
+  guardSites: ['masterkoodi', 'avaimet[].lisatieto'],
   // Suorituksen vapaat tekstit. `kuvaus` on se yksittäinen tilanne jota hoidetaan
   // ("poika 6 v, punainen takki, isä odottaa portilla") — se on määritelmällisesti
   // henkilötietoa aina kun tilanne koskee ihmistä, ja skenaariot koskevat. Kohtien

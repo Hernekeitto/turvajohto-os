@@ -59,11 +59,17 @@ type Props = {
   vartija: string;
   onTallenna: (raportti: GuardRaportti) => Promise<boolean>;
   onTakaisin: () => void;
+  // Tallennuspainikkeen teksti. Oletuksena "Tallenna raportti"; hälytystehtävällä
+  // (erä 22) raportti on samalla pyyntö saada poistua kohteesta, ja painikkeen on
+  // sanottava se — "Tallenna raportti" lupaisi että kirjaus on tässä kaikki.
+  tallennaLabel?: string;
 };
 
 const nyt = () => new Date().toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
 
-export const Raportit = ({ kohde, tyyppi, vartija, onTallenna, onTakaisin }: Props) => {
+export const Raportit = ({
+  kohde, tyyppi, vartija, onTallenna, onTakaisin, tallennaLabel = 'Tallenna raportti',
+}: Props) => {
   const { otsikko, kuvaus, Ikoni } = OTSIKOT[tyyppi];
   const [tallentaa, setTallentaa] = useState(false);
   const [virhe, setVirhe] = useState<string | null>(null);
@@ -329,7 +335,7 @@ export const Raportit = ({ kohde, tyyppi, vartija, onTallenna, onTakaisin }: Pro
             onClick={tallenna}
             className="px-5 py-2.5 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors disabled:opacity-60"
           >
-            {tallentaa ? 'Tallennetaan…' : 'Tallenna raportti'}
+            {tallentaa ? 'Tallennetaan…' : tallennaLabel}
           </button>
         </div>
       </div>
