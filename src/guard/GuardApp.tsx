@@ -1705,6 +1705,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
                 omaTunnus={session?.username || ''}
                 saaHallita={saaHallitaPankkia}
                 saaPyytaa={saaNahdaPankin}
+                omaEmployeeId={session?.employeeId || null}
                 onMuuttui={paivitaPankki}
                 onAvaa={setKohteenEsine}
               />

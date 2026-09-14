@@ -520,19 +520,30 @@ export const sijoitetut = (kalusto, sijoitusLaji, sijoitusId) =>
 
 // --- Vartijan näkymä kohteen kalustoon (erä 20b) ------------------------------------
 //
-// Vartija näkee VAIN sen kohteen kaluston jossa hän on juuri nyt vuorossa, ja siitäkin
-// vain esineen — ei sen luovutusketjua. Kaksi rajausta, kaksi eri syytä:
+// Vartija näkee KAKSI JOUKKOA, ja ne vastaavat kahteen eri kysymykseen:
 //
-// 1. RIVIT: kohde tulee kesken olevasta vuorosta (vuorot.js: keskenOlevaVuoro) eikä
-//    käyttäjän eventAccess-listasta. Ero on olennainen: eventAccess kertoo mihin
+//   "mitä tässä kohteessa on"  -> vuoron kohteelle jyvitetty kalusto
+//   "mitä minulla on"          -> hänelle itselleen luovutetut varusteet
+//
+// Molemmista näkyy vain esine, ei sen luovutusketjua. Rajaukset ja niiden syyt:
+//
+// 1. KOHTEEN RIVIT: kohde tulee kesken olevasta vuorosta (vuorot.js: keskenOlevaVuoro)
+//    eikä käyttäjän eventAccess-listasta. Ero on olennainen: eventAccess kertoo mihin
 //    kohteisiin tunnus saa koskea joskus, vuoro kertoo missä ihminen on nyt. Ilman
-//    vuoroa ei näy mitään — se on oikea lopputulos eikä puute, koska silloin ei ole
-//    kohdetta jonka kalustoa katsottaisiin.
+//    vuoroa kohteen kalustoa ei näy — se on oikea lopputulos eikä puute, koska silloin
+//    ei ole kohdetta jonka kalustoa katsottaisiin.
 //
 //    HUOM: hyväksytty tehtäväsiirto EI avaa toisen kohteen kalustoa, toisin kuin se
 //    avaa kohdelistan (index.js: siirtojenAvaamatKohteet). Päätös 14.9.2026: piiri on
 //    oma kohteensa jolla on oma kalustonsa, eikä piirivartija lainaa hälytystehtävällä
 //    kohteen tavaroita.
+//
+// 1b. OMAT VARUSTEET EIVÄT RIIPU VUOROSTA. Takki, tunnus ja varustevyö ovat vartijan
+//    hallussa myös vapaapäivänä, ja "mitä minulle on luovutettu" on kysymys johon on
+//    voitava vastata silloinkin kun vuoroa ei ole — esimerkiksi palautettaessa varusteita
+//    työsuhteen päättyessä. Sidonta on TYÖNTEKIJÄTIETUE eikä käyttäjätunnus, koska
+//    kaluston sijoitus osoittaa työntekijäpankkiin; ilman kytkentää (employeeId null)
+//    omia varusteita ei näytetä lainkaan, eikä nimellä päättelyä tehdä.
 //
 // 2. KENTÄT: `historia`, `pyynto` ja `luoja` karsitaan. Avaimen historia kertoo kuka
 //    pääsi sisään ja milloin — samaa henkilötietoa jonka takia keys.historia[].haltija
@@ -559,9 +570,27 @@ const ilmanKetjua = (esine) => {
   return julkinen;
 };
 
-export function vuoronKalusto(kalusto, siteId) {
-  if (!siteId) return [];
+/**
+ * Mitä vartija saa nähdä kalustopankista.
+ *
+ * `siteId`     kesken olevan vuoron kohde, tai null jos vuoroa ei ole
+ * `employeeId` kutsujan työntekijätietue, tai null jos tunnusta ei ole kytketty
+ *
+ * Molemmat null tarkoittaa tyhjää listaa. Se on tarkoitus: ilman vuoroa ja ilman
+ * työntekijäkytkentää ei ole mitään mitä tämä näkymä voisi kertoa.
+ */
+export function vuoronKalusto(kalusto, { siteId = null, employeeId = null } = {}) {
+  if (!siteId && !employeeId) return [];
   return (Array.isArray(kalusto) ? kalusto : [])
-    .filter((e) => e?.sijoitusLaji === 'kohde' && e?.sijoitusId === siteId && e?.tila !== 'poistettu')
+    .filter((e) => {
+      if (!e || e.tila === 'poistettu') return false;
+      if (siteId && e.sijoitusLaji === 'kohde' && e.sijoitusId === siteId) return true;
+      // Tyhjä sijoitusId ei saa osua tyhjään employeeId:hen. Ehto on jo ylempänä
+      // (molemmat null palaa aikaisin), mutta toinen niistä voi olla asetettu ja
+      // toinen ei — ja silloin `null === null` tekisi jokaisesta sijoittamattomasta
+      // esineestä kaikkien omaisuutta.
+      if (employeeId && e.sijoitusLaji === 'henkilo' && e.sijoitusId === employeeId) return true;
+      return false;
+    })
     .map(ilmanKetjua);
 }

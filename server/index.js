@@ -516,6 +516,15 @@ function requireAuth(req, res, next) {
   req.permissions = rolePermissions(user.roleId);
   req.eventAccess = user.eventAccess;
   req.tuotteet = paaseeTuotteisiin(user);
+  // Mihin työntekijäpankin tietueeseen tunnus liittyy. Tarvitaan kun kysytään mitä
+  // KÄYTTÄJÄLLE ITSELLEEN on luovutettu (kalusto.js: vuoronKalusto) — kaluston sijoitus
+  // osoittaa työntekijätietueeseen eikä käyttäjätunnukseen, koska esineitä luovutetaan
+  // myös ihmisille joilla ei ole tunnusta järjestelmään.
+  //
+  // null on tavallinen ja turvallinen arvo: jos tunnusta ei ole kytketty
+  // työntekijäpankkiin, henkilökohtaisia varusteita ei näytetä. Nimellä päättely olisi
+  // väärä ratkaisu — kaksi Virtasta on tavallisempaa kuin yksi.
+  req.employeeId = user.employeeId || null;
   // Liukuva istunto: jokainen onnistunut kirjautunut pyyntö ei-adminilta pidentää
   // evästeen voimassaoloa uudelleen alkuperäisen keston verran eteenpäin (selaimessa
   // tunnin, sovelluksessa rajoittamattoman ajan — ks. istunto.js). Admin pysyy
@@ -671,7 +680,10 @@ app.get('/api/data/:name', requireAuth, (req, res) => {
   // palvelinta. Täällä on vain se mitä se tarvitsee: kenen vuoro on kesken ja missä.
   if (name === 'assets' && req.role !== 'admin' && !canView(req.permissions, null, 'guard_assets')) {
     const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
-    data = kalusto.vuoronKalusto(data, vuoro?.siteId || null);
+    data = kalusto.vuoronKalusto(data, {
+      siteId: vuoro?.siteId || null,
+      employeeId: req.employeeId,
+    });
   }
   res.json({ ok: true, data });
 });

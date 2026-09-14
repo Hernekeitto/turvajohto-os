@@ -35,12 +35,18 @@ type Props = {
   // joten pankkihaku ei edes löytäisi mitään muuta — ja hakukenttä joka ei löydä mitään
   // on huonompi kuin ei hakukenttää.
   saaPyytaa: boolean;
+  // Kirjautuneen oma työntekijätietue, tai null jos tunnusta ei ole kytketty
+  // työntekijäpankkiin. Ratkaisee mitkä esineet ovat "sinun" — sidonta on
+  // työntekijätietue eikä käyttäjätunnus, koska kalustoa luovutetaan myös ihmisille
+  // joilla ei ole tunnusta järjestelmään.
+  omaEmployeeId: string | null;
   onMuuttui: () => void;
   onAvaa: (esine: KalustoTietue) => void;
 };
 
 export const KohteenKalusto = ({
-  kohde, kalusto, ladattu, omaTunnus, saaHallita, saaPyytaa, onMuuttui, onAvaa,
+  kohde, kalusto, ladattu, omaTunnus, saaHallita, saaPyytaa, omaEmployeeId,
+  onMuuttui, onAvaa,
 }: Props) => {
   const [pyyntoAuki, setPyyntoAuki] = useState(false);
   const [haku, setHaku] = useState('');
@@ -54,6 +60,20 @@ export const KohteenKalusto = ({
     .filter((e) => e.sijoitusLaji === 'kohde' && e.sijoitusId === kohde.id && e.tila !== 'poistettu')
     .sort((a, b) => a.tunnus.localeCompare(b.tunnus)),
   [kalusto, kohde.id]);
+
+  // Kirjautuneelle itselleen luovutetut varusteet. ERILLINEN LISTA eikä osa kohteen
+  // kalustoa, koska ne eivät ole kohteen tavaraa: takki ja tunnus seuraavat ihmistä
+  // kohteesta toiseen. Siksi ne myös näkyvät ilman vuoroa (server/kalusto.js).
+  //
+  // Ilman työntekijäkytkentää lista on tyhjä eikä osiota näytetä lainkaan — tyhjä
+  // "Sinulle luovutetut" lupaisi ettei vartijalla ole mitään, vaikka oikea syy olisi
+  // että tunnusta ei ole liitetty työntekijäpankkiin.
+  const omatVarusteet = useMemo(() => {
+    if (!omaEmployeeId) return [];
+    return kalusto
+      .filter((e) => e.sijoitusLaji === 'henkilo' && e.sijoitusId === omaEmployeeId && e.tila !== 'poistettu')
+      .sort((a, b) => a.tunnus.localeCompare(b.tunnus));
+  }, [kalusto, omaEmployeeId]);
 
   // Omat avoimet pyynnöt: mitä tälle kohteelle on jo pyydetty. Ilman tätä listaa sama
   // esine pyydettäisiin toistamiseen, ja palvelin vastaisi virheellä jota käyttäjä ei
@@ -165,34 +185,27 @@ export const KohteenKalusto = ({
           </p>
         </div>
       ) : (
-        <ul className="space-y-2">
-          {omat.map((esine) => {
-            const Ikoni = LAJIT[esine.laji]?.ikoni || Boxes;
-            return (
-              <li key={esine.id}>
-                <button
-                  type="button"
-                  onClick={() => onAvaa(esine)}
-                  className="w-full flex items-center gap-3 text-left bg-surface border border-line-soft rounded-lg px-3 py-2.5 hover:bg-sunken transition-colors"
-                >
-                  <Ikoni size={18} className="text-ink-muted shrink-0" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-medium text-ink-strong truncate">{esine.nimi}</span>
-                    <span className="block text-xs text-ink-muted font-mono">
-                      {esine.tunnus}
-                      {esine.alalaji ? ` · ${esine.alalaji}` : ''}
-                    </span>
-                  </span>
-                  {esine.tila !== 'kaytossa' && (
-                    <span className={`shrink-0 px-2 py-0.5 rounded-md text-xs font-bold border ${TILAN_VARI[esine.tila]}`}>
-                      {TILAN_SELITE[esine.tila]}
-                    </span>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <Kalustolista esineet={omat} onAvaa={onAvaa} />
+      )}
+
+      {/* --- Sinulle luovutetut varusteet ---
+          OMA OSIONSA eikä osa kohteen kalustoa, koska ne eivät ole kohteen tavaraa:
+          takki, tunnus ja varustevyö seuraavat ihmistä kohteesta toiseen. Siksi ne
+          näkyvät myös silloin kun vuoroa ei ole (server/kalusto.js: vuoronKalusto).
+
+          Osio piilotetaan kokonaan kun luovutettuja ei ole. Tyhjä lista väittäisi ettei
+          vartijalla ole mitään, vaikka todellinen syy voi olla että tunnusta ei ole
+          liitetty työntekijäpankkiin — ja se on pääkäyttäjän korjattava asia, ei
+          vartijalle näytettävä virhe. */}
+      {ladattu && omatVarusteet.length > 0 && (
+        <div className="pt-2 border-t border-line-soft">
+          <h3 className="font-bold text-ink-strong mb-1 mt-4">Sinulle luovutetut varusteet</h3>
+          <p className="text-sm text-ink-muted mb-3">
+            Henkilökohtaisesti sinulle kirjattu kalusto. Näkyy vuorosta riippumatta, ja
+            palautetaan työsuhteen päättyessä tai pyydettäessä.
+          </p>
+          <Kalustolista esineet={omatVarusteet} onAvaa={onAvaa} />
+        </div>
       )}
 
       {/* --- Pyyntö tai siirto pankista. Pelkällä vuoro-oikeudella tätä ei ole
@@ -307,3 +320,39 @@ export const KohteenKalusto = ({
     </div>
   );
 };
+
+// Kalustorivit listana. Sama esitys kohteen kalustolle ja omille varusteille: ne ovat
+// eri joukkoja mutta samaa tavaraa, eikä kahta eri riviulkoasua kannata ylläpitää.
+const Kalustolista = ({ esineet, onAvaa }: {
+  esineet: KalustoTietue[];
+  onAvaa: (esine: KalustoTietue) => void;
+}) => (
+  <ul className="space-y-2">
+    {esineet.map((esine) => {
+      const Ikoni = LAJIT[esine.laji]?.ikoni || Boxes;
+      return (
+        <li key={esine.id}>
+          <button
+            type="button"
+            onClick={() => onAvaa(esine)}
+            className="w-full flex items-center gap-3 text-left bg-surface border border-line-soft rounded-lg px-3 py-2.5 hover:bg-sunken transition-colors"
+          >
+            <Ikoni size={18} className="text-ink-muted shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="block font-medium text-ink-strong truncate">{esine.nimi}</span>
+              <span className="block text-xs text-ink-muted font-mono">
+                {esine.tunnus}
+                {esine.alalaji ? ` · ${esine.alalaji}` : ''}
+              </span>
+            </span>
+            {esine.tila !== 'kaytossa' && (
+              <span className={`shrink-0 px-2 py-0.5 rounded-md text-xs font-bold border ${TILAN_VARI[esine.tila]}`}>
+                {TILAN_SELITE[esine.tila]}
+              </span>
+            )}
+          </button>
+        </li>
+      );
+    })}
+  </ul>
+);

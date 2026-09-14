@@ -341,8 +341,9 @@ test('ilman vuoroa ei nay mitaan', () => {
   // Tyhjä lista on oikea vastaus eikä puute: ilman vuoroa ei ole kohdetta jonka
   // kalustoa katsottaisiin. Jos tämä palauttaisi koko pankin, vartija näkisi kaiken
   // heti kun vuoro päättyy.
-  assert.deepEqual(vuoronKalusto([esine()], null), []);
-  assert.deepEqual(vuoronKalusto([esine()], ''), []);
+  assert.deepEqual(vuoronKalusto([esine()], { siteId: null }), []);
+  assert.deepEqual(vuoronKalusto([esine()], {}), []);
+  assert.deepEqual(vuoronKalusto([esine()]), []);
 });
 
 test('vartija nakee vain oman vuoronsa kohteen kaluston', () => {
@@ -360,7 +361,7 @@ test('vartija nakee vain oman vuoronsa kohteen kaluston', () => {
     siirra({ esine: esine({ id: 'k4' }), sijoitus: { laji: 'henkilo', id: 'emp-9', nimi: 'Korhonen' }, user: 'a', nyt: T0 }).esine,
   ];
 
-  const nakyvat = vuoronKalusto(pankki, 'kohde-1');
+  const nakyvat = vuoronKalusto(pankki, { siteId: 'kohde-1' });
   assert.deepEqual(nakyvat.map((e) => e.id), ['k1']);
 });
 
@@ -369,7 +370,7 @@ test('poistettu ei nay vartijalle vaikka se olisi kirjattu kohteelle', () => {
     esine: esine(), sijoitus: { laji: 'kohde', id: 'kohde-1', nimi: 'Kohde 1' }, user: 'a', nyt: T0,
   }).esine;
   const poistettu = poistaKaytosta({ esine: kohteella, user: 'a', syy: 'Repesi', nyt: T0 }).esine;
-  assert.deepEqual(vuoronKalusto([poistettu], 'kohde-1'), []);
+  assert.deepEqual(vuoronKalusto([poistettu], { siteId: 'kohde-1' }), []);
 });
 
 test('luovutusketju karsitaan: ei historiaa, pyyntoa eika luojaa', () => {
@@ -387,7 +388,7 @@ test('luovutusketju karsitaan: ei historiaa, pyyntoa eika luojaa', () => {
   assert.ok(pyydetty.pyynto);
   assert.equal(pyydetty.luoja, 'paakayttaja');
 
-  const [nakyva] = vuoronKalusto([pyydetty], 'kohde-1');
+  const [nakyva] = vuoronKalusto([pyydetty], { siteId: 'kohde-1' });
   assert.equal(nakyva.historia, undefined);
   assert.equal(nakyva.pyynto, undefined);
   assert.equal(nakyva.luoja, undefined);
@@ -396,6 +397,61 @@ test('luovutusketju karsitaan: ei historiaa, pyyntoa eika luojaa', () => {
   assert.equal(nakyva.nimi, 'Talvitakki L');
   assert.equal(nakyva.sijoitusNimi, 'Kohde 1');
   assert.equal(nakyva.tila, 'kaytossa');
+});
+
+// --- Omat varusteet ----------------------------------------------------------------
+
+const henkilolle = (id, empId, nimi = 'Virtanen') => siirra({
+  esine: esine({ id }), sijoitus: { laji: 'henkilo', id: empId, nimi }, user: 'a', nyt: T0,
+}).esine;
+
+test('omat varusteet nakyvat ILMAN vuoroa', () => {
+  // Takki ja tunnus ovat vartijan hallussa myös vapaapäivänä. Jos tämä vaatisi vuoron,
+  // kysymykseen "mitä minulle on luovutettu" ei voisi vastata silloin kun se useimmiten
+  // kysytään — varusteita palautettaessa.
+  const omat = vuoronKalusto([henkilolle('k1', 'emp-1')], { siteId: null, employeeId: 'emp-1' });
+  assert.deepEqual(omat.map((e) => e.id), ['k1']);
+});
+
+test('toiselle luovutettu ei nay', () => {
+  const pankki = [henkilolle('k1', 'emp-1'), henkilolle('k2', 'emp-2', 'Korhonen')];
+  assert.deepEqual(vuoronKalusto(pankki, { employeeId: 'emp-1' }).map((e) => e.id), ['k1']);
+});
+
+test('kohteen kalusto ja omat varusteet nakyvat yhdessa', () => {
+  const kohteella = siirra({
+    esine: esine({ id: 'k1' }), sijoitus: { laji: 'kohde', id: 'kohde-1', nimi: 'Kohde 1' },
+    user: 'a', nyt: T0,
+  }).esine;
+  const pankki = [
+    kohteella,
+    henkilolle('k2', 'emp-1'),
+    henkilolle('k3', 'emp-2', 'Korhonen'),
+    esine({ id: 'k4' }), // varastossa
+  ];
+  const nakyvat = vuoronKalusto(pankki, { siteId: 'kohde-1', employeeId: 'emp-1' });
+  assert.deepEqual(nakyvat.map((e) => e.id).sort(), ['k1', 'k2']);
+});
+
+test('tyhja employeeId ei osu sijoittamattomaan esineeseen', () => {
+  // Varastossa olevan esineen sijoitusId on null. Jos kytkemättömän tunnuksen null
+  // vertautuisi siihen, jokainen varastossa oleva esine olisi kaikkien omaisuutta —
+  // ja tämä on se rivi joka sen estää.
+  const varastossa = esine({ id: 'k1' });
+  assert.equal(varastossa.sijoitusId, null);
+  assert.deepEqual(vuoronKalusto([varastossa], { siteId: 'kohde-1', employeeId: null }), []);
+});
+
+test('omista varusteista karsitaan ketju samoin kuin kohteen kalustosta', () => {
+  const [nakyva] = vuoronKalusto([henkilolle('k1', 'emp-1')], { employeeId: 'emp-1' });
+  assert.equal(nakyva.historia, undefined);
+  assert.equal(nakyva.luoja, undefined);
+  assert.equal(nakyva.sijoitusNimi, 'Virtanen');
+});
+
+test('poistettu ei nay omissa varusteissa', () => {
+  const poistettu = poistaKaytosta({ esine: henkilolle('k1', 'emp-1'), user: 'a', syy: 'Repesi', nyt: T0 }).esine;
+  assert.deepEqual(vuoronKalusto([poistettu], { employeeId: 'emp-1' }), []);
 });
 
 test('karsinta on sallittujen kenttien lista: tuntematon kentta ei paase lapi', () => {
@@ -407,7 +463,7 @@ test('karsinta on sallittujen kenttien lista: tuntematon kentta ei paase lapi', 
   }).esine;
   const laajennettu = { ...kohteella, salainenUusiKentta: 'vartijan henkilotunnus' };
 
-  const [nakyva] = vuoronKalusto([laajennettu], 'kohde-1');
+  const [nakyva] = vuoronKalusto([laajennettu], { siteId: 'kohde-1' });
   assert.equal(nakyva.salainenUusiKentta, undefined);
 });
 
@@ -418,7 +474,7 @@ test('karsinta ei muuta alkuperaista tietuetta', () => {
   const kohteella = siirra({
     esine: esine(), sijoitus: { laji: 'kohde', id: 'kohde-1', nimi: 'Kohde 1' }, user: 'a', nyt: T0,
   }).esine;
-  vuoronKalusto([kohteella], 'kohde-1');
+  vuoronKalusto([kohteella], { siteId: 'kohde-1' });
   assert.ok(Array.isArray(kohteella.historia));
   assert.equal(kohteella.historia.length, 2);
 });
