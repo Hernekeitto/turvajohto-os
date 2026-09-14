@@ -196,6 +196,13 @@ export type Checkin = {
   id: string | number;
   eventId?: string | null;
   name: string;
+  // Tapahtumakohtainen nimimerkki, esim. "Ensiapu 1". Sama henkilö voi olla eri
+  // tapahtumassa eri roolissa, joten tätä ei voi sitoa käyttäjätunnukseen.
+  nickname?: string;
+  // employeeId ja displayId sitovat rosteririvin työntekijäpankin tietueeseen, jotta
+  // kirjautuneen käyttäjän oma nimimerkki löytyy tästä tapahtumasta (kirjaajanTunniste).
+  employeeId?: string;
+  displayId?: number | null;
   role?: string;
   vest?: boolean;
   badge?: string;
@@ -216,3 +223,16 @@ export const initialCheckedInEmployees: Checkin[] = [
   { id: 2, eventId: 'fesx', name: 'Virtanen Matti Johannes Antero', role: 'Vartija', vest: false, badge: '5521', headset: false, radio: '', checkInDate: '', checkInTime: '10:22', checkOutDate: '', checkOutTime: '', comment: '', checkOutComment: '', status: 'checked_in' },
   { id: 3, eventId: 'fesx', name: 'Mäkinen Kalle Petteri Aleksi', role: 'Järjestyksenvalvoja', vest: true, badge: '9982', headset: true, radio: 'R-05', checkInDate: '', checkInTime: '10:40', checkOutDate: '', checkOutTime: '', comment: '', checkOutComment: '', status: 'checked_in' },
 ];
+
+// Sisäänkirjausrivin kommentit listana ({id, text, author, date, time}) — vanha data
+// tunsi vain yhden merkkijonokentän (comment), joka näytetään taannehtivasti yhtenä
+// "legacy"-kommenttina kunnes se korvautuu uudella listalla.
+export type KirjauksenKommentti = { id: string; text: string; author: string; date: string; time: string };
+
+export const getEmpComments = (emp: any): KirjauksenKommentti[] => {
+  if (Array.isArray(emp.comments)) return emp.comments;
+  if (emp.comment) {
+    return [{ id: 'legacy', text: emp.comment, author: '', date: emp.checkInDate || '', time: emp.checkInTime || '' }];
+  }
+  return [];
+};

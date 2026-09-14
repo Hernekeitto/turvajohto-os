@@ -49,6 +49,9 @@ export type AuditMerkinta = {
   recordId?: string;
   eventId?: string | null;
   targetId?: string;
+  // Käyttäjähallinnan toimintojen kohde (server/index.js: user_create, user_update,
+  // totp_reset, force_logout, ...). Käyttäjätunnus, ei tietue-id kuten targetId.
+  targetUser?: string;
   // Toimintokohtaiset lisätiedot (statusFrom/statusTo, siirrettyTunnisteesta, ...).
   // Tarkoituksella löyhä: lisätietoja tulee lisää eikä jokaisen takia haluta muuttaa
   // tätä tyyppiä.

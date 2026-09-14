@@ -1,24 +1,45 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from './SessionContext';
 // Jaetut apurit (ks. src/shared/). Nämä olivat aiemmin tässä tiedostossa, mutta ne eivät
 // koske App-komponentin tilaan ja GUARD-puoli tarvitsee ne samoina.
 import { seuraavaTunnisteNumero, muotoileTunniste, taydennaTunnisteet } from './shared/tunnisteet';
 import { kayttajatunnusNimesta, buildFullName } from './shared/nimet';
 import {
-  emptyEmpForm, employeeToFormState, onKortti, initialEmployees, initialCheckedInEmployees,
-  type Checkin, type Tyontekija,
+  emptyEmpForm, employeeToFormState, initialEmployees, initialCheckedInEmployees,
+  getEmpComments, type Checkin, type Tyontekija, type TyontekijaLomake,
 } from './event/tyontekijat';
+import { INITIAL_EVENTS, findEventName } from './event/tapahtumat';
+import {
+  REPORT_DETAIL_FIELDS, OLETUS_RADIOKANAVAT, CHECKIN_ROLES,
+  DEVIATION_TYPES, initialReports, READINESS_CHECKS, tyhjatKuittaukset,
+} from './event/kirjausvakiot';
+import {
+  SMS_RYHMAT, smsRyhmanLabel, SMS_OLETUSNAPIT,
+  laskeViestinMitat,
+} from './event/sms';
+import {
+  tehtavanIka, TEHTAVA_KIIREET, TEHTAVA_KIIRE_OLETUS, tehtavanKiire, type TehtavaKiire,
+} from './event/tehtavat';
 import { Hatatilanneohjeet } from './event/nakymat/Hatatilanneohjeet';
+import { AuditLoki } from './event/nakymat/AuditLoki';
+import { MinulleJaetut } from './event/nakymat/MinulleJaetut';
+import { TallennetutRaportit } from './event/nakymat/TallennetutRaportit';
+import { ArkistoidutTapahtumat, ArkistoidunTapahtumanTiedot } from './event/nakymat/ArkistoidutTapahtumat';
+import { HataviestiLoki } from './event/nakymat/HataviestiLoki';
+import { TyontekijaLista } from './event/nakymat/TyontekijaLista';
+import { TyontekijanMuokkaus } from './event/nakymat/TyontekijanMuokkaus';
+import { KayttajaLista, UusiKayttaja, KayttajanOikeudet } from './event/nakymat/KayttajaHallinta';
+import { useKayttajanOikeudet } from './event/useKayttajanOikeudet';
 import { riskipisteet, riskitaso, RISKISAVYT, RISKITASOT } from './event/riskiarvio';
-import { paikallinenPaiva, yhdistaPaivaJaAika, muotoileLaskuri, muotoileKirjautumisaika } from './shared/ajat';
-import { muotoileEuro, laskeKokonaispalkka, isValidPasswordClient } from './shared/muotoilu';
+import { yhdistaPaivaJaAika, muotoileLaskuri, muotoileKirjautumisaika, muotoileAikaleima } from './shared/ajat';
+import { isValidPasswordClient } from './shared/muotoilu';
 import { htmlTeksti, tulostusDokumentti, tulostaDokumentti, julisteDokumentti } from './shared/tuloste';
 import { QrKoodi, haeQrKoodi } from './shared/komponentit/QrKoodi';
 import { Liitteet } from './shared/komponentit/Liitteet';
 import type { Liite } from './shared/liitteet';
 import { jaotteleSailytysajan, tapahtumanPoistoaikataulu } from './shared/sailytysaika';
 import { DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab } from './shared/oikeudet';
-import { TILAT, VAKAVUUDET, tila as kirjauksenTila, onLukittu, onPoikkeama, uusiKorjausmerkinta } from './shared/kirjaukset';
+import { TILAT, VAKAVUUDET, tila as kirjauksenTila, onLukittu, onPoikkeama, uusiKorjausmerkinta, type Korjausmerkinta } from './shared/kirjaukset';
 import { lomakeRaportille, lomakeTunnus } from './shared/lomakerekisteri';
 import { TilaMerkki, VakavuusMerkki, LukkoMerkki } from './shared/komponentit/TilaMerkki';
 import { useKanava, type Sijainti } from './shared/kanava';
@@ -42,7 +63,7 @@ import { Vyohykekirjaukset, type AlueKirjaus } from './shared/komponentit/Vyohyk
 import { avaaJono, kaynnistaAutomatiikka, kuunteleLahetyksia, lisaaJonoon } from './shared/jono';
 import type {
   AuditMerkinta, Ilmoitus, JaettuKohde, Jakolinkki, KayttajaRivi, LuotuLinkki,
-  Kirjaus, LomakeRivi, Tapahtuma, TapahtumanLomake, TapahtumanTiedosto, TotpTiedot,
+  Kirjaus, LomakeRivi, Tapahtuma, TapahtumanLomake, TapahtumanTiedosto,
   UusiSalasana,
 } from './event/tyypit';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from './shared/kalusto';
@@ -59,7 +80,7 @@ import { EmpStatusBadge, getEmpStatus } from './shared/komponentit/EmpStatusBadg
 import { NotificationBell, ProfileMenu } from './shared/komponentit/YlapalkkiOsat';
 import { Ylapalkki, YlapalkkiLogo } from './shared/komponentit/Ylapalkki';
 import { TakaisinLinkki } from './shared/komponentit/TakaisinLinkki';
-import { AlertBanner } from './shared/komponentit/AlertBanner';
+import { AlertBanner, type AlertTyyppi } from './shared/komponentit/AlertBanner';
 import { ASETUSTEN_SIVUKARTAT } from './asetusten-sivukartat';
 import { Kayttajatasot } from './shared/asetukset/Kayttajatasot';
 import { Tallennustila } from './shared/asetukset/Tallennustila';
@@ -81,7 +102,6 @@ import {
   Settings,
   MessageSquare,
   ChevronRight,
-  ChevronDown,
   Info,
   X,
   ArrowLeft,
@@ -98,10 +118,8 @@ import {
   UserPlus,
   IdCard,
   UserCheck,
-  Contact,
   Archive,
   Paperclip,
-  Home,
   DoorOpen,
   CheckSquare,
   Menu,
@@ -109,16 +127,11 @@ import {
   Briefcase,
   Pencil,
   Trash2,
-  Landmark,
-  Languages,
-  BadgeCheck,
-  HardHat,
   KeyRound,
   QrCode,
   Printer,
   Megaphone,
   Smartphone,
-  RefreshCw,
   History,
   Eye,
   EyeOff,
@@ -130,428 +143,6 @@ import {
   BarChart3,
   ClipboardList,
 } from 'lucide-react';
-
-// Tapahtumat — jaettu perustieto, käytetään sekä tapahtumavalinnassa että
-// tapahtumariippumattomassa raporttinäkymässä (nimen näyttämiseen).
-// Tämä on vain alkuarvo ensimmäistä latausta varten — todellinen lista tulee
-// palvelimelta (ks. `events`-tila) ja "Luo uusi tapahtuma" -lomake lisää siihen.
-const INITIAL_EVENTS: Tapahtuma[] = [
-  {
-    id: 'fesx',
-    name: 'FestivaaliX',
-    status: 'Käynnissä',
-    statusTone: 'bg-emerald-100 text-emerald-700',
-    dates: '11.8.–13.8.2026',
-    place: 'Ratinan suvanto, Tampere',
-    audience: '14 200 hlö / vrk',
-    client: 'Tapahtumatuotanto X Oy',
-    accent: 'border-emerald-200 hover:border-emerald-400'
-  },
-  {
-    id: 'feso',
-    name: 'FestivaaliÖ',
-    status: 'Suunnittelu',
-    statusTone: 'bg-slate-200 text-slate-700',
-    dates: '5.9.–6.9.2026',
-    place: 'Ei vahvistettu',
-    audience: 'Arvio puuttuu',
-    client: 'Mallitoimeksiantaja',
-    accent: 'border-slate-200 hover:border-indigo-400'
-  }
-];
-
-function findEventName(eventId: string | null | undefined, eventsList: Tapahtuma[]) {
-  // Vanha data ilman eventId-kenttää lasketaan kuuluvaksi FestivaaliX:ään
-  // (sama oletus kuin currentEventReports/currentEventCheckedIn-suodatuksessa)
-  const id = eventId || 'fesx';
-  return eventsList.find(e => e.id === id)?.name || id;
-}
-
-// Raporttien tyyppikohtaiset lisäkentät ihmisluettavaksi "Avaa raportti" -näkymässä.
-// id/eventId/typeId/type/author/time/summary/attachment näytetään erikseen kiinteässä muodossa.
-// Tyhjät kentät jätetään näyttämättä (ks. suodatin openedReport-modaalissa), joten
-// sama lista kattaa kaikki raporttityypit: järjestyksenvalvojan tapahtumailmoituksen
-// kohdehenkilökentät näkyvät vain niissä raporteissa joissa ne on täytetty.
-
-const REPORT_DETAIL_FIELDS = [
-  { key: 'date', label: 'Päivämäärä' },
-  { key: 'place', label: 'Tapahtumapaikka' },
-  { key: 'licenseHolder', label: 'Turvallisuusalan elinkeinoluvan haltija' },
-  { key: 'subjectLastName', label: 'Kohdehenkilön sukunimi' },
-  { key: 'subjectFirstNames', label: 'Kohdehenkilön etunimet' },
-  // masked: arvo näytetään avatussa raportissa peitettynä ja paljastetaan vain
-  // erikseen silmäpainikkeesta. Suora tunniste ei näy sivusilmällä esim. silloin kun
-  // raporttia selataan muiden läsnä ollessa tai ruutu on jaettuna. Tämä on
-  // näyttötason suoja, ei pääsynhallinta: sillä käyttäjällä joka näkee raportin on
-  // oikeus myös näihin kenttiin (ks. server/permissions.js) ja arvo tulee joka
-  // tapauksessa APIsta selaimeen.
-  { key: 'subjectPersonalId', label: 'Kohdehenkilön henkilötunnus', masked: true },
-  { key: 'subjectAddress', label: 'Kohdehenkilön osoitetiedot', masked: true },
-  { key: 'subjectFeatures', label: 'Tuntomerkit' },
-  { key: 'subjectObservations', label: 'Havainnot käyttäytymisestä ja tilasta' },
-  { key: 'description', label: 'Vapaa kuvaus' },
-  { key: 'tikeComment', label: 'TIKE:n kommentti' },
-  // Erässä 1 lisätyt käsittelykentät. Tila ja vakavuus EIVÄT ole tässä listassa, koska
-  // ne ovat myös muokattavia — ne näytetään modaalissa omina merkkeinään.
-  { key: 'assignedTo', label: 'Vastuutettu' },
-  { key: 'closedAt', label: 'Suljettu', muotoile: (v: string) => new Date(v).toLocaleString('fi-FI') },
-  { key: 'closedBy', label: 'Sulkija' },
-  // Tapahtumailmoitus on toimitettava poliisilaitokselle, jos kiinni otettu vapautetaan
-  // (LYTP 8 § ja 33 § 3 mom).
-  { key: 'policeDeliveredAt', label: 'Toimitettu poliisille', muotoile: (v: string) => new Date(v).toLocaleString('fi-FI') },
-  { key: 'policeStation', label: 'Vastaanottava poliisilaitos' },
-  { key: 'taskTitle', label: 'Tehtävän otsikko' },
-  // muotoile: kentän arvo on koneluettava (ISO-aikaleima), joten se muotoillaan
-  // vasta näytettäessä — sekä avatussa raportissa että PDF-tulosteessa.
-  { key: 'taskDoneAt', label: 'Tehtävä kuitattu tehdyksi', muotoile: (v: string) => new Date(v).toLocaleString('fi-FI') },
-  { key: 'taskDoneBy', label: 'Kuittaaja' },
-  { key: 'taskDoneComment', label: 'Kuittauksen kommentti' },
-  // Hyväksytystä yleisöilmoituksesta syntyvän kirjauksen kentät. Lähde on osa
-  // kirjauksen todistusarvoa: lukijan on nähtävä että havainto on tuntemattoman
-  // ohikulkijan kertoma eikä oman työntekijän tekemä.
-  { key: 'reporterPlace', label: 'Ilmoittajan kertoma paikka' },
-  { key: 'publicFormName', label: 'Ilmoituksen lähde (juliste)' },
-  { key: 'publicReceivedAt', label: 'Ilmoitus saapui', muotoile: (v: string) => new Date(v).toLocaleString('fi-FI') },
-  // masked samasta syystä kuin kohdehenkilön tunnisteet: yhteystieto on henkilötieto,
-  // eikä sen kuulu näkyä sivusilmällä kun kirjauksia selataan.
-  { key: 'reporterContact', label: 'Ilmoittajan yhteystieto', masked: true },
-  { key: 'actions', label: 'Tehdyt toimenpiteet' },
-  { key: 'resources', label: 'Käytetyt resurssit' },
-  { key: 'employees', label: 'Paikalla olleet työntekijät' },
-  { key: 'denied', label: 'Estetty pääsy (hlö)' },
-  { key: 'removed', label: 'Poistettu alueelta (hlö)' },
-  { key: 'detained', label: 'Kiinniotettu (hlö)' },
-  { key: 'detainedOrForce', label: 'Otettu kiinni tai käytetty voimakeinoja', bool: true },
-  { key: 'force', label: 'Voimakeinoja käytetty', bool: true },
-  { key: 'tools', label: 'Voimankäyttövälineitä käytetty', bool: true },
-  { key: 'firearm', label: 'Ampuma-ase esillä tai käytetty', bool: true },
-  { key: 'firstAid', label: 'Ensiapu tai ensihoito annettu', bool: true },
-];
-
-// Kuvaa "Luo uusi tapahtuma" -lomakkeen kentät ryhmiteltynä — käytetään
-// "Tallennetut tapahtumat" -arkistonäkymässä koko lomakedatan näyttämiseen
-// vain luku -muodossa (ei pelkkiä raportteja/kirjauksia).
-const FORM_FIELD_GROUPS = [
-  { title: '1. Toimeksiantajan viralliset tiedot', fields: [
-    { key: 'clientName', label: 'Yrityksen tai yhdistyksen virallinen nimi' },
-    { key: 'businessId', label: 'Y-tunnus' },
-  ]},
-  { title: '2. Yhteyshenkilöt', fields: [
-    { key: 'ordererName', label: 'Tilaaja – Nimi' },
-    { key: 'ordererPhone', label: 'Tilaaja – Puhelinnumero' },
-    { key: 'ordererEmail', label: 'Tilaaja – Sähköpostiosoite' },
-    { key: 'deciderName', label: 'Päättävä vastuuhenkilö – Nimi' },
-    { key: 'deciderPhone', label: 'Päättävä vastuuhenkilö – Puhelinnumero' },
-    { key: 'deciderEmail', label: 'Päättävä vastuuhenkilö – Sähköpostiosoite' },
-  ]},
-  { title: '3. Laskutustiedot', fields: [
-    { key: 'einvoiceAddress', label: 'Verkkolaskuosoite' },
-    { key: 'einvoiceOperator', label: 'Operaattoritunnus' },
-    { key: 'billingRef', label: 'Viite tai kustannuspaikka' },
-  ]},
-  { title: '4. Tapahtuman virallinen nimi ja luonne', fields: [
-    { key: 'eventName', label: 'Tapahtuman virallinen nimi' },
-    { key: 'eventType', label: 'Tapahtuman luonne' },
-    { key: 'eventTypeOther', label: 'Tarkenna tapahtuman luonne' },
-  ]},
-  { title: '5. Ajankohta ja aikataulu', fields: [
-    { key: 'publicStartDate', label: 'Yleisölle alkaa (pvm)' },
-    { key: 'publicStartTime', label: 'Yleisölle alkaa (klo)' },
-    { key: 'publicEndDate', label: 'Yleisölle päättyy (pvm)' },
-    { key: 'publicEndTime', label: 'Yleisölle päättyy (klo)' },
-    { key: 'buildStart', label: 'Rakennus alkaa' },
-    { key: 'buildEnd', label: 'Rakennus päättyy' },
-    { key: 'teardownStart', label: 'Purku alkaa' },
-    { key: 'teardownEnd', label: 'Purku päättyy' },
-  ]},
-  { title: '6. Tapahtumapaikka', fields: [
-    { key: 'address', label: 'Tarkka osoite' },
-    { key: 'areaType', label: 'Aluetyyppi' },
-    { key: 'fenced', label: 'Onko alue aidattu' },
-    { key: 'areaNotes', label: 'Aluerajaukset ja huomiot' },
-  ]},
-  { title: '7. Arvioitu yleisömäärä ja kohderyhmä', fields: [
-    { key: 'audienceCount', label: 'Arvioitu yleisömäärä (hlö)' },
-    { key: 'requiredJvCount', label: 'Vahvistettu JV-mitoitus (hlö)' },
-    { key: 'ageProfile', label: 'Ikärakenne' },
-    { key: 'audienceNotes', label: 'Kohderyhmän kuvaus' },
-  ]},
-  { title: '8. Riskiprofiili ja historia', fields: [
-    { key: 'heldBefore', label: 'Onko vastaava tapahtuma järjestetty aiemmin' },
-    { key: 'previousIncidents', label: 'Aiemmat järjestyshäiriöt, sairaankuljetukset ja poikkeamat' },
-  ]},
-  { title: '9. Alkoholin anniskelu', fields: [
-    { key: 'hasBar', label: 'Alueella on anniskelualue', bool: true },
-    { key: 'barResponsible', label: 'Anniskelusta vastaa' },
-    { key: 'barOperator', label: 'Anniskeluluvan haltija ja yhteystiedot' },
-  ]},
-  { title: '10. Esiintyjät ja ohjelmisto', fields: [
-    { key: 'performers', label: 'Esiintyjät ja puhujat' },
-    { key: 'reactionRisk', label: 'Ohjelmistossa voimakkaita reaktioita herättäviä esiintyjiä/puhujia', bool: true },
-    { key: 'vipGuests', label: 'Mukana VIP-vieraita, jotka vaativat henkilösuojausta', bool: true },
-    { key: 'vipNotes', label: 'Tarkennus suojaustarpeesta' },
-  ]},
-  { title: '11. Olemassa oleva infrastruktuuri', fields: [
-    { key: 'existingCctv', label: 'Onko alueella kameravalvontaa' },
-    { key: 'cctvNotes', label: 'Kameravalvonnan tarkennus' },
-    { key: 'lighting', label: 'Valaistus pimeän aikaan' },
-    { key: 'exitRoutes', label: 'Poistumisreitit ja pelastustiet' },
-  ]},
-  { title: '12. Viranomaisyhteistyö', fields: [
-    { key: 'policeNotification', label: 'Yleisötilaisuusilmoitus poliisille' },
-    { key: 'rescuePlan', label: 'Pelastussuunnitelma pelastuslaitokselle' },
-    { key: 'authorityResponsible', label: 'Kenen vastuulla asiakirjojen laatiminen on' },
-  ]},
-  { title: '14. Viestintä ja hätänumerot', fields: [
-    { key: 'phoneTurva1', label: 'Turva 1 (turvallisuuspäällikkö)' },
-    { key: 'phoneTurva2', label: 'Turva 2' },
-    { key: 'phoneTike', label: 'TIKE (tilannekeskus)' },
-    { key: 'phoneFirstAid', label: 'EA-päivystys' },
-  ]},
-  { title: '13. Muiden toimijoiden läsnäolo', fields: [
-    { key: 'otherOperators', label: 'Alueella toimivat muut osapuolet' },
-    { key: 'buildPhaseResponsible', label: 'Päävastuu alueen kokonaisturvallisuudesta rakennusvaiheessa' },
-  ]},
-];
-
-// Radiokanavien oletusjako. Tämä on uuden tapahtuman ESITÄYTTÖ, ei kiinteä lista:
-// kanavat tallentuvat tapahtuman omiin tietoihin ja jokainen tapahtuma voi muuttaa
-// niitä. Aiemmin lista oli kovakoodattu suoraan näkymään, jolloin se näytti samalta
-// joka tapahtumassa eikä sitä voinut korjata mistään.
-const OLETUS_RADIOKANAVAT = [
-  'JV:t Tapahtuma',
-  'JV:t Välitönläheisyys',
-  'Toimintaryhmät',
-  'Toimintaryhmät (vara)',
-  'Backstage',
-  'Raportointi',
-  'Liikenne',
-  'Turvallisuusjohto ja tike (tarvittaessa viranomaiset)',
-];
-
-// Sisäänkirjauksen roolit. "Ensiapu" ja "Muu" lisättiin, koska työntekijätilanteen
-// laatikoissa oli niille kovakoodatut luvut (12 ja 8) ilman mitään datalähdettä.
-const CHECKIN_ROLES = ['Järjestyksenvalvoja', 'Vartija', 'Ensiapu', 'Muu'];
-
-// Poikkeamiksi laskettavat kirjaustyypit.
-// 'jvreport' = järjestyksenvalvojan tapahtumailmoitus (LYTP). Se on poikkeama samalla
-// perusteella kuin 'jvaction': kirjaus toimenpiteestä joka kohdistui henkilöön.
-const DEVIATION_TYPES = ['jvaction', 'jvreport', 'firstaid', 'threat', 'fence', 'damage'];
-
-// Raportit ovat polymorfisia: 14 eri typeId:tä, joilla kullakin omat lisäkenttänsä
-// (ks. REPORT_DETAIL_FIELDS ja server/validation.js:n sama perustelu). Siemendatan
-// muodosta johdettu tyyppi ei siksi kuvaa kokoelmaa, vaan estäisi uusien kenttien
-// lukemisen — siksi any[].
-const initialReports: Kirjaus[] = [
-  { id: '26/FesX/1108/099', eventId: 'fesx', typeId: 'out', type: 'Työntekijän uloskirjaus', author: 'TIKE Päivystäjä', time: '14:10', summary: 'Virtanen ulos, radiopuhelin rikki.' },
-  { id: '26/FesX/1108/098', eventId: 'fesx', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Korhonen Elli', time: '13:45', summary: 'Kiinniotto portilla 2.', denied: 0, removed: 1, detained: 1, force: true, tools: true, firearm: false, firstAid: false },
-  { id: '26/FesX/1108/097', eventId: 'fesx', typeId: 'firstaid', type: 'Ensiaputilanne', author: 'EA-Päivystys', time: '12:15', summary: 'Nyrjähdys, paikattu pisteellä.' },
-  { id: '26/FesX/1108/096', eventId: 'fesx', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Mäkinen Kalle', time: '11:50', summary: 'Päihtynyt asiakas poistettu anniskelualueelta.', denied: 0, removed: 2, detained: 0, force: false, tools: false, firearm: false, firstAid: false },
-  { id: '26/FesX/1108/095', eventId: 'fesx', typeId: 'fence', type: 'Aitojen ylitys / luvaton sisäänpääsy', author: 'Jaakko Mäki', time: '11:20', summary: 'Kaksi henkilöä aidan yli lohkolla C, poistettu alueelta.' },
-  { id: '26/FesX/1108/094', eventId: 'fesx', typeId: 'firstaid', type: 'Ensiaputilanne', author: 'EA-Päivystys', time: '10:55', summary: 'Lämpöuupumus, seurantaan EA-pisteelle.' },
-  { id: '26/FesX/1108/093', eventId: 'fesx', typeId: 'threat', type: 'Uhkatilanne', author: 'Liisa Ollila', time: '10:30', summary: 'Sanallinen uhkaus henkilökuntaa kohtaan pääportilla.' },
-  { id: '26/FesX/1108/092', eventId: 'fesx', typeId: 'damage', type: 'Omaisuusvaurio', author: 'Markus Joki', time: '09:45', summary: 'Aitaelementti vaurioitunut lohkolla B.' },
-  { id: '26/FesX/1108/091', eventId: 'fesx', typeId: 'jvaction', type: 'JV:n tai vartijan toimenpide', author: 'Korhonen Elli', time: '09:20', summary: 'Pääsy estetty portilla 2, ei lippua.', denied: 3, removed: 0, detained: 0, force: false, tools: false, firearm: false, firstAid: false },
-  { id: '26/FesX/1108/090', eventId: 'fesx', typeId: 'patrol', type: 'Kierrosraportti', author: 'Anna Lahti', time: '09:00', summary: 'Aamukierros, ei huomautettavaa.' }
-];
-
-// --- COMPONENTS ---
-
-// Avausvalmiuden kuittauskohdat. Yhdessä paikassa siksi, että sekä lomake että
-// suunnittelunäkymän tilapalkki lukevat saman listan — laskurissa oli aiemmin
-// kovakoodattu 5, joka olisi vanhentunut hiljaa jos listaan lisätään kohta.
-const READINESS_CHECKS = [
-  { key: 'exits', label: 'Hätäuloskäynnit miehitetty' },
-  { key: 'guards', label: 'Vähintään 80% järjestyksenvalvojista paikalla' },
-  { key: 'vehicles', label: 'Ajoneuvot pois alueelta' },
-  { key: 'production', label: 'Tuotanto valmis avaukseen' },
-  { key: 'security', label: 'Turvajohto valmis avaukseen' },
-];
-
-const tyhjatKuittaukset = () => Object.fromEntries(READINESS_CHECKS.map((i) => [i.key, false]));
-
-
-
-
-// Sisäänkirjausrivin kommentit listana ({id, text, author, date, time}) — vanha data
-// tunsi vain yhden merkkijonokentän (comment), joka näytetään taannehtivasti yhtenä
-// "legacy"-kommenttina kunnes se korvautuu uudella listalla.
-const getEmpComments = (emp: any) => {
-  if (Array.isArray(emp.comments)) return emp.comments;
-  if (emp.comment) {
-    return [{ id: 'legacy', text: emp.comment, author: '', date: emp.checkInDate || '', time: emp.checkInTime || '' }];
-  }
-  return [];
-};
-
-
-
-// ====================== PIKATOIMINNOT / HÄTÄTEKSTIVIESTIT ======================
-//
-// Nämä ovat käyttöliittymän peilikuva server/sms.js:n ryhmistä ja oletusnapeista.
-// Vastaanottajien todellinen ratkaisu ja viestin lähetys tapahtuvat AINA palvelimella
-// (ks. server/sms.js ja server/index.js) — selain ei koskaan näe puhelinnumeroita
-// kokonaisina eikä puhu BulkSMS:n rajapinnan kanssa. Tämä lista on vain valikon ja
-// asetuseditorin tekstejä varten, samaan tapaan kuin canView/canEdit peilaavat
-// palvelimen oikeussääntöjä suodattamatta itse dataa.
-const SMS_RYHMAT = [
-  { id: 'checked_in', label: 'Sisäänkirjatut työntekijät', selite: 'Tapahtumaan sisäänkirjatut eli oikeasti paikalla olevat.' },
-  { id: 'roster', label: 'Kaikki tapahtuman työntekijät', selite: 'Kaikki tapahtumaan merkityt, myös vielä sisäänkirjaamattomat.' },
-  { id: 'emergency_numbers', label: 'Tapahtuman hätänumerot', selite: 'Tapahtuman perustietojen osio 14: Turva 1, Turva 2, TIKE ja EA-päivystys.' },
-  { id: 'custom', label: 'Oma numerolista', selite: 'Nappiin kirjatut kiinteät numerot, eivät riipu tapahtumasta.' },
-];
-
-const smsRyhmanLabel = (id: string) => SMS_RYHMAT.find((r) => r.id === id)?.label || id;
-
-// Oletusnapit kun smsButtons-kokoelmaa ei ole vielä tallennettu. PIDETTÄVÄ SYNKASSA
-// server/sms.js:n OLETUSNAPIT-listan kanssa: palvelin käyttää omaansa lähetykseen, tämä
-// on vain se mitä valikossa näkyy ennen ensimmäistä tallennusta.
-const SMS_OLETUSNAPIT = [
-  {
-    id: 'evacuate',
-    label: 'KAIKKIEN ALUEIDEN EVAKUOINTI',
-    group: 'checked_in',
-    customNumbers: [],
-    body: 'TURVAJOHTO {tapahtuma}: EVAKUOINTI. Ohjaa yleiso ulos lahimmasta poistumistiesta ja siirry kokoontumispaikalle. Kuittaa TIKE:lle.',
-    repliable: false,
-    style: 'danger',
-  },
-  {
-    id: 'authority_own',
-    label: 'Oma Turva',
-    group: 'emergency_numbers',
-    customNumbers: [],
-    body: 'TURVAJOHTO {tapahtuma}: Oman turvaorganisaation halytys klo {aika}. Ottakaa yhteys TIKE:en valittomasti.',
-    repliable: false,
-    style: 'neutral',
-  },
-  {
-    id: 'authority_vira',
-    label: 'Turva + VIRA',
-    group: 'emergency_numbers',
-    customNumbers: [],
-    body: 'TURVAJOHTO {tapahtuma}: Turva- ja viranomaishalytys klo {aika}. Viranomaiset halytetty. Ottakaa yhteys TIKE:en.',
-    repliable: false,
-    style: 'neutral',
-  },
-  {
-    id: 'authority_prep',
-    label: 'Varautumistilanne',
-    group: 'emergency_numbers',
-    customNumbers: [],
-    body: 'TURVAJOHTO {tapahtuma}: Varautumistilanne klo {aika}. Kohotettu valmius, ei viela toimenpiteita. Odota ohjeita.',
-    repliable: false,
-    style: 'neutral',
-  },
-  {
-    id: 'instructions',
-    label: 'Lähetä toimintaohjeita',
-    group: 'checked_in',
-    customNumbers: [],
-    body: '',
-    repliable: false,
-    style: 'neutral',
-  },
-];
-
-// GSM 03.38 -merkistö viestin pituuslaskuria varten. Sama taulukko kuin
-// server/bulksms.js:ssä — toistettu tässä tarkoituksella, koska laskurin on päivityttävä
-// jokaisella näppäinpainalluksella eikä sitä voi hakea palvelimelta. Palvelin laskee
-// pituuden itse uudelleen lähetyshetkellä; tämä on vain käyttäjäpalautetta.
-const GSM_PERUS =
-  '@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?' +
-  '¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà';
-const GSM_LAAJENNUS = '^{}\\[~]|€';
-
-// Toimitustilojen esitys. ACCEPTED = otettu vastaan lähetettäväksi, SENT = luovutettu
-// operaattorille, DELIVERED = perillä puhelimessa, FAILED = ei mennyt perille.
-// DRY_RUN on sovelluksen oma tila kuivaharjoittelulle.
-const SMS_TILA_META: Record<string, { label: string; tone: string }> = {
-  DELIVERED: { label: 'Perillä', tone: 'bg-emerald-100 text-emerald-700' },
-  SENT: { label: 'Matkalla', tone: 'bg-sky-100 text-sky-700' },
-  ACCEPTED: { label: 'Vastaanotettu', tone: 'bg-slate-100 text-slate-600' },
-  FAILED: { label: 'Ei mennyt perille', tone: 'bg-rose-100 text-rose-700' },
-  DRY_RUN: { label: 'Kuivaharjoittelu', tone: 'bg-amber-100 text-amber-700' },
-};
-const smsTilaMeta = (tila: string) => SMS_TILA_META[tila] || { label: tila || 'Tuntematon', tone: 'bg-slate-100 text-slate-600' };
-
-// Yhden lähetyksen toimitustilanne. Sama laskenta kuin server/smswebhook.js:n
-// koostaTilanne — toistettu tässä koska frontti laskee sen jo ladatusta datasta eikä
-// erillistä kutsua kannata tehdä.
-const koostaSmsTilanne = (lahetys: any) => {
-  const saajat = Array.isArray(lahetys?.recipients) ? lahetys.recipients : [];
-  const laske = (tila: string) => saajat.filter((s: any) => s?.status === tila).length;
-  return {
-    yhteensa: saajat.length,
-    perilla: laske('DELIVERED'),
-    epaonnistui: laske('FAILED'),
-    matkalla: laske('ACCEPTED') + laske('SENT'),
-    kuivaharjoittelu: laske('DRY_RUN'),
-  };
-};
-
-const laskeViestinMitat = (text: string) => {
-  const s = typeof text === 'string' ? text : '';
-  let septetit = 0;
-  let gsm = true;
-  for (const ch of Array.from(s)) {
-    if (GSM_PERUS.includes(ch)) septetit += 1;
-    else if (GSM_LAAJENNUS.includes(ch)) septetit += 2;
-    else { gsm = false; break; }
-  }
-  if (!gsm) {
-    const yksikot = s.length;
-    const osia = yksikot === 0 ? 1 : yksikot <= 70 ? 1 : Math.ceil(yksikot / 67);
-    return { encoding: 'UNICODE', pituus: yksikot, osia, osanRaja: osia > 1 ? 67 : 70 };
-  }
-  const osia = septetit === 0 ? 1 : septetit <= 160 ? 1 : Math.ceil(septetit / 153);
-  return { encoding: 'TEXT', pituus: septetit, osia, osanRaja: osia > 1 ? 153 : 160 };
-};
-
-
-
-// Tehtävän kiireellisyys. Tehtävä syntyy TIKE:n avoimesta kirjauksesta, kun
-// kirjaaja rastii "Merkitse tehtäväksi" — tieto tallentuu raportin kenttiin
-// taskTitle/taskUrgency, joten erillistä kokoelmaa ei tarvita ja tehtävä säilyy
-// samassa lokissa kuin kirjaus josta se syntyi.
-// jarjestys ratkaisee Tilannekuvan Tehtävät-listan järjestyksen (pienin ensin).
-// Kauanko tehtävä on ollut auki. Muoto "HH:MM:SS" tai "2 pv HH:MM:SS" kuten
-// avausvalmiuden laskurissa. Lasketaan createdAt-kentästä, joka on tarkka
-// aikaleima (time-kenttä on vain kellonaika ilman päivää).
-const tehtavanIka = (tehtava: any, nyt: Date) => {
-  const luotu = tehtava?.createdAt ? new Date(tehtava.createdAt) : null;
-  if (!luotu || Number.isNaN(luotu.getTime())) return '—';
-  return muotoileLaskuri(nyt.getTime() - luotu.getTime());
-};
-
-const TEHTAVA_KIIREET = {
-  red: {
-    jarjestys: 0,
-    label: 'ASAP',
-    piste: 'bg-rose-500',
-    reuna: 'border-rose-200 bg-rose-50',
-    teksti: 'text-rose-700',
-  },
-  orange: {
-    jarjestys: 1,
-    label: 'Mahdollisimman pian',
-    piste: 'bg-amber-500',
-    reuna: 'border-amber-200 bg-amber-50',
-    teksti: 'text-amber-700',
-  },
-  blue: {
-    jarjestys: 2,
-    label: 'Ei määritettyä aikaa',
-    piste: 'bg-blue-500',
-    reuna: 'border-blue-200 bg-blue-50',
-    teksti: 'text-blue-700',
-  },
-};
-type TehtavaKiire = keyof typeof TEHTAVA_KIIREET;
-const TEHTAVA_KIIRE_OLETUS: TehtavaKiire = 'blue';
-// Tuntematon tai puuttuva arvo (vanha data) tulkitaan vähiten kiireelliseksi.
-const tehtavanKiire = (avain?: string) =>
-  TEHTAVA_KIIREET[avain as TehtavaKiire] || TEHTAVA_KIIREET[TEHTAVA_KIIRE_OLETUS];
 
 // Montako hälytystä Tilannekuvan paneeliin mahtuu ennen kuin loput siirtyvät
 // "Näytä kaikki" -painikkeen taakse. Ilman rajaa paneeli kasvaisi rajatta ja
@@ -605,7 +196,7 @@ export default function App() {
 
   // Tapahtuman muokkaus: jos asetettu, "Luo uusi tapahtuma" -lomake päivittää
   // tämän id:n tapahtuman sen sijaan että loisi uuden. Lomake avataan aina tyhjänä.
-  const [editingEventId, setEditingEventId] = useState(null);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
 
   // "Tallennetut tapahtumat" -näkymä: poistetut (arkistoidut) tapahtumat ja niiden data
   const [viewingArchivedEvents, setViewingArchivedEvents] = useState(false);
@@ -762,7 +353,7 @@ export default function App() {
   // käyttö ovat juuri ne tilanteet joista kysytään jälkikäteen.
   const [jvrLiitteet, setJvrLiitteet] = useState<Liite[]>([]);
   const [jvrLiitteetLataa, setJvrLiitteetLataa] = useState(false);
-  const timeInputRef = useRef(null);
+  const timeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Tapahtumat (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
   const [events, setEvents] = useState(INITIAL_EVENTS);
@@ -811,12 +402,10 @@ export default function App() {
 
   const [newUserError, setNewUserError] = useState('');
   const [newUserSubmitting, setNewUserSubmitting] = useState(false);
-  const [editingPermUser, setEditingPermUser] = useState<KayttajaRivi | null>(null);
   // Käyttäjätasot (server/roles.js). Taso määrää sivukartta-oikeudet — käyttäjäkohtaista
   // sivukarttaa ei enää muokata, joten "Muokkaa oikeuksia" -näkymässä valitaan vain taso.
   const [roles, setRoles] = useState<any[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
-  const [permRoleId, setPermRoleId] = useState('');
   // Palvelimen arvoma salasana näytetään kertaalleen luonnin/nollauksen jälkeen.
   const [uusiSalasanaNaytto, setUusiSalasanaNaytto] = useState<UusiSalasana | null>(null);
 
@@ -882,22 +471,6 @@ export default function App() {
   const [shareError, setShareError] = useState('');
   const [shareSubmitting, setShareSubmitting] = useState(false);
   const [luotuLinkki, setLuotuLinkki] = useState<LuotuLinkki | null>(null);
-  // Tapahtumarajaus: tyhjä = ei rajoitusta (näkee kaikki tapahtumat), muuten lista
-  // tapahtuma-id:itä joihin käyttäjä on rajattu (ks. server/permissions.js: eventAccess).
-  const [permEventAccess, setPermEventAccess] = useState<string[]>([]);
-  // Tuotepääsy: mihin puoliin ('event' / 'guard') tunnus pääsee. Palvelin torjuu tyhjän
-  // listan, joten UI ei anna poistaa viimeistä valintaa (ks. vaihdaTuote).
-  const [permTuotteet, setPermTuotteet] = useState(['event']);
-  const [permNickname, setPermNickname] = useState('');
-  const [permSaveError, setPermSaveError] = useState('');
-  const [permSaving, setPermSaving] = useState(false);
-  const [permTotpInfo, setPermTotpInfo] = useState<TotpTiedot | null>(null);
-  const [permTotpLoading, setPermTotpLoading] = useState(false);
-  const [permTotpError, setPermTotpError] = useState('');
-  const [permTotpResetting, setPermTotpResetting] = useState(false);
-  const [permTotpToggling, setPermTotpToggling] = useState(false);
-  const [permForceLogoutSubmitting, setPermForceLogoutSubmitting] = useState(false);
-  const [permForceLogoutMessage, setPermForceLogoutMessage] = useState('');
 
   // Työntekijäpankki: yrityksen koko henkilöstörekisteri (yhteinen tila, tallennetaan palvelimelle)
   const [employees, setEmployees] = useState(initialEmployees);
@@ -2122,7 +1695,10 @@ export default function App() {
     setOpenedRiskAssessment(null);
   };
 
-  const updEmpForm = (key: string, value: any) => setEmpForm(prev => ({ ...prev, [key]: value }));
+  // Avain on rajattu lomakkeen omiin kenttiin ja arvo sen kentän tyyppiin: ilman tätä
+  // kirjoitusvirhe avaimessa loisi hiljaa uuden kentän, jota mikään ei lue.
+  const updEmpForm = <K extends keyof TyontekijaLomake>(key: K, value: TyontekijaLomake[K]) =>
+    setEmpForm(prev => ({ ...prev, [key]: value }));
 
   const addEmpLanguage = () => setEmpForm(prev => ({ ...prev, languages: [...prev.languages, { language: '', level: 3 }] }));
   const removeEmpLanguage = (idx: number) => setEmpForm(prev => ({ ...prev, languages: prev.languages.filter((_, i) => i !== idx) }));
@@ -2427,19 +2003,6 @@ export default function App() {
     }
   };
 
-  const fetchPermTotpInfo = (username: string) => {
-    setPermTotpLoading(true);
-    setPermTotpError('');
-    fetch(`/api/users/${encodeURIComponent(username)}/totp`, { credentials: 'include' })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.ok) setPermTotpInfo(data);
-        else setPermTotpError(data.error || 'Authenticator-tietojen haku epäonnistui.');
-      })
-      .catch(() => setPermTotpError('Yhteysvirhe.'))
-      .finally(() => setPermTotpLoading(false));
-  };
-
   // Yläpalkin "Turvajohto EVENT" vie etusivulle mistä tahansa näkymästä. Kaikki päällä
   // olevat näkymätilat on nollattava yhdessä: ne ovat toisistaan riippumattomia lippuja,
   // ja yksikin päälle jäänyt (esim. viewingSettings) pitäisi käyttäjän edelleen siinä
@@ -2452,7 +2015,7 @@ export default function App() {
     setArchivedEventDetailId(null);
     setViewingEmployeeBank(null);
     setViewingUserAdmin(null);
-    setEditingPermUser(null);
+    kayttajanOikeudet.nollaa();
     setViewingAuditLog(false);
     setViewingSettings(false);
     setViewingSharedWithMe(false);
@@ -2517,7 +2080,7 @@ export default function App() {
       sticky={valinnat.sticky}
       ilmoitukset={notifications}
       onIlmoitus={avaaIlmoitus}
-      nimimerkki={sessionNickname}
+      nimimerkki={sessionNickname || ''}
       isAdmin={session?.role === 'admin'}
       onChangePassword={() => setShowChangePassword(true)}
       onViewAuditLog={() => setViewingAuditLog(true)}
@@ -2532,109 +2095,6 @@ export default function App() {
       .then((data) => { if (data.ok) setRoles(data.roles || []); })
       .catch(() => { /* virhe näkyy tyhjänä listana */ })
       .finally(() => setRolesLoading(false));
-  };
-
-  const handleOpenPermissions = (user: KayttajaRivi) => {
-    setEditingPermUser(user);
-    setPermEventAccess(user.eventAccess || []);
-    setPermTuotteet(Array.isArray(user.tuotteet) && user.tuotteet.length > 0 ? user.tuotteet : ['event']);
-    setPermNickname(user.nickname || '');
-    setPermRoleId(user.roleId || '');
-    setUusiSalasanaNaytto(null);
-    fetchRoles();
-    setPermSaveError('');
-    setPermTotpInfo(null);
-    setPermTotpError('');
-    setPermForceLogoutMessage('');
-    setViewingUserAdmin('permissions');
-    if (user.role !== 'admin') fetchPermTotpInfo(user.username);
-  };
-
-  const handleResetTotp = () => {
-    if (!editingPermUser) return;
-    const confirmed = window.confirm(
-      `Nollataanko "${editingPermUser.nickname}" (${editingPermUser.username}) Authenticator-käyttöönotto?\n\n` +
-      'Vanha koodi lakkaa toimimasta heti ja uusi QR-koodi pitää skannata puhelimeen.'
-    );
-    if (!confirmed) return;
-    setPermTotpResetting(true);
-    setPermTotpError('');
-    fetch(`/api/users/${encodeURIComponent(editingPermUser.username)}/totp/reset`, {
-      method: 'POST',
-      credentials: 'include',
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.ok) setPermTotpInfo(data);
-        else setPermTotpError(data.error || 'Nollaus epäonnistui.');
-      })
-      .catch(() => setPermTotpError('Yhteysvirhe.'))
-      .finally(() => setPermTotpResetting(false));
-  };
-
-  const handleToggleTotpRequired = () => {
-    if (!editingPermUser) return;
-    const nextRequired = !(permTotpInfo ? permTotpInfo.totpRequired !== false : editingPermUser.totp_required !== false);
-    setPermTotpToggling(true);
-    setPermTotpError('');
-    fetch(`/api/users/${encodeURIComponent(editingPermUser.username)}/totp`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ required: nextRequired }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.ok) {
-          setPermTotpInfo((prev) => (prev ? { ...prev, totpRequired: data.totpRequired } : prev));
-          setEditingPermUser((prev) => (prev ? { ...prev, totp_required: data.totpRequired } : prev));
-        } else {
-          setPermTotpError(data.error || 'Muutos epäonnistui.');
-        }
-      })
-      .catch(() => setPermTotpError('Yhteysvirhe.'))
-      .finally(() => setPermTotpToggling(false));
-  };
-
-  const handleForceLogoutUser = () => {
-    if (!editingPermUser) return;
-    const confirmed = window.confirm(
-      `Kirjataanko "${editingPermUser.nickname}" (${editingPermUser.username}) ulos välittömästi?\n\n` +
-      'Käyttäjän nykyinen istunto mitätöityy heti, ja hänen täytyy kirjautua uudelleen.'
-    );
-    if (!confirmed) return;
-    setPermForceLogoutSubmitting(true);
-    setPermForceLogoutMessage('');
-    setPermTotpError('');
-    fetch(`/api/users/${encodeURIComponent(editingPermUser.username)}/logout`, {
-      method: 'POST',
-      credentials: 'include',
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.ok) setPermForceLogoutMessage('Käyttäjä kirjattu ulos.');
-        else setPermTotpError(data.error || 'Uloskirjaus epäonnistui.');
-      })
-      .catch(() => setPermTotpError('Yhteysvirhe.'))
-      .finally(() => setPermForceLogoutSubmitting(false));
-  };
-
-  // Tapahtumarajauksen valintaruudun kytkin — sama "lista mukana / pois" -periaate kuin
-  // muuallakin sovelluksessa (ks. esim. toggleAddEmpSelected).
-  const handleToggleEventAccess = (eventId: string) => {
-    setPermEventAccess((prev) => (
-      prev.includes(eventId) ? prev.filter((id) => id !== eventId) : [...prev, eventId]
-    ));
-  };
-
-  // Tuotepääsyn vaihto. Viimeistä valintaa ei voi poistaa: tyhjä lista lukitsisi käyttäjän
-  // ulos molemmilta puolilta, ja palvelin torjuisi tallennuksen joka tapauksessa (PUT
-  // /api/users). Parempi estää se tässä kuin näyttää virhe vasta tallennettaessa.
-  const vaihdaTuote = (tuote: string) => {
-    setPermTuotteet((prev) => {
-      if (!prev.includes(tuote)) return [...prev, tuote];
-      return prev.length > 1 ? prev.filter((t) => t !== tuote) : prev;
-    });
   };
 
   // Mille puolille käyttäjätaso antaa sivuja. Tuotepääsy (Puolet) on käyttäjäkohtainen ja
@@ -2652,71 +2112,15 @@ export default function App() {
     return puolet;
   };
 
-  const handleSavePermissions = async () => {
-    if (!editingPermUser) return;
-    setPermSaveError('');
-    if (!permNickname.trim()) {
-      setPermSaveError('Nimimerkki ei voi olla tyhjä.');
-      return;
-    }
-    setPermSaving(true);
-    try {
-      const res = await fetch(`/api/users/${encodeURIComponent(editingPermUser.username)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        // permissions-kenttää EI enää lähetetä: sivukartta-oikeudet tulevat tasolta
-        // (roleId), ei käyttäjätietueesta. Tapahtumarajaus pysyy käyttäjäkohtaisena.
-        body: JSON.stringify({
-          nickname: permNickname.trim(),
-          eventAccess: permEventAccess,
-          tuotteet: permTuotteet,
-          ...(permRoleId ? { roleId: permRoleId } : {}),
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        setEditingPermUser(null);
-        setViewingUserAdmin('list');
-      } else {
-        setPermSaveError(data.error || 'Tallennus epäonnistui.');
-      }
-    } catch {
-      setPermSaveError('Yhteysvirhe. Yritä uudelleen.');
-    } finally {
-      setPermSaving(false);
-    }
-  };
-
-  // Pääkäyttäjä nollaa salasanan kun käyttäjä ei muista omaansa. Palvelin arpoo uuden
-  // ja pakottaa käyttäjän vaihtamaan sen omakseen heti seuraavalla kirjautumisella.
-  const handleResetUserPassword = async () => {
-    if (!editingPermUser) return;
-    const vahvistus = window.confirm(
-      `Nollataanko "${editingPermUser.nickname}" (${editingPermUser.username}) salasana?\n\n` +
-      'Palvelin arpoo uuden väliaikaisen salasanan, joka näytetään sinulle kerran. ' +
-      'Käyttäjä kirjautuu sillä ja joutuu heti vaihtamaan sen omakseen. ' +
-      'Mahdolliset avoimet istunnot katkaistaan.'
-    );
-    if (!vahvistus) return;
-    setPermSaveError('');
-    try {
-      const res = await fetch(`/api/users/${encodeURIComponent(editingPermUser.username)}/password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        setUusiSalasanaNaytto({ username: editingPermUser.username, password: data.password });
-      } else {
-        setPermSaveError(data.error || 'Salasanan nollaus epäonnistui.');
-      }
-    } catch {
-      setPermSaveError('Yhteysvirhe. Yritä uudelleen.');
-    }
-  };
+  // Käyttäjän oikeusnäkymän tila ja palvelinoperaatiot. Hook omistaa oman
+  // muokkausistuntonsa; tasolista, salasananäyttö ja näkymänvaihdot jäävät tänne, koska
+  // ne palvelevat myös muita näkymiä (ks. useKayttajanOikeudet.ts: RAJAUS).
+  const kayttajanOikeudet = useKayttajanOikeudet({
+    onUusiSalasana: setUusiSalasanaNaytto,
+    onAvattu: () => setViewingUserAdmin('permissions'),
+    onSuljettu: () => setViewingUserAdmin('list'),
+    onHaeTasot: fetchRoles,
+  });
 
   // ---- Täytettävien lomakkeiden lisäys ja poisto ----
   const LOMAKE_TUNNISTEET = ['Sisäinen', 'Ulkoinen', 'Viranomaislomake', 'Muu'];
@@ -2754,7 +2158,10 @@ export default function App() {
     nollaaLomakeLisays();
   };
 
-  const poistaLomake = async (lomake: TapahtumanLomake) => {
+  const poistaLomake = async (lomake: LomakeRivi) => {
+    // Vain lisätyillä lomakkeilla on id — sisäänrakennettua ei voi poistaa, eikä
+    // undefined-id saa päätyä suodattimeen jossa se poistaisi väärät rivit.
+    if (!lomake.id) return;
     if (!window.confirm(`Poistetaanko lomake "${lomake.name}"? Tätä ei voi perua.`)) return;
     const jaljelle = eventForms.filter((f) => f.id !== lomake.id);
     // Viimeisen poisto tyhjentää kokoelman, jonka palvelimen romahdussuoja hylkää
@@ -2820,7 +2227,7 @@ export default function App() {
     setNewFolderName('');
   };
 
-  const lataaTiedosto = async (tiedosto: TapahtumanTiedosto) => {
+  const lataaTiedosto = async (tiedosto?: File) => {
     if (!tiedosto) return;
     setTiedostoUploading(true);
     try {
@@ -2864,7 +2271,7 @@ export default function App() {
       while (muuttui) {
         muuttui = false;
         for (const f of tapahtumanTiedostot) {
-          if (!alipuu.includes(f.id) && alipuu.includes(f.parentId)) {
+          if (!alipuu.includes(f.id) && f.parentId != null && alipuu.includes(f.parentId)) {
             alipuu.push(f.id);
             muuttui = true;
           }
@@ -2964,7 +2371,7 @@ export default function App() {
             approvalStatus: data.share.approvalStatus,
           });
         } else {
-          setLuotuLinkki({ url: null, approvalStatus: 'none' });
+          setLuotuLinkki({ approvalStatus: 'none' });
         }
       } else {
         setShareError(data.error || 'Jakolinkin luonti epäonnistui.');
@@ -4355,7 +3762,7 @@ export default function App() {
     .sort((a, b) => b.score - a.score)
     .map(ra => ({
       id: `risk-${ra.id}`,
-      type: ra.score >= 4 ? 'critical' : 'warning',
+      type: (ra.score >= 4 ? 'critical' : 'warning') as AlertTyyppi,
       message: `Riskiarvio (${RISKITASOT[ra.score].label}): ${ra.hazard}`,
       time: ra.date,
       location: ra.target
@@ -5231,7 +4638,7 @@ export default function App() {
               // "Map is not a constructor".
               const tyyppiNimet: Record<string, string> = {};
               for (const r of deviationReports) {
-                if (r.typeId && !tyyppiNimet[r.typeId]) tyyppiNimet[r.typeId] = r.type;
+                if (r.typeId && !tyyppiNimet[r.typeId]) tyyppiNimet[r.typeId] = r.type || r.typeId;
               }
               const tyypit = Object.entries(tyyppiNimet)
                 .sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'fi'));
@@ -9500,7 +8907,7 @@ export default function App() {
           ...fillableForms,
           ...eventForms
             .filter((f) => (f.eventId || 'fesx') === selectedEvent)
-            .map((f) => ({ ...f, lisatty: true })),
+            .map((f) => ({ ...f, name: f.name || 'Nimetön lomake', lisatty: true })),
         ];
 
         const tulostaTyhjaPohja = (lomake: LomakeRivi) => {
@@ -9654,7 +9061,7 @@ export default function App() {
                       <>
                         <button
                           type="button"
-                          onClick={() => setActiveTab(form.tab)}
+                          onClick={() => form.tab && setActiveTab(form.tab)}
                           className="text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
                         >
                           Täytä
@@ -9816,7 +9223,7 @@ export default function App() {
                         <td className="p-4 font-medium text-slate-800">{report.type}</td>
                         <td className="p-4 text-slate-600">{report.author}</td>
                         <td className="p-4 text-slate-600 text-xs">
-                          {new Date(report.deletedAt).toLocaleString('fi-FI')}
+                          {muotoileAikaleima(report.deletedAt)}
                           {report.deletedBy ? ` — ${report.deletedBy}` : ''}
                         </td>
                         <td className="p-4 text-right">
@@ -10669,9 +10076,13 @@ export default function App() {
 
   // ====================== TYÖNTEKIJÄPANKKI (koko yrityksen henkilöstörekisteri) ======================
   if (viewingEmployeeBank) {
-    const filteredBankEmployees = employeeBankSearch.trim()
-      ? employees.filter(e => e.name.toLowerCase().includes(employeeBankSearch.trim().toLowerCase()))
-      : employees;
+    // Sama oikeuslauseke ohjasi aiemmin viittä eri kohtaa listassa ja lomakkeessa.
+    const saaMuokataPankkia = isAdminUser || canEdit(perms, selectedEvent, 'global_employee_bank');
+    const takaisinListaan = () => {
+      setViewingEmployeeBank('list');
+      setEditingEmp(null);
+      setEmpForm(emptyEmpForm);
+    };
 
     return (
       <div className="min-h-screen bg-canvas font-sans flex flex-col">
@@ -10679,785 +10090,38 @@ export default function App() {
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-5xl mx-auto">
-            <TakaisinLinkki onClick={() => {
-                if (viewingEmployeeBank === 'form') {
-                  setViewingEmployeeBank('list');
-                  setEditingEmp(null);
-                  setEmpForm(emptyEmpForm);
-                } else {
-                  setViewingEmployeeBank(null);
-                }
-              }}>
+            <TakaisinLinkki
+              onClick={() => (viewingEmployeeBank === 'form' ? takaisinListaan() : setViewingEmployeeBank(null))}
+            >
               {viewingEmployeeBank === 'form' ? 'Takaisin työntekijälistaan' : 'Takaisin'}
             </TakaisinLinkki>
 
             {viewingEmployeeBank === 'form' ? (
-              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8 max-w-5xl">
-                <div className="mb-6 border-b border-slate-100 pb-4 flex justify-between items-start">
-                  <div>
-                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                      {editingEmp ? <UserCheck className="text-indigo-500" size={24} /> : <UserPlus className="text-emerald-500" size={24} />}
-                      {editingEmp ? 'Muokkaa työntekijää' : 'Kirjaa uusi työntekijä'}
-                    </h2>
-                    <p className="text-sm text-slate-500 mt-1">
-                      {editingEmp ? 'Päivitä työntekijän perustiedot, luvat ja suoritetut koulutukset.' : 'Lisää työntekijän perustiedot, pätevyydet ja suoritetut koulutukset rekisteriin.'}
-                    </p>
-                  </div>
-                  {editingEmp && (isAdminUser || canEdit(perms, selectedEvent, 'global_employee_bank')) && (
-                    <button
-                      onClick={() => handleDeleteEmployee(editingEmp)}
-                      title="Poista työntekijä"
-                      className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-lg transition-colors shrink-0"
-                    >
-                      <Trash2 size={20} />
-                    </button>
-                  )}
-                </div>
-
-                <form className="space-y-8 text-left" onSubmit={(e) => e.preventDefault()}>
-                  {/* Osa 1: Henkilötiedot */}
-                  <div className="space-y-4">
-                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <Contact size={18} className="text-slate-400"/>
-                      1. Henkilötiedot
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Etunimi</label>
-                        <input type="text" value={empForm.firstName} onChange={(e) => updEmpForm('firstName', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. Elli Marja Orvokki" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Sukunimi</label>
-                        <input type="text" value={empForm.lastName} onChange={(e) => updEmpForm('lastName', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. Korhonen" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Henkilötunnus</label>
-                        <input type="text" value={empForm.personalId} onChange={(e) => updEmpForm('personalId', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="PPKKVV-XXXX" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Syntymäaika</label>
-                        <input type="date" value={empForm.birthDate} onChange={(e) => updEmpForm('birthDate', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Kansalaisuus</label>
-                        <input type="text" value={empForm.nationality} onChange={(e) => updEmpForm('nationality', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. Suomi" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Osa 2: Yhteystiedot */}
-                  <div className="space-y-4">
-                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <Home size={18} className="text-slate-400"/>
-                      2. Yhteystiedot
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Katuosoite</label>
-                        <input type="text" value={empForm.address} onChange={(e) => updEmpForm('address', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esimerkkikatu 1 A 2" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Postinumero</label>
-                          <input type="text" value={empForm.postalCode} onChange={(e) => updEmpForm('postalCode', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="00100" />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Postitoimipaikka</label>
-                          <input type="text" value={empForm.postalCity} onChange={(e) => updEmpForm('postalCity', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Helsinki" />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Sähköposti</label>
-                        <input type="email" value={empForm.email} onChange={(e) => updEmpForm('email', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="etunimi.sukunimi@esimerkki.fi" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Matkapuhelin</label>
-                        <input type="tel" value={empForm.phone} onChange={(e) => updEmpForm('phone', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="040 123 4567" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Osa 3: Pankkitiedot */}
-                  <div className="space-y-4">
-                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <Landmark size={18} className="text-slate-400"/>
-                      3. Pankkitiedot
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Tilinumero (IBAN)</label>
-                        <input type="text" value={empForm.iban} onChange={(e) => updEmpForm('iban', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="FI00 0000 0000 0000 00" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">BIC</label>
-                        <input type="text" value={empForm.bic} onChange={(e) => updEmpForm('bic', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. NDEAFIHH" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Pankki</label>
-                        <input type="text" value={empForm.bankName} onChange={(e) => updEmpForm('bankName', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. Nordea" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Veronumero</label>
-                        <input type="text" inputMode="numeric" value={empForm.taxNumber} onChange={(e) => updEmpForm('taxNumber', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="12 numeroa" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Osa 4: Työsuhdetiedot */}
-                  <div className="space-y-4">
-                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <Briefcase size={18} className="text-slate-400"/>
-                      4. Työsuhdetiedot
-                    </h3>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Työsuhteen alkamispäivä</label>
-                        <div className="flex gap-2">
-                          <input type="date" value={empForm.employmentStart} onChange={(e) => updEmpForm('employmentStart', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" />
-                          <button
-                            type="button"
-                            onClick={() => updEmpForm('employmentStart', paikallinenPaiva())}
-                            title="Aseta tämä päivä"
-                            className="shrink-0 px-3 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded-lg transition-colors"
-                          >
-                            Tänään
-                          </button>
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Työn suorittamispaikka</label>
-                        <input type="text" value={empForm.workLocation} onChange={(e) => updEmpForm('workLocation', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. Tampere ja lähikunnat" />
-                      </div>
-                    </div>
-
-                    {/* Työsuhteen voimassaolo */}
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                      <p className="text-sm font-bold text-slate-800">Työsuhde voimassa</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {[
-                          ['permanent', 'Toistaiseksi'],
-                          ['fixed', 'Määräajan'],
-                        ].map(([arvo, label]) => (
-                          <label key={arvo} className="flex items-center gap-2.5 p-3 bg-white rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
-                            <input
-                              type="checkbox"
-                              checked={empForm.employmentType === arvo}
-                              onChange={(e) => updEmpForm('employmentType', e.target.checked ? arvo : '')}
-                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0"
-                            />
-                            <span className="text-sm font-medium text-slate-700">{label}</span>
-                          </label>
-                        ))}
-                      </div>
-                      {empForm.employmentType === 'fixed' && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-xs text-slate-500 mb-1">Määräaika alkaa</label>
-                            <input type="date" value={empForm.employmentFixedFrom} onChange={(e) => updEmpForm('employmentFixedFrom', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-slate-500 mb-1">Määräaika päättyy</label>
-                            <input type="date" value={empForm.employmentFixedTo} onChange={(e) => updEmpForm('employmentFixedTo', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Työaika ja palkkausmuoto */}
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                      <p className="text-sm font-bold text-slate-800">Työaika ja palkkausmuoto</p>
-                      <div className="space-y-2">
-                        {[
-                          ['monthly', 'Kuukausipalkka', '120 h / 3 viikkoa'],
-                          ['parttime', 'Tuntipalkka (osa-aikainen)', 'alle 112 h 30 min / 3 viikkoa'],
-                          ['oncall', 'Erikseen työhön kutsuttava tuntipalkkainen', 'työvoimareservi'],
-                        ].map(([arvo, label, tarkenne]) => (
-                          <label key={arvo} className="flex items-start gap-2.5 p-3 bg-white rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
-                            <input
-                              type="checkbox"
-                              checked={empForm.workTimeType === arvo}
-                              onChange={(e) => updEmpForm('workTimeType', e.target.checked ? arvo : '')}
-                              className="w-4 h-4 mt-0.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0"
-                            />
-                            <span className="text-sm text-slate-700">
-                              <span className="font-medium">{label}</span>
-                              <span className="text-slate-500"> — {tarkenne}</span>
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                      {(empForm.workTimeType === 'parttime' || empForm.workTimeType === 'oncall') && (
-                        <div className="sm:w-72">
-                          <label className="block text-xs text-slate-500 mb-1">Vähimmäistyöaika (tuntia / 3 viikkoa)</label>
-                          <input type="number" min="0" step="0.5" value={empForm.minHoursPer3Weeks} onChange={(e) => updEmpForm('minHoursPer3Weeks', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. 60" />
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
-                      <Info size={18} className="text-amber-500 shrink-0 mt-0.5" />
-                      <p className="text-sm text-amber-900 leading-relaxed">
-                        Työtehtävissä noudatetaan voimassa olevia lakeja sekä työehtosopimusta.
-                      </p>
-                    </div>
-
-                    {/* Palkkaus */}
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
-                      <p className="text-sm font-bold text-slate-800">Palkkaus</p>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div>
-                          <label className="block text-xs text-slate-500 mb-1">Tasopalkka</label>
-                          <select value={empForm.payLevel} onChange={(e) => updEmpForm('payLevel', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500">
-                            <option value="">Ei valittu</option>
-                            {['I', 'II', 'III', 'IIIA', 'IV', 'IVA', 'V'].map((taso) => (
-                              <option key={taso} value={taso}>{taso}-taso</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-xs text-slate-500 mb-1">Paikkakuntaluokka</label>
-                          <select value={empForm.municipalityClass} onChange={(e) => updEmpForm('municipalityClass', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500">
-                            <option value="">Ei valittu</option>
-                            <option value="A">A = pääkaupunkiseutu</option>
-                            <option value="B">B = muu Suomi</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-xs text-slate-500 mb-1">Tasopalkka (€/kk)</label>
-                          <input type="text" inputMode="decimal" value={empForm.basePay} onChange={(e) => updEmpForm('basePay', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="TES-taulukon mukaan" />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-xs text-slate-500 mb-1">Henkilökohtainen palkan osa (€/kk)</label>
-                          <input type="text" inputMode="decimal" value={empForm.personalPayPart} onChange={(e) => updEmpForm('personalPayPart', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="0,00" />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-slate-500 mb-1">Perusteet</label>
-                          <input type="text" value={empForm.personalPayBasis} onChange={(e) => updEmpForm('personalPayBasis', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Millä perusteella osa on sovittu" />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div>
-                          <label className="block text-xs text-slate-500 mb-1">Henkilökohtainen palkka, jos sovittu (€/kk)</label>
-                          <input type="text" inputMode="decimal" value={empForm.personalPay} onChange={(e) => updEmpForm('personalPay', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Korvaa tasopalkan" />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-slate-500 mb-1">Muu palkka (€/kk)</label>
-                          <input type="text" inputMode="decimal" value={empForm.otherPay} onChange={(e) => updEmpForm('otherPay', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="0,00" />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-slate-500 mb-1">Muun palkan perusteet</label>
-                          <input type="text" value={empForm.otherPayBasis} onChange={(e) => updEmpForm('otherPayBasis', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. olosuhdelisä" />
-                        </div>
-                      </div>
-
-                      {/* Kokonaispalkka lasketaan yllä olevista riveistä */}
-                      {(() => {
-                        const summa = laskeKokonaispalkka(empForm);
-                        return (
-                          <div className="bg-white border-2 border-indigo-200 rounded-xl p-4">
-                            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-                              <div>
-                                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Kokonaispalkka</p>
-                                <p className="text-2xl font-bold text-indigo-700 mt-1">
-                                  {muotoileEuro(summa.kuukaudessa)} €/kk
-                                </p>
-                                <p className="text-sm font-semibold text-slate-600">
-                                  {muotoileEuro(summa.tunnissa)} €/tunti
-                                </p>
-                              </div>
-                              <div className="sm:w-44">
-                                <label className="block text-xs text-slate-500 mb-1">Tuntijakaja (h/kk)</label>
-                                <input type="text" inputMode="decimal" value={empForm.hourDivisor} onChange={(e) => updEmpForm('hourDivisor', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500" />
-                              </div>
-                            </div>
-                            <p className="text-xs text-slate-500 mt-3 leading-relaxed">
-                              {summa.korvaava
-                                ? 'Laskettu: henkilökohtainen palkka + muu palkka. Erikseen sovittu henkilökohtainen palkka korvaa tasopalkan ja henkilökohtaisen palkan osan.'
-                                : 'Laskettu: tasopalkka + henkilökohtainen palkan osa + muu palkka.'}
-                              {' '}Tuntipalkka = kuukausipalkka / tuntijakaja. Oletusjakaja 173,33 vastaa 120 h / 3 viikkoa; tarkista se sopimuksesta.
-                            </p>
-                          </div>
-                        );
-                      })()}
-                    </div>
-
-                    {/* Muut sopimuksen ehdot */}
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Muut sopimuksen ehdot</label>
-                      <textarea rows={3} value={empForm.otherTerms} onChange={(e) => updEmpForm('otherTerms', e.target.value)} className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500" placeholder="Esim. koeaika, työvälineet, muut erikseen sovitut ehdot" />
-                    </div>
-
-                    {/* Kiinteät sopimusehdot */}
-                    <div className="bg-white border border-slate-200 rounded-xl p-4">
-                      <h4 className="text-sm font-bold text-slate-800 mb-2">Salassapitovelvollisuus</h4>
-                      <p className="text-sm text-slate-600 leading-relaxed">
-                        Työntekijä sitoutuu olemaan ilmaisematta tietoja vartiointikohteen turvallisuusjärjestelyistä,
-                        vartiointitoimeksiannon osapuolten liike- tai ammattisalaisuutta taikka yksityisen henkilön
-                        henkilökohtaisista asioista. Salassapitovelvollisuus ei koske tietojen antamista
-                        valvontaviranomaiselle, syyttäjä- tai poliisiviranomaiselle rikoksen selvittämistä varten eikä
-                        viranomaiselle, jolla erikoissäännöksen nojalla on oikeus saada näitä tietoja.
-                      </p>
-                    </div>
-
-                    <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
-                      <h4 className="text-sm font-bold text-slate-800">Koulutus</h4>
-                      <p className="text-sm text-slate-600 leading-relaxed">
-                        Työntekijä sitoutuu osallistumaan kaikkeen työnantajan osoittamaan ammatilliseen koulutukseen.
-                        Perusteeton koulutuksesta kieltäytyminen katsotaan työstä kieltäytymiseksi.
-                      </p>
-
-                      <h4 className="text-sm font-bold text-slate-800 pt-1">
-                        Vartijan peruskurssin vaikutus työsuhteeseen, työsuhteen purku, lopputilin saamisen edellytykset
-                      </h4>
-                      <p className="text-sm text-slate-600 leading-relaxed">
-                        Työntekijän osallistuessa yksityisistä turvallisuuspalveluista annetun lain edellyttämälle
-                        vartijan peruskurssille (60 tunnin osio), hän sitoutuu kurssin hyväksytysti suoritettuaan
-                        olemaan työnantajan palveluksessa vähintään{' '}
-                        <input
-                          type="number"
-                          min="0"
-                          max="4"
-                          value={empForm.trainingCommitmentMonths}
-                          onChange={(e) => updEmpForm('trainingCommitmentMonths', e.target.value)}
-                          className="inline-block w-16 rounded border-slate-300 border px-2 py-0.5 text-sm focus:ring-2 focus:ring-indigo-500 align-baseline"
-                          placeholder="0"
-                        />{' '}
-                        kuukautta (enintään 4 kuukautta) kurssin suorittamisesta lukien. Mikäli työsuhde päättyy
-                        työntekijästä johtuvasta syystä ennen mainittua aikaa, työnantaja voi periä työntekijältä
-                        työnantajalle kurssista aiheutuneet kustannukset samassa suhteessa kuin neljän kuukauden
-                        ajasta on kulumatta. Työnantajan suorittamat kustannukset ovat{' '}
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={empForm.trainingCourseCost}
-                          onChange={(e) => updEmpForm('trainingCourseCost', e.target.value)}
-                          className="inline-block w-24 rounded border-slate-300 border px-2 py-0.5 text-sm focus:ring-2 focus:ring-indigo-500 align-baseline"
-                          placeholder="0,00"
-                        />{' '}
-                        euroa.
-                      </p>
-                      <p className="text-sm text-slate-600 leading-relaxed">
-                        Mikäli viranomainen peruuttaa työntekijän vartijaksi hyväksymisen, voi se olla peruste
-                        työsopimuksen päättämiselle.
-                      </p>
-                      <p className="text-sm text-slate-600 leading-relaxed">
-                        Työsuhteen päättyessä on aina lopputilin maksamisen edellytyksenä, että työntekijä palauttaa
-                        työnantajan hänelle luovuttamat puvun, varusteet, laitteet ja toimikortin (TES 36 §).
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Osa 5: Ajokortti ja yleiset luvat.
-                      Tiivistetty: kortit ovat kahdessa sarakkeessa yhden sijaan, jolloin
-                      koko osio mahtuu näytölle ilman vieritystä. */}
-                  <div className="space-y-4">
-                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <BadgeCheck size={18} className="text-slate-400"/>
-                      5. Ajokortti ja yleiset luvat
-                    </h3>
-
-                    {/* Ajokortti: kyllä-valinta + ajo-oikeuden laatu vasta jos rastittu */}
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                      <label className="flex items-center gap-2.5 cursor-pointer sm:w-48 shrink-0">
-                        <input
-                          type="checkbox"
-                          checked={empForm.hasDrivingLicense}
-                          onChange={(e) => updEmpForm('hasDrivingLicense', e.target.checked)}
-                          className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0"
-                        />
-                        <span className="text-sm font-medium text-slate-700">Ajokortti</span>
-                      </label>
-                      <input
-                        type="text"
-                        disabled={!empForm.hasDrivingLicense}
-                        value={empForm.drivingLicense}
-                        onChange={(e) => updEmpForm('drivingLicense', e.target.value)}
-                        className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
-                        placeholder="Ajo-oikeuden laatu, esim. B, BE, C"
-                      />
-                    </div>
-
-                    {/* Pelkkä kyllä/ei, ei voimassaoloa */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      {[
-                        ['adrPermit', 'ADR-lupa'],
-                        ['alcoholPass', 'Alkoholipassi'],
-                        ['hygienePass', 'Hygieniapassi'],
-                      ].map(([key, label]) => (
-                        <label key={key} className="flex items-center gap-2.5 p-3 bg-slate-50 rounded-lg border border-slate-200 cursor-pointer hover:bg-slate-100 transition-colors">
-                          <input type="checkbox" checked={empForm[key]} onChange={(e) => updEmpForm(key, e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0" />
-                          <span className="text-sm font-medium text-slate-700">{label}</span>
-                        </label>
-                      ))}
-                    </div>
-
-                    {/* Kyllä/ei + voimassa kuukausi/vuosi jos kyllä — kaksi per rivi */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {[
-                        ['craneCard', 'craneCardUntil', 'Nosturikortti'],
-                        ['electricalWorkCard', 'electricalWorkCardUntil', 'Sähkötyökortti'],
-                        ['firstAidEA1', 'firstAidEA1Until', 'Ensiapukortti (EA1)'],
-                        ['firstAidEA2', 'firstAidEA2Until', 'Ensiapukortti (EA2)'],
-                        ['firstAidEA3', 'firstAidEA3Until', 'Ensiapukortti (EA3)'],
-                      ].map(([boolKey, untilKey, label]) => (
-                        <div key={boolKey} className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
-                          <label className="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer">
-                            <input type="checkbox" checked={empForm[boolKey]} onChange={(e) => updEmpForm(boolKey, e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0" />
-                            <span className="text-sm font-medium text-slate-700 truncate">{label}</span>
-                          </label>
-                          <input
-                            type="month"
-                            disabled={!empForm[boolKey]}
-                            value={empForm[untilKey]}
-                            onChange={(e) => updEmpForm(untilKey, e.target.value)}
-                            title="Voimassa asti"
-                            className="w-36 shrink-0 rounded-lg border-slate-300 border p-1.5 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Osa 6: Turvallisuusalan kortit */}
-                  <div className="space-y-4">
-                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <IdCard size={18} className="text-slate-400"/>
-                      6. Turvallisuusalan kortit
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {[
-                        ['hasJvCard', 'jvCard', 'jvCardValidUntil', 'Järjestyksenvalvojakortti'],
-                        ['hasGuardCard', 'guardCard', 'guardCardValidUntil', 'Vartijakortti'],
-                        ['hasGasPermit', 'gasPermit', 'gasPermitValidUntil', 'Kaasusumuttimen hallussapito'],
-                      ].map(([boolKey, numKey, untilKey, label]) => (
-                        <div key={numKey} className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                          <label className="flex items-center gap-2.5 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={empForm[boolKey]}
-                              onChange={(e) => updEmpForm(boolKey, e.target.checked)}
-                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0"
-                            />
-                            <span className="text-sm font-bold text-slate-800">{label}</span>
-                          </label>
-                          <input
-                            type="text"
-                            disabled={!empForm[boolKey]}
-                            value={empForm[numKey]}
-                            onChange={(e) => updEmpForm(numKey, e.target.value)}
-                            className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
-                            placeholder="Kortin numero"
-                          />
-                          <div>
-                            <label className="block text-xs text-slate-500 mb-1">Voimassa asti (kk/vuosi)</label>
-                            <input
-                              type="month"
-                              disabled={!empForm[boolKey]}
-                              value={empForm[untilKey]}
-                              onChange={(e) => updEmpForm(untilKey, e.target.value)}
-                              className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Voimankäyttövälineiden kertauskoulutus: turvallisuusalan pätevyys,
-                        ei yleinen työturvallisuuskortti — siirretty tänne osiosta 7. */}
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg">
-                      <label className="flex items-center gap-2.5 flex-1 cursor-pointer">
-                        <input type="checkbox" checked={empForm.trainingRefresher} onChange={(e) => updEmpForm('trainingRefresher', e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0" />
-                        <span className="text-sm font-medium text-slate-700">Voimankäyttövälineiden kertauskoulutus</span>
-                      </label>
-                      <div className="sm:w-48">
-                        <input
-                          type="date"
-                          disabled={!empForm.trainingRefresher}
-                          value={empForm.trainingRefresherUntil}
-                          onChange={(e) => updEmpForm('trainingRefresherUntil', e.target.value)}
-                          title="Voimassa asti"
-                          className="w-full rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Osa 7: Työturvallisuuskortit. Tiivistetty samalla tavalla kuin osio 5. */}
-                  <div className="space-y-4">
-                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <HardHat size={18} className="text-slate-400"/>
-                      7. Työturvallisuuskortit
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {[
-                        ['roadSafetyCard', 'roadSafetyCardUntil', 'Tieturvakortti'],
-                        ['forkliftCard', 'forkliftCardUntil', 'Trukkikortti'],
-                        ['hotWorkCard', 'hotWorkCardUntil', 'Tulityökortti'],
-                        ['safetyCard', 'safetyCardUntil', 'Työturvallisuuskortti'],
-                      ].map(([boolKey, dateKey, label]) => (
-                        <div key={boolKey} className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
-                          <label className="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer">
-                            <input type="checkbox" checked={empForm[boolKey]} onChange={(e) => updEmpForm(boolKey, e.target.checked)} className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 shrink-0" />
-                            <span className="text-sm font-medium text-slate-700 truncate">{label}</span>
-                          </label>
-                          <input
-                            type="date"
-                            disabled={!empForm[boolKey]}
-                            value={empForm[dateKey]}
-                            onChange={(e) => updEmpForm(dateKey, e.target.value)}
-                            title="Voimassa asti"
-                            className="w-40 shrink-0 rounded-lg border-slate-300 border p-1.5 text-sm focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:text-slate-400"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Osa 7: Erityiskoulutukset */}
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-end border-b pb-2">
-                      <h3 className="text-md font-semibold text-slate-700 flex items-center gap-2">
-                        <UserCheck size={18} className="text-slate-400"/>
-                        8. Erityiskoulutukset
-                      </h3>
-                      <span className="text-xs font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded">Ruksaa vain jos suoritettu ja todistus mukana</span>
-                    </div>
-
-                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
-                      <label className="flex items-center gap-4 p-4 cursor-pointer hover:bg-slate-50 transition-colors">
-                        <input type="checkbox" checked={empForm.trainingForce} onChange={(e) => updEmpForm('trainingForce', e.target.checked)} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
-                        <div>
-                          <span className="block text-sm font-bold text-slate-800">Järjestyksenvalvojan voimankäytön lisäkoulutus</span>
-                          <span className="block text-xs text-slate-500 mt-0.5">Oikeuttaa kantaa voimankäyttövälineitä (jos muut luvat kunnossa).</span>
-                        </div>
-                      </label>
-                      <label className="flex items-center gap-4 p-4 cursor-pointer hover:bg-slate-50 transition-colors">
-                        <input type="checkbox" checked={empForm.trainingGas} onChange={(e) => updEmpForm('trainingGas', e.target.checked)} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
-                        <span className="text-sm font-bold text-slate-800">Kaasusumutinkoulutus</span>
-                      </label>
-                      <label className="flex items-center gap-4 p-4 cursor-pointer hover:bg-slate-50 transition-colors">
-                        <input type="checkbox" checked={empForm.trainingBaton} onChange={(e) => updEmpForm('trainingBaton', e.target.checked)} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
-                        <span className="text-sm font-bold text-slate-800">Teleskooppipatukkakoulutus</span>
-                      </label>
-                      <label className="flex items-center gap-4 p-4 cursor-pointer hover:bg-slate-50 transition-colors">
-                        <input type="checkbox" checked={empForm.firearmTraining} onChange={(e) => updEmpForm('firearmTraining', e.target.checked)} className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
-                        <span className="text-sm font-bold text-slate-800">Vartijan ampuma-asekoulutus</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Osa 8: Kielitaito */}
-                  <div className="space-y-4">
-                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <Languages size={18} className="text-slate-400"/>
-                      9. Kielitaito
-                    </h3>
-                    <div className="space-y-3">
-                      {empForm.languages.length === 0 && (
-                        <p className="text-sm text-slate-500">Ei lisättyjä kieliä.</p>
-                      )}
-                      {empForm.languages.map((lang, idx) => (
-                        <div key={idx} className="flex flex-col sm:flex-row gap-3 sm:items-center bg-slate-50 p-3 rounded-lg border border-slate-200">
-                          <input
-                            type="text"
-                            value={lang.language}
-                            onChange={(e) => updEmpLanguage(idx, 'language', e.target.value)}
-                            placeholder="Esim. Englanti"
-                            className="flex-1 rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500"
-                          />
-                          <select
-                            value={lang.level}
-                            onChange={(e) => updEmpLanguage(idx, 'level', Number(e.target.value))}
-                            className="rounded-lg border-slate-300 border p-2 text-sm focus:ring-2 focus:ring-indigo-500 sm:w-56"
-                          >
-                            <option value={5}>5 – Erinomainen</option>
-                            <option value={4}>4 – Kiitettävä</option>
-                            <option value={3}>3 – Hyvä</option>
-                            <option value={2}>2 – Tyydyttävä</option>
-                            <option value={1}>1 – Välttävä</option>
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => removeEmpLanguage(idx)}
-                            title="Poista kieli"
-                            className="text-rose-500 hover:text-rose-700 p-2 rounded-lg hover:bg-rose-50 transition-colors shrink-0 self-start sm:self-center"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      ))}
-                      <button
-                        type="button"
-                        onClick={addEmpLanguage}
-                        className="text-sm font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1.5"
-                      >
-                        <Plus size={16} />
-                        Lisää kieli
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Osa 10: Käyttäjätunnukset. Avaa modaalin eikä vie käyttäjähallintaan,
-                      jottei keskeneräinen työntekijän muokkaus katoa navigoinnin mukana. */}
-                  <div className="space-y-4">
-                    <h3 className="text-md font-semibold text-slate-700 border-b pb-2 flex items-center gap-2">
-                      <KeyRound size={18} className="text-slate-400"/>
-                      10. Käyttäjätunnukset
-                    </h3>
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-4">
-                      <div className="flex-1 min-w-0 space-y-1">
-                        <p className="text-sm text-slate-700">
-                          <span className="font-medium">Käyttäjätunnus:</span>{' '}
-                          {empFormUsername
-                            ? <span className="font-mono text-slate-900">{empFormUsername}</span>
-                            : <span className="text-slate-400">muodostuu etu- ja sukunimestä</span>}
-                        </p>
-                        <p className="text-sm text-slate-700">
-                          <span className="font-medium">Tunnistenumero:</span>{' '}
-                          {empForm.displayId
-                            ? <span className="font-mono text-slate-900">{muotoileTunniste(empForm.displayId)}</span>
-                            : <span className="text-slate-400">annetaan kun työntekijä tallennetaan</span>}
-                        </p>
-                        <p className="text-xs text-slate-500 pt-1 leading-relaxed">
-                          Raporteissa kirjaajana näkyy tapahtumakohtainen nimimerkki ja tämä numero,
-                          esim. "Ensiapu 1 {muotoileTunniste(empForm.displayId || 1028)}". Nimimerkki annetaan
-                          kun henkilö lisätään tapahtumaan.
-                        </p>
-                      </div>
-                      {(isAdminUser || canEdit(perms, selectedEvent, 'global_employee_bank')) && (
-                        <button
-                          type="button"
-                          onClick={avaaTunnusModaali}
-                          disabled={!empFormUsername}
-                          title={empFormUsername ? undefined : 'Täytä ensin etunimi ja sukunimi'}
-                          className="shrink-0 px-4 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                        >
-                          <KeyRound size={16} />
-                          {empFormExistingUser ? 'Muokkaa käyttäjätunnusta' : 'Luo käyttäjätunnukset'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="pt-6 flex justify-end gap-3 border-t border-slate-100">
-                    <button
-                      type="button"
-                      onClick={() => { setViewingEmployeeBank('list'); setEditingEmp(null); setEmpForm(emptyEmpForm); }}
-                      className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                    >
-                      Peruuta
-                    </button>
-                    {(isAdminUser || canEdit(perms, selectedEvent, 'global_employee_bank')) && (
-                      <button
-                        type="button"
-                        onClick={handleSaveEmployee}
-                        className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                      >
-                        <CheckCircle size={18} />
-                        {editingEmp ? 'Tallenna muutokset' : 'Tallenna työntekijä'}
-                      </button>
-                    )}
-                  </div>
-                </form>
-              </div>
+              <TyontekijanMuokkaus
+                lomake={empForm}
+                onKentta={updEmpForm}
+                muokattava={editingEmp}
+                saaMuokata={saaMuokataPankkia}
+                onTallenna={handleSaveEmployee}
+                onPeruuta={takaisinListaan}
+                onPoista={handleDeleteEmployee}
+                kayttajatunnus={empFormUsername}
+                olemassaOlevaTunnus={empFormExistingUser}
+                onAvaaTunnus={avaaTunnusModaali}
+                onLisaaKieli={addEmpLanguage}
+                onPoistaKieli={removeEmpLanguage}
+                onMuutaKieli={updEmpLanguage}
+              />
             ) : (
-              <>
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-                  <div>
-                    <h2 className="text-2xl font-bold text-slate-800">Työntekijäpankki</h2>
-                    <p className="text-sm text-slate-500 mt-1">
-                      Kaikki yrityksen työntekijät ({employees.length} kpl). Täältä luodaan, muokataan ja poistetaan työntekijät.
-                    </p>
-                  </div>
-                  {(isAdminUser || canEdit(perms, selectedEvent, 'global_employee_bank')) && (
-                    <button
-                      onClick={() => { setEditingEmp(null); setEmpForm(emptyEmpForm); setViewingEmployeeBank('form'); }}
-                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors shadow-sm shrink-0"
-                    >
-                      <UserPlus size={16} />
-                      Uusi työntekijä
-                    </button>
-                  )}
-                </div>
-
-                <div className="relative mb-4 max-w-sm">
-                  <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
-                  <input
-                    type="text"
-                    value={employeeBankSearch}
-                    onChange={(e) => setEmployeeBankSearch(e.target.value)}
-                    placeholder="Hae nimellä..."
-                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-500 text-sm"
-                  />
-                </div>
-
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
-                      <tr>
-                        <th className="p-4">Nimi</th>
-                        <th className="p-4 w-24">Tunniste</th>
-                        <th className="p-4">Henkilötunnus</th>
-                        <th className="p-4">Kortit</th>
-                        <th className="p-4">Yhteystiedot</th>
-                        <th className="p-4 text-right">Toiminnot</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {filteredBankEmployees.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="p-8 text-center text-sm text-slate-500">
-                            {employeeBankSearch.trim() ? 'Ei hakua vastaavia työntekijöitä.' : 'Ei vielä työntekijöitä rekisterissä.'}
-                          </td>
-                        </tr>
-                      ) : filteredBankEmployees.map((emp) => (
-                        <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="p-4 font-medium text-slate-800">{emp.name}</td>
-                          <td className="p-4">
-                            {emp.displayId
-                              ? <span className="font-mono text-xs font-bold text-indigo-700">{muotoileTunniste(emp.displayId)}</span>
-                              : <span className="text-xs text-slate-400">—</span>}
-                          </td>
-                          <td className="p-4 font-mono text-xs text-slate-600">{emp.personalId || '—'}</td>
-                          <td className="p-4">
-                            <div className="flex flex-wrap gap-1">
-                              {onKortti(emp, 'hasJvCard', 'jvCard') && <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">JV</span>}
-                              {onKortti(emp, 'hasGuardCard', 'guardCard') && <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded">Vartija</span>}
-                              {onKortti(emp, 'hasGasPermit', 'gasPermit') && <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded">Kaasu</span>}
-                              {!onKortti(emp, 'hasJvCard', 'jvCard') && !onKortti(emp, 'hasGuardCard', 'guardCard') && !onKortti(emp, 'hasGasPermit', 'gasPermit') && <span className="text-xs text-slate-400">-</span>}
-                            </div>
-                          </td>
-                          <td className="p-4 text-slate-500 text-xs">{[emp.email, emp.phone].filter(Boolean).join(' · ') || '—'}</td>
-                          <td className="p-4 text-right">
-                            <div className="flex justify-end gap-2">
-                              <button
-                                onClick={() => { setEditingEmp(emp); setEmpForm(employeeToFormState(emp)); setViewingEmployeeBank('form'); }}
-                                className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
-                              >
-                                Muokkaa
-                              </button>
-                              {(isAdminUser || canEdit(perms, selectedEvent, 'global_employee_bank')) && (
-                                <button
-                                  onClick={() => handleDeleteEmployee(emp)}
-                                  className="text-rose-600 hover:text-rose-800 font-medium text-xs bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-md transition-colors"
-                                >
-                                  Poista
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
+              <TyontekijaLista
+                tyontekijat={employees}
+                haku={employeeBankSearch}
+                onHaku={setEmployeeBankSearch}
+                saaMuokata={saaMuokataPankkia}
+                onUusi={() => { setEditingEmp(null); setEmpForm(emptyEmpForm); setViewingEmployeeBank('form'); }}
+                onMuokkaa={(emp) => { setEditingEmp(emp); setEmpForm(employeeToFormState(emp)); setViewingEmployeeBank('form'); }}
+                onPoista={handleDeleteEmployee}
+              />
             )}
           </div>
         </main>
@@ -11469,11 +10133,11 @@ export default function App() {
   // ====================== MUOKKAA KÄYTTÄJIÄ (vain admin) ======================
   if (viewingUserAdmin) {
     const isAdmin = session?.role === 'admin';
-    const roleBadge = (role?: string) => (
-      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${role === 'admin' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'}`}>
-        {role === 'admin' ? 'Pääkäyttäjä' : 'Käyttäjä'}
-      </span>
-    );
+    const takaisinListaan = () => {
+      setViewingUserAdmin('list');
+      resetNewUserForm();
+      kayttajanOikeudet.nollaa();
+    };
 
     return (
       <div className="min-h-screen bg-canvas font-sans flex flex-col">
@@ -11481,15 +10145,9 @@ export default function App() {
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-4xl mx-auto">
-            <TakaisinLinkki onClick={() => {
-                if (viewingUserAdmin === 'list') {
-                  setViewingUserAdmin(null);
-                } else {
-                  setViewingUserAdmin('list');
-                  resetNewUserForm();
-                  setEditingPermUser(null);
-                }
-              }}>
+            <TakaisinLinkki
+              onClick={() => (viewingUserAdmin === 'list' ? setViewingUserAdmin(null) : takaisinListaan())}
+            >
               {viewingUserAdmin === 'list' ? 'Takaisin' : 'Takaisin käyttäjälistaan'}
             </TakaisinLinkki>
 
@@ -11500,475 +10158,46 @@ export default function App() {
                 <p className="text-sm text-slate-500">Käyttäjähallinta on vain pääkäyttäjille.</p>
               </div>
             ) : viewingUserAdmin === 'new' ? (
-              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8">
-                <div className="mb-6 border-b border-slate-100 pb-4">
-                  <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                    <UserPlus className="text-emerald-500" size={24} />
-                    Uusi käyttäjä
-                  </h2>
-                  <p className="text-sm text-slate-500 mt-1">
-                    Uudella käyttäjällä ei ole oletuksena mitään sivukartta-oikeuksia, ja hän tarvitsee Authenticator-sovelluksen kirjautuakseen — hoida molemmat luonnin jälkeen "Muokkaa oikeuksia" -kohdasta.
-                  </p>
-                </div>
-                <form className="space-y-4 text-left max-w-md" onSubmit={(e) => e.preventDefault()}>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Käyttäjä</label>
-                    <input
-                      type="text"
-                      autoComplete="username"
-                      value={newUserUsername}
-                      onChange={(e) => setNewUserUsername(e.target.value)}
-                      className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-                      placeholder="esim. tikepvst"
-                    />
-                  </div>
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex gap-2.5">
-                    <Info size={16} className="text-slate-400 shrink-0 mt-0.5" />
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      Nimimerkkiä ei enää aseteta tässä. Raporttien "Laatija"-kenttä muodostuu
-                      tapahtumakohtaisesta nimimerkistä ja henkilön tunnistenumerosta (esim.
-                      "Ensiapu 1 #1028") — nimimerkki annetaan kun henkilö lisätään tapahtumaan.
-                      Tunnukset kannattaa luoda työntekijäpankista, jolloin nimi, tunnus ja
-                      tunnistenumero täyttyvät automaattisesti.
-                    </p>
-                  </div>
-                  {/* Salasanaa ei syötetä: palvelin arpoo sen ja näyttää kerran alla. */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex gap-2.5">
-                    <KeyRound size={16} className="text-slate-400 shrink-0 mt-0.5" />
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      Salasanaa ei aseteta käsin. Palvelin arpoo väliaikaisen salasanan, joka
-                      näytetään sinulle kerran luonnin jälkeen. Käyttäjä kirjautuu sillä ja joutuu
-                      heti vaihtamaan sen omakseen.
-                    </p>
-                  </div>
-                  {uusiSalasanaNaytto && (
-                    <div className="bg-emerald-50 border-2 border-emerald-300 rounded-lg p-4">
-                      <p className="text-xs font-bold text-emerald-900 uppercase tracking-wide mb-1">
-                        Tunnus {uusiSalasanaNaytto.username} luotu — väliaikainen salasana
-                      </p>
-                      <code className="block bg-white border border-emerald-200 rounded-lg px-3 py-2.5 text-base font-mono font-bold tracking-wider break-all text-slate-900">
-                        {uusiSalasanaNaytto.password}
-                      </code>
-                      <p className="text-xs text-emerald-800 mt-2">
-                        Välitä tämä käyttäjälle. Salasanaa ei voi hakea myöhemmin uudelleen.
-                      </p>
-                    </div>
-                  )}
-                  {newUserError && <p className="text-sm text-rose-600">{newUserError}</p>}
-                  <div className="pt-2 flex justify-end gap-3">
-                    <button
-                      type="button"
-                      onClick={() => { setViewingUserAdmin('list'); resetNewUserForm(); }}
-                      className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                    >
-                      Peruuta
-                    </button>
-                    <button
-                      type="button"
-                      disabled={newUserSubmitting}
-                      onClick={handleCreateUser}
-                      className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                    >
-                      <CheckCircle size={18} />
-                      {newUserSubmitting ? 'Luodaan…' : 'Luo käyttäjä'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            ) : viewingUserAdmin === 'permissions' && editingPermUser ? (
-              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8">
-                <div className="mb-6 border-b border-slate-100 pb-4 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-                  <div>
-                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                      <IdCard className="text-indigo-500" size={24} />
-                      Käyttöoikeudet: {editingPermUser.username}
-                    </h2>
-                    <p className="text-sm text-slate-500 mt-1">Valitse mitkä sivut käyttäjä näkee ja voi muokata.</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {roleBadge(editingPermUser.role)}
-                    {editingPermUser.role !== 'admin' && (
-                      <button
-                        type="button"
-                        disabled={permForceLogoutSubmitting}
-                        onClick={handleForceLogoutUser}
-                        title="Mitätöi käyttäjän nykyisen istunnon välittömästi"
-                        className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-rose-700 bg-slate-100 hover:bg-rose-50 disabled:opacity-60 px-3 py-1.5 rounded-lg transition-colors"
-                      >
-                        <LogOut size={14} />
-                        {permForceLogoutSubmitting ? 'Kirjataan ulos…' : 'Kirjaa käyttäjä ulos'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {permForceLogoutMessage && (
-                  <p className="text-sm text-emerald-600 -mt-4 mb-6">{permForceLogoutMessage}</p>
-                )}
-
-                <div className="mb-6 max-w-sm">
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Nimimerkki</label>
-                  <input
-                    type="text"
-                    value={permNickname}
-                    onChange={(e) => setPermNickname(e.target.value)}
-                    className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-
-                {editingPermUser.role !== 'admin' && (
-                  <div className="mb-6 bg-slate-50 border border-slate-200 rounded-xl p-5">
-                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-1">
-                      <Smartphone size={18} className="text-slate-400" />
-                      Authenticator-sovellus (TOTP)
-                      {permTotpInfo && (
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${permTotpInfo.totpRequired !== false ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
-                          {permTotpInfo.totpRequired !== false ? 'Käytössä' : 'Pois käytöstä'}
-                        </span>
-                      )}
-                    </h3>
-                    <p className="text-xs text-slate-500 mb-4">
-                      Käyttäjä tarvitsee tämän kirjautuakseen. Skannaa QR-koodi Google Authenticatorilla (tai vastaavalla) käyttäjän puhelimeen, tai syötä tekstisalaisuus käsin.
-                    </p>
-                    {permTotpLoading ? (
-                      <p className="text-sm text-slate-500">Ladataan…</p>
-                    ) : permTotpInfo ? (
-                      <div className="flex flex-col sm:flex-row gap-5 items-start">
-                        <img
-                          src={permTotpInfo.qrDataUri}
-                          alt="Authenticator-sovelluksen QR-koodi"
-                          className="w-40 h-40 rounded-lg border border-slate-200 bg-white p-2 shrink-0"
-                        />
-                        <div className="flex-1 min-w-0 space-y-3">
-                          <div>
-                            <label className="block text-xs text-slate-400 uppercase tracking-wide mb-1 flex items-center gap-1.5">
-                              <QrCode size={12} />
-                              Tekstisalaisuus (jos QR ei skannaudu)
-                            </label>
-                            <code className="block bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono tracking-wide break-all">
-                              {permTotpInfo.secret}
-                            </code>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              disabled={permTotpResetting}
-                              onClick={handleResetTotp}
-                              className="flex items-center gap-2 text-xs font-bold text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 disabled:opacity-60 px-3 py-2 rounded-lg transition-colors"
-                            >
-                              <RefreshCw size={14} />
-                              {permTotpResetting ? 'Nollataan…' : 'Nollaa Authenticator (esim. puhelin kadonnut)'}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={permTotpToggling}
-                              onClick={handleToggleTotpRequired}
-                              className="flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 disabled:opacity-60 px-3 py-2 rounded-lg transition-colors"
-                            >
-                              <Smartphone size={14} />
-                              {permTotpToggling
-                                ? 'Päivitetään…'
-                                : permTotpInfo.totpRequired !== false
-                                  ? 'Poista Authenticator käytöstä'
-                                  : 'Ota Authenticator uudelleen käyttöön'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                    {permTotpError && <p className="text-sm text-rose-600 mt-3">{permTotpError}</p>}
-                  </div>
-                )}
-
-                {/* Sivukartta-oikeudet tulevat KÄYTTÄJÄTASOLTA (server/roles.js), ei enää
-                    käyttäjäkohtaisesti. Täällä valitaan vain taso; itse tason sivuoikeuksia
-                    muokataan Sovellusasetuksissa. Näin yhdestä paikasta näkee kenellä on
-                    mitkä oikeudet, eikä efektiivisiä oikeuksia tarvitse laskea kahdesta
-                    lähteestä. */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
-                  <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
-                    <ShieldCheck className="text-indigo-500" size={16} />
-                    Käyttäjätaso
-                  </h3>
-                  <p className="text-xs text-slate-500 mb-4">
-                    Taso määrää mitä sivuja käyttäjä näkee ja voi muokata. Tasojen sisältöä
-                    muokataan Sovellusasetuksista — muutos vaikuttaa kaikkiin tason käyttäjiin heti.
-                  </p>
-
-                  {rolesLoading ? (
-                    <p className="text-sm text-slate-500">Ladataan tasoja…</p>
-                  ) : roles.length === 0 ? (
-                    <p className="text-sm text-rose-600">Käyttäjätasoja ei saatu ladattua.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {roles.map((role) => (
-                        <label
-                          key={role.id}
-                          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                            permRoleId === role.id
-                              ? 'bg-indigo-50 border-indigo-300'
-                              : 'bg-white border-slate-200 hover:bg-slate-50'
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="permRole"
-                            checked={permRoleId === role.id}
-                            onChange={() => setPermRoleId(role.id)}
-                            className="w-4 h-4 mt-0.5 text-indigo-600 focus:ring-indigo-500 shrink-0"
-                          />
-                          <span className="min-w-0">
-                            <span className="block text-sm font-bold text-slate-800">
-                              {role.name}
-                              {role.builtin && <span className="ml-2 text-xs font-medium text-slate-400">vakio</span>}
-                            </span>
-                            {role.description && (
-                              <span className="block text-xs text-slate-500 mt-0.5">{role.description}</span>
-                            )}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-
-                  {permRoleId === 'admin' && (
-                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-3">
-                      Pääkäyttäjällä on täydet oikeudet kaikkeen, mukaan lukien käyttäjien ja
-                      tasojen hallinta. Anna tämä taso vain harkiten.
-                    </p>
-                  )}
-
-                  {(() => {
-                    if (permRoleId === 'admin') return null;
-                    const puuttuvat = tasonPuolet(permRoleId).filter((t) => !permTuotteet.includes(t));
-                    if (puuttuvat.length === 0) return null;
-                    const nimet: Record<string, string> = {
-                      event: 'Turvajohto EVENT',
-                      guard: 'Turvajohto GUARD',
-                    };
-                    return (
-                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-3 flex gap-2.5">
-                        <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-xs text-amber-900 leading-relaxed">
-                            Taso antaa sivuja puolelta{' '}
-                            <strong>{puuttuvat.map((t) => nimet[t]).join(' ja ')}</strong>, mutta
-                            tunnuksella ei ole sinne pääsyä. Ilman sitä käyttäjä ei pääse
-                            kirjautumaan kyseiselle puolelle lainkaan.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => setPermTuotteet((prev) => [...new Set([...prev, ...puuttuvat])])}
-                            className="mt-2 text-xs font-bold text-amber-900 underline hover:no-underline"
-                          >
-                            Lisää {puuttuvat.map((t) => nimet[t]).join(' ja ')} alla oleviin puoliin
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                {/* Salasanan nollaus: käyttäjä ei muista omaansa */}
-                <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5">
-                  <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
-                    <KeyRound className="text-indigo-500" size={16} />
-                    Salasana
-                  </h3>
-                  <p className="text-xs text-slate-500 mb-4">
-                    Nollaus arpoo uuden väliaikaisen salasanan, joka näytetään sinulle kerran.
-                    Käyttäjä kirjautuu sillä ja joutuu heti vaihtamaan sen omakseen.
-                  </p>
-                  {uusiSalasanaNaytto && uusiSalasanaNaytto.username === editingPermUser.username ? (
-                    <div className="bg-emerald-50 border-2 border-emerald-300 rounded-lg p-4">
-                      <p className="text-xs font-bold text-emerald-900 uppercase tracking-wide mb-2">
-                        Väliaikainen salasana — näytetään vain nyt
-                      </p>
-                      <code className="block bg-white border border-emerald-200 rounded-lg px-3 py-2.5 text-base font-mono font-bold tracking-wider break-all text-slate-900">
-                        {uusiSalasanaNaytto.password}
-                      </code>
-                      <p className="text-xs text-emerald-800 mt-2">
-                        Välitä tämä käyttäjälle. Salasanaa ei voi hakea myöhemmin uudelleen —
-                        jos se katoaa, nollaa uudestaan.
-                      </p>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleResetUserPassword}
-                      className="flex items-center gap-2 text-xs font-bold text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-lg transition-colors"
-                    >
-                      <RefreshCw size={14} />
-                      Nollaa salasana
-                    </button>
-                  )}
-                </div>
-
-                {/* Tuotepääsy. Uusi koodi käyttää teematokeneita (ks. src/TEEMA.md) — värit ovat
-                    EVENT-puolella samat kuin viereisissä slate-luokissa, mutta lohko siirtyy
-                    aikanaan jaettuun kansioon sellaisenaan. */}
-                {editingPermUser.role !== 'admin' && (
-                  <>
-                  <div className="mt-6 bg-sunken border border-line rounded-xl p-5">
-                    <h3 className="text-sm font-bold text-ink mb-1 flex items-center gap-2">
-                      <ShieldCheck className="text-accent" size={16} />
-                      Puolet
-                    </h3>
-                    <p className="text-xs text-ink-muted mb-4">
-                      Mihin puoliin tunnus pääsee kirjautumaan. Sama tunnus käy molempiin, ja
-                      valinta ratkaisee vain sen kumman osoitteen takaa sovellus aukeaa —
-                      sivukartta-oikeudet määräävät edelleen mitä hän siellä näkee. Vähintään
-                      yksi puoli on valittava.
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {[
-                        { id: 'event', nimi: 'Turvajohto EVENT', selite: 'Tapahtumat' },
-                        { id: 'guard', nimi: 'Turvajohto GUARD', selite: 'Vartiointi' },
-                      ].map((t) => (
-                        <label
-                          key={t.id}
-                          className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer transition-colors ${
-                            permTuotteet.includes(t.id)
-                              ? 'bg-accent-soft border-accent text-accent-ink'
-                              : 'bg-surface border-line text-ink-body hover:bg-sunken'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={permTuotteet.includes(t.id)}
-                            onChange={() => vaihdaTuote(t.id)}
-                            className="w-4 h-4 text-accent rounded border-line-strong focus:ring-accent"
-                          />
-                          {t.nimi}
-                          <span className="text-xs text-ink-subtle">({t.selite})</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5">
-                    <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
-                      <Layers className="text-indigo-500" size={16} />
-                      Tapahtumarajaus
-                    </h3>
-                    <p className="text-xs text-slate-500 mb-4">
-                      Jos yhtään tapahtumaa ei ole valittu, käyttäjä näkee kaikkien tapahtumien datan
-                      normaaliin tapaan (ei rajoitusta). Valitsemalla tapahtumia käyttäjä näkee ja voi
-                      muokata vain niiden kirjauksia, raportteja ja riskiarviointeja — Sivukartta-
-                      oikeudet määräävät edelleen mitä sivuja hän ylipäätään näkee, tämä vain mitkä
-                      tapahtumat niillä sivuilla näkyvät.
-                    </p>
-                    {events.length === 0 ? (
-                      <p className="text-sm text-slate-500">Ei tapahtumia.</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {events.map((ev) => (
-                          <label
-                            key={ev.id}
-                            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer transition-colors ${
-                              permEventAccess.includes(ev.id)
-                                ? 'bg-indigo-50 border-indigo-300 text-indigo-800'
-                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={permEventAccess.includes(ev.id)}
-                              onChange={() => handleToggleEventAccess(ev.id)}
-                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-                            />
-                            {ev.name}
-                            {ev.archived && <span className="text-xs text-slate-400">(arkistoitu)</span>}
-                          </label>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  </>
-                )}
-
-                {permSaveError && <p className="text-sm text-rose-600 mt-4">{permSaveError}</p>}
-
-                <div className="pt-6 mt-2 flex justify-end gap-3 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => { setViewingUserAdmin('list'); setEditingPermUser(null); }}
-                    className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                  >
-                    Peruuta
-                  </button>
-                  <button
-                    type="button"
-                    disabled={permSaving}
-                    onClick={handleSavePermissions}
-                    className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-                  >
-                    <CheckCircle size={18} />
-                    {permSaving ? 'Tallennetaan…' : 'Tallenna oikeudet'}
-                  </button>
-                </div>
-              </div>
+              <UusiKayttaja
+                tunnus={newUserUsername}
+                onTunnus={setNewUserUsername}
+                virhe={newUserError}
+                kesken={newUserSubmitting}
+                onLuo={handleCreateUser}
+                onPeruuta={() => { setViewingUserAdmin('list'); resetNewUserForm(); }}
+                uusiSalasana={uusiSalasanaNaytto}
+              />
+            ) : viewingUserAdmin === 'permissions' && kayttajanOikeudet.muokattava ? (
+              <KayttajanOikeudet
+                muokattava={kayttajanOikeudet.muokattava}
+                nimimerkki={kayttajanOikeudet.nimimerkki}
+                onNimimerkki={kayttajanOikeudet.setNimimerkki}
+                taso={kayttajanOikeudet.taso}
+                onTaso={kayttajanOikeudet.setTaso}
+                tasot={roles}
+                tasotLatautuu={rolesLoading}
+                tasonPuolet={tasonPuolet}
+                tuotteet={kayttajanOikeudet.tuotteet}
+                onTuote={kayttajanOikeudet.vaihdaTuote}
+                onLisaaPuolet={kayttajanOikeudet.lisaaPuolet}
+                tapahtumaPaasy={kayttajanOikeudet.tapahtumaPaasy}
+                onTapahtumaPaasy={kayttajanOikeudet.vaihdaTapahtumaPaasy}
+                tapahtumat={events}
+                totp={kayttajanOikeudet.totp}
+                salasana={{ naytto: uusiSalasanaNaytto, onNollaa: kayttajanOikeudet.nollaaSalasana }}
+                uloskirjaus={kayttajanOikeudet.uloskirjaus}
+                tallennus={kayttajanOikeudet.tallennus}
+                onPeruuta={kayttajanOikeudet.sulje}
+              />
             ) : (
-              <>
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-                  <div>
-                    <h2 className="text-2xl font-bold text-slate-800">Muokkaa käyttäjiä</h2>
-                    <p className="text-sm text-slate-500 mt-1">Kaikki sovelluksen käyttäjätunnukset ja niiden sivukartta-oikeudet.</p>
-                  </div>
-                  <button
-                    onClick={() => { resetNewUserForm(); setViewingUserAdmin('new'); }}
-                    className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors shadow-sm shrink-0"
-                  >
-                    <UserPlus size={16} />
-                    Uusi käyttäjä
-                  </button>
-                </div>
-
-                {userAdminError && <p className="text-sm text-rose-600 mb-4">{userAdminError}</p>}
-
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
-                      <tr>
-                        <th className="p-4">Nimimerkki</th>
-                        <th className="p-4 w-24">Tunniste</th>
-                        <th className="p-4">Käyttäjätaso</th>
-                        <th className="p-4">Käyttäjätunnus</th>
-                        <th className="p-4">Luotu</th>
-                        <th className="p-4 text-right">Toiminnot</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {userAdminLoading ? (
-                        <tr><td colSpan={5} className="p-8 text-center text-sm text-slate-500">Ladataan…</td></tr>
-                      ) : userAdminList.length === 0 ? (
-                        <tr><td colSpan={5} className="p-8 text-center text-sm text-slate-500">Ei käyttäjiä.</td></tr>
-                      ) : userAdminList.map((u) => (
-                        <tr key={u.username} className="hover:bg-slate-50 transition-colors">
-                          <td className="p-4 font-medium text-slate-800">{u.nickname}</td>
-                          <td className="p-4">
-                            {u.displayId
-                              ? <span className="font-mono text-xs font-bold text-indigo-700">{muotoileTunniste(u.displayId)}</span>
-                              : <span className="text-xs text-slate-400">—</span>}
-                          </td>
-                          <td className="p-4 text-slate-600 text-xs">
-                            {roles.find((r) => r.id === u.roleId)?.name || u.roleId || '—'}
-                          </td>
-                          <td className="p-4 font-mono text-xs text-slate-600">{u.username}</td>
-                          <td className="p-4 text-slate-500 text-xs">{u.created_at ? new Date(u.created_at).toLocaleDateString('fi-FI') : '—'}</td>
-                          <td className="p-4 text-right">
-                            <button
-                              onClick={() => handleOpenPermissions(u)}
-                              className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
-                            >
-                              Muokkaa oikeuksia
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
+              <KayttajaLista
+                kayttajat={userAdminList}
+                lataa={userAdminLoading}
+                virhe={userAdminError}
+                tasot={roles}
+                onUusi={() => { resetNewUserForm(); setViewingUserAdmin('new'); }}
+                onOikeudet={kayttajanOikeudet.avaa}
+              />
             )}
           </div>
         </main>
@@ -12019,187 +10248,22 @@ export default function App() {
 
   // ====================== HÄTÄVIESTIEN LÄHETYSHISTORIA JA TOIMITUSTILAT ======================
   if (viewingSmsLog) {
-    const omatLahetykset = smsLog
-      .filter((l: any) => (l.eventId || 'fesx') === selectedEvent)
-      .sort((a: any, b: any) => String(b.ts || '').localeCompare(String(a.ts || '')));
-
     return (
       <div className="min-h-screen bg-canvas font-sans flex flex-col">
         {ylapalkki('Hätäviestien lähetyshistoria', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10">
-          <div className="max-w-4xl mx-auto text-left">
-            <TakaisinLinkki onClick={() => { setViewingSmsLog(false); setAvattuLahetys(null); }}>
-              Takaisin
-            </TakaisinLinkki>
-
-            <h2 className="text-2xl font-bold text-slate-800 mb-1">Lähetetyt hätäviestit</h2>
-            <p className="text-sm text-slate-500 mb-6">
-              {findEventName(selectedEvent, events)} · toimitustilat päivittyvät automaattisesti
-              BulkSMS:n toimituskuittauksista.
-            </p>
-
-            {!smsStatus?.webhookKaytossa && (
-              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5">
-                <strong>Toimituskuittaukset eivät ole käytössä.</strong> Webhook-salaisuutta ei ole asetettu
-                palvelimelle, joten viestit näkyvät tilassa "Vastaanotettu" eikä perillemenoa voi todentaa.
-              </p>
-            )}
-
-            {smsLogError && <p className="text-sm text-rose-600 mb-4">{smsLogError}</p>}
-
-            {omatLahetykset.length === 0 ? (
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-10 text-center">
-                <Smartphone className="text-slate-300 mx-auto mb-4" size={40} />
-                <p className="text-sm text-slate-500">Tästä tapahtumasta ei ole lähetetty yhtään hätäviestiä.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {omatLahetykset.map((lahetys: any) => {
-                  const tilanne = koostaSmsTilanne(lahetys);
-                  const auki = avattuLahetys === lahetys.id;
-                  const vastaukset = smsReplies.filter((v: any) => v.sendId === lahetys.id);
-                  return (
-                    <div key={lahetys.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={() => setAvattuLahetys(auki ? null : lahetys.id)}
-                        className="w-full text-left p-5 hover:bg-slate-50 transition-colors"
-                      >
-                        <div className="flex justify-between items-start gap-3">
-                          <div className="min-w-0">
-                            <p className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                              <span className="truncate">{lahetys.label}</span>
-                              {lahetys.dryRun && (
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 shrink-0">
-                                  KUIVAHARJOITTELU
-                                </span>
-                              )}
-                            </p>
-                            <p className="text-xs text-slate-500 mt-0.5">
-                              {new Date(lahetys.ts).toLocaleString('fi-FI')} · {lahetys.user} · {smsRyhmanLabel(lahetys.group)}
-                            </p>
-                          </div>
-                          <ChevronDown size={16} className={`text-slate-400 shrink-0 transition-transform ${auki ? 'rotate-180' : ''}`} />
-                        </div>
-
-                        {/* Toimitustilanne yhdellä silmäyksellä: hätätilanteessa oleellisin
-                            luku on kuinka moni EI saanut viestiä. */}
-                        <div className="flex flex-wrap gap-2 mt-3">
-                          {tilanne.perilla > 0 && (
-                            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700">
-                              {tilanne.perilla} perillä
-                            </span>
-                          )}
-                          {tilanne.matkalla > 0 && (
-                            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-sky-100 text-sky-700">
-                              {tilanne.matkalla} matkalla
-                            </span>
-                          )}
-                          {tilanne.epaonnistui > 0 && (
-                            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-rose-100 text-rose-700">
-                              {tilanne.epaonnistui} ei perille
-                            </span>
-                          )}
-                          {tilanne.kuivaharjoittelu > 0 && (
-                            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">
-                              {tilanne.kuivaharjoittelu} simuloitu
-                            </span>
-                          )}
-                          {lahetys.skipped?.length > 0 && (
-                            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">
-                              {lahetys.skipped.length} ilman numeroa
-                            </span>
-                          )}
-                          {vastaukset.length > 0 && (
-                            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-700">
-                              {vastaukset.length} vastausta
-                            </span>
-                          )}
-                        </div>
-                      </button>
-
-                      {auki && (
-                        <div className="border-t border-slate-100 p-5 space-y-4 bg-slate-50">
-                          <div>
-                            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Lähetetty viesti</h4>
-                            <p className="text-sm text-slate-700 bg-white border border-slate-200 rounded-lg p-3 font-mono leading-snug">
-                              {lahetys.body}
-                            </p>
-                          </div>
-
-                          <div>
-                            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
-                              Vastaanottajat ({lahetys.recipients?.length || 0})
-                            </h4>
-                            <ul className="text-xs bg-white border border-slate-200 rounded-lg divide-y divide-slate-100">
-                              {(lahetys.recipients || []).map((s: any, i: number) => {
-                                const meta = smsTilaMeta(s.status);
-                                return (
-                                  <li key={i} className="px-3 py-2 flex justify-between items-center gap-2">
-                                    <span className="truncate">
-                                      <span className="font-medium text-slate-800">{s.nimi || '(tuntematon)'}</span>
-                                      {s.rooli ? <span className="text-slate-500"> · {s.rooli}</span> : null}
-                                      <span className="text-slate-400 font-mono ml-2">{s.numero}</span>
-                                    </span>
-                                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 ${meta.tone}`}>
-                                      {meta.label}
-                                    </span>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-
-                          {lahetys.skipped?.length > 0 && (
-                            <div>
-                              <h4 className="text-xs font-bold text-amber-600 uppercase tracking-wide mb-1">
-                                Ei tavoitettu ({lahetys.skipped.length})
-                              </h4>
-                              <ul className="text-xs text-slate-600 bg-amber-50 border border-amber-200 rounded-lg divide-y divide-amber-200">
-                                {lahetys.skipped.map((v: any, i: number) => (
-                                  <li key={i} className="px-3 py-2"><span className="font-medium">{v.nimi}</span> — {v.syy}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {vastaukset.length > 0 && (
-                            <div>
-                              <h4 className="text-xs font-bold text-indigo-600 uppercase tracking-wide mb-1">
-                                Vastaukset ({vastaukset.length})
-                              </h4>
-                              <ul className="text-xs bg-white border border-indigo-200 rounded-lg divide-y divide-indigo-100">
-                                {vastaukset.map((v: any) => (
-                                  <li key={v.id} className="px-3 py-2">
-                                    <div className="flex justify-between gap-2">
-                                      <span className="font-medium text-slate-800 truncate">
-                                        {v.nimi || v.numero || '(tuntematon)'}
-                                      </span>
-                                      <span className="text-slate-400 shrink-0">
-                                        {v.ts ? new Date(v.ts).toLocaleString('fi-FI') : ''}
-                                      </span>
-                                    </div>
-                                    <p className="text-slate-700 mt-1">{v.body}</p>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {lahetys.repliable && vastaukset.length === 0 && (
-                            <p className="text-xs text-slate-500">
-                              Viesti lähetettiin vastattavana, mutta yhtään vastausta ei ole vielä saapunut.
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <HataviestiLoki
+            lahetykset={smsLog}
+            vastaukset={smsReplies}
+            tapahtumaId={selectedEvent}
+            tapahtumat={events}
+            webhookKaytossa={!!smsStatus?.webhookKaytossa}
+            virhe={smsLogError}
+            avattu={avattuLahetys}
+            onAvaa={setAvattuLahetys}
+            onTakaisin={() => { setViewingSmsLog(false); setAvattuLahetys(null); }}
+          />
         </main>
         {globalOverlays}
       </div>
@@ -12619,167 +10683,23 @@ export default function App() {
   }
 
   if (viewingAuditLog) {
-    const isAdmin = session?.role === 'admin';
-    const actionLabels = {
-      create: 'Luotu',
-      update: 'Muokattu',
-      delete: 'Poistettu',
-      login_success: 'Kirjautui sisään',
-      login_failed: 'Epäonnistunut kirjautuminen',
-      user_create: 'Loi käyttäjän',
-      user_update: 'Muokkasi käyttäjää',
-      totp_reset: 'Nollasi Authenticatorin',
-      totp_required_change: 'Muutti Authenticator-vaatimusta',
-      force_logout: 'Pakotti uloskirjautumaan',
-      password_change: 'Vaihtoi salasanan',
-      user_password_set: 'Asetti käyttäjän salasanan',
-      sms_send: 'Lähetti hätäviestin',
-      sms_dryrun: 'Hätäviesti (kuivaharjoittelu)',
-      sms_failed: 'Hätäviestin lähetys epäonnistui',
-      sms_replies: 'Vastauksia hätäviestiin',
-      sms_saldo_vahissa: 'SMS-saldo alle varoitusrajan',
-      sms_webhook_rejected: 'Webhook hylätty (väärä salaisuus)',
-    };
-    const collectionLabels: Record<string, string> = {
-      checkins: 'Sisäänkirjaukset',
-      reports: 'Raportit',
-      events: 'Tapahtumat',
-      riskAssessments: 'Riskiarviot',
-      employees: 'Työntekijäpankki',
-      smsButtons: 'Pikatoiminnot',
-    };
-    // Korostettavat rivit: epäonnistunut kirjautuminen ja epäonnistunut hätäviesti ovat
-    // molemmat asioita jotka lokia selaavan pitää huomata heti.
-    const korostaVirheena = (a?: string) =>
-      a === 'login_failed' || a === 'sms_failed' || a === 'sms_webhook_rejected' || a === 'sms_saldo_vahissa';
-    const targetLabel = (e: AuditMerkinta) => {
-      if (e.collection) {
-        const label = collectionLabels[e.collection] || e.collection;
-        return e.recordId ? `${label} (${e.recordId})` : label;
-      }
-      if (e.targetUser) return e.targetUser;
-      return '—';
-    };
-
     return (
       <div className="min-h-screen bg-canvas font-sans flex flex-col">
         {ylapalkki('Audit-loki', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10">
-          <div className="max-w-5xl mx-auto">
-            <TakaisinLinkki onClick={() => setViewingAuditLog(false)}>
-              Takaisin
-            </TakaisinLinkki>
-
-            {!isAdmin ? (
-              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-10 text-center">
-                <ShieldAlert className="text-rose-400 mx-auto mb-4" size={40} />
-                <h2 className="text-lg font-bold text-slate-800 mb-1">Ei käyttöoikeutta</h2>
-                <p className="text-sm text-slate-500">Audit-loki on vain pääkäyttäjille.</p>
-              </div>
-            ) : (
-              <>
-                <div className="mb-6">
-                  <h2 className="text-2xl font-bold text-slate-800">Audit-loki</h2>
-                  <p className="text-sm text-slate-500 mt-1">
-                    Kuka teki mitä milloin — luonnit, muokkaukset, poistot, käyttäjähallinta ja kirjautumiset.
-                  </p>
-                </div>
-
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 mb-4 flex flex-wrap gap-3 items-end">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Käyttäjä</label>
-                    <input
-                      type="text"
-                      value={auditFilters.user}
-                      onChange={(e) => setAuditFilters((f) => ({ ...f, user: e.target.value }))}
-                      placeholder="esim. Johto1"
-                      className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-40"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Toiminto</label>
-                    <select
-                      value={auditFilters.action}
-                      onChange={(e) => setAuditFilters((f) => ({ ...f, action: e.target.value }))}
-                      className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm"
-                    >
-                      <option value="">Kaikki</option>
-                      {Object.entries(actionLabels).map(([id, label]) => (
-                        <option key={id} value={id}>{label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Kokoelma</label>
-                    <select
-                      value={auditFilters.collection}
-                      onChange={(e) => setAuditFilters((f) => ({ ...f, collection: e.target.value }))}
-                      className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm"
-                    >
-                      <option value="">Kaikki</option>
-                      {Object.entries(collectionLabels).map(([id, label]) => (
-                        <option key={id} value={id}>{label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <button
-                    onClick={() => fetchAuditLog()}
-                    className="px-4 py-1.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
-                  >
-                    Suodata
-                  </button>
-                </div>
-
-                {auditError && <p className="text-sm text-rose-600 mb-4">{auditError}</p>}
-
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
-                      <tr>
-                        <th className="p-4">Ajankohta</th>
-                        <th className="p-4">Käyttäjä</th>
-                        <th className="p-4">Toiminto</th>
-                        <th className="p-4">Kohde</th>
-                        <th className="p-4">Tapahtuma</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {auditLoading && auditEntries.length === 0 ? (
-                        <tr><td colSpan={5} className="p-8 text-center text-sm text-slate-500">Ladataan…</td></tr>
-                      ) : auditEntries.length === 0 ? (
-                        <tr><td colSpan={5} className="p-8 text-center text-sm text-slate-500">Ei lokirivejä.</td></tr>
-                      ) : auditEntries.map((e, i) => (
-                        <tr key={i} className={`hover:bg-slate-50 transition-colors ${korostaVirheena(e.action) ? 'bg-rose-50/50' : ''}`}>
-                          <td className="p-4 text-slate-500 text-xs whitespace-nowrap">{new Date(e.ts).toLocaleString('fi-FI')}</td>
-                          <td className="p-4 font-mono text-xs text-slate-700">{e.user || '—'}</td>
-                          <td className="p-4">
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${korostaVirheena(e.action) ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
-                              {actionLabels[e.action] || e.action}
-                            </span>
-                          </td>
-                          <td className="p-4 text-slate-700 text-xs">{targetLabel(e)}</td>
-                          <td className="p-4 text-slate-500 text-xs">{e.eventId ? findEventName(e.eventId, events) : '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {auditHasMore && (
-                  <div className="text-center mt-4">
-                    <button
-                      onClick={() => fetchAuditLog(auditEntries[auditEntries.length - 1]?.ts)}
-                      disabled={auditLoading}
-                      className="px-4 py-2 text-sm font-medium text-indigo-600 bg-white border border-slate-200 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-60"
-                    >
-                      {auditLoading ? 'Ladataan…' : 'Lataa lisää'}
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+          <AuditLoki
+            merkinnat={auditEntries}
+            lataa={auditLoading}
+            virhe={auditError}
+            lisaaLadattavaa={auditHasMore}
+            suodattimet={auditFilters}
+            onSuodattimet={setAuditFilters}
+            onHae={fetchAuditLog}
+            onTakaisin={() => setViewingAuditLog(false)}
+            isAdmin={session?.role === 'admin'}
+            tapahtumat={events}
+          />
         </main>
         {globalOverlays}
       </div>
@@ -12788,125 +10708,19 @@ export default function App() {
 
   // ====================== TALLENNETUT RAPORTIT (kaikki tapahtumat) ======================
   if (viewingAllReports) {
-    // Roskakoriin siirretyt eivät kuulu raporttilistaukseen (ks. handleDeleteReport).
-    const sortedAllReports = reports.filter((r) => !r.deletedAt).sort((a, b) => {
-      if (allReportsSortBy === 'id') return String(a.id).localeCompare(String(b.id));
-      if (allReportsSortBy === 'author') return String(a.author || '').localeCompare(String(b.author || ''));
-      if (allReportsSortBy === 'event') return findEventName(a.eventId, events).localeCompare(findEventName(b.eventId, events));
-      return 0; // 'newest' — tallennusjärjestys on jo uusin ensin
-    });
-
-    const sortOptions = [
-      { id: 'newest', label: 'Uusin' },
-      { id: 'id', label: 'Tunniste' },
-      { id: 'author', label: 'Kirjaaja' },
-      { id: 'event', label: 'Tapahtuma' }
-    ];
-
     return (
       <div className="min-h-screen bg-canvas font-sans flex flex-col">
         {ylapalkki('Tallennetut raportit', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10">
-          <div className="max-w-6xl mx-auto">
-            <TakaisinLinkki onClick={() => setViewingAllReports(false)}>
-              Takaisin etusivulle
-            </TakaisinLinkki>
-
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-              <div>
-                <h2 className="text-2xl font-bold text-slate-800">Tallennetut raportit</h2>
-                <p className="text-sm text-slate-500 mt-1">
-                  Kaikki kirjaukset kaikista tapahtumista samassa listassa ({sortedAllReports.length} kpl).
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-1 shadow-sm">
-                <span className="text-xs font-medium text-slate-400 pl-2 pr-1 hidden sm:inline">Lajittele:</span>
-                {sortOptions.map((opt) => (
-                  <button
-                    key={opt.id}
-                    onClick={() => setAllReportsSortBy(opt.id)}
-                    className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${
-                      allReportsSortBy === opt.id
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
-                  <tr>
-                    <th className="p-4">Tunniste</th>
-                    <th className="p-4">Tyyppi</th>
-                    <th className="p-4">Laatija</th>
-                    <th className="p-4">Tapahtuma</th>
-                    <th className="p-4">Aika</th>
-                    <th className="p-4">Liite</th>
-                    <th className="p-4 text-right">Toiminnot</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200">
-                  {sortedAllReports.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="p-8 text-center text-sm text-slate-500">
-                        Ei vielä tallennettuja raportteja.
-                      </td>
-                    </tr>
-                  ) : sortedAllReports.map((report) => (
-                    <tr key={report.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-4 font-mono text-xs text-slate-700">{report.id}</td>
-                      <td className="p-4 font-medium text-slate-800">{report.type}</td>
-                      <td className="p-4 text-slate-600">{report.author}</td>
-                      <td className="p-4 text-slate-600">{findEventName(report.eventId, events)}</td>
-                      <td className="p-4 font-mono text-slate-600">{report.time}</td>
-                      <td className="p-4">
-                        {report.attachment ? (
-                          <a
-                            href={`/api/uploads/${report.attachment.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
-                          >
-                            <Paperclip size={12} />
-                            {report.attachment.name}
-                          </a>
-                        ) : (
-                          <span className="text-xs text-slate-300">—</span>
-                        )}
-                      </td>
-                      <td className="p-4 text-right">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => avaaRaporttiPdf(report, false)}
-                            title="Avaa tulostusversio esikatseluun"
-                            className="text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors"
-                          >
-                            Esikatsele
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => avaaRaporttiPdf(report, true)}
-                            title="Avaa tulostusikkunan, josta tallennetaan PDF-tiedostona"
-                            className="text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-md transition-colors"
-                          >
-                            Tallenna PDF
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <TallennetutRaportit
+            kirjaukset={reports}
+            jarjestys={allReportsSortBy}
+            onJarjestys={setAllReportsSortBy}
+            onAvaaPdf={avaaRaporttiPdf}
+            onTakaisin={() => setViewingAllReports(false)}
+            tapahtumat={events}
+          />
         </main>
         {globalOverlays}
       </div>
@@ -12919,157 +10733,20 @@ export default function App() {
     const detailEvent = archivedEventDetailId ? archivedEvents.find(e => e.id === archivedEventDetailId) : null;
 
     if (detailEvent) {
-      const eventReports = reports.filter(r => (r.eventId || 'fesx') === detailEvent.id && !r.deletedAt);
-      const eventCheckins = checkedInEmployees.filter(e => (e.eventId || 'fesx') === detailEvent.id);
-      const eventRisks = riskAssessments.filter(r => (r.eventId || 'fesx') === detailEvent.id);
-
       return (
         <div className="min-h-screen bg-canvas font-sans flex flex-col">
           {ylapalkki('Tallennetut tapahtumat')}
 
           <main className="flex-1 p-6 md:p-10">
-            <div className="max-w-6xl mx-auto">
-              <TakaisinLinkki onClick={() => setArchivedEventDetailId(null)}>
-              Takaisin tallennettuihin tapahtumiin
-            </TakaisinLinkki>
-
-              <div className="mb-6 bg-slate-100 border border-slate-200 rounded-xl p-4 flex items-start gap-3">
-                <Archive className="text-slate-500 shrink-0 mt-0.5" size={18} />
-                <div className="text-sm text-slate-700">
-                  <span className="font-bold">{detailEvent.name}</span> — poistettu {new Date(detailEvent.archivedAt).toLocaleString('fi-FI')}.
-                  Tiedot ovat vain luku -tilassa.
-                </div>
-              </div>
-
-              <h3 className="text-lg font-bold text-slate-800 mb-3">Tapahtuman perustiedot (luontilomake)</h3>
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-8 space-y-6">
-                {(() => {
-                  const fd = detailEvent.formData || {};
-                  const groupsWithData = FORM_FIELD_GROUPS
-                    .map(group => ({
-                      ...group,
-                      fields: group.fields.filter(f => {
-                        const v = fd[f.key];
-                        return f.bool ? !!v : !!(v && String(v).trim());
-                      })
-                    }))
-                    .filter(group => group.fields.length > 0);
-
-                  if (groupsWithData.length === 0) {
-                    return <p className="text-sm text-slate-500">Ei tallennettuja lomaketietoja tälle tapahtumalle.</p>;
-                  }
-
-                  return groupsWithData.map(group => (
-                    <div key={group.title}>
-                      <h4 className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">{group.title}</h4>
-                      <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
-                        {group.fields.map(f => (
-                          <div key={f.key} className="text-sm">
-                            <dt className="text-slate-500">{f.label}</dt>
-                            <dd className="text-slate-800 font-medium">{f.bool ? 'Kyllä' : fd[f.key]}</dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </div>
-                  ));
-                })()}
-              </div>
-
-              <h3 className="text-lg font-bold text-slate-800 mb-3">Raportit ({eventReports.length})</h3>
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto mb-8">
-                <table className="w-full text-sm text-left">
-                  <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="p-4">Tunniste</th>
-                      <th className="p-4">Tyyppi</th>
-                      <th className="p-4">Laatija</th>
-                      <th className="p-4">Aika</th>
-                      <th className="p-4">Liite</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {eventReports.length === 0 ? (
-                      <tr><td colSpan={5} className="p-8 text-center text-sm text-slate-500">Ei raportteja.</td></tr>
-                    ) : eventReports.map((report) => (
-                      <tr key={report.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="p-4 font-mono text-xs text-slate-700">{report.id}</td>
-                        <td className="p-4 font-medium text-slate-800">{report.type}</td>
-                        <td className="p-4 text-slate-600">{report.author}</td>
-                        <td className="p-4 font-mono text-slate-600">{report.time}</td>
-                        <td className="p-4">
-                          {report.attachment ? (
-                            <a
-                              href={`/api/uploads/${report.attachment.id}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
-                            >
-                              <Paperclip size={12} />
-                              {report.attachment.name}
-                            </a>
-                          ) : (
-                            <span className="text-xs text-slate-300">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <h3 className="text-lg font-bold text-slate-800 mb-3">Tapahtumaan merkityt työntekijät ({eventCheckins.length})</h3>
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                  <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
-                    <tr>
-                      <th className="p-4">Nimi</th>
-                      <th className="p-4">Rooli</th>
-                      <th className="p-4">Sisäänkirjattu</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {eventCheckins.length === 0 ? (
-                      <tr><td colSpan={3} className="p-8 text-center text-sm text-slate-500">Ei työntekijöitä merkitty tapahtumaan.</td></tr>
-                    ) : eventCheckins.map((emp) => (
-                      <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="p-4 font-medium text-slate-800">{emp.name}</td>
-                        <td className="p-4 text-slate-600">{emp.role}</td>
-                        <td className="p-4"><EmpStatusBadge emp={emp} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Pysyvä poisto: vain adminille, ks. handlePermanentDeleteEvent */}
-              {isAdminUser && (
-                <div className="mt-10 bg-white rounded-xl border-2 border-rose-200 shadow-sm p-6">
-                  <h3 className="text-lg font-bold text-rose-700 flex items-center gap-2">
-                    <Trash2 size={18} />
-                    Poista tapahtuma pysyvästi
-                  </h3>
-                  <p className="text-sm text-slate-600 mt-2 max-w-3xl">
-                    Poistaa tapahtuman ja kaiken siihen liittyvän datan lopullisesti:
-                    {' '}<span className="font-semibold">{eventReports.length} raporttia</span>,
-                    {' '}<span className="font-semibold">{eventCheckins.length} työntekijäkirjausta</span> ja
-                    {' '}<span className="font-semibold">{eventRisks.length} riskiarviota</span>.
-                    Poistoa ei voi perua eikä dataa saa takaisin arkistosta.
-                  </p>
-                  <p className="text-xs text-slate-500 mt-2 max-w-3xl">
-                    Huomioi ennen poistoa, onko tapahtumailmoituksilla tai voimankäyttöraporteilla
-                    vielä lakisääteinen säilytysvelvollisuus.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => handlePermanentDeleteEvent(detailEvent)}
-                    className="mt-4 px-5 py-2 text-sm font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors flex items-center gap-2"
-                  >
-                    <Trash2 size={16} />
-                    Poista pysyvästi
-                  </button>
-                </div>
-              )}
-            </div>
+            <ArkistoidunTapahtumanTiedot
+              tapahtuma={detailEvent}
+              kirjaukset={reports}
+              sisaankirjaukset={checkedInEmployees}
+              riskiarviot={riskAssessments}
+              isAdmin={isAdminUser}
+              onPoistaPysyvasti={handlePermanentDeleteEvent}
+              onTakaisin={() => setArchivedEventDetailId(null)}
+            />
           </main>
           {globalOverlays}
         </div>
@@ -13081,52 +10758,11 @@ export default function App() {
         {ylapalkki('Tallennetut tapahtumat')}
 
         <main className="flex-1 p-6 md:p-10">
-          <div className="max-w-5xl mx-auto">
-            <TakaisinLinkki onClick={() => setViewingArchivedEvents(false)}>
-              Takaisin etusivulle
-            </TakaisinLinkki>
-
-            <div className="mb-8">
-              <h2 className="text-2xl font-bold text-slate-800">Tallennetut tapahtumat</h2>
-              <p className="text-sm text-slate-500 mt-1">
-                Poistetut tapahtumat säilyvät tässä raportteineen ja kirjauksineen ({archivedEvents.length} kpl).
-              </p>
-            </div>
-
-            {archivedEvents.length === 0 ? (
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-10 text-center text-sm text-slate-500">
-                Ei poistettuja tapahtumia.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {archivedEvents.map((ev) => (
-                  <button
-                    key={ev.id}
-                    onClick={() => setArchivedEventDetailId(ev.id)}
-                    className="bg-white rounded-xl border-2 border-slate-200 hover:border-indigo-400 shadow-sm hover:shadow-md transition-all p-6 text-left group"
-                  >
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="p-3 rounded-lg bg-slate-100 text-slate-500 group-hover:scale-110 transition-transform duration-200">
-                        <Archive size={24} />
-                      </div>
-                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-200 text-slate-700">
-                        Poistettu
-                      </span>
-                    </div>
-                    <h3 className="text-lg font-bold text-slate-800">{ev.name}</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">{ev.client}</p>
-                    <p className="text-xs text-slate-400 mt-3">
-                      Poistettu {new Date(ev.archivedAt).toLocaleDateString('fi-FI')}
-                    </p>
-                    <div className="mt-5 pt-4 border-t border-slate-100 text-sm font-bold text-indigo-600 flex items-center gap-1">
-                      Näytä tiedot
-                      <ChevronRight size={16} />
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <ArkistoidutTapahtumat
+            tapahtumat={archivedEvents}
+            onAvaa={setArchivedEventDetailId}
+            onTakaisin={() => setViewingArchivedEvents(false)}
+          />
         </main>
         {globalOverlays}
       </div>
@@ -13143,76 +10779,12 @@ export default function App() {
         {ylapalkki('Minulle jaetut', { kello: true })}
 
         <main className="flex-1 p-6 md:p-10">
-          <div className="max-w-4xl mx-auto">
-            <TakaisinLinkki onClick={() => setViewingSharedWithMe(false)}>
-              Takaisin etusivulle
-            </TakaisinLinkki>
-
-            <div className="mb-8">
-              <h2 className="text-2xl font-bold text-slate-800">Minulle jaetut</h2>
-              <p className="text-sm text-slate-500 mt-1">
-                Tiedostot ja kansiot jotka on jaettu sinulle nimellä. Näet ne täältä vaikka
-                sinulla ei olisi muuten pääsyä kyseiseen tapahtumaan.
-              </p>
-            </div>
-
-            {sharedWithMeLoading ? (
-              <p className="text-sm text-slate-500">Ladataan…</p>
-            ) : sharedWithMe.length === 0 ? (
-              <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
-                <Paperclip className="text-slate-300 mx-auto mb-3" size={36} />
-                <p className="text-sm text-slate-500">Sinulle ei ole jaettu tiedostoja.</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {sharedWithMe.map((jako) => (
-                  <div key={jako.shareId} className="bg-white border border-slate-200 rounded-xl p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          {jako.type === 'folder'
-                            ? <Layers size={18} className="text-indigo-500 shrink-0" />
-                            : <FileText size={18} className="text-slate-400 shrink-0" />}
-                          <h3 className="text-sm font-bold text-slate-800 truncate">{jako.name}</h3>
-                        </div>
-                        <p className="text-xs text-slate-500 mt-1">
-                          Jakanut {jako.sharedBy}
-                          {jako.sharedAt && ` · ${new Date(jako.sharedAt).toLocaleDateString('fi-FI')}`}
-                          {' · '}
-                          {findEventName(jako.eventId, events)}
-                        </p>
-                      </div>
-                      {jako.expiresAt && (
-                        <span className="shrink-0 text-xs text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
-                          Voimassa {new Date(jako.expiresAt).toLocaleDateString('fi-FI')} asti
-                        </span>
-                      )}
-                    </div>
-
-                    {jako.files.length === 0 ? (
-                      <p className="text-sm text-slate-500">Ei ladattavia tiedostoja.</p>
-                    ) : (
-                      <div className="border border-slate-100 rounded-lg divide-y divide-slate-100">
-                        {jako.files.map((f) => (
-                          <div key={f.id} className="p-3 flex items-center justify-between gap-3">
-                            <span className="text-sm text-slate-700 truncate">{f.name}</span>
-                            <a
-                              href={`/api/uploads/${f.uploadId}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="shrink-0 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
-                            >
-                              Lataa
-                            </a>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <MinulleJaetut
+            jaot={sharedWithMe}
+            lataa={sharedWithMeLoading}
+            onTakaisin={() => setViewingSharedWithMe(false)}
+            tapahtumat={events}
+          />
         </main>
         {globalOverlays}
       </div>
@@ -14049,7 +11621,7 @@ export default function App() {
           <div className="flex items-center gap-3 border-l border-slate-700 pl-4 sm:pl-6">
             <NotificationBell notifications={notifications} onOpen={avaaIlmoitus} />
             <ProfileMenu
-              nickname={sessionNickname}
+              nickname={sessionNickname || ''}
               isAdmin={session?.role === 'admin'}
               onChangePassword={() => setShowChangePassword(true)}
               onViewAuditLog={() => setViewingAuditLog(true)}
@@ -14581,7 +12153,7 @@ export default function App() {
                     />
                   ) : (
                     <div className="flex flex-wrap gap-2">
-                      {openedReport.attachments.map((liite) => (
+                      {openedReport.attachments.map((liite: Liite) => (
                         <a
                           key={liite.id}
                           href={`/api/uploads/${liite.id}`}
@@ -14602,7 +12174,7 @@ export default function App() {
                 <div>
                   <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Korjausmerkinnät</p>
                   <ul className="space-y-2">
-                    {openedReport.corrections.map((merkinta) => (
+                    {openedReport.corrections.map((merkinta: Korjausmerkinta) => (
                       <li key={merkinta.id} className="bg-amber-50 border border-amber-100 rounded-lg p-3">
                         <p className="text-slate-700 whitespace-pre-wrap">{merkinta.text}</p>
                         <p className="text-xs text-slate-500 mt-1.5">
@@ -14772,7 +12344,7 @@ export default function App() {
                   )}
                 </dl>
 
-                {resLevel && (
+                {resLevel && resTone && (
                   <div>
                     <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Jäännösriski toimenpiteiden jälkeen</p>
                     <div className={`rounded-xl border p-3 flex items-center gap-3 ${resTone.bg} ${resTone.border}`}>

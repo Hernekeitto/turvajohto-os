@@ -38,3 +38,18 @@ export const muotoileKirjautumisaika = (iso?: string | null) => {
     day: 'numeric', month: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
   });
 };
+
+// Aikaleima listoihin ja korteille. Puuttuva tai kelvoton arvo antaa ajatusviivan eikä
+// "Invalid Date" -tekstiä: rivi jonka aikaleima on kadonnut on silti näytettävä.
+export const muotoileAikaleima = (iso?: string | null, oletus = '—') => {
+  if (!iso) return oletus;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? oletus : d.toLocaleString('fi-FI');
+};
+
+// Sama ilman kellonaikaa, kun pelkkä päivä riittää.
+export const muotoilePaivays = (iso?: string | null, oletus = '—') => {
+  if (!iso) return oletus;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? oletus : d.toLocaleDateString('fi-FI');
+};

@@ -72,7 +72,9 @@ export const onPoikkeama = (kirjaus: any) => POIKKEAMATYYPIT.includes(kirjaus?.t
 
 // Uusi korjausmerkintä lukittuun kirjaukseen. Merkinnät ovat append-only: palvelin
 // hylkää pyynnön jossa vanha merkintä on muuttunut tai kadonnut.
-export const uusiKorjausmerkinta = (teksti: string, tekija: string) => ({
+export type Korjausmerkinta = { id: string; at: string; by: string; text: string };
+
+export const uusiKorjausmerkinta = (teksti: string, tekija: string): Korjausmerkinta => ({
   id: `k-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   at: new Date().toISOString(),
   by: tekija || '',

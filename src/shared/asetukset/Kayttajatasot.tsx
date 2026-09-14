@@ -35,7 +35,7 @@ type Props = {
   rolesLoading: boolean;
   // Käyttäjälista tason käyttäjämäärien näyttämiseen. Tyhjä lista on kelvollinen: ilman
   // pääkäyttäjäoikeuksia sitä ei saa haettua, jolloin kortit näyttävät "Ei käyttäjiä".
-  kayttajat: { username: string; nickname?: string; displayId?: number | null; roleId?: string }[];
+  kayttajat: { username: string; nickname?: string; displayId?: number | null; roleId?: string | null }[];
   sivukartat: AsetusSivukartta[];
   // Tasojen luonti, muokkaus ja poisto ovat palvelimella pääkäyttäjärajattuja
   // (server/index.js: /api/roles). Muille näytetään lista ilman työkaluja sen sijaan,

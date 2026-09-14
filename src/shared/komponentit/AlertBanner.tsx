@@ -1,7 +1,7 @@
 // Hälytysbanneri. Jaettu: GUARD-puolen kohdehälytykset näytetään samalla bannerilla.
 import { AlertTriangle } from 'lucide-react';
 
-type AlertTyyppi = 'critical' | 'warning' | 'info';
+export type AlertTyyppi = 'critical' | 'warning' | 'info';
 
 type AlertBannerProps = {
   alert: {
