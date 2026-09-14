@@ -82,13 +82,20 @@ export const LIIKKUMATON_MS = 60 * 60_000;
 // ja toimitettu siinä vaiheessa kun portti hylkää ne.
 //
 // 250 ms:n portti päästi läpi joka kolmannen, eli isku nähtiin 300 ms:n välein. Kaatumisen
-// piikki on tyypillisesti lyhyempi, joten portti saattoi ohittaa koko iskun. 100 ms:llä
-// jokainen tapahtuma käsitellään.
+// piikki on tyypillisesti lyhyempi, joten portti saattoi ohittaa koko iskun.
 //
-// Selaimen toteutus pidetään samassa arvossa natiivin kanssa tarkoituksella: sama sääntö
-// samoilla luvuilla, jotta niiden erot eivät ole toinen muuttuja jälkiselvityksessä.
-// Ks. natiivin Mandown.NAYTEVALI_MS, jossa koko mittaus on kirjattuna.
-export const NAYTEVALI_MS = 100;
+// Korjausta yritettiin kahdesti samalla tavalla väärin: ensin 100 ms eli täsmälleen mitattu
+// toimitusväli, sitten 50 ms. Molemmilla kerroilla natiivipuolen mittaus näytti väärän
+// suhteen, ja syy oli rakenteellinen — yksi vakio teki kahta vastakkaista työtä. Se oli sekä
+// anturille annettu PYYNTÖ (joka asettaa toimitusvälin) että PORTTI (jonka on oltava
+// tiukasti sen alle). Yhtä suurina lopputulos riippui jitteristä: mitattu suhde 1,28.
+//
+// Portti on siis katto eikä tavoitetahti. Natiivissa pyyntö on oma vakionsa PYYNTO_MS = 100,
+// ja tämä on 80 eli tiukasti sen alla. Selaimessa ei ole vastaavaa pyyntöä — DeviceMotion
+// antaa mitä antaa — joten täällä tarvitaan vain katto, ja se pidetään samana natiivin
+// kanssa: sama sääntö samoilla luvuilla, jotta niiden erot eivät ole toinen muuttuja
+// jälkiselvityksessä. Ks. natiivin Mandown.NAYTEVALI_MS, jossa koko mittaus on kirjattuna.
+export const NAYTEVALI_MS = 80;
 
 export type MandownTila = {
   paikallaanAlkaen: number | null;

@@ -1570,7 +1570,7 @@ mittaa kestoa eikä näytemäärää. Iskun tunnistukseen voi olla: harvempi nä
 pienentää mahdollisuutta osua lyhyen kiihtyvyyspiikin huippuun. Se osuu samaan kohtaan
 joka on muutenkin yhä testaamatta laitteella (ks. avoimet kohdat).
 
-#### v23–v24 14.9.2026: näytetahdin syy — ja väärä selitys jonka se kumosi
+#### v23–v26 14.9.2026: näytetahdin syy — ja kolme väärää selitystä matkan varrella
 
 Yön ajo paljasti, että käsiteltyjen näytteiden väli on 300,0 ms vaikka koodi tähtää
 250:een. Kirjasin siitä avoimen kohdan otsikolla "näytetahti putoaa ruudun sammuessa".
@@ -1642,6 +1642,56 @@ kävely tuota sellaista jaksoa 10 Hz:lläkään, ja lepokohina (0,026 keskimää
 suurin) jää yhä yli kolminkertaisesti rajan alle. **Kannettavalla puhelimella tehty ajo
 uudella tahdilla on silti tekemättä, eikä tätä saa esittää mitattuna ennen sitä.**
 
+##### v25–v26: korjaus meni pieleen kahdesti, ja syy oli rakenteessa
+
+Yllä oleva johtopäätös "näyteväli 100 ms, jokainen tapahtuma käsitellään" **ei pitänyt
+paikkaansa laitteella.** Se korjattiin kahdesti väärin ennen kuin syy löytyi, ja molemmat
+virheet näkyivät vasta mittauksessa.
+
+| Versio | Portti | Mitattu laitteella | |
+|---|---|---|---|
+| v24 | 100 ms | toimitus 66,7 ms, suhde 2,00 | ruutu päällä, muut sovellukset kuuntelivat |
+| v25 | 50 ms | toimitus 50,0 ms, **suhde 1,28** | portti veti toimituksen mukanaan |
+| **v26** | **80 ms** (pyyntö 100) | toimitus 100,0 ms, **suhde 1,000** | 14 min, ruutu pois, kaapeli irti |
+
+**Syy oli rakenteellinen eikä lukuarvossa.** Sama vakio teki kahta vastakkaista työtä:
+
+```java
+registerListener(kuuntelija, kiihtyvyys, NAYTEVALI_MS * 1000, 0);  // pyyntö
+if (nyt - edellinen < NAYTEVALI_MS) return;                        // portti
+```
+
+Pyyntö **asettaa** toimitusvälin; portti edellyttää olevansa **tiukasti sen alle**. Yhdellä
+vakiolla ne ovat väistämättä yhtä suuret, jolloin lopputulos riippuu jitteristä: 50,1 ms:n
+toimitus menee läpi, 49,9 ms:n hylätään. v25:n mitattu suhde 1,28 tarkoittaa että 28
+prosenttia tapahtumista hylättiin kolikonheitolla.
+
+Portin laskeminen ei siis voinut auttaa — se veti toimitusvälin mukanaan. Nyt pyyntö on oma
+vakionsa (`PYYNTO_MS = 100`) ja portti katto sen alla (`NAYTEVALI_MS = 80`).
+
+##### Kaksi väärää väitettä jotka tämä kumosi
+
+Kirjoitin molemmat koodin kommentteihin samana päivänä, ennen kuin ne oli mitattu:
+
+**"Tämä laite ei noudata vihjettä lainkaan."** Noudattaa. 50 ms:n pyynnöllä saatiin tasan
+50,0 ms. Oikea muotoilu on että toimituksella on **100 ms:n lattia** — sitä hitaampaa ei
+saa, nopeampaa saa pyytämällä.
+
+**"Hitain tuettu tahti on 12,5 Hz eli 80 ms."** Se luku on `dumpsys sensorservice`:n
+ilmoittama `minRate`, eikä se vastaa todellista lattiaa 100 ms. Luin dumpin ja päättelin
+siitä sen mitä odotin näkeväni.
+
+##### Miksi pyyntö on 100 eikä 50, vaikka nopeampaa saisi
+
+50 ms kaksinkertaistaisi anturin työn. 100 ms on se ainoa tahti jolla akkukustannus on
+mitattu: 13.–14.9. yön yli -ajo tehtiin 100 ms:n toimituksella, ja man-downin hinta jäi yön
+vaihtelun alle. Nopeampi tahti olisi mittaamattomalla kustannuksella ostettu mittaamaton
+hyöty. Iskun tunnistus paranee 100 ms:llä joka tapauksessa kolminkertaisesti alkuperäiseen
+300 ms:iin nähden.
+
+Jos laitteella tehty iskutesti joskus osoittaa 10 Hz:n riittämättömäksi, `PYYNTO_MS` on se
+jota lasketaan — mutta silloin perusteena on mittaus.
+
 ### Erä 13 — Hätäpainike sovelluksen ulkopuolelta
 
 | Osa | Uutta |
@@ -1709,9 +1759,11 @@ Kalenterin määrää käytännössä juridiikka, ei koodi.
    eivätkä he pääse siihen käsiksi. Havaittu 13.9.2026 kun käyttäjä ei saanut sitä auki.
 4. ~~**Anturin näytetahti putoaa ruudun sammuessa.**~~ **Selvitetty 14.9.2026, ja otsikko
    oli väärä.** Tahti ei putoa ruudun sammuessa vaan nousee kun muut sovellukset
-   kuuntelevat anturia. Toimitusväli on 100,0 ms kun mikään muu ei kuuntele, ja anturille
-   annettu 250 ms:n pyyntö ei vaikuta siihen mitenkään. Näyteväli laskettiin v24:ssä
-   100 ms:iin, koska hylätyt tapahtumat eivät säästä akkua. Ks. "v23–v24 14.9.2026".
+   kuuntelevat anturia. Toimitusväli on 100,0 ms kun mikään muu ei kuuntele, ja se on
+   samalla lattia: pyyntö vaikuttaa toimitukseen, mutta hitaampaa kuin 100 ms ei saa.
+   Näyteväli laskettiin v26:ssa 100 ms:n pyyntöön ja 80 ms:n porttiin, kahden
+   epäonnistuneen yrityksen jälkeen. Mitattu suhde on nyt 1,000 eli jokainen toimitettu
+   tapahtuma käsitellään. Ks. "v23–v26 14.9.2026".
 5. **Iskusääntö on yhä testaamatta laitteella.** Kaatumista ei ole kertaakaan simuloitu
    oikealla puhelimella, eikä 100 ms:n näytevälin vaikutusta paikallaanolosääntöön ole
    mitattu kannettavalla puhelimella — se on toistaiseksi perusteltu arvio.
