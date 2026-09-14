@@ -1,4 +1,5 @@
-// Säilyttimen (avainkaappi, ajoneuvo) oma historia: mitä sieltä on lähtenyt ja milloin.
+// Säilyttimen (avainkaappi, ajoneuvo) oma historia: mitä sinne on tullut ja mitä sieltä
+// on lähtenyt.
 //
 // JOHDETTU NÄKYMÄ, EI OMA KOKOELMANSA. Säilyttimellä ei ole omaa lokia — jokaisen esineen
 // oma historia kertoo missä se on ollut, ja tämä kokoaa niistä yhden säilyttimen
@@ -6,8 +7,13 @@
 // ensimmäisessä virheessä.
 //
 // Kysymys johon tämä vastaa on avainhävikin selvittäminen: "kaapissa pitäisi olla
-// kymmenen avainta, siellä on yhdeksän — mikä on lähtenyt ja minne". `Kaapissa nyt`
-// -lista kertoo mitä siellä on, tämä kertoo mitä siellä on OLLUT.
+// kymmenen avainta, siellä on yhdeksän — mitä on tapahtunut". `Kaapissa nyt` -lista
+// kertoo mitä siellä on, tämä kertoo mitä siellä on KÄYNYT.
+//
+// SAAPUMISET JA LÄHDÖT SAMASSA LISTASSA eikä kahtena. Ne ovat saman liikkeen kaksi
+// puolta, ja hävikkiä selvitettäessä niitä luetaan rinnakkain: avain tuli kaappiin
+// maanantaina ja lähti keskiviikkona, vai eikö se tullutkaan takaisin. Kaksi listaa
+// pakottaisi vertaamaan aikaleimoja kahdesta paikasta.
 //
 // Laskenta on selaimessa eikä palvelimella, koska aineisto on jo haettu: pankkinäkymällä
 // on koko kalusto historioineen, eikä yhtä kaappia varten kannata tehdä verkkokutsua.
@@ -16,17 +22,22 @@
 
 import type { KalustonHistoria, KalustoTietue } from './tyypit';
 
-export type Lahto = {
+export type Suunta = 'saapui' | 'lahti';
+
+export type SailyttimenTapahtuma = {
   esineId: string;
   tunnus: string;
   nimi: string;
   holviPaikka?: number | null;
-  // Milloin esine lähti säilyttimestä.
-  lahti: string;
-  // Mihin se meni. Nimi sellaisena kuin se oli lähtöhetkellä — kohde on voitu nimetä
-  // uudelleen tai poistaa sen jälkeen.
-  minne: string;
-  minneLaji: string | null;
+  suunta: Suunta;
+  ts: string;
+  // Mistä tuli (saapui) tai minne meni (lähti). Nimi sellaisena kuin se oli tapahtuman
+  // hetkellä — kohde on voitu nimetä uudelleen tai poistaa sen jälkeen.
+  //
+  // TYHJÄ ON MAHDOLLINEN ja tarkoittaa saapumisessa sitä, ettei esineellä ollut aiempaa
+  // sijoitusta: se kirjattiin pankkiin suoraan tähän säilyttimeen.
+  vastapuoli: string;
+  vastapuoliLaji: string | null;
   // Kuka siirsi. null jos merkintä on vanha tai järjestelmän tekemä.
   kuka: string | null;
 };
@@ -38,40 +49,66 @@ const paikkaketju = (historia: KalustonHistoria[] | undefined) =>
   (historia || []).filter((rivi) => rivi.sijoitusLaji != null);
 
 /**
- * Mitä säilyttimestä on lähtenyt, uusin ensin.
+ * Säilyttimen liikenne: saapumiset ja lähdöt yhtenä listana, uusin ensin.
  *
- * Lähtö tunnistetaan paikkaketjun PERÄKKÄISISTÄ riveistä: jos esine oli rivillä i
- * säilyttimessä ja rivillä i+1 jossain muualla, se lähti rivin i+1 hetkellä. Sama esine
- * voi esiintyä listalla useasti — avain voi käydä kaapissa monta kertaa, ja jokainen
- * käynti on oma rivinsä.
+ * Molemmat tunnistetaan paikkaketjun PERÄKKÄISISTÄ riveistä. Rivi jolla esine on
+ * säilyttimessä on saapuminen, jos edellinen paikka oli muualla (tai sitä ei ole);
+ * sitä seuraava rivi muualle on lähtö. Sama esine voi esiintyä listalla useasti — avain
+ * voi käydä kaapissa monta kertaa, ja jokainen käynti on kaksi riviä.
  *
  * Ennen erää 20e kirjatuilta historiariveiltä puuttuu `sijoitusId`, eivätkä ne osu
  * täsmäykseen. Niitä ei yritetä tunnistaa nimestä: kaksi samannimistä kaappia
  * tuottaisi vääriä rivejä, ja väärä rivi hävikkiselvityksessä on pahempi kuin puuttuva.
  */
-export function sailyttimenLahdot(kalusto: KalustoTietue[], sailytinId: string): Lahto[] {
+export function sailyttimenTapahtumat(
+  kalusto: KalustoTietue[],
+  sailytinId: string
+): SailyttimenTapahtuma[] {
   if (!sailytinId) return [];
-  const lahdot: Lahto[] = [];
+  const tapahtumat: SailyttimenTapahtuma[] = [];
 
   for (const esine of kalusto) {
     const ketju = paikkaketju(esine.historia);
-    for (let i = 0; i < ketju.length - 1; i += 1) {
-      const oli = ketju[i];
+    const perus = {
+      esineId: esine.id,
+      tunnus: esine.tunnus,
+      nimi: esine.nimi,
+      holviPaikka: esine.holviPaikka,
+    };
+
+    for (let i = 0; i < ketju.length; i += 1) {
+      const rivi = ketju[i];
+      if (rivi.sijoitusId !== sailytinId) continue;
+
+      // Saapuminen: edellinen paikka oli muualla, tai tämä on ensimmäinen paikka.
+      // Peräkkäiset rivit samassa säilyttimessä (esim. huoltomerkintä joka ei siirrä
+      // esinettä) eivät ole uusi saapuminen — muuten yksi käynti näkyisi monena.
+      const edellinen = ketju[i - 1];
+      if (!edellinen || edellinen.sijoitusId !== sailytinId) {
+        tapahtumat.push({
+          ...perus,
+          suunta: 'saapui',
+          ts: rivi.ts,
+          vastapuoli: edellinen?.sijoitusNimi || '',
+          vastapuoliLaji: edellinen?.sijoitusLaji ?? null,
+          kuka: rivi.user,
+        });
+      }
+
+      // Lähtö: seuraava paikka on muualla.
       const seuraava = ketju[i + 1];
-      if (oli.sijoitusId !== sailytinId) continue;
-      if (seuraava.sijoitusId === sailytinId) continue;
-      lahdot.push({
-        esineId: esine.id,
-        tunnus: esine.tunnus,
-        nimi: esine.nimi,
-        holviPaikka: esine.holviPaikka,
-        lahti: seuraava.ts,
-        minne: seuraava.sijoitusNimi || '—',
-        minneLaji: seuraava.sijoitusLaji,
-        kuka: seuraava.user,
-      });
+      if (seuraava && seuraava.sijoitusId !== sailytinId) {
+        tapahtumat.push({
+          ...perus,
+          suunta: 'lahti',
+          ts: seuraava.ts,
+          vastapuoli: seuraava.sijoitusNimi || '—',
+          vastapuoliLaji: seuraava.sijoitusLaji,
+          kuka: seuraava.user,
+        });
+      }
     }
   }
 
-  return lahdot.sort((a, b) => String(b.lahti).localeCompare(String(a.lahti)));
+  return tapahtumat.sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
 }

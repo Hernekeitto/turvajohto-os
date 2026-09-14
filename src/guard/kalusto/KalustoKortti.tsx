@@ -10,12 +10,12 @@
 import { useState, type ReactNode } from 'react';
 import {
   ArrowRightLeft, History, Printer, TriangleAlert, Wrench, Ban, Undo2, Pencil, X, Check,
-  Plus, Search, LogOut,
+  Plus, Search, ArrowDownLeft, ArrowUpRight, ListOrdered,
 } from 'lucide-react';
 
 import { QrKoodi } from '../../shared/komponentit/QrKoodi';
 import { LAJIT } from './lajit';
-import { sailyttimenLahdot } from './sailytin';
+import { sailyttimenTapahtumat } from './sailytin';
 import {
   aikaleima, paivitaKalusto, peruPyynto, ratkaisePyynto, siirraKalusto, tarranOsoite, vaihdaTila,
 } from './pankki';
@@ -79,7 +79,7 @@ export const KalustoKortti = ({
   const [syy, setSyy] = useState('');
   const [hylkaysSyy, setHylkaysSyy] = useState('');
   const [lisaysAuki, setLisaysAuki] = useState(false);
-  const [lahdotAuki, setLahdotAuki] = useState(false);
+  const [liikenneAuki, setLiikenneAuki] = useState(false);
   const [lisaysHaku, setLisaysHaku] = useState('');
   const [lisattavat, setLisattavat] = useState<Set<string>>(new Set());
 
@@ -152,11 +152,12 @@ export const KalustoKortti = ({
       .slice(0, 40)
     : [];
 
-  // Mitä säilyttimestä on lähtenyt (sailytin.ts). Johdettu esineiden omista
-  // historioista eikä säilyttimen omasta lokista: kaksi lokia samasta tapahtumasta
-  // eroaisivat ensimmäisessä virheessä. Vastaa hävikkiselvityksen kysymykseen — kaapissa
-  // pitäisi olla kymmenen avainta, siellä on yhdeksän, mikä lähti ja minne.
-  const lahdot = onSailytin ? sailyttimenLahdot(kalusto, esine.id) : [];
+  // Säilyttimen liikenne: saapumiset ja lähdöt yhtenä aikajanana (sailytin.ts).
+  // Johdettu esineiden omista historioista eikä säilyttimen omasta lokista: kaksi lokia
+  // samasta tapahtumasta eroaisivat ensimmäisessä virheessä. Vastaa hävikkiselvityksen
+  // kysymykseen — kaapissa pitäisi olla kymmenen avainta, siellä on yhdeksän, mitä on
+  // tapahtunut.
+  const liikenne = onSailytin ? sailyttimenTapahtumat(kalusto, esine.id) : [];
 
   // Lisäys on N siirtoa peräkkäin. Yksi kutsu per esine eikä eräsiirtoa: jokainen siirto
   // on oma historiarivinsä, ja juuri se on luovutusketjun sisältö. Ensimmäinen virhe
@@ -593,40 +594,58 @@ export const KalustoKortti = ({
                 </ul>
               )}
 
-              {/* Lähteneet omana listanaan eikä sisällön sekaan: "mitä täällä on" ja
-                  "mitä täältä on lähtenyt" ovat eri kysymyksiä, ja sekoitettuina
-                  kumpaankaan ei saisi vastausta yhdellä silmäyksellä. Painikkeen takana,
-                  koska lista kasvaa loputtomiin — sisältö ei. */}
-              {lahdot.length > 0 && (
+              {/* Liikenne omana listanaan eikä sisällön sekaan: "mitä täällä on" ja "mitä
+                  täällä on käynyt" ovat eri kysymyksiä, ja sekoitettuina kumpaankaan ei
+                  saisi vastausta yhdellä silmäyksellä. Painikkeen takana, koska lista
+                  kasvaa loputtomiin — sisältö ei.
+
+                  Saapumiset ja lähdöt SAMASSA aikajanassa: ne ovat saman liikkeen kaksi
+                  puolta, ja hävikkiä selvitettäessä niitä luetaan rinnakkain. */}
+              {liikenne.length > 0 && (
                 <div className="mt-3">
                   <button
                     type="button"
-                    onClick={() => setLahdotAuki((a) => !a)}
+                    onClick={() => setLiikenneAuki((a) => !a)}
                     className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-body hover:text-accent"
                   >
-                    <LogOut size={15} />
-                    {lahdotAuki ? 'Piilota lähteneet' : ('Täältä lähtenyt (' + lahdot.length + ')')}
+                    <ListOrdered size={15} />
+                    {liikenneAuki ? 'Piilota liikenne' : ('Saapumiset ja lähdöt (' + liikenne.length + ')')}
                   </button>
-                  {lahdotAuki && (
+                  {liikenneAuki && (
                     <ul className="mt-3 space-y-2">
-                      {lahdot.map((lahto, i) => (
-                        <li
-                          key={lahto.esineId + '-' + lahto.lahti + '-' + i}
-                          className="text-sm border-l-2 border-line pl-3"
-                        >
-                          <div className="flex flex-wrap items-baseline gap-x-2">
-                            <span className="font-mono text-xs text-ink-muted">{lahto.tunnus}</span>
-                            <span className="font-medium text-ink-strong">{lahto.nimi}</span>
-                            {typeof lahto.holviPaikka === 'number' && (
-                              <span className="text-xs text-ink-muted">holvi {lahto.holviPaikka}</span>
-                            )}
-                          </div>
-                          <div className="text-ink-body">→ {lahto.minne}</div>
-                          <div className="text-xs text-ink-muted">
-                            {aikaleima(lahto.lahti)}{lahto.kuka ? (' · ' + lahto.kuka) : ''}
-                          </div>
-                        </li>
-                      ))}
+                      {liikenne.map((rivi, i) => {
+                        const saapui = rivi.suunta === 'saapui';
+                        return (
+                          <li
+                            key={rivi.esineId + '-' + rivi.ts + '-' + rivi.suunta + '-' + i}
+                            className={'text-sm border-l-2 pl-3 ' + (saapui ? 'border-success/50' : 'border-warning/50')}
+                          >
+                            <div className="flex flex-wrap items-baseline gap-x-2">
+                              <span className="font-mono text-xs text-ink-muted">{rivi.tunnus}</span>
+                              <span className="font-medium text-ink-strong">{rivi.nimi}</span>
+                              {typeof rivi.holviPaikka === 'number' && (
+                                <span className="text-xs text-ink-muted">holvi {rivi.holviPaikka}</span>
+                              )}
+                            </div>
+                            <div className={'flex items-center gap-1.5 ' + (saapui ? 'text-success-ink' : 'text-warning-ink')}>
+                              {saapui ? <ArrowDownLeft size={14} /> : <ArrowUpRight size={14} />}
+                              {/* Suunta sanotaan myös sanana eikä vain nuolena ja värinä:
+                                  nuolen suunta on tulkinnanvarainen ja väri katoaa
+                                  tulosteessa ja värisokealta. */}
+                              <span>
+                                {saapui ? 'Saapui' : 'Lähti'}
+                                {/* Suomen sijapäätteitä ei voi liittää nimeen ohjelmallisesti
+                                    ("Holvi" -> "holvista"), joten suunta kerrotaan sanana ja
+                                    paikka sen perässä omana kenttänään. */}
+                                {rivi.vastapuoli && (saapui ? ' · mistä: ' : ' · minne: ') + rivi.vastapuoli}
+                              </span>
+                            </div>
+                            <div className="text-xs text-ink-muted">
+                              {aikaleima(rivi.ts)}{rivi.kuka ? (' · ' + rivi.kuka) : ''}
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
