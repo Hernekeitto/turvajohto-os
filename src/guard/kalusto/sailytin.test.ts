@@ -9,7 +9,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sailyttimenTapahtumat } from './sailytin.ts';
+import { sailyttimenTapahtumat, suodataValille } from './sailytin.ts';
+import type { SailyttimenTapahtuma } from './sailytin.ts';
 import type { KalustonHistoria, KalustoTietue } from './tyypit.ts';
 
 const hetki = (n: number) => `2026-09-${String(10 + n).padStart(2, '0')}T10:00:00.000Z`;
@@ -183,4 +184,69 @@ test('vartijan karsittu aineisto ei kaada laskentaa', () => {
   // Vartijalta historia karsitaan kokonaan (server/kalusto.js: vuoronKalusto), jolloin
   // kenttä on undefined. Tyhjä lista on oikea vastaus eikä virhe.
   assert.deepEqual(sailyttimenTapahtumat([esine({ historia: undefined })], 'kaappi-1'), []);
+});
+
+// --- Aikavälirajaus -------------------------------------------------------------------
+//
+// Aikaleimat rakennetaan PAIKALLISESTA ajasta (`new Date(v, kk, pv, t)`) eikä kirjoiteta
+// kiinteinä UTC-merkkijonoina: suodatin lupaa rajata sen mukaan mitä käyttäjä ruudulla
+// lukee, ja `aikaleima` (pankki.ts) muotoilee paikallisessa ajassa. Kiinteä UTC-merkkijono
+// tekisi testistä sellaisen joka menee läpi Suomessa ja hajoaa muualla.
+
+const paikallinen = (kk: number, pv: number, tunti: number, min = 0) =>
+  new Date(2026, kk - 1, pv, tunti, min).toISOString();
+
+const tapahtuma = (ts: string): SailyttimenTapahtuma => ({
+  esineId: 'k1',
+  tunnus: 'TJ-AVA-0001',
+  nimi: 'Hansa pääovi',
+  holviPaikka: 1000,
+  suunta: 'saapui',
+  ts,
+  vastapuoli: 'Holvi',
+  vastapuoliLaji: 'holvi',
+  kuka: 'paakayttaja',
+});
+
+// Neljä tapahtumaa neljänä perättäisenä päivänä.
+const nelja = [11, 12, 13, 14].map((pv) => tapahtuma(paikallinen(9, pv, 12)));
+const paivat = (t: SailyttimenTapahtuma[]) => t.map((x) => new Date(x.ts).getDate());
+
+test('vali rajaa molemmista paista ja paatepaivat kuuluvat valiin', () => {
+  assert.deepEqual(paivat(suodataValille(nelja, '2026-09-12', '2026-09-13')), [12, 13]);
+});
+
+test('pelkka alku on tasta eteenpain ja pelkka loppu tahan asti', () => {
+  assert.deepEqual(paivat(suodataValille(nelja, '2026-09-13', '')), [13, 14]);
+  assert.deepEqual(paivat(suodataValille(nelja, '', '2026-09-12')), [11, 12]);
+});
+
+test('tyhja tai kelvoton paivamaara ei tyhjenna listaa', () => {
+  // Kenttä on tyhjä myös kesken kirjoittamisen. Jos tyhjä tarkoittaisi tyhjää tulosta,
+  // lista katoaisi aina kun päivää vaihdetaan.
+  assert.equal(suodataValille(nelja, '', '').length, 4);
+  assert.equal(suodataValille(nelja, 'ei-paiva', '').length, 4);
+});
+
+test('alku loppua myohemmin tuottaa tyhjan eika paita vaihdeta keskenaan', () => {
+  assert.deepEqual(suodataValille(nelja, '2026-09-14', '2026-09-12'), []);
+});
+
+test('loppupaivan myohainen ilta kuuluu valiin myos kesaajan vaihtumisyona', () => {
+  // 25.10.2026 on Suomessa 25 tuntia pitkä (kello siirtyy taaksepäin klo 4). Jos
+  // vuorokauden loppuraja laskettaisiin lisäämällä 24 tuntia millisekunteina, illan
+  // tapahtumat putoaisivat pois juuri sinä yönä. Muualla tämä testi varmistaa tavallisen
+  // vuorokaudenvaihteen.
+  const ilta = [tapahtuma(paikallinen(10, 25, 23, 30)), tapahtuma(paikallinen(10, 26, 0, 30))];
+  assert.deepEqual(
+    suodataValille(ilta, '2026-10-25', '2026-10-25').map((t) => t.ts),
+    [ilta[0].ts]
+  );
+});
+
+test('kelvoton aikaleima jaa nakyviin eika katoa suodattimeen', () => {
+  // Rikkinäinen rivi on nimenomaan se jota hävikkiselvityksessä etsitään; piilotettuna
+  // se näyttäisi siltä ettei tapahtumaa ole lainkaan.
+  const rikki = tapahtuma('ei aikaleima');
+  assert.deepEqual(suodataValille([rikki], '2026-09-12', '2026-09-13'), [rikki]);
 });

@@ -10,12 +10,12 @@
 import { useState, type ReactNode } from 'react';
 import {
   ArrowRightLeft, History, Printer, TriangleAlert, Wrench, Ban, Undo2, Pencil, X, Check,
-  Plus, Search, ArrowDownLeft, ArrowUpRight, ListOrdered,
+  Plus, Search, ArrowDownLeft, ArrowUpRight, ListOrdered, CalendarRange,
 } from 'lucide-react';
 
 import { QrKoodi } from '../../shared/komponentit/QrKoodi';
 import { LAJIT } from './lajit';
-import { sailyttimenTapahtumat } from './sailytin';
+import { sailyttimenTapahtumat, suodataValille } from './sailytin';
 import {
   aikaleima, paivitaKalusto, peruPyynto, ratkaisePyynto, siirraKalusto, tarranOsoite, vaihdaTila,
 } from './pankki';
@@ -80,6 +80,9 @@ export const KalustoKortti = ({
   const [hylkaysSyy, setHylkaysSyy] = useState('');
   const [lisaysAuki, setLisaysAuki] = useState(false);
   const [liikenneAuki, setLiikenneAuki] = useState(false);
+  // Aikavälirajaus koskee vain liikennelistaa, ei korttia muuten.
+  const [valiAlku, setValiAlku] = useState('');
+  const [valiLoppu, setValiLoppu] = useState('');
   const [lisaysHaku, setLisaysHaku] = useState('');
   const [lisattavat, setLisattavat] = useState<Set<string>>(new Set());
 
@@ -158,6 +161,8 @@ export const KalustoKortti = ({
   // kysymykseen — kaapissa pitäisi olla kymmenen avainta, siellä on yhdeksän, mitä on
   // tapahtunut.
   const liikenne = onSailytin ? sailyttimenTapahtumat(kalusto, esine.id) : [];
+  const rajattu = suodataValille(liikenne, valiAlku, valiLoppu);
+  const rajausPaalla = Boolean(valiAlku || valiLoppu);
 
   // Lisäys on N siirtoa peräkkäin. Yksi kutsu per esine eikä eräsiirtoa: jokainen siirto
   // on oma historiarivinsä, ja juuri se on luovutusketjun sisältö. Ensimmäinen virhe
@@ -612,41 +617,91 @@ export const KalustoKortti = ({
                     {liikenneAuki ? 'Piilota liikenne' : ('Saapumiset ja lähdöt (' + liikenne.length + ')')}
                   </button>
                   {liikenneAuki && (
-                    <ul className="mt-3 space-y-2">
-                      {liikenne.map((rivi, i) => {
-                        const saapui = rivi.suunta === 'saapui';
-                        return (
-                          <li
-                            key={rivi.esineId + '-' + rivi.ts + '-' + rivi.suunta + '-' + i}
-                            className={'text-sm border-l-2 pl-3 ' + (saapui ? 'border-success/50' : 'border-warning/50')}
-                          >
-                            <div className="flex flex-wrap items-baseline gap-x-2">
-                              <span className="font-mono text-xs text-ink-muted">{rivi.tunnus}</span>
-                              <span className="font-medium text-ink-strong">{rivi.nimi}</span>
-                              {typeof rivi.holviPaikka === 'number' && (
-                                <span className="text-xs text-ink-muted">holvi {rivi.holviPaikka}</span>
-                              )}
-                            </div>
-                            <div className={'flex items-center gap-1.5 ' + (saapui ? 'text-success-ink' : 'text-warning-ink')}>
-                              {saapui ? <ArrowDownLeft size={14} /> : <ArrowUpRight size={14} />}
-                              {/* Suunta sanotaan myös sanana eikä vain nuolena ja värinä:
-                                  nuolen suunta on tulkinnanvarainen ja väri katoaa
-                                  tulosteessa ja värisokealta. */}
-                              <span>
-                                {saapui ? 'Saapui' : 'Lähti'}
-                                {/* Suomen sijapäätteitä ei voi liittää nimeen ohjelmallisesti
-                                    ("Holvi" -> "holvista"), joten suunta kerrotaan sanana ja
-                                    paikka sen perässä omana kenttänään. */}
-                                {rivi.vastapuoli && (saapui ? ' · mistä: ' : ' · minne: ') + rivi.vastapuoli}
-                              </span>
-                            </div>
-                            <div className="text-xs text-ink-muted">
-                              {aikaleima(rivi.ts)}{rivi.kuka ? (' · ' + rivi.kuka) : ''}
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
+                    <div className="mt-3 space-y-3">
+                      {/* Aikavälirajaus on listan sisällä eikä kortin yläreunassa: se koskee
+                          vain tätä listaa eikä mitään muuta kortilla. Päät ovat erikseen, koska
+                          kysymys on usein toispuoleinen — mitä viime inventaarion jälkeen on
+                          tapahtunut — eikä toista päätä pidä joutua keksimään. */}
+                      <div className="flex flex-wrap items-end gap-2">
+                        <CalendarRange size={15} className="text-ink-muted mb-2" />
+                        <label className="text-xs text-ink-muted">
+                          <span className="block mb-1">Alkaen</span>
+                          <input
+                            type="date"
+                            value={valiAlku}
+                            max={valiLoppu || undefined}
+                            onChange={(e) => setValiAlku(e.target.value)}
+                            className="px-2 py-1.5 rounded-lg border border-line bg-surface text-sm text-ink-strong"
+                          />
+                        </label>
+                        <label className="text-xs text-ink-muted">
+                          <span className="block mb-1">Päättyen</span>
+                          <input
+                            type="date"
+                            value={valiLoppu}
+                            min={valiAlku || undefined}
+                            onChange={(e) => setValiLoppu(e.target.value)}
+                            className="px-2 py-1.5 rounded-lg border border-line bg-surface text-sm text-ink-strong"
+                          />
+                        </label>
+                        {rajausPaalla && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => { setValiAlku(''); setValiLoppu(''); }}
+                              className="px-2 py-1.5 rounded-lg border border-line text-sm text-ink-body hover:bg-sunken"
+                            >
+                              Koko historia
+                            </button>
+                            {/* Kuinka moni jäi rajauksen ulkopuolelle sanotaan ääneen: muuten
+                                lyhentynyt lista näyttää siltä kuin tapahtumia olisi vähemmän
+                                kuin niitä on. */}
+                            <span className="text-xs text-ink-muted pb-2">
+                              Näytetään {rajattu.length} / {liikenne.length}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      {rajattu.length === 0 ? (
+                        <p className="text-sm text-ink-muted">Ei tapahtumia valitulla aikavälillä.</p>
+                      ) : (
+                      <ul className="space-y-2">
+                        {rajattu.map((rivi, i) => {
+                          const saapui = rivi.suunta === 'saapui';
+                          return (
+                            <li
+                              key={rivi.esineId + '-' + rivi.ts + '-' + rivi.suunta + '-' + i}
+                              className={'text-sm border-l-2 pl-3 ' + (saapui ? 'border-success/50' : 'border-warning/50')}
+                            >
+                              <div className="flex flex-wrap items-baseline gap-x-2">
+                                <span className="font-mono text-xs text-ink-muted">{rivi.tunnus}</span>
+                                <span className="font-medium text-ink-strong">{rivi.nimi}</span>
+                                {typeof rivi.holviPaikka === 'number' && (
+                                  <span className="text-xs text-ink-muted">holvi {rivi.holviPaikka}</span>
+                                )}
+                              </div>
+                              <div className={'flex items-center gap-1.5 ' + (saapui ? 'text-success-ink' : 'text-warning-ink')}>
+                                {saapui ? <ArrowDownLeft size={14} /> : <ArrowUpRight size={14} />}
+                                {/* Suunta sanotaan myös sanana eikä vain nuolena ja värinä:
+                                    nuolen suunta on tulkinnanvarainen ja väri katoaa
+                                    tulosteessa ja värisokealta. */}
+                                <span>
+                                  {saapui ? 'Saapui' : 'Lähti'}
+                                  {/* Suomen sijapäätteitä ei voi liittää nimeen ohjelmallisesti
+                                      ("Holvi" -> "holvista"), joten suunta kerrotaan sanana ja
+                                      paikka sen perässä omana kenttänään. */}
+                                  {rivi.vastapuoli && (saapui ? ' · mistä: ' : ' · minne: ') + rivi.vastapuoli}
+                                </span>
+                              </div>
+                              <div className="text-xs text-ink-muted">
+                                {aikaleima(rivi.ts)}{rivi.kuka ? (' · ' + rivi.kuka) : ''}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

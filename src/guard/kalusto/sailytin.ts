@@ -112,3 +112,65 @@ export function sailyttimenTapahtumat(
 
   return tapahtumat.sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
 }
+
+// --- Aikavälirajaus -------------------------------------------------------------------
+//
+// PÄIVÄMÄÄRÄT OVAT PAIKALLISTA AIKAA, aikaleimat UTC:tä. Rajaus on tehtävä muuntamalla
+// päivä paikallisen vuorokauden rajoiksi eikä vertaamalla ISO-merkkijonon kymmentä
+// ensimmäistä merkkiä: kello 23.30 Suomessa on UTC:ssä jo seuraavaa päivää, jolloin
+// merkkijonovertailu jättäisi tapahtuman pois väliltä jolla se ruudulla näkyy.
+// `aikaleima` (pankki.ts) muotoilee paikallisessa ajassa, ja suodattimen on vastattava
+// sitä mitä käyttäjä lukee.
+
+// 'YYYY-MM-DD' -> paikallisen vuorokauden alku. Ilman Z-päätettä JS tulkitsee
+// merkkijonon paikalliseksi ajaksi, mikä on tässä juuri haluttu tulkinta.
+const paivanAlku = (paiva: string): number | null => {
+  if (!paiva) return null;
+  const ms = new Date(`${paiva}T00:00:00`).getTime();
+  return Number.isNaN(ms) ? null : ms;
+};
+
+// Loppupäivä on MUKAAN LUKIEN: raja on seuraavan vuorokauden alku. Päivä siirretään
+// `setDate`illä eikä lisäämällä 24 tuntia millisekunteina — kesäajan vaihtumisyönä
+// vuorokausi on 23 tai 25 tuntia, ja kiinteä lisäys leikkaisi viimeisen tunnin pois
+// tai ottaisi seuraavasta päivästä tunnin mukaan.
+const seuraavanAlku = (paiva: string): number | null => {
+  if (!paiva) return null;
+  const d = new Date(`${paiva}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() + 1);
+  return d.getTime();
+};
+
+/**
+ * Rajaa liikenteen päivämäärävälille. Molemmat päät ovat valinnaisia ja erikseen:
+ * pelkkä alku on "tästä eteenpäin", pelkkä loppu "tähän asti". Molemmat päivät
+ * kuuluvat väliin.
+ *
+ * Tyhjät ja virheelliset päivät ohitetaan sen sijaan että ne palauttaisivat tyhjän
+ * listan. Päivämääräkenttä on tyhjä myös kesken kirjoittamisen, eikä lista saa tyhjentyä
+ * sen takia.
+ *
+ * Jos alku on loppua myöhemmin, tulos on tyhjä. Päitä ei vaihdeta keskenään: käyttäjän
+ * kirjoitusvirhe on parempi näyttää tyhjänä tuloksena kuin korjata hiljaa väliksi jota
+ * hän ei pyytänyt.
+ */
+export function suodataValille(
+  tapahtumat: SailyttimenTapahtuma[],
+  alku: string,
+  loppu: string
+): SailyttimenTapahtuma[] {
+  const alusta = paivanAlku(alku);
+  const ennen = seuraavanAlku(loppu);
+  if (alusta == null && ennen == null) return tapahtumat;
+
+  return tapahtumat.filter((t) => {
+    const ms = new Date(t.ts).getTime();
+    // Kelvoton aikaleima jätetään näkyviin: sitä ei voi sijoittaa välille, eikä
+    // rikkinäistä riviä pidä piilottaa juuri hävikkiselvityksessä.
+    if (Number.isNaN(ms)) return true;
+    if (alusta != null && ms < alusta) return false;
+    if (ennen != null && ms >= ennen) return false;
+    return true;
+  });
+}
