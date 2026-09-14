@@ -28,6 +28,10 @@ export type Sijoitus = {
   sijoitusNimi: string;
 };
 
+// Historiarivi kantaa sijoituksen sellaisena kuin se OLI. sijoitusId on mukana nimen
+// lisäksi (erä 20e), koska säilyttimen historianäkymä täsmää id:llä — nimi on ihmiselle
+// ja kaksi avainkaappia voi hyvin olla samanniminen. Ennen sitä kirjatuilta riveiltä id
+// puuttuu, ja ne jäävät täsmäyksen ulkopuolelle.
 export type KalustonHistoria = Sijoitus & {
   ts: string;
   tapahtuma: string;

@@ -10,11 +10,12 @@
 import { useState, type ReactNode } from 'react';
 import {
   ArrowRightLeft, History, Printer, TriangleAlert, Wrench, Ban, Undo2, Pencil, X, Check,
-  Plus, Search,
+  Plus, Search, LogOut,
 } from 'lucide-react';
 
 import { QrKoodi } from '../../shared/komponentit/QrKoodi';
 import { LAJIT } from './lajit';
+import { sailyttimenLahdot } from './sailytin';
 import {
   aikaleima, paivitaKalusto, peruPyynto, ratkaisePyynto, siirraKalusto, tarranOsoite, vaihdaTila,
 } from './pankki';
@@ -78,6 +79,7 @@ export const KalustoKortti = ({
   const [syy, setSyy] = useState('');
   const [hylkaysSyy, setHylkaysSyy] = useState('');
   const [lisaysAuki, setLisaysAuki] = useState(false);
+  const [lahdotAuki, setLahdotAuki] = useState(false);
   const [lisaysHaku, setLisaysHaku] = useState('');
   const [lisattavat, setLisattavat] = useState<Set<string>>(new Set());
 
@@ -149,6 +151,12 @@ export const KalustoKortti = ({
       .sort((a, b) => a.tunnus.localeCompare(b.tunnus))
       .slice(0, 40)
     : [];
+
+  // Mitä säilyttimestä on lähtenyt (sailytin.ts). Johdettu esineiden omista
+  // historioista eikä säilyttimen omasta lokista: kaksi lokia samasta tapahtumasta
+  // eroaisivat ensimmäisessä virheessä. Vastaa hävikkiselvityksen kysymykseen — kaapissa
+  // pitäisi olla kymmenen avainta, siellä on yhdeksän, mikä lähti ja minne.
+  const lahdot = onSailytin ? sailyttimenLahdot(kalusto, esine.id) : [];
 
   // Lisäys on N siirtoa peräkkäin. Yksi kutsu per esine eikä eräsiirtoa: jokainen siirto
   // on oma historiarivinsä, ja juuri se on luovutusketjun sisältö. Ensimmäinen virhe
@@ -583,6 +591,45 @@ export const KalustoKortti = ({
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {/* Lähteneet omana listanaan eikä sisällön sekaan: "mitä täällä on" ja
+                  "mitä täältä on lähtenyt" ovat eri kysymyksiä, ja sekoitettuina
+                  kumpaankaan ei saisi vastausta yhdellä silmäyksellä. Painikkeen takana,
+                  koska lista kasvaa loputtomiin — sisältö ei. */}
+              {lahdot.length > 0 && (
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={() => setLahdotAuki((a) => !a)}
+                    className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-body hover:text-accent"
+                  >
+                    <LogOut size={15} />
+                    {lahdotAuki ? 'Piilota lähteneet' : ('Täältä lähtenyt (' + lahdot.length + ')')}
+                  </button>
+                  {lahdotAuki && (
+                    <ul className="mt-3 space-y-2">
+                      {lahdot.map((lahto, i) => (
+                        <li
+                          key={lahto.esineId + '-' + lahto.lahti + '-' + i}
+                          className="text-sm border-l-2 border-line pl-3"
+                        >
+                          <div className="flex flex-wrap items-baseline gap-x-2">
+                            <span className="font-mono text-xs text-ink-muted">{lahto.tunnus}</span>
+                            <span className="font-medium text-ink-strong">{lahto.nimi}</span>
+                            {typeof lahto.holviPaikka === 'number' && (
+                              <span className="text-xs text-ink-muted">holvi {lahto.holviPaikka}</span>
+                            )}
+                          </div>
+                          <div className="text-ink-body">→ {lahto.minne}</div>
+                          <div className="text-xs text-ink-muted">
+                            {aikaleima(lahto.lahti)}{lahto.kuka ? (' · ' + lahto.kuka) : ''}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               )}
 
               {lisaysAuki && (

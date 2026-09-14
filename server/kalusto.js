@@ -221,7 +221,16 @@ const merkinta = (tapahtuma, { user, teksti = '', kentat = null }, nyt) => ({
   teksti: siivoa(teksti, HUOMION_MAX),
   // Sijoitus talletetaan merkintään sellaisena kuin se oli: historia kertoo missä esine
   // on ollut, eikä sitä voi laskea jälkikäteen jos kohde tai työntekijä poistetaan.
+  //
+  // ID ON MUKANA NIMEN LISÄKSI (erä 20e). Nimi on ihmiselle ja voi muuttua tai toistua —
+  // kaksi avainkaappia voi hyvin olla samanniminen. Säilyttimen historianäkymä ("mitä
+  // täältä on lähtenyt") täsmää nimenomaan id:llä, ja nimellä täsmäys näyttäisi toimivan
+  // siihen asti kunnes kaksi kaappia nimetään samoin.
+  //
+  // Ennen tätä kirjatuilta riveiltä id puuttuu. Ne jäävät historianäkymän ulkopuolelle
+  // eikä sitä yritetä arvata nimestä: puuttuva rivi on rehellisempi kuin väärä.
   sijoitusLaji: kentat?.sijoitusLaji || null,
+  sijoitusId: kentat?.sijoitusId || null,
   sijoitusNimi: kentat?.sijoitusNimi || '',
 });
 
