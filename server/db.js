@@ -302,11 +302,22 @@ export function setMustChangePassword(username, required) {
   return existing;
 }
 
-export function updateUser(username, { nickname, permissions, eventAccess, tuotteet, roleId } = {}) {
+export function updateUser(username, { nickname, permissions, eventAccess, tuotteet, roleId, employeeId } = {}) {
   const users = readUsers();
   const existing = users.find((u) => u.username === username);
   if (!existing) return null;
   if (nickname !== undefined) existing.nickname = nickname;
+  // Työntekijäpankin kytkentä. Toisin kuin displayId, TÄMÄ SAA MUUTTUA: numero on
+  // henkilön pysyvä tunniste jo tallennetuissa raporteissa, mutta employeeId on pelkkä
+  // viittaus siihen mikä työntekijätietue on tämän tunnuksen takana — ja väärin kytketty
+  // viittaus on korjattava. null katkaisee kytkennän.
+  //
+  // Kytkentä ratkaisee mitä kalustoa tunnus näkee omanaan (server/kalusto.js:
+  // vuoronKalusto), joten muutos lokitetaan kutsujassa.
+  if (employeeId !== undefined) {
+    if (employeeId) existing.employeeId = employeeId;
+    else delete existing.employeeId;
+  }
   if (permissions !== undefined) existing.permissions = permissions;
   if (eventAccess !== undefined) existing.eventAccess = eventAccess;
   if (tuotteet !== undefined) existing.tuotteet = tuotteet;

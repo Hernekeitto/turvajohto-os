@@ -999,10 +999,34 @@ app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
 
 app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
   const { username } = req.params;
-  const { nickname, permissions, eventAccess, tuotteet, roleId } = req.body || {};
+  const { nickname, permissions, eventAccess, tuotteet, roleId, employeeId } = req.body || {};
   const kohde = findUser(username);
   if (!kohde) {
     return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
+  }
+  // Työntekijäpankin kytkentä (erä 20c). Ratkaisee mitä kalustoa tunnus näkee omanaan
+  // (kalusto.js: vuoronKalusto), joten kaksi tarkistusta:
+  //
+  // 1. TIETUEEN ON OLTAVA OLEMASSA. Viittaus poistettuun työntekijään näyttäisi
+  //    kytketyltä muttei löytäisi mitään, ja vika näkyisi vasta tyhjänä varustelistana.
+  // 2. YKSI TIETUE, YKSI TUNNUS. Kaksi tunnusta samaan työntekijään tarkoittaisi että
+  //    kaksi ihmistä näkee samat varusteet omanaan — ja luovutusvastuu on yhden
+  //    henkilön asia. Sama sääntö kuin tunnistenumerolla (POST /api/users).
+  if (employeeId !== undefined && employeeId !== null && employeeId !== '') {
+    if (typeof employeeId !== 'string') {
+      return res.status(400).json({ ok: false, error: 'Virheellinen työntekijäviite.' });
+    }
+    const tyontekija = (readCollection('employees') || []).find((t) => t?.id === employeeId);
+    if (!tyontekija) {
+      return res.status(404).json({ ok: false, error: 'Työntekijää ei löytynyt työntekijäpankista.' });
+    }
+    const varattu = listUsers().find((u) => u.employeeId === employeeId && u.username !== username);
+    if (varattu) {
+      return res.status(409).json({
+        ok: false,
+        error: `${tyontekija.name || 'Työntekijä'} on jo kytketty tunnukseen ${varattu.username}. Katkaise se ensin.`,
+      });
+    }
   }
   if (roleId !== undefined) {
     if (!findRole(roleId)) {
@@ -1037,6 +1061,10 @@ app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
     eventAccess,
     tuotteet,
     roleId,
+    // Tyhjä merkkijono tarkoittaa kytkennän katkaisua: pudotusvalikon "ei kytkentää"
+    // -vaihtoehto lähettää sen. undefined jättää kentän koskematta, jotta muut
+    // tallennukset eivät pyyhi kytkentää vahingossa.
+    employeeId: employeeId === undefined ? undefined : (employeeId || null),
   });
   // Ei tallenneta permissions/eventAccess-sisältöä itseään lokiin (iso, nested rakenne,
   // ei kovin luettava sellaisenaan) — vain mitkä kentät koskivat, samaan tapaan kuin
@@ -1046,6 +1074,7 @@ app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
     permissions !== undefined && 'permissions',
     eventAccess !== undefined && 'eventAccess',
     tuotteet !== undefined && 'tuotteet',
+    employeeId !== undefined && 'employeeId',
   ].filter(Boolean);
   logAudit({ user: req.username, action: 'user_update', targetUser: username, fields: changedFields });
   res.json({ ok: true });
