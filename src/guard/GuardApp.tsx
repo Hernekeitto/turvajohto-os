@@ -57,6 +57,8 @@ import { haeTiedotteet, type Tiedote } from '../shared/tiedotteet';
 import { Kalusto } from '../shared/komponentit/Kalusto';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from '../shared/kalusto';
 import { Kalustopankki } from './kalusto/Kalustopankki';
+import { Tyontekijapankki } from './Tyontekijapankki';
+import type { Tyontekija } from '../shared/tyontekijat';
 import { KalustoKortti } from './kalusto/KalustoKortti';
 import { KohteenKalusto } from './kalusto/KohteenKalusto';
 import { haeKalusto } from './kalusto/pankki';
@@ -91,7 +93,7 @@ const JUURINAKYMA = 'etusivu';
 // 'kalusto' on Kohteiden ja Hälytyskeskuksen rinnalla eikä kohteen sisällä, koska pankki
 // on kohteiden YLI menevä rekisteri: sen kysymys on "mitä yrityksellä on ja missä", ja
 // kohteen sisältä katsottuna vastaus olisi aina yhden kohteen mittainen.
-type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus' | 'tehtavanjako' | 'kalusto';
+type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus' | 'tehtavanjako' | 'kalusto' | 'tyontekijat';
 
 // Historiamerkinnän näkymätunniste -> kohteen toiminto. Mobiiliversion takaisin-nappi
 // tarvitsee tämän: siellä ei ole kohdevalikkoa johon palata, joten näkymä avataan
@@ -176,6 +178,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // kalusto.js) — tämä lippu päättää vain mitä käyttöliittymässä näytetään, eikä sen
   // varaan saa laskea mitään. Selain saa jo valmiiksi rajatun listan.
   const saaNahdaVuoronKaluston = saaNahdaPankin || canView(perms, null, 'guard_site_assets');
+  // Työntekijäpankki. SAMA SOLMU KUIN EVENTISSÄ eikä guard_-omaa: rekisteri on yrityksen
+  // eikä tuotteen, ja solmu on jo globaali ilman tuoteporttia (server/permissions.js).
+  // Tunnus jolla on oikeus näkee saman pankin kummalta puolelta tahansa.
+  const saaNahdaTyontekijat = isAdmin || canView(perms, null, 'global_employee_bank');
+  const saaMuokataTyontekijoita = isAdmin || canEdit(perms, null, 'global_employee_bank');
   // Varustepoikkeama on vikailmoitus eikä omaisuuskirjanpito, joten sillä on yhä oma
   // solmunsa. ILMOITTAMINEN riittää lukuoikeudella — sen huomaa se joka käyttää
   // varustetta; sulkeminen on väite siitä että asia on kunnossa.
@@ -224,7 +231,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [poistettava, setPoistettava] = useState<Kohde | null>(null);
   // Työntekijäpankki perehdytysvalintaa varten. Jää tyhjäksi jos käyttäjällä ei ole
   // siihen lukuoikeutta — silloin perehdytettävän nimi kirjoitetaan käsin.
-  const [tyontekijat, setTyontekijat] = useState<{ id?: string; name?: string; displayId?: number | null }[]>([]);
+  const [tyontekijat, setTyontekijat] = useState<Tyontekija[]>([]);
+  // Erillinen lippu: tyhjä rekisteri ja epäonnistunut haku eivät saa näyttää samalta,
+  // koska pankkinäkymä tallentaa koko kokoelman kerralla.
+  const [tyontekijatLadattu, setTyontekijatLadattu] = useState(false);
   const [tiedostot, setTiedostot] = useState<KohteenTiedosto[]>([]);
   const [tiedostotLadattu, setTiedostotLadattu] = useState(false);
   const [suoritukset, setSuoritukset] = useState<TehtavaSuoritus[]>([]);
@@ -403,7 +413,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     fetch('/api/data/employees', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
       .then((res) => {
-        if (res && res.ok === true && Array.isArray(res.data)) setTyontekijat(res.data);
+        if (res && res.ok === true && Array.isArray(res.data)) {
+          setTyontekijat(res.data);
+          setTyontekijatLadattu(true);
+        }
       })
       .catch(() => { /* ei kriittinen */ });
   }, [saaNahda]);
@@ -495,6 +508,33 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   }, [saaNahdaVuoronKaluston]);
 
   useEffect(() => { paivitaPankki(); }, [paivitaPankki]);
+
+  // Työntekijäpankin tallennus. Koko kokoelma kerralla, kuten kohdelistallakin — palvelin
+  // vertaa uutta vanhaan ja hylkää romahduksen (server/index.js). Näkymä ei kutsu tätä
+  // ennen onnistunutta hakua, koska `tyontekijatLadattu` on sen renderöinnin ehtona.
+  const tallennaTyontekijat = async (lista: Tyontekija[]) => {
+    setVirhe(null);
+    try {
+      // Viimeisen tietueen poisto tarvitsee ?allowEmpty=1, muuten romahdussuoja hylkää
+      // sen virheellä joka ei kerro käyttäjälle mitään.
+      const r = await fetch(`/api/data/employees${lista.length === 0 ? '?allowEmpty=1' : ''}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(lista),
+      });
+      const res = await r.json().catch(() => null);
+      if (r.ok && res && res.ok === true) {
+        setTyontekijat(lista);
+        return true;
+      }
+      setVirhe(res?.error || 'Työntekijöiden tallennus epäonnistui.');
+      return false;
+    } catch {
+      setVirhe('Ei yhteyttä palvelimeen. Muutosta ei tallennettu.');
+      return false;
+    }
+  };
 
   // Jälkiraportit haetaan tavalliselta kokoelmareitiltä, mutta niitä ei koskaan
   // kirjoiteta takaisin: kokoelma on palvelimen ylläpitämä (jäädytetyt luvut, lukitus).
@@ -1053,6 +1093,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     asetuksissa ? 'asetukset'
       : osio === 'halytyskeskus' ? 'halytyskeskus'
       : osio === 'kalusto' ? 'kalustopankki'
+      : osio === 'tyontekijat' ? 'tyontekijapankki'
       : raporttiKohde ? 'raportit'
       : tietoKohde ? 'kohteen-tiedot'
       : kalustoKohde ? 'kalusto'
@@ -1099,6 +1140,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         // Kalustopankki on etusivun osio siinä missä hälytyskeskus, joten takaisin-nappi
         // purkaa sen samalla tavalla yhdeksi tasoksi.
         : tunniste === 'kalustopankki' ? 'kalusto'
+          : tunniste === 'tyontekijapankki' ? 'tyontekijat'
           : tunniste === JUURINAKYMA ? 'etusivu'
             : 'kohteet'
     );
@@ -1477,6 +1519,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const nakymanNimi = asetuksissa ? 'Sovellusasetukset'
     : osio === 'halytyskeskus' ? 'Hälytyskeskus'
     : osio === 'kalusto' ? 'Kalustopankki'
+    : osio === 'tyontekijat' ? 'Työntekijäpankki'
     : raporttiKohde ? 'Raportointi'
     : tietoKohde ? 'Kohteen tiedot'
     : halytysKohde ? 'Hälytykset'
@@ -1618,6 +1661,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           isAdmin={!!isAdmin}
           onHavita={havitaVanhentuneet}
           onTakaisin={() => setAsetuksissa(false)}
+        />
+      ) : osio === 'tyontekijat' ? (
+        <Tyontekijapankki
+          tyontekijat={tyontekijat}
+          ladattu={tyontekijatLadattu}
+          saaMuokata={saaMuokataTyontekijoita}
+          onTallenna={tallennaTyontekijat}
+          onTakaisin={() => setOsio('etusivu')}
         />
       ) : osio === 'tehtavanjako' ? (
         <Tehtavanjako onTakaisin={() => setOsio('etusivu')} />
@@ -1916,6 +1967,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           saaNahdaAsetukset={saaNahdaAsetukset}
           saaJakaaTehtavia={saaNahdaHalytyskeskus || !!isAdmin}
           saaNahdaKalusto={saaNahdaPankin}
+          saaNahdaTyontekijat={saaNahdaTyontekijat}
           kohteita={kohteet.length}
           lauenneita={halytykset.filter((h) => h.tila === 'lauennut').length}
           ajastimia={halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa').length}
@@ -1927,6 +1979,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onKalusto={() => setOsio('kalusto')}
           onHalytyskeskus={() => setOsio('halytyskeskus')}
           onTehtavanjako={() => setOsio('tehtavanjako')}
+          onTyontekijat={() => setOsio('tyontekijat')}
           onAsetukset={() => setAsetuksissa(true)}
         />
       ) : (

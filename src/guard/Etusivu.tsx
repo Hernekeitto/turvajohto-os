@@ -11,7 +11,7 @@
 
 import type { ReactNode } from 'react';
 import {
-  ArrowRight, Boxes, Building2, ClipboardList, Siren, Settings, Timer, Route, TriangleAlert,
+  ArrowRight, Boxes, Building2, ClipboardList, Siren, Settings, Timer, Route, TriangleAlert, Users,
 } from 'lucide-react';
 
 type Props = {
@@ -26,6 +26,9 @@ type Props = {
   // pääkäyttäjä tai päivystäjä. Oma korttinsa eikä hälytyskeskuksen sisällä: hälytys on
   // tapahtuma johon reagoidaan, tehtävien jako on suunnittelua.
   saaJakaaTehtavia: boolean;
+  // Työntekijäpankki. Sama rekisteri ja sama solmu kuin tapahtumapuolella
+  // (global_employee_bank) — GUARD ei saa omaa pankkiaan vaan oman näkymänsä samaan.
+  saaNahdaTyontekijat: boolean;
   kohteita: number;
   lauenneita: number;
   ajastimia: number;
@@ -37,14 +40,16 @@ type Props = {
   onKalusto: () => void;
   onHalytyskeskus: () => void;
   onTehtavanjako: () => void;
+  onTyontekijat: () => void;
   onAsetukset: () => void;
 };
 
 export const Etusivu = ({
   saaNahdaKohteet, saaNahdaHalytyskeskus, saaNahdaAsetukset, saaJakaaTehtavia, saaNahdaKalusto,
+  saaNahdaTyontekijat,
   kohteita, lauenneita, ajastimia, kierroksiaKesken,
   kalustoa, kalustopyyntoja, kadonnuttaKalustoa,
-  onKohteet, onKalusto, onHalytyskeskus, onTehtavanjako, onAsetukset,
+  onKohteet, onKalusto, onHalytyskeskus, onTehtavanjako, onTyontekijat, onAsetukset,
 }: Props) => (
   <div>
     <div className="mb-8">
@@ -170,6 +175,17 @@ export const Etusivu = ({
     {/* Tehtävien jako (erä 19). Riviksi eikä kortiksi: kortit vastaavat kysymykseen
         "missä pitää olla nyt", ja tehtävien jako on suunnittelua johon mennään kun
         siihen on syytä — ei tilanne joka vaatii huomiota. */}
+    {saaNahdaTyontekijat && (
+      <button
+        type="button"
+        onClick={onTyontekijat}
+        className="mt-6 mr-6 inline-flex items-center gap-2 text-sm font-medium text-ink-body hover:text-accent transition-colors"
+      >
+        <Users size={16} />
+        Työntekijäpankki
+      </button>
+    )}
+
     {saaJakaaTehtavia && (
       <button
         type="button"
