@@ -1570,6 +1570,78 @@ mittaa kestoa eikä näytemäärää. Iskun tunnistukseen voi olla: harvempi nä
 pienentää mahdollisuutta osua lyhyen kiihtyvyyspiikin huippuun. Se osuu samaan kohtaan
 joka on muutenkin yhä testaamatta laitteella (ks. avoimet kohdat).
 
+#### v23–v24 14.9.2026: näytetahdin syy — ja väärä selitys jonka se kumosi
+
+Yön ajo paljasti, että käsiteltyjen näytteiden väli on 300,0 ms vaikka koodi tähtää
+250:een. Kirjasin siitä avoimen kohdan otsikolla "näytetahti putoaa ruudun sammuessa".
+**Se otsikko oli väärä, ja tapa jolla se syntyi on virheistä kiinnostavampi kuin itse
+luku:** vertasin kahta mittausta joista toinen oli tehty eri päivänä, eri vuorolla ja
+diagnostiikkanäkymä auki, ja nimesin eron sen ainoan muuttujan mukaan jonka satuin
+huomaamaan.
+
+##### Mittaväline jota ei ollut
+
+`naytteita`-laskuri laskee vain harvennusportin läpi päässeet. Raakatoimituksia ei
+laskenut mikään, joten 300 ms:n väli saattoi tarkoittaa 75 ms:n tai 100 ms:n toimitusta —
+eikä niitä voinut erottaa. Mittaus on lisäksi tehtävä kaapeli irti, jolloin `adb` ei näe
+laitteesta mitään.
+
+Siksi v23 lisäsi `raakoja`-laskurin, joka kasvaa **ennen** porttia ja kulkee
+sydämenlyönnin mukana: `lyonti anturi=6636 raakoja=27562`.
+
+##### Mittaus: 21 minuuttia, ruutu pois, kaapeli irti
+
+| | |
+|---|---|
+| Toimitusväli | **100,0 ms** (600 tapahtumaa joka minuutti) |
+| Portin läpi | **300,0 ms** (200 näytettä) |
+| Suhde | **3,00**, vaihtelu 2,99–3,02 |
+
+Ei keskiarvo vaan vakio. Sama luku selittää yön 300,0 ms:n kokonaan.
+
+Vertailuksi sama vuoro ruutu päällä, kolme ensimmäistä minuuttia:
+
+| Minuutti | Toimitusväli |
+|---|---|
+| 1. | 15,0 ms |
+| 2. | 16,6 ms |
+| 3. | 76,5 ms |
+
+##### Kolme johtopäätöstä, joista kaksi kumoaa aiemman
+
+**1. Anturille annettu pyyntö ei vaikuta mihinkään.** Pyydettiin 250 ms, saatiin 100 ms.
+`dumpsys sensorservice` näyttää kiihtyvyysanturilla neljä asiakasta ja laitteiston ajavan
+aina nopeimman pyynnön mukaan. Luokan kommentti sanoi harvennuksen olevan varmuuden
+vuoksi; todellisuudessa se on ainoa mikä harventaa mitään.
+
+**2. Tahti ei putoa ruudun sammuessa — se NOUSEE kun muut sovellukset kuuntelevat.**
+Käyttöliittymä ja näytön kääntö pitivät anturia 15 ms:ssä sovelluksen avauduttua. Eilinen
+"3,89 Hz ruutu päällä" mitattiin 41 minuutin ajalta jolloin diagnostiikkanäkymä oli auki
+koko ajan, eikä se ollut perustaso vaan poikkeus. **Kentän todellinen tahti on 3,33 Hz**,
+ja se mitattiin kahdesti eri päivinä samaksi.
+
+**3. Hylätyt tapahtumat eivät säästä akkua.** Ne on tuotettu, herätetty ja toimitettu
+siihen mennessä kun portti hylkää ne. Harvennus säästi vain `syota`-kutsuja.
+
+##### v24: näyteväli 250 ms → 100 ms
+
+Kohta 3 muuttaa laskelman. 250 ms:n portti päästi läpi joka kolmannen tapahtuman, eli
+**isku nähtiin 300 ms:n välein**. Kaatumisen kiihtyvyyspiikki on tyypillisesti lyhyempi,
+joten portti saattoi ohittaa koko iskun osumatta huippuun kertaakaan — ja silloin
+`kaatuminen` ei laukea lainkaan, vaan jäljelle jää `liikkumaton` puolen tunnin päästä.
+Riskiä ei ollut aiemmin kvantifioitu; nyt se on luku.
+
+100 ms:llä jokainen toimitettu tapahtuma käsitellään. Iskun tunnistus paranee
+kolminkertaisesti eikä akkukustannus muutu.
+
+**Yksi seuraus on arvio eikä mittaus.** `LIIKKUMATTA_MUUTOS` vertaa peräkkäisiä näytteitä,
+ja tiheämmin otettuina sama fyysinen liike tuottaa pienemmän eron — sääntö kutsuu siis
+hieman herkemmin jotain paikallaan olevaksi. Käytännön riski näyttää pieneltä: väärä
+havainto vaatii kolmekymmentä minuuttia peräkkäin ilman yhtäkään yli 0,35:n muutosta, eikä
+kävely tuota sellaista jaksoa 10 Hz:lläkään, ja lepokohina (0,026 keskimäärin, 0,110
+suurin) jää yhä yli kolminkertaisesti rajan alle. **Kannettavalla puhelimella tehty ajo
+uudella tahdilla on silti tekemättä, eikä tätä saa esittää mitattuna ennen sitä.**
+
 ### Erä 13 — Hätäpainike sovelluksen ulkopuolelta
 
 | Osa | Uutta |
@@ -1635,9 +1707,11 @@ Kalenterin määrää käytännössä juridiikka, ei koodi.
    Chrome tekee siitä haun, eikä koko web-käyttöliittymässä ole linkkiä siihen. Näkymä on
    rakennettu vastaamaan vartijan ja päivystäjän kysymykseen "miksi hälytys ei tullut" —
    eivätkä he pääse siihen käsiksi. Havaittu 13.9.2026 kun käyttäjä ei saanut sitä auki.
-4. **Anturin näytetahti putoaa ruudun sammuessa.** Mitattu 13.–14.9.2026: 3,89 Hz ruutu
-   päällä, 3,34 Hz ruutu pois — koodi tähtää 4 Hz:iin (250 ms). Ero ei liity Dozeen vaan
-   alkaa heti ruudun sammuessa, eikä syytä ole todennettu. Liikkumattomuussääntöön ei
-   vaikutusta (se mittaa kestoa), mutta iskun tunnistukseen voi olla: harvempi näyte
-   pienentää mahdollisuutta osua lyhyen piikin huippuun. Iskusääntö on muutenkin yhä
-   testaamatta laitteella.
+4. ~~**Anturin näytetahti putoaa ruudun sammuessa.**~~ **Selvitetty 14.9.2026, ja otsikko
+   oli väärä.** Tahti ei putoa ruudun sammuessa vaan nousee kun muut sovellukset
+   kuuntelevat anturia. Toimitusväli on 100,0 ms kun mikään muu ei kuuntele, ja anturille
+   annettu 250 ms:n pyyntö ei vaikuta siihen mitenkään. Näyteväli laskettiin v24:ssä
+   100 ms:iin, koska hylätyt tapahtumat eivät säästä akkua. Ks. "v23–v24 14.9.2026".
+5. **Iskusääntö on yhä testaamatta laitteella.** Kaatumista ei ole kertaakaan simuloitu
+   oikealla puhelimella, eikä 100 ms:n näytevälin vaikutusta paikallaanolosääntöön ole
+   mitattu kannettavalla puhelimella — se on toistaiseksi perusteltu arvio.

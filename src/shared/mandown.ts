@@ -72,10 +72,23 @@ export const ISKUN_IKKUNA_MS = 3_000;
 // ks. server/halytys.js mandownAsetukset (rajat 30–60).
 export const LIIKKUMATON_MS = 60 * 60_000;
 
-// Näytteenoton väli. Anturi tarjoaa dataa noin 60 kertaa sekunnissa, mikä on tähän
-// tarkoitukseen sata kertaa liikaa: neljä näytettä sekunnissa riittää sekä iskuun että
-// liikkumattomuuteen, ja loput vain kuluttavat akkua.
-export const NAYTEVALI_MS = 250;
+// Näytteenoton väli.
+//
+// Arvo oli 250 ms ja perustelu kuului: "anturi tarjoaa dataa noin 60 kertaa sekunnissa,
+// mikä on sata kertaa liikaa; neljä näytettä sekunnissa riittää, ja loput vain kuluttavat
+// akkua." Natiivipuolella mitattiin 14.9.2026 raakalaskurilla (21 min, ruutu pois, kaapeli
+// irti), että anturi toimittaa tasan 100,0 ms:n välein — kymmenen kertaa sekunnissa, ei
+// kuuttakymmentä — ja että hylätyt tapahtumat eivät säästä akkua, koska ne on jo tuotettu
+// ja toimitettu siinä vaiheessa kun portti hylkää ne.
+//
+// 250 ms:n portti päästi läpi joka kolmannen, eli isku nähtiin 300 ms:n välein. Kaatumisen
+// piikki on tyypillisesti lyhyempi, joten portti saattoi ohittaa koko iskun. 100 ms:llä
+// jokainen tapahtuma käsitellään.
+//
+// Selaimen toteutus pidetään samassa arvossa natiivin kanssa tarkoituksella: sama sääntö
+// samoilla luvuilla, jotta niiden erot eivät ole toinen muuttuja jälkiselvityksessä.
+// Ks. natiivin Mandown.NAYTEVALI_MS, jossa koko mittaus on kirjattuna.
+export const NAYTEVALI_MS = 100;
 
 export type MandownTila = {
   paikallaanAlkaen: number | null;
