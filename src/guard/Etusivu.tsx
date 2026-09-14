@@ -10,12 +10,18 @@
 // päättää sen.
 
 import type { ReactNode } from 'react';
-import { ArrowRight, Building2, ClipboardList, Siren, Settings, Timer, Route } from 'lucide-react';
+import {
+  ArrowRight, Boxes, Building2, ClipboardList, Siren, Settings, Timer, Route, TriangleAlert,
+} from 'lucide-react';
 
 type Props = {
   saaNahdaKohteet: boolean;
   saaNahdaHalytyskeskus: boolean;
   saaNahdaAsetukset: boolean;
+  // Kalustopankki (erä 20). Kolmas kortti eikä kohteen sisäinen näkymä, koska pankki on
+  // kohteiden YLI menevä rekisteri — samasta syystä kuin hälytyskeskus. Kohteen
+  // kalustorekisteri on yhä olemassa, mutta se näyttää vain yhden kohteen osuuden.
+  saaNahdaKalusto: boolean;
   // Tehtävien jako (erä 19): sama oikeus kuin hälytyskeskuksella, koska määrääjä on
   // pääkäyttäjä tai päivystäjä. Oma korttinsa eikä hälytyskeskuksen sisällä: hälytys on
   // tapahtuma johon reagoidaan, tehtävien jako on suunnittelua.
@@ -24,27 +30,32 @@ type Props = {
   lauenneita: number;
   ajastimia: number;
   kierroksiaKesken: number;
+  kalustoa: number;
+  kalustopyyntoja: number;
+  kadonnuttaKalustoa: number;
   onKohteet: () => void;
+  onKalusto: () => void;
   onHalytyskeskus: () => void;
   onTehtavanjako: () => void;
   onAsetukset: () => void;
 };
 
 export const Etusivu = ({
-  saaNahdaKohteet, saaNahdaHalytyskeskus, saaNahdaAsetukset, saaJakaaTehtavia,
+  saaNahdaKohteet, saaNahdaHalytyskeskus, saaNahdaAsetukset, saaJakaaTehtavia, saaNahdaKalusto,
   kohteita, lauenneita, ajastimia, kierroksiaKesken,
-  onKohteet, onHalytyskeskus, onTehtavanjako, onAsetukset,
+  kalustoa, kalustopyyntoja, kadonnuttaKalustoa,
+  onKohteet, onKalusto, onHalytyskeskus, onTehtavanjako, onAsetukset,
 }: Props) => (
   <div>
     <div className="mb-8">
       <h2 className="text-2xl font-bold text-ink-strong mb-1">Turvajohto GUARD</h2>
       <p className="text-sm text-ink-muted leading-relaxed">
         Valitse osio. Kohteista tehdään vuoron työ, hälytyskeskuksesta katsotaan kaikkien
-        kohteiden tilanne yhtä aikaa.
+        kohteiden tilanne yhtä aikaa, ja kalustopankki kertoo mitä yrityksellä on ja missä.
       </p>
     </div>
 
-    <div className="grid gap-5 sm:grid-cols-2">
+    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
       {saaNahdaKohteet && (
         <button
           type="button"
@@ -114,6 +125,42 @@ export const Etusivu = ({
           </div>
           <span className={`inline-flex items-center gap-2 text-sm font-medium ${lauenneita > 0 ? 'text-danger-ink' : 'text-accent'}`}>
             Avaa hälytyskeskus
+            <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+          </span>
+        </button>
+      )}
+
+      {saaNahdaKalusto && (
+        <button
+          type="button"
+          onClick={onKalusto}
+          className="group text-left flex flex-col bg-surface hover:bg-sunken border border-line hover:border-line-strong rounded-2xl p-6 transition-colors"
+        >
+          <Boxes className="w-8 h-8 mb-4 text-accent" strokeWidth={1.75} />
+          <h3 className="text-xl font-bold text-ink-strong mb-1">Kalusto</h3>
+          <p className="text-sm text-ink-muted mb-3">Koko yrityksen kalustopankki</p>
+          <p className="text-sm text-ink-body leading-relaxed mb-5 flex-1">
+            Avaimet, ajoneuvot, asusteet, voimankäyttövälineet ja tietotekniikka. Jokaisella
+            esineellä on oma tunnus ja kilpimerkki, ja pankista jyvitetään tavaraa
+            kohteille ja vartijoille.
+          </p>
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <Merkki>{kalustoa === 1 ? '1 esine' : `${kalustoa} esinettä`}</Merkki>
+            {kalustopyyntoja > 0 && (
+              <Merkki taso="varoitus">
+                <ClipboardList size={12} />
+                {kalustopyyntoja === 1 ? '1 pyyntö odottaa' : `${kalustopyyntoja} pyyntöä odottaa`}
+              </Merkki>
+            )}
+            {kadonnuttaKalustoa > 0 && (
+              <Merkki taso="kriittinen">
+                <TriangleAlert size={12} />
+                {kadonnuttaKalustoa} kadonnut
+              </Merkki>
+            )}
+          </div>
+          <span className="inline-flex items-center gap-2 text-sm font-medium text-accent">
+            Avaa kalustopankki
             <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
           </span>
         </button>

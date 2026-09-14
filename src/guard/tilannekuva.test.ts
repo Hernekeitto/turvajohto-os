@@ -16,6 +16,7 @@ import {
 } from './tilannekuva.ts';
 import type { Halytys } from '../shared/halytykset.ts';
 import type { Kierros, TehtavaSuoritus } from './tyypit.ts';
+import type { KalustoTietue } from './kalusto/tyypit.ts';
 
 const NYT = Date.parse('2026-09-05T12:00:00.000Z');
 const hetki = (minuuttiaSitten: number) => new Date(NYT - minuuttiaSitten * 60_000).toISOString();
@@ -196,20 +197,47 @@ test('tyhjä kohde saa tekstin eikä nollaa', () => {
   assert.equal(t.halytykset.huomio, null);
 });
 
-test('kadonnut avain menee kaluston huomiossa poikkeaman edelle', () => {
+// Kohteen kalusto luetaan KALUSTOPANKISTA (erä 20) eikä enää avainrekisteristä: GUARD-
+// puolella avain on pankin rivi lajilla 'avain', ja sen sijoitus kertoo millä kohteella
+// se on. `avaimet` jää tähän moduuliin EVENT-puolta varten.
+const pankkiEsine = (yli: Partial<KalustoTietue> = {}): KalustoTietue => ({
+  id: 'k1', tunnus: 'TJ-AVA-0001', laji: 'avain', alalaji: 'Yleisavain', nimi: 'Pääovi',
+  kuvaus: '', sarjanumero: '', tila: 'kaytossa',
+  sijoitusLaji: 'kohde', sijoitusId: 'kohde1', sijoitusNimi: 'Kohde 1',
+  lisatiedot: {}, pyynto: null, luotu: hetki(500), luoja: null, historia: [],
+  ...yli,
+});
+
+test('kadonnut kalusto menee kaluston huomiossa poikkeaman edelle', () => {
   const t = toiminnot(lahteilla({
-    avaimet: [
-      { id: 'a1', ownerId: 'kohde1', omistaja: 'kohde', tunnus: 'A-1', kuvaus: '', tila: 'kadonnut', haltija: null, otettu: null, luotu: hetki(500), historia: [] },
-      { id: 'a2', ownerId: 'kohde1', omistaja: 'kohde', tunnus: 'A-2', kuvaus: '', tila: 'ulkona', haltija: 'vartija1', otettu: hetki(60), luotu: hetki(500), historia: [] },
-      // Käytöstä poistettua avainta ei lasketa mukaan.
-      { id: 'a3', ownerId: 'kohde1', omistaja: 'kohde', tunnus: 'A-3', kuvaus: '', tila: 'poistettu', haltija: null, otettu: null, luotu: hetki(500), historia: [] },
+    kalusto: [
+      pankkiEsine({ id: 'k1', tunnus: 'TJ-AVA-0001', tila: 'kadonnut' }),
+      pankkiEsine({ id: 'k2', tunnus: 'TJ-AVA-0002' }),
+      // Käytöstä poistettua ei lasketa mukaan.
+      pankkiEsine({ id: 'k3', tunnus: 'TJ-AVA-0003', tila: 'poistettu' }),
+      // Toisen kohteen esine ei kuulu tähän tiivistelmään.
+      pankkiEsine({ id: 'k4', tunnus: 'TJ-AVA-0004', sijoitusId: 'kohde2' }),
     ],
     poikkeamat: [
       { id: 'p1', ownerId: 'kohde1', omistaja: 'kohde', varuste: 'Valaisin', kuvaus: '', vakavuus: 'kriittinen', tila: 'avoin', ilmoittaja: 'vartija1', ilmoitettu: hetki(30), kasittelija: null, kasitelty: null, kasittelyHuomio: '', halytysId: null },
     ],
   }));
-  assert.match(t.kalusto.teksti, /^2 avainta, 1 luovutettuna · 1 poikkeama avoinna$/);
-  assert.deepEqual(t.kalusto.huomio, { teksti: 'avain kadonnut', taso: 'kriittinen' });
+  assert.match(t.kalusto.teksti, /^2 esinettä kohteella · 1 poikkeama avoinna$/);
+  assert.deepEqual(t.kalusto.huomio, { teksti: 'kalustoa kadonnut', taso: 'kriittinen' });
+});
+
+test('avoin kalustopyynto nakyy tiivistelmassa vaikka esine on muualla', () => {
+  // Pyydetty esine EI ole vielä kohteella — juuri se on tiivistelmän kerrottava, jotta
+  // vuoron alussa näkee onko pyyntö yhä ratkaisematta.
+  const t = toiminnot(lahteilla({
+    kalusto: [
+      pankkiEsine({ id: 'k1', tunnus: 'TJ-VKV-0001', laji: 'voimankayttovaline',
+        sijoitusLaji: 'varasto', sijoitusId: null, sijoitusNimi: 'Varasto',
+        pyynto: { id: 'p1', pyytaja: 'esimies', kohdeId: 'kohde1', kohdeNimi: 'Kohde 1', perustelu: 'Yövuoroon', luotu: hetki(20) } }),
+    ],
+  }));
+  assert.match(t.kalusto.teksti, /^0 esinettä kohteella · 1 pyyntö odottaa$/);
+  assert.deepEqual(t.kalusto.huomio, { teksti: 'pyyntö odottaa', taso: 'varoitus' });
 });
 
 test('tiedotteen kuittaamattomuus katsotaan katsojan omalta kohdalta', () => {

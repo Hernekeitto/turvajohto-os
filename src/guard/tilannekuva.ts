@@ -13,6 +13,7 @@
 
 import { onAvoin, type Halytys } from '../shared/halytykset.ts';
 import type { Avain, Poikkeama } from '../shared/kalusto';
+import type { KalustoTietue } from './kalusto/tyypit';
 import { onKuitannut, onVoimassa, type Tiedote } from '../shared/tiedotteet.ts';
 import type { Pohja, Suoritus } from '../shared/pohjat';
 import type { Jalkiraportti } from '../shared/jalkiraportit';
@@ -28,6 +29,11 @@ export type Lahteet = {
   raportit: GuardRaportti[];
   avaimet: Avain[];
   poikkeamat: Poikkeama[];
+  // Kalustopankki (erä 20). GUARD-puolen kohteen kalusto tulee TÄSTÄ eikä `avaimet`ista:
+  // pankin rivi kuuluu kohteelle silloin kun sen sijoitus osoittaa siihen. `avaimet` on
+  // yhä olemassa EVENT-puolen avainrekisteriä varten, ja tapahtuman kalusto luetaan
+  // siitä — kaksi eri rekisteriä, koska tapahtuman avain on tapahtuman mittainen.
+  kalusto: KalustoTietue[];
   tiedotteet: Tiedote[];
   skenaariot: Suoritus[];
   // Pohjat ovat yksi kokoelma jossa on kolme lajia (patrol = kierrospohja, guide =
@@ -39,7 +45,7 @@ export type Lahteet = {
 
 export const tyhjatLahteet = (): Lahteet => ({
   halytykset: [], kierrokset: [], tehtavat: [], raportit: [],
-  avaimet: [], poikkeamat: [], tiedotteet: [], skenaariot: [],
+  avaimet: [], poikkeamat: [], kalusto: [], tiedotteet: [], skenaariot: [],
   pohjat: [], jaksoraportit: [],
 });
 
@@ -466,9 +472,14 @@ export function kohteenToiminnot(
   const tehtavat = lahteet.tehtavat.filter((t) => t.siteId === kohdeId);
   const toimenpiteet = lahteet.raportit.filter((r) => r.siteId === kohdeId && r.typeId === 'guard_action');
   const ilmoitukset = lahteet.raportit.filter((r) => r.siteId === kohdeId && r.typeId === 'guard_jvreport');
-  const avaimet = lahteet.avaimet.filter((a) => a.ownerId === kohdeId && a.tila !== 'poistettu');
-  const ulkona = avaimet.filter((a) => a.tila === 'ulkona');
-  const kadonneet = avaimet.filter((a) => a.tila === 'kadonnut');
+  // Kohteen kalusto on pankin rivejä joiden sijoitus osoittaa tähän kohteeseen (erä 20).
+  // Avoimet pyynnöt lasketaan erikseen ja koko pankista, koska pyydetty esine EI ole
+  // vielä kohteella — se on juuri se mitä valikon tiivistelmän on kerrottava.
+  const kalusto = lahteet.kalusto.filter(
+    (e) => e.sijoitusLaji === 'kohde' && e.sijoitusId === kohdeId && e.tila !== 'poistettu'
+  );
+  const kadonneet = kalusto.filter((e) => e.tila === 'kadonnut');
+  const kalustopyynnot = lahteet.kalusto.filter((e) => e.pyynto?.kohdeId === kohdeId);
   const poikkeamat = lahteet.poikkeamat.filter((p) => p.ownerId === kohdeId && p.tila === 'avoin');
   const tiedotteet = lahteet.tiedotteet.filter((t) => t.ownerId === kohdeId && onVoimassa(t, nyt));
   const kuittaamatta = tiedotteet.filter((t) => !onKuitannut(t, kayttaja));
@@ -519,17 +530,23 @@ export function kohteenToiminnot(
       huomio: kierrospohjat.length === 0 ? { teksti: 'puuttuu', taso: 'varoitus' } : null,
     },
     kalusto: {
-      teksti: avaimet.length === 0 && poikkeamat.length === 0
-        ? 'Ei avaimia eikä poikkeamia'
-        : `${monikko(avaimet.length, 'avain', 'avainta')}, ${ulkona.length} luovutettuna${
+      // Odottava pyyntö EI saa jäädä tyhjän tilan taakse. Juuri se on tilanne jossa
+      // kohteella ei ole kalustoa: "Ei kalustoa eikä poikkeamia" olisi totta mutta
+      // salaisi sen että asialle on jo tehty jotain ja se odottaa toista ihmistä.
+      teksti: kalusto.length === 0 && poikkeamat.length === 0 && kalustopyynnot.length === 0
+        ? 'Ei kalustoa eikä poikkeamia'
+        : `${monikko(kalusto.length, 'esine', 'esinettä')} kohteella${
+          kalustopyynnot.length > 0 ? ` · ${monikko(kalustopyynnot.length, 'pyyntö', 'pyyntöä')} odottaa` : ''}${
           poikkeamat.length > 0 ? ` · ${monikko(poikkeamat.length, 'poikkeama', 'poikkeamaa')} avoinna` : ''}`,
       huomio: kadonneet.length > 0
-        ? { teksti: 'avain kadonnut', taso: 'kriittinen' }
+        ? { teksti: 'kalustoa kadonnut', taso: 'kriittinen' }
         : poikkeamat.some((p) => p.vakavuus === 'kriittinen')
           ? { teksti: 'kriittinen poikkeama', taso: 'kriittinen' }
           : poikkeamat.length > 0
             ? { teksti: 'poikkeama', taso: 'varoitus' }
-            : null,
+            : kalustopyynnot.length > 0
+              ? { teksti: 'pyyntö odottaa', taso: 'varoitus' }
+              : null,
     },
     mittaristo: {
       // Mittaristo hakee lukunsa palvelimelta valitulta aikaväliltä (/api/analytiikka),

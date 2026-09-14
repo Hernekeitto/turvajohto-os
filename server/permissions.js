@@ -45,6 +45,11 @@ const GLOBAL_NODES = new Set([
   // tarkoittaisi mitään — se rajaus tehdään eventAccess-listalla, joka rajaa myös tämän
   // solmun tuomat rivit (ks. guardSites ja alerts alempana).
   'guard_dispatch',
+  // Kalustopankki on määritelmällisesti kohteiden yli menevä rekisteri: sen koko idea on
+  // nähdä kerralla mitä yrityksellä on ja missä. Kohdekohtainen "saa nähdä vain kohteen X
+  // kaluston" olisi sama kuin ei pankkia lainkaan — ja juuri siksi solmua ei anneta
+  // vartijalle oletuksena (ks. roles.js).
+  'guard_assets',
   'global_reports',
   'global_archived_events',
   'global_employee_bank',
@@ -325,6 +330,21 @@ const COLLECTIONS = {
     touch: () => [],
     eventScoped: true,
     eventIdOf: (item) => item?.ownerId,
+  },
+  // Kalustopankki (erä 20). Palvelimen ylläpitämä samasta syystä kuin avainrekisteri:
+  // sijoitus ja historia ovat rekisterin koko sisältö, ja selaimesta kirjoitettuina ne
+  // eivät todistaisi mitään siitä kenelle voimankäyttöväline on luovutettu.
+  //
+  // EI eventScoped, toisin kuin keys ja equipmentIssues. Kalusto ei kuulu kohteelle vaan
+  // yritykselle; kohde on vain yksi paikka jossa esine voi olla. Kohderajaus tehdään
+  // näkymässä sijoituksen perusteella (src/guard/kalusto/KohteenKalusto.tsx).
+  assets: {
+    view: ['guard_assets'],
+    touch: () => [],
+    eventScoped: false,
+    // Kalustopankki on vartioimisliikkeen rekisteri eikä tapahtumapuolen asia, joten
+    // tuoteportti sulkee sen tunnuksilta joilla ei ole GUARD-pääsyä.
+    tuote: 'guard',
   },
   // Varustepoikkeamat. Sama malli.
   equipmentIssues: {

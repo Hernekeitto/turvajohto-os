@@ -85,6 +85,15 @@ const VARTIJA_MUOKKAUS = ['guard_tasks', 'guard_report_action', 'guard_report_jv
 // vapaa nimikenttä (src/guard/KohteenHallinta.tsx). Pudotusvalikon saa käyttöön
 // lisäämällä solmun tasolle Sovellusasetuksista.
 const ESIMIES_MUOKKAUS = ['guard_sites'];
+// Kalustopankki Vartioesimiehelle: KATSELUOIKEUS, ei muokkausta. Se on tarkoituksellinen
+// puolikas eikä unohdus — lukuoikeus riittää pyyntöön ("tähän kohteeseen tarvitaan kolme
+// paria käsirautoja"), ja jyvitys jää pääkäyttäjälle (server/index.js: saaHallitaPankkia).
+// Näin pankki pysyy yhden ihmisen kirjanpitona vaikka pyytäjiä on monta.
+//
+// Vartija ei saa solmua lainkaan: pankki on kohteiden yli menevä rekisteri (GLOBAL_NODES),
+// joten sen näkeminen kertoisi mitä kalustoa on missäkin kohteessa ja kenen vartijan
+// hallussa — myös niissä kohteissa joihin vartijan eventAccess ei ulotu.
+const ESIMIES_KATSELU = ['guard_assets'];
 
 function bucketista(nodeIds, { view, edit }) {
   return Object.fromEntries(nodeIds.map((id) => [id, { view, edit }]));
@@ -135,6 +144,7 @@ function oletusTasot() {
       permissions: {
         [DEFAULT_BUCKET]: {
           ...bucketista(VARTIJA_KATSELU, { view: true, edit: false }),
+          ...bucketista(ESIMIES_KATSELU, { view: true, edit: false }),
           ...bucketista(VARTIJA_MUOKKAUS, { view: true, edit: true }),
           // Viimeisenä, koska tämä nostaa guard_sitesin muokattavaksi — sama solmu on
           // VARTIJA_KATSELUssa pelkkänä katseluoikeutena.

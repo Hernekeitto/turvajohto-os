@@ -94,6 +94,11 @@ import {
 import {
   luoPoikkeama, kasittele as kasittelePoikkeama, eskaloituu, halytyksenKuvaus,
 } from './varusteet.js';
+// Nimiavaruutena eikä nimettyinä tuonteina: kalusto.js vie nimet LAJIT,
+// merkitseKadonneeksi ja poistaKaytosta, jotka kaikki ovat jo varattuja tässä
+// tiedostossa (pohjat.js ja avaimet.js). Aliasointi rivi riviltä olisi luettavampi
+// vain siihen asti kunnes joku lisää seuraavan törmäyksen.
+import * as kalusto from './kalusto.js';
 import { teeIkkuna, kooste as laskeKooste } from './analytiikka.js';
 import { loydaSamaKirjaus, seuraavaVapaaTunniste } from './kirjaukset.js';
 import {
@@ -555,7 +560,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'assets']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -3301,6 +3306,11 @@ app.get('/api/tiedote/:id/kuittaamatta', requireAuth, (req, res) => {
 // muutetaan, kun taas pohjasta tehdään suorituksia. Säännöt ovat avaimet.js:ssä ja
 // varusteet.js:ssä.
 
+// HUOM (erä 20): 'guard_keys' ei ole enää GUARDin sivukartassa — kohteen avaimet ovat
+// kalustopankissa lajina 'avain' (kalusto.js). Kartoitus jätetään tähän, koska se on
+// yhä oikea vastaus kysymykseen "mikä solmu tätä riviä suojaa": kohteen avaintietueita
+// ei enää synny, ja jos niitä jostain on, ne jäävät pääkäyttäjän nähtäviksi eivätkä
+// aukea vahingossa jollekin muulle solmulle. EVENT-puolen 'keys' on ennallaan.
 const kalustonSolmu = (tietue, laji) => {
   const kohde = tietue?.omistaja === 'kohde';
   if (laji === 'avain') return kohde ? 'guard_keys' : 'keys';
@@ -3477,6 +3487,260 @@ app.post('/api/varuste/:id/kasittele', requireAuth, (req, res) => {
   });
   kerroKalustosta('equipmentIssues', tulos.poikkeama, 'varuste', 'update');
   res.json({ ok: true, poikkeama: tulos.poikkeama });
+});
+
+
+// --- Kalustopankki (erä 20) -------------------------------------------------------
+//
+// Säännöt ovat kalusto.js:ssä. Täällä on se osa jota ei voi testata ilman palvelinta:
+// kuka saa tehdä mitäkin, ja mihin kohteeseen kalustoa saa pyytää.
+//
+// OIKEUSJAKO ON KOKO OMINAISUUDEN YDIN. `guard_assets`-lukuoikeus = näet pankin ja voit
+// PYYTÄÄ; muokkausoikeus = jyvität ja RATKAISET pyynnöt. Sama jako kuin
+// varustepoikkeamalla yllä, ja samasta syystä: havainnon puutteesta saa tehdä se joka
+// sen huomaa, mutta päätöksen yrityksen omaisuudesta ei.
+//
+// Solmu on globaali (permissions.js: GLOBAL_NODES), joten oikeus luetaan aina
+// __default__-ämpäristä — siksi eventId on näissä tarkistuksissa null eikä kohteen id.
+
+const saaNahdaPankin = (req) =>
+  req.role === 'admin' || (tuoteOk(req, true) && canView(req.permissions, null, 'guard_assets'));
+
+const saaHallitaPankkia = (req) =>
+  req.role === 'admin' || (tuoteOk(req, true) && canEdit(req.permissions, null, 'guard_assets'));
+
+// Kanavaviesti kalustomuutoksesta. Kuljettaa vain id:n; sisältö haetaan
+// oikeustarkistetulta listahaulta, kuten muissakin kokoelmissa.
+function kerroKalustopankista(esine, action) {
+  lahetaKanavalle('assets', [{ action, id: esine.id, eventId: null }], {
+    saaNahda: (istunto) =>
+      istunto?.role === 'admin' || canView(rolePermissions(istunto?.roleId), null, 'guard_assets'),
+  });
+}
+
+const haeEsine = (id) => {
+  const pankki = readCollection('assets') || [];
+  return { pankki, esine: pankki.find((e) => e.id === id) || null };
+};
+
+// Yhden tietueen kirjoitus takaisin pankkiin. Koko kokoelma kirjoitetaan aina uudelleen
+// (ks. store.js), joten tämä on se kohta jossa muut rivit säilyvät koskemattomina.
+const tallennaEsine = (pankki, esine) =>
+  writeCollection('assets', pankki.map((e) => (e.id === esine.id ? esine : e)));
+
+app.post('/api/kalusto', requireAuth, guardPortti, (req, res) => {
+  if (!saaHallitaPankkia(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta kalustopankin ylläpitoon.' });
+  }
+
+  const laji = typeof req.body?.laji === 'string' ? req.body.laji : '';
+  const kappaletta = Math.trunc(Number(req.body?.kappaletta ?? 1));
+  if (!Number.isFinite(kappaletta) || kappaletta < 1 || kappaletta > kalusto.KAPPALEITA_MAX) {
+    return res.status(400).json({
+      ok: false,
+      error: `Kappalemäärän on oltava 1–${kalusto.KAPPALEITA_MAX}.`,
+    });
+  }
+
+  // Sijoituskohde on tarkistettava olemassa olevaksi: rekisteri joka osoittaa kohteeseen
+  // jota ei ole, ei kerro missä esine on.
+  const sijoitus = req.body?.sijoitus || { laji: 'varasto' };
+  if (sijoitus.laji === 'kohde') {
+    const omistaja = omistajanTiedot(sijoitus.id);
+    if (!omistaja?.onKohde) return res.status(404).json({ ok: false, error: 'Kohdetta ei löytynyt.' });
+    sijoitus.nimi = omistaja.nimi;
+  }
+
+  const pankki = readCollection('assets') || [];
+  // Numerointi lasketaan KERRAN ja kasvatetaan silmukassa. Jos jokainen kappale kysyisi
+  // numeronsa erikseen samasta muuttumattomasta listasta, koko erä saisi saman tunnuksen.
+  const numero = kalusto.seuraavaNumero(pankki, laji);
+
+  const uudet = [];
+  for (let i = 0; i < kappaletta; i += 1) {
+    const tulos = kalusto.luoKalusto({
+      id: crypto.randomUUID(),
+      laji,
+      alalaji: req.body?.alalaji,
+      nimi: req.body?.nimi,
+      kuvaus: req.body?.kuvaus,
+      // Sarjanumero on esinekohtainen, joten erässä se voi olla vain ensimmäisellä.
+      // Loput jäävät tyhjiksi ja täydennetään kortista — sama sarjanumero kymmenellä
+      // esineellä olisi väärää tietoa, ei puuttuvaa.
+      sarjanumero: kappaletta === 1 ? req.body?.sarjanumero : '',
+      lisatiedot: req.body?.lisatiedot,
+      sijoitus,
+      numero: numero + i,
+      user: req.username,
+    });
+    if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+    uudet.push(tulos.esine);
+  }
+
+  writeCollection('assets', [...uudet, ...pankki]);
+  for (const esine of uudet) {
+    logAudit({ user: req.username, action: 'asset_create', collection: 'assets', recordId: esine.id });
+    kerroKalustopankista(esine, 'create');
+  }
+  res.json({ ok: true, esineet: uudet });
+});
+
+app.put('/api/kalusto/:id', requireAuth, guardPortti, (req, res) => {
+  if (!saaHallitaPankkia(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta kalustopankin ylläpitoon.' });
+  }
+  const { pankki, esine } = haeEsine(req.params.id);
+  if (!esine) return res.status(404).json({ ok: false, error: 'Esinettä ei löytynyt.' });
+
+  const tulos = kalusto.paivitaTiedot({ esine, muutokset: req.body, user: req.username });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  tallennaEsine(pankki, tulos.esine);
+  logAudit({ user: req.username, action: 'asset_update', collection: 'assets', recordId: esine.id });
+  kerroKalustopankista(tulos.esine, 'update');
+  res.json({ ok: true, esine: tulos.esine });
+});
+
+// Jyvitys. Pääkäyttäjän toiminto — vuoroesimies pyytää, ei siirrä.
+app.post('/api/kalusto/:id/siirto', requireAuth, guardPortti, (req, res) => {
+  if (!saaHallitaPankkia(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta jyvittää kalustoa. Tee pyyntö pääkäyttäjälle.' });
+  }
+  const { pankki, esine } = haeEsine(req.params.id);
+  if (!esine) return res.status(404).json({ ok: false, error: 'Esinettä ei löytynyt.' });
+
+  const sijoitus = { ...(req.body?.sijoitus || {}) };
+  if (sijoitus.laji === 'kohde') {
+    const omistaja = omistajanTiedot(sijoitus.id);
+    if (!omistaja?.onKohde) return res.status(404).json({ ok: false, error: 'Kohdetta ei löytynyt.' });
+    sijoitus.nimi = omistaja.nimi;
+  }
+  // Nimi haetaan palvelimen puolelta myös henkilölle ja ajoneuvolle: luovutustositteessa
+  // lukeva nimi ei saa olla selaimen lähettämää vapaata tekstiä.
+  if (sijoitus.laji === 'henkilo') {
+    const tyontekija = (readCollection('employees') || []).find((t) => t.id === sijoitus.id);
+    if (!tyontekija) return res.status(404).json({ ok: false, error: 'Työntekijää ei löytynyt.' });
+    sijoitus.nimi = tyontekija.name || '';
+  }
+  if (sijoitus.laji === 'ajoneuvo' || sijoitus.laji === 'avainkaappi') {
+    const kantaja = pankki.find((e) => e.id === sijoitus.id);
+    if (!kantaja) return res.status(404).json({ ok: false, error: 'Ajoneuvoa tai avainkaappia ei löytynyt.' });
+    sijoitus.nimi = `${kantaja.nimi} (${kantaja.tunnus})`;
+  }
+
+  const tulos = kalusto.siirra({ esine, sijoitus, user: req.username, huomio: req.body?.huomio });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  tallennaEsine(pankki, tulos.esine);
+  logAudit({
+    user: req.username, action: 'asset_transfer', collection: 'assets', recordId: esine.id,
+    eventId: tulos.esine.sijoitusLaji === 'kohde' ? tulos.esine.sijoitusId : null,
+  });
+  kerroKalustopankista(tulos.esine, 'update');
+  res.json({ ok: true, esine: tulos.esine });
+});
+
+// Pyyntö. LUKUOIKEUS RIITTÄÄ — vuoroesimies näkee pankin ja kertoo mitä kohteessa
+// tarvitaan. Kohde on rajattava käyttäjän omiin: pyyntö kohteeseen jossa ei työskentele
+// olisi tapa saada selville mitä muissa kohteissa on.
+app.post('/api/kalusto/:id/pyynto', requireAuth, guardPortti, (req, res) => {
+  if (!saaNahdaPankin(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta kalustopankkiin.' });
+  }
+  const { pankki, esine } = haeEsine(req.params.id);
+  if (!esine) return res.status(404).json({ ok: false, error: 'Esinettä ei löytynyt.' });
+
+  const kohdeId = typeof req.body?.kohdeId === 'string' ? req.body.kohdeId : '';
+  const omistaja = omistajanTiedot(kohdeId);
+  if (!omistaja?.onKohde) return res.status(404).json({ ok: false, error: 'Kohdetta ei löytynyt.' });
+  if (req.role !== 'admin' && !eventAllowed(req.eventAccess, kohdeId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta tähän kohteeseen.' });
+  }
+
+  const tulos = kalusto.pyydaKalustoa({
+    esine,
+    id: crypto.randomUUID(),
+    pyytaja: req.username,
+    kohde: { id: kohdeId, nimi: omistaja.nimi },
+    perustelu: req.body?.perustelu,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  tallennaEsine(pankki, tulos.esine);
+  logAudit({
+    user: req.username, action: 'asset_request', collection: 'assets',
+    recordId: esine.id, eventId: kohdeId,
+  });
+  kerroKalustopankista(tulos.esine, 'update');
+  res.json({ ok: true, esine: tulos.esine });
+});
+
+// Pyynnön ratkaisu tai peruminen.
+//
+// PERUMINEN ON PYYTÄJÄN OMA OIKEUS, ratkaisu ei. Vuoroesimies joka huomaa pyytäneensä
+// väärää esinettä ei saa joutua odottamaan pääkäyttäjää saadakseen sen pois listalta —
+// mutta hän ei myöskään saa hyväksyä omaa pyyntöään, mikä on koko hyväksyntäketjun syy.
+app.post('/api/kalusto/:id/pyynto/ratkaise', requireAuth, guardPortti, (req, res) => {
+  const { pankki, esine } = haeEsine(req.params.id);
+  if (!esine) return res.status(404).json({ ok: false, error: 'Esinettä ei löytynyt.' });
+
+  const peru = req.body?.toiminto === 'peru';
+  if (peru) {
+    const omaPyynto = esine.pyynto && esine.pyynto.pyytaja === req.username;
+    if (!omaPyynto && !saaHallitaPankkia(req)) {
+      return res.status(403).json({ ok: false, error: 'Vain pyytäjä tai pääkäyttäjä voi perua pyynnön.' });
+    }
+  } else if (!saaHallitaPankkia(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta ratkaista kalustopyyntöjä.' });
+  }
+
+  const tulos = peru
+    ? kalusto.peruPyynto({ esine, user: req.username })
+    : kalusto.ratkaisePyynto({
+      esine,
+      hyvaksy: req.body?.hyvaksy === true,
+      user: req.username,
+      perustelu: req.body?.perustelu,
+    });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  tallennaEsine(pankki, tulos.esine);
+  logAudit({
+    user: req.username,
+    action: peru ? 'asset_request_cancel' : (req.body?.hyvaksy === true ? 'asset_request_approve' : 'asset_request_reject'),
+    collection: 'assets', recordId: esine.id, eventId: esine.pyynto?.kohdeId || null,
+  });
+  kerroKalustopankista(tulos.esine, 'update');
+  res.json({ ok: true, esine: tulos.esine });
+});
+
+// Tilamuutokset yhdellä reitillä: toiminto tulee rungosta, ja jokainen niistä on sama
+// kirjoitus samaan tietueeseen. Sama ratkaisu kuin avaimen toiminnoilla yllä.
+const KALUSTON_TILAT = {
+  kadonnut: { fn: (a) => kalusto.merkitseKadonneeksi(a), action: 'asset_lost' },
+  huoltoon: { fn: (a) => kalusto.merkitseHuoltoon(a), action: 'asset_service' },
+  kayttoon: { fn: (a) => kalusto.palautaKayttoon(a), action: 'asset_restore' },
+  poista: { fn: (a) => kalusto.poistaKaytosta(a), action: 'asset_retire' },
+};
+
+app.post('/api/kalusto/:id/tila', requireAuth, guardPortti, (req, res) => {
+  const toiminto = KALUSTON_TILAT[req.body?.toiminto];
+  if (!toiminto) return res.status(400).json({ ok: false, error: 'Tuntematon toiminto.' });
+  if (!saaHallitaPankkia(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta muuttaa kaluston tilaa.' });
+  }
+  const { pankki, esine } = haeEsine(req.params.id);
+  if (!esine) return res.status(404).json({ ok: false, error: 'Esinettä ei löytynyt.' });
+
+  const tulos = toiminto.fn({
+    esine, user: req.username, syy: req.body?.syy, huomio: req.body?.huomio,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  tallennaEsine(pankki, tulos.esine);
+  logAudit({ user: req.username, action: toiminto.action, collection: 'assets', recordId: esine.id });
+  kerroKalustopankista(tulos.esine, 'update');
+  res.json({ ok: true, esine: tulos.esine });
 });
 
 

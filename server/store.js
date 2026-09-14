@@ -125,6 +125,12 @@ const COLLECTIONS = {
   // Lyhytikäiset sidontakoodit. Koodi itse on TIIVISTEENÄ samasta syystä kuin salasanat:
   // se on viiden minuutin ajan pääsy tunnukseen. Kokoelma on lähes aina tyhjä.
   deviceCodes: 'deviceCodes.json',
+  // Kalustopankki (erä 20): yrityksen koko kalusto yhtenä rekisterinä, josta tavaraa
+  // jyvitetään kohteille ja vartijoille. EI kohdesidottu kuten keys — se on koko ero
+  // avainrekisteriin: takki ja pakettiauto kiertävät kohteelta toiselle, eikä
+  // kohdekohtainen rekisteri osaa kertoa missä ne ovat. Palvelimen ylläpitämä, koska
+  // luovutusketju on rekisterin ainoa sisältö.
+  assets: 'assets.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
@@ -261,6 +267,19 @@ const ENCRYPTED_FIELDS = {
   // järjestelmään (siivooja, huoltomies). Historian tekstit ovat vapaata tekstiä samasta
   // tapahtumasta. Avaimen tunnus ("A-12 pääovi") jää selväkieliseksi: se on esineen nimi.
   keys: ['haltija', 'historia[].haltija', 'historia[].teksti'],
+  // Kalustopankki (erä 20). `sijoitusNimi` on VARTIJAN NIMI silloin kun esine on
+  // luovutettu henkilölle — sama peruste kuin avaimen haltijalla, ja voimankäyttövälineen
+  // kohdalla painavampi. Historiarivit kantavat oman kopionsa siitä nimestä, joten ne on
+  // salattava erikseen.
+  //
+  // HUOM: kentät ovat litteitä (`sijoitusNimi`) eivätkä sisäkkäisiä (`sijoitus.nimi`),
+  // koska alla oleva jaaTaulukkopolku tuntee vain muodot `kentta` ja `taulukko[].kentta`.
+  // Pisteellä erotettu polku menisi tälle listalle läpi mutta ei salaisi mitään — eikä
+  // siitä kerrottaisi mitenkään. Tietue on siksi muotoiltu salauksen ehdoilla.
+  //
+  // Tunnus, laji ja sarjanumero jäävät selväkielisiksi: ne ovat esineen tietoja, ja
+  // tunnuksella haetaan (QR-skannaus etsii rivin tunnuksella).
+  assets: ['sijoitusNimi', 'historia[].sijoitusNimi', 'historia[].teksti'],
   // Poikkeaman kuvaus ja käsittelyn huomio ovat vapaata tekstiä, jossa mainitaan usein
   // ihmisiä ("Virtasen radio kastui"). Varusteen nimi jää selväkieliseksi.
   equipmentIssues: ['kuvaus', 'kasittelyHuomio'],

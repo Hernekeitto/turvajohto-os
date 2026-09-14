@@ -62,9 +62,20 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // Tiedotteet. Sama sääntö kuin EVENT-puolella: lukuoikeus näyttää ja oikeuttaa
   // kuittaamaan, muokkausoikeus oikeuttaa lähettämään.
   { id: 'guard_broadcast', label: 'Tiedotteet (muokkausoikeus = oikeus lähettää)' },
-  // Kalusto. Vartiointikohteessa avainhallinta on tavallisempi kuin tapahtumassa: kohteen
-  // avaimet ovat pitkäkestoisia ja niiden luovutusketju on osa toimeksiantoa.
-  { id: 'guard_keys', label: 'Avainhallinta' },
+  // Kalustopankki (erä 20). Yrityksen koko kalusto yhtenä rekisterinä: avaimet,
+  // ajoneuvot, asusteet, voimankäyttövälineet, aseet ja tietotekniikka. GLOBAALI solmu
+  // (server/permissions.js: GLOBAL_NODES) eikä kohdekohtainen — pankin koko idea on
+  // nähdä kerralla mitä yrityksellä on ja missä, ja kohdekohtainen rajaus olisi sama
+  // kuin ei pankkia lainkaan.
+  //
+  // Oikeusjako on toiminnon ydin: LUKU = näet pankin ja voit PYYTÄÄ kalustoa kohteelle,
+  // MUOKKAUS = jyvität ja ratkaiset pyynnöt. Sama jako kuin varustepoikkeamalla —
+  // havainnon puutteesta saa tehdä se joka sen huomaa, päätöksen yrityksen omaisuudesta
+  // ei. Oletuksena Vartioesimiehellä on luku, pääkäyttäjällä molemmat (server/roles.js).
+  { id: 'guard_assets', label: 'Kalustopankki (muokkausoikeus = oikeus jyvittää ja hyväksyä pyynnöt)' },
+  // HUOM: erillistä 'guard_keys'-solmua EI enää ole. GUARD-puolen avaimet ovat pankissa
+  // lajina 'avain', ja tyhjä solmu lupaisi oikeuseditorissa sivun jota ei ole. EVENT-
+  // puolen avainrekisteri ('keys'-solmu, server/avaimet.js) jatkaa ennallaan.
   { id: 'guard_equipment', label: 'Varustepoikkeamat' },
   // Mittaristo ja jälkiraportti (erä 9). KAKSI SOLMUA eikä yksi: mittaristo näyttää
   // lukuja, jälkiraportti on dokumentti joka jaetaan tilaajalle ja jossa sanotaan mikä

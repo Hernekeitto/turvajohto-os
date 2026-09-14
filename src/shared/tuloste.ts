@@ -276,6 +276,76 @@ export const tarraDokumentti = ({ kohdeNimi, pohjaNimi, tarrat }: TarraOsat) => 
   </div>`).join('')}
 </div></body></html>`;
 
+// ---------------------------------------------------------------------------
+// Kalustokilpi (erä 20)
+//
+// ERI DOKUMENTTI KUIN TARKISTUSPISTEEN TARRA, eikä sen variantti — ja ero on nimenomaan
+// tekstissä. Pisteen tarra jää ASIAKKAAN tiloihin kenen tahansa luettavaksi, joten siinä
+// ei ole sanaakaan. Kalustokilpi kiinnitetään OMAAN omaisuuteen: tunnus on painettava
+// näkyviin, koska kilpimerkin koko tarkoitus on että esineen voi tunnistaa ilman
+// puhelinta, ja koska tunnuksen on voitava syöttää käsin kun kamera ei lue.
+//
+// Kilpi on myös paljon pienempi: tarkistuspisteen tarra menee seinään, kalustokilpi
+// avainlätkään tai takin sisäpuolelle. Kaksitoista arkille eikä kuusi.
+// ---------------------------------------------------------------------------
+const KILPIMERKKI_TYYLIT = `
+  @page { size: A4 portrait; margin: 10mm; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #000; margin: 0; }
+  .arkki { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4mm; }
+  .solu { page-break-inside: avoid; }
+  .kilpimerkki { border: 0.8mm solid #000; border-radius: 4mm; padding: 3mm 2mm 2mm;
+    text-align: center; display: flex; flex-direction: column; align-items: center; }
+  .kilpimerkki .tuote { font-size: 6pt; letter-spacing: .1em; text-transform: uppercase;
+    color: #000; margin-bottom: 1.5mm; }
+  .kilpimerkki img { display: block; width: 26mm; height: 26mm; }
+  /* Tunnus on monospacella ja isolla: se luetaan silmin ja syötetään käsin silloin kun
+     koodi on naarmuuntunut. Sen on kestettävä kulumista paremmin kuin QR:n. */
+  .kilpimerkki .tunnus { font-family: ui-monospace, "Courier New", monospace;
+    font-size: 10pt; font-weight: 700; letter-spacing: .04em; margin-top: 1.5mm; }
+  /* Esineen nimi jää kilven ULKOPUOLELLE leikkuujätteeseen: kilpi on pieni, ja nimi
+     muuttuu ("Talvitakki L" -> "Talvitakki L, Virtanen") vaikka tunnus ei muutu. */
+  .nimi { font-size: 7.5pt; color: #444; text-align: center; margin-top: 1.5mm; line-height: 1.25; }
+  .otsikko { grid-column: 1 / -1; border-bottom: 2px solid #000; padding-bottom: 3mm; margin-bottom: 2mm; }
+  .otsikko h1 { font-size: 14pt; margin: 0; }
+  .otsikko p { font-size: 9pt; color: #444; margin: 1mm 0 0; }
+  @media screen {
+    body { background: #f1f5f9; padding: 20px; }
+    .arkki { background: #fff; width: 210mm; margin: 0 auto; padding: 10mm;
+      box-shadow: 0 2px 12px rgba(15, 23, 42, .12); }
+  }
+`;
+
+export type TulostettavaKilpimerkki = {
+  tunnus: string;
+  nimi: string;
+  // QR palvelimelta data-URI:na. Tyhjä tarkoittaa ettei sitä saatu — kilpi tulostetaan
+  // silti, koska tunnus yksin riittää tunnistamiseen ja puuttuva koodi on parempi kuin
+  // puuttuva kilpi.
+  qrDataUri?: string;
+};
+
+export const kilpimerkkiDokumentti = ({ kilvet }: { kilvet: TulostettavaKilpimerkki[] }) => `<!doctype html>
+<html lang="fi"><head><meta charset="utf-8"><title>Kalustokilvet</title>
+<style>${KILPIMERKKI_TYYLIT}</style></head><body>
+<div class="arkki">
+  <div class="otsikko">
+    <h1>Kalustokilvet</h1>
+    <p>${kilvet.length} ${kilvet.length === 1 ? 'kilpi' : 'kilpeä'} · leikkaa reunaviivaa pitkin</p>
+    <p>Tarkista tunnus ennen kiinnitystä. Esineen nimi jää leikkuujätteeseen — kilvessä on
+    vain tunnus, koska nimi muuttuu ja tunnus ei.</p>
+  </div>
+  ${kilvet.map((k) => `<div class="solu">
+    <div class="kilpimerkki">
+      <div class="tuote">Turvajohto OS</div>
+      ${k.qrDataUri ? `<img src="${htmlTeksti(k.qrDataUri)}" alt="">` : ''}
+      <div class="tunnus">${htmlTeksti(k.tunnus)}</div>
+    </div>
+    <div class="nimi">${htmlTeksti(k.nimi)}</div>
+  </div>`).join('')}
+</div></body></html>`;
+
 // Tulostaa dokumentin näkymättömän iframen kautta. Tässä EI käytetä
 // window.openia: sovelluksen sisäinen selain ja moni työpaikkaympäristö estää
 // ponnahdusikkunat oletuksena, jolloin koko toiminto katkeaisi. Iframe toimii

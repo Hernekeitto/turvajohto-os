@@ -4,7 +4,7 @@
 // mitä kalustoa on ja onko se käytettävissä. Oikeudet ovat silti eri solmuissa — avaimen
 // luovutusmerkintä kertoo kuka pääsee sisään, ja se on eri luottamusasia kuin rikkinäisen
 // taskulampun ilmoittaminen.
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { KeyRound, Wrench, Plus, Check, TriangleAlert, Ban, Search, Undo2 } from 'lucide-react';
 
 import {
@@ -27,6 +27,18 @@ type Props = {
   // Kumpi välilehti avataan ensin. GUARD avaa avaimet, EVENT varusteet — kumpikin sen
   // mukaan kumpaa siellä käytetään useammin.
   aloitusValilehti?: 'avaimet' | 'varusteet';
+  // Ensimmäisen välilehden KORVAAVA sisältö (erä 20).
+  //
+  // GUARD-puolella kohteen kalusto ei ole enää oma avainrekisterinsä vaan näkymä
+  // kalustopankkiin (src/guard/kalusto/KohteenKalusto.tsx). EVENT-puolella avainrekisteri
+  // jatkaa ennallaan: tapahtuman avaimet ovat tapahtuman mittaisia eikä niitä jyvitetä
+  // yrityksen laajuisesta pankista.
+  //
+  // Korvaava solmu propsina eikä kaksi eri komponenttia, koska varustepoikkeamat ovat
+  // molemmilla puolilla samat ja ne ovat saman näkymän toinen välilehti. Kopio tästä
+  // komponentista tarkoittaisi kahta paikkaa jossa poikkeaman käsittely voi erota.
+  avainNakyma?: ReactNode;
+  avainOtsikko?: string;
 };
 
 const TILAN_VARI: Record<string, string> = {
@@ -39,6 +51,7 @@ const TILAN_VARI: Record<string, string> = {
 export const Kalusto = ({
   ownerId, ownerNimi, avaimet, poikkeamat, saaMuokataAvaimia, saaKasitellaPoikkeamia,
   onAvaimetMuuttui, onPoikkeamatMuuttui, aloitusValilehti = 'avaimet',
+  avainNakyma, avainOtsikko = 'Avaimet',
 }: Props) => {
   const [valilehti, setValilehti] = useState<'avaimet' | 'varusteet'>(aloitusValilehti);
   const [virhe, setVirhe] = useState<string | null>(null);
@@ -296,8 +309,8 @@ export const Kalusto = ({
           onClick={() => setValilehti('avaimet')}
           className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${valilehti === 'avaimet' ? 'bg-accent text-white' : 'bg-surface border border-line-soft text-ink-body hover:bg-sunken'}`}
         >
-          Avaimet
-          {kaytossa.some((a) => a.tila === 'kadonnut') && (
+          {avainOtsikko}
+          {!avainNakyma && kaytossa.some((a) => a.tila === 'kadonnut') && (
             <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-danger-soft text-danger-ink border border-danger/30">
               kadonnut
             </span>
@@ -323,7 +336,9 @@ export const Kalusto = ({
         <p className="mb-4 text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">{virhe}</p>
       )}
 
-      {valilehti === 'avaimet' ? (
+      {valilehti === 'avaimet' && avainNakyma ? (
+        avainNakyma
+      ) : valilehti === 'avaimet' ? (
         <div>
           {saaMuokataAvaimia && (
             <div className="bg-surface border border-line rounded-xl p-4 mb-4">

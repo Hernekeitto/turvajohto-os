@@ -56,6 +56,11 @@ import { Tiedotteet, TiedoteKehote } from '../shared/komponentit/Tiedotteet';
 import { haeTiedotteet, type Tiedote } from '../shared/tiedotteet';
 import { Kalusto } from '../shared/komponentit/Kalusto';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from '../shared/kalusto';
+import { Kalustopankki } from './kalusto/Kalustopankki';
+import { KalustoKortti } from './kalusto/KalustoKortti';
+import { KohteenKalusto } from './kalusto/KohteenKalusto';
+import { haeKalusto } from './kalusto/pankki';
+import type { KalustoTietue, SijoitusLaji } from './kalusto/tyypit';
 import { Mittaristo } from '../shared/komponentit/Mittaristo';
 import { Jalkiraportit } from '../shared/komponentit/Jalkiraportit';
 import { haeJalkiraportit, type Jalkiraportti } from '../shared/jalkiraportit';
@@ -83,7 +88,10 @@ const JUURINAKYMA = 'etusivu';
 
 // Etusivun osiot. Erillinen tila eikä johdettu jostain muusta: käyttäjä voi olla
 // Kohteet-osiossa ilman että yhtäkään kohdetta on avattu.
-type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus' | 'tehtavanjako';
+// 'kalusto' on Kohteiden ja Hälytyskeskuksen rinnalla eikä kohteen sisällä, koska pankki
+// on kohteiden YLI menevä rekisteri: sen kysymys on "mitä yrityksellä on ja missä", ja
+// kohteen sisältä katsottuna vastaus olisi aina yhden kohteen mittainen.
+type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus' | 'tehtavanjako' | 'kalusto';
 
 // Historiamerkinnän näkymätunniste -> kohteen toiminto. Mobiiliversion takaisin-nappi
 // tarvitsee tämän: siellä ei ole kohdevalikkoa johon palata, joten näkymä avataan
@@ -157,12 +165,20 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Tiedotteet: lukuoikeus näyttää ja oikeuttaa kuittaamaan, muokkausoikeus lähettämään.
   const saaNahdaTiedotteet = isAdmin || canView(perms, null, 'guard_broadcast');
   const saaLahettaaTiedotteita = isAdmin || canEdit(perms, null, 'guard_broadcast');
-  // Kalusto: avaimet ja varustepoikkeamat. Avainrekisterin muutokset vaativat
-  // muokkausoikeuden, koska luovutusmerkintä kertoo kuka pääsee sisään. Poikkeaman
-  // ILMOITTAMINEN riittää lukuoikeudella — sen huomaa se joka käyttää varustetta.
-  const saaNahdaKalustoa = isAdmin || canView(perms, null, 'guard_keys') || canView(perms, null, 'guard_equipment');
-  const saaMuokataAvaimia = isAdmin || canEdit(perms, null, 'guard_keys');
+  // Kalustopankki (erä 20). LUKU = näet pankin ja voit PYYTÄÄ kalustoa kohteelle,
+  // MUOKKAUS = jyvität ja RATKAISET pyynnöt. Sama jako kuin varustepoikkeamalla, ja sama
+  // tarkistus on palvelimella (server/index.js: saaNahdaPankin / saaHallitaPankkia) —
+  // tämä vain piilottaa napit joita ei saisi painaa.
+  const saaNahdaPankin = isAdmin || canView(perms, null, 'guard_assets');
+  const saaHallitaPankkia = isAdmin || canEdit(perms, null, 'guard_assets');
+  // Varustepoikkeama on vikailmoitus eikä omaisuuskirjanpito, joten sillä on yhä oma
+  // solmunsa. ILMOITTAMINEN riittää lukuoikeudella — sen huomaa se joka käyttää
+  // varustetta; sulkeminen on väite siitä että asia on kunnossa.
   const saaKasitellaPoikkeamia = isAdmin || canEdit(perms, null, 'guard_equipment');
+  // Kohteen Kalusto-näkymä näyttää molemmat: kohteelle jyvitetyn kaluston ja
+  // varustepoikkeamat. Kumpi tahansa oikeus riittää valikkopainikkeen näkymiseen, koska
+  // näkymän sisällä välilehdet ovat omien oikeuksiensa takana.
+  const saaNahdaKalustoa = saaNahdaPankin || canView(perms, null, 'guard_equipment');
   // Mittaristo ja jaksoraportit (erä 9). Erilliset oikeudet: mittaristo näyttää lukuja,
   // jaksoraportti on dokumentti joka lähtee toimeksiantajalle. Palvelin laskee luvut vain
   // niistä tietueista jotka käyttäjä saisi lukea rivinä, joten mittariston lukuoikeus ei
@@ -234,6 +250,15 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [avaimet, setAvaimet] = useState<Avain[]>([]);
   const [poikkeamat, setPoikkeamat] = useState<Poikkeama[]>([]);
   const [kalustoKohde, setKalustoKohde] = useState<Kohde | null>(null);
+  // Kalustopankki (erä 20). Yksi lista jota sekä pankkinäkymä että kohteen
+  // kalustorekisteri lukevat — kohteen kalusto on pankin rivejä joiden sijoitus osoittaa
+  // kohteeseen, ei oma kokoelmansa.
+  const [pankki, setPankki] = useState<KalustoTietue[]>([]);
+  const [pankkiLadattu, setPankkiLadattu] = useState(false);
+  // Kohteen kalustorekisteristä avattu esine. Erillinen pankin omasta valinnasta, koska
+  // kohdenäkymä on eri paikassa näkymäpuussa eikä sen kortti saa jäädä auki kun
+  // kohteesta poistutaan.
+  const [kohteenEsine, setKohteenEsine] = useState<KalustoTietue | null>(null);
   const [mittariKohde, setMittariKohde] = useState<Kohde | null>(null);
   const [jaksoKohde, setJaksoKohde] = useState<Kohde | null>(null);
   const [jalkiraportit, setJalkiraportit] = useState<Jalkiraportti[]>([]);
@@ -450,6 +475,21 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   }, [saaNahdaKalustoa]);
 
   useEffect(() => { paivitaAvaimet(); paivitaPoikkeamat(); }, [paivitaAvaimet, paivitaPoikkeamat]);
+
+  // Kalustopankki. Palvelimen ylläpitämä kokoelma, joten tänne tulee vain luettua tilaa —
+  // jokainen muutos tehdään /api/kalusto-reiteillä ja haetaan sen jälkeen uudelleen.
+  // `pankkiLadattu` erottaa tyhjän pankin epäonnistuneesta hausta: ilman sitä "ei
+  // kalustoa" näkyisi myös silloin kun haku kaatui.
+  const paivitaPankki = useCallback(() => {
+    if (!saaNahdaPankin) return;
+    haeKalusto().then((lista) => {
+      if (!lista) return;
+      setPankki(lista);
+      setPankkiLadattu(true);
+    });
+  }, [saaNahdaPankin]);
+
+  useEffect(() => { paivitaPankki(); }, [paivitaPankki]);
 
   // Jälkiraportit haetaan tavalliselta kokoelmareitiltä, mutta niitä ei koskaan
   // kirjoiteta takaisin: kokoelma on palvelimen ylläpitämä (jäädytetyt luvut, lukitus).
@@ -731,6 +771,31 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     kuittaaPiste(token);
   }, [ladattu, saaKiertaa, kohteet]);
 
+  // Kalustokilven skannaus (erä 20). Sama reitti kuin tarkistuspisteellä — puhelimen oma
+  // kamera avaa /guard?kalusto=TJ-ASU-0117 — mutta parametri on TUNNUS eikä token, eikä
+  // skannaus kuittaa mitään. Kilpi vain kertoo mikä esine on kädessä, ja vastaus on
+  // esineen kortti.
+  //
+  // Tunnus jätetään tilaan eikä poisteta heti: kortti avataan tunnuksen perusteella, ja
+  // se on suljettava ennen kuin tunnus unohdetaan. Osoiterivi siivotaan silti heti,
+  // koska muuten sivun lataus avaisi saman kortin uudelleen.
+  const [skannattuKalusto, setSkannattuKalusto] = useState<string | null>(null);
+  const kalustoSkannausTehty = useRef(false);
+  useEffect(() => {
+    if (kalustoSkannausTehty.current) return;
+    const tunnus = new URLSearchParams(window.location.search).get('kalusto');
+    if (!tunnus) return;
+    kalustoSkannausTehty.current = true;
+    window.history.replaceState(window.history.state, '', window.location.pathname);
+    if (!saaNahdaPankin) {
+      setVirhe('Sinulla ei ole oikeutta kalustopankkiin.');
+      return;
+    }
+    setSkannattuKalusto(tunnus);
+    nollaaNakymat();
+    setOsio('kalusto');
+  }, [saaNahdaPankin]);
+
   // Raportti lisätään uutena tietueena samalla periaatteella kuin tehtäväsuoritus:
   // kirjattua raporttia ei muokata jälkikäteen, vaan tarvittaessa kirjataan uusi.
   // Raportti menee LÄHTEVÄN JONON kautta yhtenä tietueena eikä koko kokoelmana.
@@ -964,6 +1029,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     setPohjaNakyma(null);
     setTiedoteKohde(null);
     setKalustoKohde(null);
+    setKohteenEsine(null);
     setMittariKohde(null);
     setJaksoKohde(null);
   };
@@ -981,6 +1047,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const nakyma =
     asetuksissa ? 'asetukset'
       : osio === 'halytyskeskus' ? 'halytyskeskus'
+      : osio === 'kalusto' ? 'kalustopankki'
       : raporttiKohde ? 'raportit'
       : tietoKohde ? 'kohteen-tiedot'
       : kalustoKohde ? 'kalusto'
@@ -1022,7 +1089,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       return;
     }
     nollaaNakymat();
-    setOsio(tunniste === 'halytyskeskus' ? 'halytyskeskus' : tunniste === JUURINAKYMA ? 'etusivu' : 'kohteet');
+    setOsio(
+      tunniste === 'halytyskeskus' ? 'halytyskeskus'
+        // Kalustopankki on etusivun osio siinä missä hälytyskeskus, joten takaisin-nappi
+        // purkaa sen samalla tavalla yhdeksi tasoksi.
+        : tunniste === 'kalustopankki' ? 'kalusto'
+          : tunniste === JUURINAKYMA ? 'etusivu'
+            : 'kohteet'
+    );
   };
 
   // Yläpalkin logo vie etusivulle. Se on koko sovelluksen juuri, ei enää kohdelista.
@@ -1060,12 +1134,13 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     raportit,
     avaimet,
     poikkeamat,
+    kalusto: pankki,
     tiedotteet,
     skenaariot: pohjaSuoritukset,
     pohjat: pohjat as unknown as Pohja[],
     jaksoraportit: jalkiraportit,
   }), [
-    halytykset, kierrokset, suoritukset, raportit, avaimet, poikkeamat, tiedotteet,
+    halytykset, kierrokset, suoritukset, raportit, avaimet, poikkeamat, pankki, tiedotteet,
     pohjaSuoritukset, pohjat, jalkiraportit,
   ]);
 
@@ -1339,6 +1414,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
   // Poistovahvistus on modaali: takaisin peruu sen eikä vie kohdelistaan.
   useTakaisinEste(!!poistettava, () => setPoistettava(null));
+  // Kohteen kalustorekisteristä avattu esineen kortti. Este on täällä eikä kortissa
+  // samasta syystä kuin yllä: hook on kutsuttava komponentista joka on jo mountattu,
+  // muuten StrictModen kaksoisajo sulkee modaalin heti sen avauduttua.
+  useTakaisinEste(!!kohteenEsine, () => setKohteenEsine(null));
 
   const kirjauduUlos = async () => {
     // Laitteelle ei jää työtietoja uloskirjautumisen jälkeen. Jonoa EI tyhjennetä:
@@ -1392,6 +1471,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // eroaisivat, palkissa lukisi eri näkymä kuin ruudulla on.
   const nakymanNimi = asetuksissa ? 'Sovellusasetukset'
     : osio === 'halytyskeskus' ? 'Hälytyskeskus'
+    : osio === 'kalusto' ? 'Kalustopankki'
     : raporttiKohde ? 'Raportointi'
     : tietoKohde ? 'Kohteen tiedot'
     : halytysKohde ? 'Hälytykset'
@@ -1536,6 +1616,25 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         />
       ) : osio === 'tehtavanjako' ? (
         <Tehtavanjako onTakaisin={() => setOsio('etusivu')} />
+      ) : osio === 'kalusto' ? (
+        <Kalustopankki
+          kalusto={pankki}
+          kohteet={kohteet.map((k) => ({ id: k.id, nimi: k.name }))}
+          // Työntekijäpankki on oman oikeutensa takana (global_employee_bank). Jos sitä ei
+          // ole, lista on tyhjä eikä henkilölle voi luovuttaa — se on oikea lopputulos:
+          // luovutustositteessa lukeva nimi ei saa olla käsin kirjoitettua arvausta.
+          tyontekijat={tyontekijat
+            .filter((t) => t.id && t.name)
+            .map((t) => ({ id: t.id as string, nimi: t.name as string, displayId: t.displayId }))}
+          saaHallita={saaHallitaPankkia}
+          omaTunnus={session?.username || ''}
+          omaNimi={session?.nickname || session?.username || ''}
+          ladattu={pankkiLadattu}
+          onMuuttui={paivitaPankki}
+          onTakaisin={() => setOsio('etusivu')}
+          avaaTunnus={skannattuKalusto}
+          onAvausKasitelty={() => setSkannattuKalusto(null)}
+        />
       ) : osio === 'halytyskeskus' ? (
         <Halytyskeskus
           kohteet={kohteet}
@@ -1584,12 +1683,53 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             ownerNimi={kalustoKohde.name}
             avaimet={avaimet}
             poikkeamat={poikkeamat}
-            saaMuokataAvaimia={saaMuokataAvaimia}
+            // GUARD-puolella kohteen avaimet tulevat kalustopankista, joten vanhaa
+            // avainrekisteriä ei muokata täältä lainkaan. Propsi on yhä olemassa
+            // EVENT-puolta varten (src/App.tsx), jossa avainrekisteri jatkaa ennallaan.
+            saaMuokataAvaimia={false}
             saaKasitellaPoikkeamia={saaKasitellaPoikkeamia}
             onAvaimetMuuttui={paivitaAvaimet}
             onPoikkeamatMuuttui={paivitaPoikkeamat}
             aloitusValilehti="avaimet"
+            avainOtsikko="Kohteen kalusto"
+            avainNakyma={saaNahdaPankin ? (
+              <KohteenKalusto
+                kohde={{ id: kalustoKohde.id, nimi: kalustoKohde.name }}
+                kalusto={pankki}
+                ladattu={pankkiLadattu}
+                omaTunnus={session?.username || ''}
+                saaHallita={saaHallitaPankkia}
+                onMuuttui={paivitaPankki}
+                onAvaa={setKohteenEsine}
+              />
+            ) : (
+              <p className="text-sm text-ink-muted">
+                Sinulla ei ole oikeutta kalustopankkiin. Varustepoikkeamat näkyvät toisella
+                välilehdellä.
+              </p>
+            )}
           />
+          {/* Kohteen kalustorekisteristä avattu esine. Sama kortti kuin pankissa — ilman
+              muokkausoikeutta se näyttää tiedot ja historian mutta ei siirtonappeja. */}
+          {kohteenEsine && (
+            <KalustoKortti
+              esine={pankki.find((e) => e.id === kohteenEsine.id) || kohteenEsine}
+              kohteet={kohteet.map((k) => ({ id: k.id, nimi: k.name }))}
+              tyontekijat={tyontekijat
+                .filter((t) => t.id && t.name)
+                .map((t) => ({ id: t.id as string, nimi: t.name as string }))}
+              kantajat={pankki
+                .filter((e) => (e.laji === 'ajoneuvo' || e.laji === 'avainkaappi') && e.tila !== 'poistettu')
+                .map((e) => ({ id: e.id, nimi: `${e.nimi} (${e.tunnus})`, laji: e.laji as SijoitusLaji }))}
+              saaHallita={saaHallitaPankkia}
+              omaTunnus={session?.username || ''}
+              onMuuttui={paivitaPankki}
+              onSulje={() => setKohteenEsine(null)}
+              // Kilpitulostus on pankin toiminto: kilpiä tulostetaan arkillinen kerrallaan,
+              // eikä kohdenäkymässä ole sitä valintalistaa johon arkki kootaan.
+              onTulostaKilpi={() => { setKohteenEsine(null); setKalustoKohde(null); setOsio('kalusto'); }}
+            />
+          )}
         </div>
       ) : mittariKohde ? (
         <div className="max-w-5xl">
@@ -1768,11 +1908,16 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           saaNahdaHalytyskeskus={saaNahdaHalytyskeskus}
           saaNahdaAsetukset={saaNahdaAsetukset}
           saaJakaaTehtavia={saaNahdaHalytyskeskus || !!isAdmin}
+          saaNahdaKalusto={saaNahdaPankin}
           kohteita={kohteet.length}
           lauenneita={halytykset.filter((h) => h.tila === 'lauennut').length}
           ajastimia={halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa').length}
           kierroksiaKesken={kierrokset.filter((k) => k.tila === 'kesken').length}
+          kalustoa={pankki.filter((e) => e.tila !== 'poistettu').length}
+          kalustopyyntoja={pankki.filter((e) => e.pyynto).length}
+          kadonnuttaKalustoa={pankki.filter((e) => e.tila === 'kadonnut').length}
           onKohteet={() => setOsio('kohteet')}
+          onKalusto={() => setOsio('kalusto')}
           onHalytyskeskus={() => setOsio('halytyskeskus')}
           onTehtavanjako={() => setOsio('tehtavanjako')}
           onAsetukset={() => setAsetuksissa(true)}
