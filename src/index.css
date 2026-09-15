@@ -286,3 +286,34 @@ html {
   padding-left: max(1rem, env(safe-area-inset-left));
   padding-right: max(1rem, env(safe-area-inset-right));
 }
+
+/* ---------------------------------------------------------------------------
+   Hälytyskeskuksen seinätaulutila (erä 24).
+
+   Irrotettu paneeli jota KATSOTAAN eikä kosketa: päivystäjän toinen näyttö on
+   usein kolmen metrin päässä. Luokka eikä erillinen komponenttipuu — sama
+   paneeli, eri kuori. Kaksi puuta tarkoittaisi kahta paikkaa joissa sama tieto
+   voi näyttää eri asiaa.
+
+   Toiminnot piilotetaan kokonaan eikä himmennetä: himmennetty nappi kaukaa
+   katsottuna on nappi, ja seinätaululla ei ole ketään painamassa sitä.
+   --------------------------------------------------------------------------- */
+.halke-taulu {
+  font-size: 1.25rem;
+}
+
+.halke-taulu button,
+.halke-taulu input,
+.halke-taulu select,
+.halke-taulu textarea {
+  display: none !important;
+}
+
+/* Otsikot ja luvut isommiksi samassa suhteessa. Tailwindin omat kokoluokat ovat
+   rem-pohjaisia, joten juuren kasvatus ei riitä — ne on nostettava erikseen. */
+.halke-taulu .text-xs { font-size: 0.95rem; }
+.halke-taulu .text-sm { font-size: 1.1rem; }
+.halke-taulu .text-base { font-size: 1.25rem; }
+.halke-taulu .text-lg { font-size: 1.5rem; }
+.halke-taulu .text-2xl { font-size: 2.25rem; }
+.halke-taulu .text-3xl { font-size: 3rem; }

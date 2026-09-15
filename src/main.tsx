@@ -64,6 +64,13 @@ function onAvainEra(pathname: string): boolean {
   return pathname.replace(LOPUN_KENOVIIVAT, '').toLowerCase() === AVAINERAPOLKU
 }
 
+// Onko osoite hälytyskeskuksen irrotettu paneeli (erä 24). Omat osoitteensa, koska
+// päivystäjän toinen näyttö on oma IKKUNANSA — ja ikkunan sisältö kulkee osoitteessa,
+// ei Reactin tilassa. Ks. src/guard/halke/paneelit.ts.
+function onHalkePaneeli(pathname: string): boolean {
+  return pathname.replace(LOPUN_KENOVIIVAT, '').toLowerCase().startsWith('/guard/halke/')
+}
+
 function ratkaiseGuardMobiili(pathname: string): boolean {
   const polku = pathname.replace(LOPUN_KENOVIIVAT, '').toLowerCase()
   if (polku === MOBIILIPOLKU) return true
@@ -74,10 +81,17 @@ function ratkaiseGuardMobiili(pathname: string): boolean {
 // Siivoaa osoiterivin kanoniseen muotoon ilman uudelleenlatausta: /Guard/ -> /guard,
 // ja kaikki tuntemattomat polut mainossivulle (/), jotta kirjoitusvirhe ei jätä
 // käyttäjää katsomaan mainossivua väärässä osoitteessa.
-function normalisoiPolku(tuote: Tuote, guardMobiili: boolean, avainEra: boolean) {
+function normalisoiPolku(
+  tuote: Tuote, guardMobiili: boolean, avainEra: boolean, halkePaneeli: boolean,
+) {
   // Avainerän osoite on kanoninen sellaisenaan: ilman tätä haaraa normalisointi
   // kirjoittaisi sen /guard:ksi ja välilehti näyttäisi pankin taulukon sijaan.
   if (avainEra) return
+  // Sama koskee hälytyskeskuksen paneeleita. Ilman tätä irrotettu ikkuna menettäisi
+  // paneelinsa heti latauksessa: normalisointi kirjoittaisi osoitteeksi /guard ennen
+  // kuin GuardApp ehtii lukea sen, ja jokainen toiselle näytölle raahattu ikkuna
+  // avautuisi koostenäkymään.
+  if (halkePaneeli) return
   const kanoninen = tuote === 'landing' ? '/' : guardMobiili ? MOBIILIPOLKU : `/${tuote}`
   if (window.location.pathname !== kanoninen) {
     window.history.replaceState(null, '', kanoninen + window.location.search + window.location.hash)
@@ -86,11 +100,13 @@ function normalisoiPolku(tuote: Tuote, guardMobiili: boolean, avainEra: boolean)
 
 const tuote = ratkaiseTuote(window.location.pathname)
 const avainEra = tuote === 'guard' && onAvainEra(window.location.pathname)
-const guardMobiili = tuote === 'guard' && !avainEra && ratkaiseGuardMobiili(window.location.pathname)
+const halkePaneeli = tuote === 'guard' && !avainEra && onHalkePaneeli(window.location.pathname)
+const guardMobiili = tuote === 'guard' && !avainEra && !halkePaneeli
+  && ratkaiseGuardMobiili(window.location.pathname)
 // replaceState eikä uudelleenohjaus: sovellusnippu on jo ladattu, ja koko ero on siinä
 // mikä komponentti renderöidään. Uudelleenlataus tässä kohdassa maksaisi vartijalle
 // yhden ylimääräisen latauksen jokaisella käynnistyksellä.
-normalisoiPolku(tuote, guardMobiili, avainEra)
+normalisoiPolku(tuote, guardMobiili, avainEra, halkePaneeli)
 
 // Väritokenien arvot ratkeavat juuren data-tuote-attribuutista (ks. index.css), jolloin
 // sama komponentti näyttää EVENT-puolella slate/indigo-ilmeeltä ja GUARD-puolella

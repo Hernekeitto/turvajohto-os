@@ -55,6 +55,13 @@ const GLOBAL_NODES = new Set([
   // vuorosta (index.js). Kohdekohtainen oikeus olisi harhaanjohtava — se lupaisi että
   // näkyvyyttä säädetään kohteittain, kun sen ratkaisee se missä vartija on juuri nyt.
   'guard_site_assets',
+  // Vartijoiden sijainnit GUARD-puolella. Globaali samasta syystä kuin guard_dispatch:
+  // päivystäjä katsoo kaikkia kohteita, eikä "saa nähdä vain kohteen X vartijat"
+  // tarkoittaisi mitään — se rajaus tehdään eventAccess-listalla.
+  //
+  // OMA SOLMUNSA eikä guard_dispatch: tilannekuvan näkeminen ja henkilöstön sijainnin
+  // näkeminen ovat eri asioita, ja jälkimmäinen on teknistä valvontaa.
+  'guard_locations',
   'global_reports',
   'global_archived_events',
   'global_employee_bank',

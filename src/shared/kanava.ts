@@ -12,6 +12,9 @@ export type Muutos = { action: 'create' | 'update' | 'delete'; id: string; event
 
 export type Sijainti = {
   username: string;
+  // Nimimerkki. Valinnainen, koska kanavan työntämä sijainti tulee suoraan
+  // sijaintikerroksesta eikä käy käyttäjärekisterin kautta — listahaku täydentää sen.
+  nimi?: string;
   eventId: string | null;
   img: { x: number; y: number } | null;
   gps: { lat: number; lon: number; tarkkuus: number | null } | null;

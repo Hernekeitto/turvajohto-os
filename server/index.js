@@ -702,14 +702,37 @@ app.get('/api/data/:name', requireAuth, (req, res) => {
 // `kaytossa: false` on eri asia kuin tyhjä lista: se kertoo käyttöliittymälle että
 // seurantaa ei ole kytketty päälle lainkaan, jolloin karttaan ei piirretä tyhjää
 // henkilöstötasoa eikä luvata toimintoa jota ei ole.
+// Kuka saa nähdä henkilöstön sijainnit listana.
+//
+// KAKSI SOLMUA, KOSKA PUOLIA ON KAKSI. 'locations' on tapahtumapuolen solmu ja
+// 'guard_locations' vartiointipuolen. Erään 23 asti tässä tarkistettiin vain
+// tapahtumapuolen solmua, jota GUARDin oikeuseditori ei näytä lainkaan — GUARD-puolen
+// päivystäjä ei siis voinut saada sijaintioikeutta millään, ja vika näytti siltä kuin
+// sijainnit eivät päivittyisi.
+//
+// Kumpi tahansa riittää: tunnus jolla on jommankumman puolen sijaintioikeus näkee
+// sijainnit sillä puolella, ja eventAccess rajaa rivit kuten muutenkin.
+function saaNahdaSijaintilistan(req, eventId) {
+  if (req.role === 'admin') return true;
+  if (!eventAllowed(req.eventAccess, eventId)) return false;
+  return canView(req.permissions, eventId, 'locations')
+    || canView(req.permissions, eventId, 'guard_locations');
+}
+
 app.get('/api/sijainnit', requireAuth, (req, res) => {
   if (!seurantaKaytossa()) return res.json({ ok: true, kaytossa: false, sijainnit: [] });
   const eventId = typeof req.query.eventId === 'string' ? req.query.eventId : null;
-  const saa =
-    req.role === 'admin' ||
-    (eventAllowed(req.eventAccess, eventId) && canView(req.permissions, eventId, 'locations'));
-  if (!saa) return res.status(403).json({ ok: false, error: 'Ei oikeutta henkilöstön sijainteihin.' });
-  res.json({ ok: true, kaytossa: true, sijainnit: sijainnit({ eventId }) });
+  if (!saaNahdaSijaintilistan(req, eventId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta henkilöstön sijainteihin.' });
+  }
+  // Nimimerkki mukaan: käyttäjätunnus on kirjautumista varten, ja valvomon ruudulla
+  // lukisi muuten "mvirtanen" siinä missä kaikkialla muualla lukee "Matti Virtanen".
+  // Kenttä on lisäys eikä korvaus, joten tapahtumapuolen kartta toimii ennallaan.
+  const lista = sijainnit({ eventId }).map((sija) => ({
+    ...sija,
+    nimi: findUser(sija.username)?.nickname || sija.username,
+  }));
+  res.json({ ok: true, kaytossa: true, sijainnit: lista });
 });
 
 app.put('/api/data/:name', requireAuth, (req, res) => {
@@ -2527,6 +2550,22 @@ app.post('/api/halytystehtava/:id/havainto', requireAuth, guardPortti, (req, res
   });
 });
 
+// Onko raportti tämän käyttäjän kirjaama.
+//
+// `author` on NIMIMERKKI eikä käyttäjätunnus (src/guard/GuardApp.tsx antaa lomakkeelle
+// `session.nickname`), joten pelkkä vertailu käyttäjätunnukseen hylkäisi vartijan oman
+// raportin aina kun nimimerkki poikkeaa tunnuksesta — eli lähes aina. Vika ei näkynyt
+// erässä 22, koska sen testaus tehtiin pääkäyttäjänä ja admin ohittaa tarkistuksen.
+//
+// Kenttä on ihmiselle tarkoitettu näyttönimi eikä identiteetti, joten tämä ei ole
+// varsinainen oikeustarkistus: se estää vahingossa väärän raportin liittämisen. Se että
+// vartija on tehtävällä, tarkistetaan sääntömoduulissa (halytystehtava.js).
+function omaRaportti(req, raportti) {
+  if (req.role === 'admin') return true;
+  const nimimerkki = findUser(req.username)?.nickname || req.username;
+  return raportti?.author === nimimerkki || raportti?.author === req.username;
+}
+
 // Vartijan yksikön nimi tähän tehtävään. Vuorosta jos vuoro on, muuten nimimerkki.
 function yksikonNimi(username) {
   const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], username);
@@ -2601,14 +2640,119 @@ app.post('/api/halytystehtava/:id/raportti', requireAuth, guardPortti, (req, res
   const raporttiId = String(req.body?.raporttiId || '');
   const raportti = (readCollection('guardReports') || []).find((r) => r?.id === raporttiId);
   if (!raportti) return res.status(404).json({ ok: false, error: 'Raporttia ei löytynyt.' });
-  if (raportti.author !== req.username && req.role !== 'admin') {
+  if (!omaRaportti(req, raportti)) {
     return res.status(403).json({ ok: false, error: 'Raportti on toisen kirjaama.' });
   }
   return muutaTehtava(req, res, {
+    // Raportin on kuuluttava SAMAAN KOHTEESEEN kuin tehtävän. Ilman tätä vartija voisi
+    // kuitata poistumisensa kohteesta A liittämällä siihen kohteessa B kirjoittamansa
+    // raportin, ja hyväksyntäketju hyväksyisi väärän dokumentin.
+    tarkista: (tehtava) => (raportti.siteId === tehtava.siteId
+      ? null
+      : { status: 400, error: 'Raportti on kirjattu toiseen kohteeseen.' }),
     saanto: (tehtava) => lahetaRaportti({ tehtava, vartija: req.username, raporttiId }),
     action: 'halytystehtava_raportti',
     lisa: { raporttiId },
   });
+});
+
+// Tapahtumailmoituksen ne kentät jotka kirjataan LYTP:n nojalla kohdehenkilöstä.
+//
+// Nämä karsitaan päivystäjältä joka ei muuten saisi lukea kohteen raportteja. Ks.
+// perustelu alla olevalla reitillä.
+const LYTP_KOHDEHENKILO = [
+  'licenseHolder',
+  'subjectLastName',
+  'subjectFirstNames',
+  'subjectPersonalId',
+  'subjectAddress',
+  'subjectFeatures',
+  'subjectObservations',
+];
+
+function ilmanKohdehenkiloa(raportti) {
+  const kopio = { ...raportti };
+  let karsittu = false;
+  for (const kentta of LYTP_KOHDEHENKILO) {
+    if (kopio[kentta]) karsittu = true;
+    delete kopio[kentta];
+  }
+  // Liitteet pois id:tä myöten: niiden lukuoikeus tulee raporttisolmusta
+  // (permissions.js: canReadGuardAttachment), joten linkki jota ei voi avata olisi
+  // lupaus jota ei lunasteta. Lukumäärä jää, koska se on osa sitä onko ilmoitus valmis.
+  const liitteita = (raportti.attachments || []).length;
+  return { ...kopio, attachments: [], liitteita, kohdehenkiloKarsittu: karsittu };
+}
+
+// Poistumispyynnön raportit luettavaksi.
+//
+// OMA REITTINSÄ eikä guardReports-kokoelman listahaku, ja se on tietoinen poikkeus
+// hälytyskeskuksen perussääntöön "näkymä KOKOAA sen mitä käyttäjä saa muutenkin nähdä
+// eikä avaa mitään uutta" (ks. src/guard/sivukartta.ts).
+//
+// Poikkeuksen syy: päivystäjää pyydetään hyväksymään dokumentti. Hyväksyntänappi jonka
+// vieressä ei ole sitä tekstiä jota hyväksytään ei ole hyväksyntä vaan kuittaus, ja juuri
+// sen takia tämä reitti tehtiin (käyttäjän havainto 14.9.2026).
+//
+// Poikkeus on rajattu kolmella tavalla:
+//
+//   1. VAIN TÄMÄN TEHTÄVÄN raportit — ei kohteen muita, ei muiden kohteiden.
+//   2. KOHDEHENKILÖN TIEDOT KARSITAAN siltä jolla ei ole raporttisolmun lukuoikeutta
+//      kyseiseen kohteeseen. Päivystäjä ratkaisee onko toimenpiteet tehty; kohdehenkilön
+//      henkilötunnus ja osoite eivät ole se tieto jolla se ratkeaa.
+//   3. KARSITTU LUKU JÄÄ AUDITLOKIIN. Poikkeus jota ei voi jälkikäteen nähdä ei ole
+//      poikkeus vaan aukko.
+//
+// Jos päivystäjän halutaan näkevän koko ilmoitus, ratkaisu ei ole tämän reitin
+// laventaminen vaan raporttisolmun (guard_report_jv) myöntäminen tunnukselle — silloin
+// pääsy näkyy oikeuseditorissa siellä missä sitä etsitään.
+app.get('/api/halytystehtava/:id/raportit', requireAuth, guardPortti, (req, res) => {
+  const tehtava = (readCollection('guardDispatch') || []).find((t) => t?.id === req.params.id);
+  if (!tehtava) return res.status(404).json({ ok: false, error: 'Tehtävää ei löytynyt.' });
+
+  const paivystaja = req.role === 'admin' || canView(req.permissions, null, 'guard_dispatch');
+  const mukana = (tehtava.yksikot || []).some((y) => y?.vartija === req.username && !y.kieltaytyi);
+  if (!paivystaja && !mukana) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän tehtävän raportteihin.' });
+  }
+
+  // Normaali lukuoikeus raportteihin tässä kohteessa. Sen omaava näkee ilmoituksen
+  // kokonaisena, koska hän näkisi sen muutenkin kohteen tiedoista.
+  const taysiLuku = req.role === 'admin'
+    || (eventAllowed(req.eventAccess, tehtava.siteId)
+      && (canView(req.permissions, tehtava.siteId, 'guard_report_jv')
+        || canView(req.permissions, tehtava.siteId, 'guard_report_action')
+        || canView(req.permissions, tehtava.siteId, 'guard_site_info')));
+
+  const kaikki = readCollection('guardReports') || [];
+  const raportit = (tehtava.raportit || [])
+    .map((viite) => {
+      const raportti = kaikki.find((r) => r?.id === viite.raporttiId);
+      if (!raportti) return null;
+      return {
+        ...(taysiLuku ? raportti : ilmanKohdehenkiloa(raportti)),
+        lahetetty: viite.lahetetty,
+        yksikko: viite.nimi,
+      };
+    })
+    .filter(Boolean);
+
+  // Kirjataan aina kun lukija ei ole raportin kirjoittaja: tapahtumailmoitus on
+  // henkilötietoa senkin jälkeen kun kohdehenkilön kentät on karsittu. Pääkäyttäjää EI
+  // ohiteta — toisen kirjoittama ilmoitus on toisen kirjoittama myös pääkäyttäjälle, ja
+  // juuri laajimmat oikeudet ovat ne joiden käyttö on voitava nähdä jälkikäteen.
+  const omaNimi = findUser(req.username)?.nickname || req.username;
+  const vieraita = raportit.some((r) => r.author !== omaNimi && r.author !== req.username);
+  if (vieraita) {
+    logAudit({
+      user: req.username,
+      action: taysiLuku ? 'halytystehtava_raportti_luettu' : 'halytystehtava_raportti_luettu_rajattuna',
+      collection: 'guardReports', recordId: tehtava.id, eventId: tehtava.siteId,
+      raportteja: raportit.length,
+    });
+  }
+
+  res.json({ ok: true, raportit, rajattu: !taysiLuku });
 });
 
 // Päivystäjä ratkaisee poistumispyynnön. Hylkäys vaatii kommentin (halytystehtava.js).
@@ -3544,10 +3688,9 @@ app.post('/api/halytys/:id/kuittaa', requireAuth, (req, res) => {
 app.get('/api/lahin', requireAuth, (req, res) => {
   if (!seurantaKaytossa()) return res.json({ ok: true, kaytossa: false, vartijat: [] });
   const eventId = typeof req.query.eventId === 'string' ? req.query.eventId : null;
-  const saa =
-    req.role === 'admin' ||
-    (eventAllowed(req.eventAccess, eventId) && canView(req.permissions, eventId, 'locations'));
-  if (!saa) return res.status(403).json({ ok: false, error: 'Ei oikeutta henkilöstön sijainteihin.' });
+  if (!saaNahdaSijaintilistan(req, eventId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta henkilöstön sijainteihin.' });
+  }
 
   const lat = Number(req.query.lat);
   const lon = Number(req.query.lon);
@@ -5252,7 +5395,9 @@ function saaNahdaSijainnit(istunto, eventId) {
   if (!istunto) return false;
   if (istunto.role === 'admin') return true;
   if (!eventAllowed(istunto.eventAccess, eventId)) return false;
-  return canView(rolePermissions(istunto.roleId), eventId, 'locations');
+  const perms = rolePermissions(istunto.roleId);
+  // Molemmat puolet, ks. saaNahdaSijaintilistan.
+  return canView(perms, eventId, 'locations') || canView(perms, eventId, 'guard_locations');
 }
 
 // Sijaintiviesti kentältä. Palvelin päättää sekä aikaleiman että sen kenelle tieto

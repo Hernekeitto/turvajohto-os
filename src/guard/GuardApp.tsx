@@ -18,6 +18,7 @@ import { Kierros } from './Kierros';
 import { Halytykset } from './Halytykset';
 import { Etusivu } from './Etusivu';
 import { Halytyskeskus } from './Halytyskeskus';
+import { lueOsoite } from './halke/paneelit';
 import { Kohdenakyma } from './Kohdenakyma';
 import { kohteenToiminnot, type Toiminto } from './tilannekuva';
 import { Halytysvahti } from '../shared/komponentit/Halytysvahti';
@@ -46,6 +47,10 @@ import {
   type Halytystehtava,
 } from './halytystehtavat';
 import { lueVuoro, tallennaVuoro, unohdaVuoro, type Vuoro } from './mobiili/vuoro';
+import { lueAaniasetus, tallennaAaniasetus } from './mobiili/aaniasetus';
+import {
+  aloitaHalytys, ilmoita, lopetaHalytys, pyydaIlmoituslupa, varmistaAani,
+} from '../shared/aani';
 import {
   aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, haeVuoronKooste, lisaaVuoroon,
   paataVuoroPalvelimella,
@@ -57,7 +62,7 @@ import {
   type OmatSiirrot, type Vastaanottaja,
 } from './siirrot';
 import { kaynnistaSovelluksessa, onAlustaJollaSovellus, paataSovelluksessa } from './mobiili/sovellusvuoro';
-import { useKanava } from '../shared/kanava';
+import { useKanava, type Sijainti } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
 import { Pohjanakyma } from '../shared/komponentit/Pohjanakyma';
@@ -136,6 +141,14 @@ const tyhjaKohde = (): Kohde => ({
 // samat näkymät kuin työpöytäversiossa; ero on kuoressa ja etusivussa (ks. mobiili/).
 // Yksi komponentti eikä kaksi, koska kaikki hakeminen, tallennus ja oikeuslogiikka ovat
 // yhteisiä — kaksi juurta tarkoittaisi kahta kopiota niistä.
+// Irrotetun ikkunan paneeli ja seinätaulutila luetaan osoitteesta kerran moduulin
+// latautuessa (erä 24). Ei komponentin tilaa: ikkuna on koko elinkaarensa yhtä
+// paneelia varten, ja osoitteen muuttaminen kesken käytön tarkoittaisi että sama
+// ikkuna vaihtaa merkitystään päivystäjän huomaamatta.
+const HALKE_OSOITE = typeof window === 'undefined'
+  ? { paneeli: null, taulu: false }
+  : lueOsoite(window.location.pathname, window.location.search);
+
 export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const session = useSession();
   const isAdmin = session?.role === 'admin';
@@ -215,6 +228,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Sovellusasetukset on oma solmunsa (guard_settings), ei EVENTin 'settings': muuten
   // toisen puolen asetusoikeus avaisi myös tämän puolen asetukset.
   const saaNahdaAsetukset = isAdmin || canView(perms, null, 'guard_settings');
+  // Vartijoiden sijainnit (erä 23). Oma solmunsa: tilannekuvan näkeminen ja henkilöstön
+  // sijainnin näkeminen ovat eri asioita, ja jälkimmäinen on teknistä valvontaa.
+  const saaNahdaSijainnit = isAdmin || canView(perms, null, 'guard_locations');
   const saaNahdaRaportit = isAdmin
     || canView(perms, null, 'guard_site_info')
     || canView(perms, null, 'guard_report_action')
@@ -222,7 +238,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
   // Avoinna oleva osio. Etusivulta mennään joko kohteisiin tai hälytyskeskukseen; kaikki
   // muut näkymät avautuvat näiden sisältä.
-  const [osio, setOsio] = useState<Osio>('etusivu');
+  // Irrotettu hälytyskeskusikkuna avautuu suoraan omaan paneeliinsa (erä 24): sen
+  // etusivu olisi ylimääräinen klikkaus joka kerta kun valvomon kone käynnistetään.
+  const [osio, setOsio] = useState<Osio>(HALKE_OSOITE.paneeli ? 'halytyskeskus' : 'etusivu');
   // Kohde jonka valikko on auki. Kohdelistan ja yksittäisten näkymien VÄLISSÄ oleva taso:
   // täältä valitaan mitä kohteessa tehdään, ja tänne palataan kun näkymä suljetaan.
   // Erillinen kaikista `*Kohde`-tiloista, koska ne kertovat MIKÄ näkymä on auki — tämä
@@ -292,6 +310,17 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // että päivystäjä näkee vain ne keikat joihin hänet on kohdennettu.
   const [keskuksenTehtavat, setKeskuksenTehtavat] = useState<Halytystehtava[]>([]);
   const [saaMuokataTehtavia, setSaaMuokataTehtavia] = useState(false);
+  // Viimeksi tiedetyt sijainnit hälytyskeskusta varten. Muistissa vain: palvelin ei
+  // tallenna sijaintihistoriaa levylle (server/sijainti.js), eikä selain saa tehdä
+  // siitä pysyvää omin päin.
+  const [sijainnit, setSijainnit] = useState<Sijainti[]>([]);
+  // Onko hälytysääni käytössä tällä laitteella (erä 23).
+  //
+  // Laitteen tila eikä palvelimen: selaimen äänilupa on laitekohtainen, eikä sama tunnus
+  // toisella puhelimella peri toisen puhelimen lupaa. `armed` kertoo onko lupa oikeasti
+  // saatu — pelkkä käyttäjän valinta ei riitä, koska selain voi hylätä sen hiljaa.
+  const [aaniValittu, setAaniValittu] = useState(() => lueAaniasetus());
+  const [aaniArmed, setAaniArmed] = useState(false);
   // Pohjanäkymä (erä 8): sama näkymä kahdelle lajille, joten tilassa on myös laji.
   const [pohjaNakyma, setPohjaNakyma] = useState<{ kohde: Kohde; laji: 'guide' | 'play' } | null>(null);
   // Pohjien suoritukset. Nimi on eri kuin tehtäväsuorituksilla (`suoritukset`), koska ne
@@ -629,6 +658,36 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
   useEffect(() => { paivitaTehtavat(); }, [paivitaTehtavat]);
 
+  // Uusi hälytystehtävä soittaa äänen ja värisyttää (erä 23).
+  //
+  // ENSIMMÄISELLÄ HAULLA EI SOITETA. Silloin kaikki avoimet tehtävät olisivat "uusia",
+  // ja sovelluksen avaaminen hälyttäisi keikoista jotka on jo otettu vastaan. Sama
+  // sääntö kuin hälytyskeskuksen äänimerkillä.
+  const tunnetutTehtavat = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const idt = new Set(tehtavat.map((t) => t.id));
+    const edelliset = tunnetutTehtavat.current;
+    tunnetutTehtavat.current = idt;
+    if (!edelliset) return;
+
+    const uudet = tehtavat.filter((t) => !edelliset.has(t.id));
+    if (uudet.length === 0) {
+      // Lista tyhjeni: hälytys on hoidettu tai peruttu, eikä ääni saa jäädä soimaan
+      // tyhjän listan päälle.
+      if (tehtavat.length === 0) lopetaHalytys();
+      return;
+    }
+    if (aaniValittu && aaniArmed) aloitaHalytys();
+    for (const t of uudet) {
+      ilmoita(`${TEHTAVAN_LAJI[t.laji].toUpperCase()} · ${t.siteNimi}`,
+        t.silmukka ? `Silmukka: ${t.silmukka}` : 'Avaa sovellus ja ota tehtävä vastaan.', t.id);
+    }
+  }, [tehtavat, aaniValittu, aaniArmed]);
+
+  // Ääni vaikenee kun sovellus suljetaan. Ilman tätä ajastin jäisi pyörimään
+  // komponentin purkamisen jälkeen.
+  useEffect(() => lopetaHalytys, []);
+
   // Hälytyskeskuksen lista. Oma hakunsa ja oma oikeusehtonsa: se palauttaa kaikki
   // tehtävät kaikista kohteista, mikä on päivystäjän oikeus eikä vartijan.
   const paivitaKeskuksenTehtavat = useCallback(() => {
@@ -641,6 +700,27 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   }, [saaNahdaHalytyskeskus]);
 
   useEffect(() => { paivitaKeskuksenTehtavat(); }, [paivitaKeskuksenTehtavat]);
+
+  // Sijaintien listahaku. Kanava työntää yksittäiset päivitykset, mutta listaa
+  // tarvitaan silti: kanavalta ei tule niitä sijainteja jotka on lähetetty ennen kuin
+  // tämä näkymä avattiin, eli käytännössä kaikkia.
+  //
+  // Ajastin on harva (60 s), koska kanava hoitaa tuoreuden. Tämä on varmistus sen
+  // varalta että kanava on poikki — ja silloin ikäleima kertoo totuuden itsestään.
+  const paivitaSijainnit = useCallback(() => {
+    if (!saaNahdaSijainnit) return;
+    fetch('/api/sijainnit', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (data?.ok) setSijainnit(data.sijainnit || []); })
+      .catch(() => { /* Verkkovirhe: lista jää ennalleen, ikäleima vanhenee näkyvästi. */ });
+  }, [saaNahdaSijainnit]);
+
+  useEffect(() => {
+    if (!saaNahdaSijainnit) return undefined;
+    paivitaSijainnit();
+    const ajastin = window.setInterval(paivitaSijainnit, 60_000);
+    return () => window.clearInterval(ajastin);
+  }, [saaNahdaSijainnit, paivitaSijainnit]);
 
   // Odottava poistumispyyntö lähtee heti kun sen raportti on mennyt jonosta perille.
   // Ilman tätä vartija jäisi kohteeseen odottamaan lupaa jota kukaan ei ole pyytänyt.
@@ -667,6 +747,13 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   //
   // Sama yhteys kuljettaa myös sijainnin kentältä palvelimelle (erä 3).
   const { laheta: lahetaKanavalle, yhdistetty } = useKanava({
+    // Kanava työntää yhden vartijan sijainnin heti kun se päivittyy. Korvataan rivi
+    // tunnuksen perusteella eikä lisätä: sama vartija lähettää monta kertaa vuorossa,
+    // ja lista kasvaisi muuten yhdeksi pitkäksi historiaksi.
+    onSijainnit: (uudet) => setSijainnit((edelliset) => {
+      const tunnukset = new Set(uudet.map((s) => s.username));
+      return [...edelliset.filter((s) => !tunnukset.has(s.username)), ...uudet];
+    }),
     onMuutos: (kokoelma) => {
       if (kokoelma === 'alerts') paivitaHalytykset();
       if (kokoelma === 'guardDispatch') {
@@ -1016,7 +1103,24 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     else if (id === 'tehtava-kieltaydy') tehtavaToiminto(() => kieltaydyTehtavasta(avattu.id));
   };
 
+  // Äänikytkin sivuvalikossa. Painallus on se ele jonka selain vaatii, joten lupa
+  // varmistetaan samassa — erillinen "salli ääni" -vaihe jäisi tekemättä.
+  const vaihdaAani = async (paalla: boolean) => {
+    setAaniValittu(paalla);
+    tallennaAaniasetus(paalla);
+    if (!paalla) {
+      lopetaHalytys();
+      setAaniArmed(false);
+      return;
+    }
+    setAaniArmed(await varmistaAani());
+    await pyydaIlmoituslupa();
+  };
+
   const avaaTehtava = (id: string) => {
+    // Avaaminen on kuittaus: vartija on nähnyt hälytyksen, joten ääni vaikenee. Se ei
+    // tarkoita että tehtävä olisi otettu vastaan — vastaanotto on oma painalluksensa.
+    lopetaHalytys();
     nollaaAlanakymat();
     setTehtavaVirhe(null);
     setAvattuTehtava(id);
@@ -1409,6 +1513,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     tallennaVuoro(session?.username || '', uusi);
     setPalvelimenVuoro(tulos.vuoro);
     setVuoro(uusi);
+    // Hälytysääni avataan TÄSSÄ eikä erillisellä painikkeella (erä 23). Selain vaatii
+    // äänelle käyttäjän eleen, ja vuoron aloitus on se ele jonka vartija tekee joka
+    // vuorossa — erillinen "salli ääni" -nappi jäisi painamatta juuri niiltä joiden
+    // takia koko ääni tehtiin. Ilmoituslupa kysytään samassa eleessä samasta syystä.
+    if (aaniValittu) {
+      setAaniArmed(await varmistaAani());
+      await pyydaIlmoituslupa();
+    }
     // Natiivipalvelu käynnistetään vasta kun vuoro on tallessa: jos sovelluksen avaaminen
     // vie näkymän hetkeksi pois, palaava käyttöliittymä lukee vuoron varastosta.
     const valitys = kaynnistaSovelluksessa(uusi);
@@ -1943,7 +2055,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             kierrokset: saaNahdaKierrokset,
             kalusto: saaNahdaKalustoa,
             tiedotteet: saaNahdaTiedotteet,
+            sijainnit: saaNahdaSijainnit,
           }}
+          sijainnit={sijainnit}
+          paneeli={HALKE_OSOITE.paneeli}
+          taulu={HALKE_OSOITE.taulu}
           yhteys={yhdistetty}
           sijaintiseuranta={session?.sijaintiseuranta === true}
           tehtavat={keskuksenTehtavat}
@@ -2332,6 +2448,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         onLinkki={avaaMobiiliLinkki}
         mandown={mandown}
         mandownMin={mandownMin}
+        aaniValittu={aaniValittu}
+        aaniArmed={aaniArmed}
+        onAani={vaihdaAani}
         liikelupa={liikelupa}
         natiivi={natiivi}
         onKamera={() => setKameraAuki(true)}

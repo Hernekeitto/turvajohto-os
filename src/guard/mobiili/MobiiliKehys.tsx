@@ -15,7 +15,7 @@
 // vaaka-asennossa on 915 px leveä, ja silloin leveyteen sidottu kehys puristi sovelluksen
 // 164 pikselin levyiseksi malliksi keskelle ruutua. Ks. index.css.
 import { useEffect, useState, type ReactNode } from 'react';
-import { ArrowLeft, Bell, BellRing, Camera, ChevronRight, LogOut, Menu, Monitor, MoreVertical, Send, TriangleAlert, X } from 'lucide-react';
+import { ArrowLeft, Bell, BellRing, Camera, ChevronRight, LogOut, Menu, Monitor, MoreVertical, Send, TriangleAlert, Volume2, VolumeX, X } from 'lucide-react';
 
 export type MobiiliIlmoitus = {
   id: string;
@@ -47,6 +47,13 @@ type Props = {
   // tilan; muuttaminen tapahtuu kohteen tiedoissa hälytyskeskuksen toimesta.
   mandown: boolean;
   mandownMin: number;
+  // Hälytysääni (erä 23). `valittu` on käyttäjän asetus, `armed` se onko selain
+  // oikeasti antanut luvan. Ne ovat ERI ASIA ja molemmat on näytettävä: valittu mutta
+  // armaamaton ääni on juuri se tila jossa vartija luulee saavansa hälytyksen mutta
+  // ei saa, ja se on koko ominaisuuden pahin vikatila.
+  aaniValittu: boolean;
+  aaniArmed: boolean;
+  onAani: (paalla: boolean) => void;
   liikelupa: boolean;
   natiivi: boolean;
   onKamera: () => void;
@@ -76,6 +83,7 @@ const kellonaika = (iso: string) => {
 export const MobiiliKehys = ({
   otsikko, vuoro, ilmoitukset, onIlmoitus, linkit, onLinkki,
   mandown, mandownMin, liikelupa, natiivi,
+  aaniValittu, aaniArmed, onAani,
   onKamera, onTilatieto, onPaataVuoro, onTyopoyta, onLogout,
   pikavalinnat = [], onPikavalinta, onTakaisin = null, children,
 }: Props) => {
@@ -254,6 +262,40 @@ export const MobiiliKehys = ({
               ) : (
                 <p className="mb-6 text-base text-ink-on-dark-muted">Et ole kirjautuneena vuoroon.</p>
               )}
+
+              {/* Hälytysääni (erä 23). Kytkin eikä pelkkä tila, toisin kuin man-down:
+                  ääni on vartijan oma valinta eikä työnantajan turvallisuusasetus.
+
+                  TAUSTARAJOITE SANOTAAN ÄÄNEEN. Selain ei voi herättää sammunutta
+                  puhelinta: kun sovellus on taustalla, välilehti jäädytetään eikä ääntä
+                  kuulu. Hiljainen hälytyssovellus joka näyttää valvovalta on pahempi
+                  kuin sellainen jonka rajat tietää. */}
+              <div className="mb-6 border-t border-white/10 pt-5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-base font-medium">Hälytysääni</span>
+                  <button
+                    type="button"
+                    onClick={() => onAani(!aaniValittu)}
+                    aria-pressed={aaniValittu}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${
+                      aaniValittu ? 'bg-accent-on-dark/20 text-accent-on-dark' : 'bg-white/10 text-ink-on-dark-muted'
+                    }`}
+                  >
+                    {aaniValittu ? <Volume2 size={15} /> : <VolumeX size={15} />}
+                    {aaniValittu ? 'päällä' : 'pois'}
+                  </button>
+                </div>
+                {aaniValittu && !aaniArmed && (
+                  <p className="text-sm text-warning mt-2 leading-relaxed">
+                    Ääni ei ole vielä käytössä: selain sallii sen vasta kun kosketat
+                    sovellusta. Aloita vuoro tai paina kytkintä yllä.
+                  </p>
+                )}
+                <p className="text-xs text-ink-on-dark-muted mt-2 leading-relaxed">
+                  Ääni ja värinä toimivat kun sovellus on auki. Taskussa nukkuvaa
+                  puhelinta selain ei voi herättää — siihen tarvitaan puhelinsovellus.
+                </p>
+              </div>
 
               {/* Man-down: TILA eikä kytkin.
 

@@ -58,6 +58,20 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // Vartija ei tarvitse tätä solmua lainkaan nähdäkseen hänelle kohdennetun
   // hälytystehtävän: kohdennus (vuoro, piirivuoro, säde) on portti, ei sivukartta.
   { id: 'guard_dispatch', label: 'Hälytyskeskus (muokkausoikeus = oikeus lähettää hälytystehtäviä ja hyväksyä poistumiset)' },
+  // Vartijoiden sijainnit. OMA SOLMUNSA eikä osa hälytyskeskusta, ja ero on koko oikeuden
+  // pointti: tilannekuvan näkeminen ("mikä palaa, mitä on kesken") ja henkilöstön
+  // sijainnin näkeminen ("missä Virtanen on juuri nyt") ovat eri asioita. Jälkimmäinen on
+  // työntekijään kohdistuvaa teknistä valvontaa, ja sen katselupiirin on oltava erikseen
+  // päätettävissä — sama perustelu kuin EVENT-puolen 'locations'-solmulla.
+  //
+  // TÄMÄ SOLMU EI YKSIN NÄYTÄ MITÄÄN. Sijaintiseuranta on oletuksena pois päältä
+  // (server/sijainti.js: SIJAINTISEURANTA=1) ja odottaa juridista työpakettia. Solmu on
+  // silti olemassa, koska ilman sitä oikeutta ei voi myöntää lainkaan: GUARD-puolella
+  // sijaintireitit tarkistivat erään 23 asti EVENT-puolen 'locations'-solmua, jota
+  // GUARDin oikeuseditori ei näytä — eli oikeus oli olemassa muttei myönnettävissä.
+  //
+  // Globaali solmu samasta syystä kuin hälytyskeskus: päivystäjä katsoo kaikkia kohteita.
+  { id: 'guard_locations', label: 'Vartijoiden sijainnit (tekninen valvonta, vaatii sijaintiseurannan)' },
   // Pohjamoottorin lajit (erä 8). Omat solmunsa EVENT-puolen vastaavista samasta syystä
   // kuin muutkin GUARD-solmut: oikeudet tallennetaan yhteiseen olioon, joten sama nimi
   // molemmilla puolilla jakaisi vahingossa saman oikeuden.

@@ -42,6 +42,18 @@ async function loadSessionProfile(): Promise<SessionProfile | null> {
     tuotteet: Array.isArray(data.tuotteet) && data.tuotteet.length > 0 ? data.tuotteet : ['event'],
     permissions: data.permissions || {},
     lastLoginAt: data.lastLoginAt || null,
+    // Onko sijaintiseuranta kytketty palvelimella (erä 23).
+    //
+    // TÄMÄ PUUTTUI, ja se oli koko sijaintiominaisuuden hiljainen katkos: palvelin on
+    // lähettänyt kentän /api/session-vastauksessa alusta asti ja SessionProfile on
+    // tuntenut sen, mutta profiilia koottaessa sitä ei kopioitu. Arvo oli siis aina
+    // undefined, jolloin `session?.sijaintiseuranta === true` oli aina false —
+    // useSijainninLahetys ei käynnistynyt kertaakaan eikä yksikään selain lähettänyt
+    // sijaintiaan, vaikka SIJAINTISEURANTA olisi ollut päällä.
+    //
+    // Vika ei näkynyt mistään: seuranta on oletuksena pois päältä, joten tyhjä
+    // sijaintilista oli odotettu lopputulos ja näytti oikealta.
+    sijaintiseuranta: data.sijaintiseuranta === true,
   };
   tallennaIstunto(profiili);
   return profiili;

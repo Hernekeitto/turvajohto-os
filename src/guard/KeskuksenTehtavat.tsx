@@ -17,13 +17,13 @@
 // vielä", ja ilman perustetta se on punainen palkki josta ei seuraa mitään tekemistä.
 import { useState } from 'react';
 import {
-  Check, ChevronDown, ChevronRight, Loader2, Plus, Siren, TriangleAlert, X,
+  Check, ChevronDown, ChevronRight, FileText, Loader2, Plus, Siren, TriangleAlert, X,
 } from 'lucide-react';
 
 import {
   LAJIN_NIMI, LAJIT, TILAN_NIMI, kellonaika, kellonaikaSek,
-  lisaaHavainto, luoTehtava, peruTehtava, ratkaiseHyvaksynta,
-  type HalytysLaji, type Halytystehtava,
+  haeTehtavanRaportit, lisaaHavainto, luoTehtava, peruTehtava, ratkaiseHyvaksynta,
+  type HalytysLaji, type Halytystehtava, type TehtavanRaportti,
 } from './halytystehtavat';
 import type { Kohde } from './tyypit';
 
@@ -219,6 +219,138 @@ const UusiTehtava = ({
   );
 };
 
+// --- Tehtävään liitetty tapahtumailmoitus --------------------------------------------
+
+// Toimenpidelaskurit ja voimakeinot yhtenä rivinä. Nollat jätetään pois: "Pääsy estetty 0"
+// ei ole tieto vaan täytettä, ja päivystäjä lukee tämän ruudulta sekunneissa.
+const TOIMENPITEET: { avain: keyof TehtavanRaportti; label: string }[] = [
+  { avain: 'denied', label: 'pääsy estetty' },
+  { avain: 'removed', label: 'poistettu' },
+  { avain: 'detained', label: 'kiinniotettu' },
+];
+
+const VOIMAKEINOT: { avain: keyof TehtavanRaportti; label: string }[] = [
+  { avain: 'force', label: 'voimakeinoja' },
+  { avain: 'tools', label: 'voimankäyttövälineitä' },
+  { avain: 'firearm', label: 'ampuma-ase' },
+  { avain: 'firstAid', label: 'ensiapua annettu' },
+];
+
+const Ilmoitus = ({
+  tehtavaId, avattu, onAvattu,
+}: {
+  tehtavaId: string;
+  avattu: 'ei' | 'luettu' | 'virhe';
+  onAvattu: (tila: 'ei' | 'luettu' | 'virhe') => void;
+}) => {
+  const [raportit, setRaportit] = useState<TehtavanRaportti[] | null>(null);
+  const [rajattu, setRajattu] = useState(false);
+  const [haetaan, setHaetaan] = useState(false);
+
+  const lue = async () => {
+    setHaetaan(true);
+    try {
+      const tulos = await haeTehtavanRaportit(tehtavaId);
+      if (!tulos) {
+        onAvattu('virhe');
+        return;
+      }
+      setRaportit(tulos.raportit);
+      setRajattu(tulos.rajattu);
+      onAvattu('luettu');
+    } finally {
+      setHaetaan(false);
+    }
+  };
+
+  if (avattu === 'ei' || avattu === 'virhe') {
+    return (
+      <div className="mt-2">
+        <button
+          type="button"
+          disabled={haetaan}
+          onClick={lue}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-action px-3 py-2 text-sm font-medium text-white hover:bg-action-hover disabled:opacity-50 transition-colors"
+        >
+          <FileText size={14} />
+          {haetaan ? 'Haetaan…' : avattu === 'virhe' ? 'Yritä uudelleen' : 'Lue ilmoitus'}
+        </button>
+        {avattu === 'virhe' && (
+          <p className="mt-1.5 text-xs text-danger-ink">
+            Ilmoitusta ei saatu haettua. Voit silti ratkaista pyynnön — vartija ei saa jäädä
+            odottamaan lupaa verkkovirheen takia.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-3">
+      {rajattu && (
+        <p className="rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-xs text-warning-ink">
+          Kohdehenkilön tiedot on karsittu: tunnuksellasi ei ole lukuoikeutta tämän kohteen
+          raportteihin. Ne EIVÄT ole täyttämättä — ne eivät vain näy sinulle. Koko ilmoituksen
+          näkee tunnus jolle on myönnetty kohteen raporttioikeus.
+        </p>
+      )}
+      {raportit && raportit.length === 0 && (
+        <p className="text-xs text-ink-muted">Tehtävälle ei löytynyt ilmoitusta.</p>
+      )}
+      {(raportit || []).map((r) => {
+        const maarat = TOIMENPITEET
+          .filter((t) => Number(r[t.avain]) > 0)
+          .map((t) => `${r[t.avain]} ${t.label}`);
+        const keinot = VOIMAKEINOT.filter((v) => r[v.avain] === true).map((v) => v.label);
+        return (
+          <article key={r.id} className="rounded-lg border border-line bg-sunken p-3">
+            <p className="text-sm font-bold text-ink-strong">{r.type}</p>
+            <p className="text-xs text-ink-muted">
+              {r.author} · {r.date} klo {r.time}
+              {r.place ? ` · ${r.place}` : ''}
+            </p>
+
+            {r.summary && <p className="mt-2 text-sm font-medium text-ink">{r.summary}</p>}
+            {r.description && (
+              <p className="mt-1 whitespace-pre-wrap text-sm text-ink-body leading-relaxed">
+                {r.description}
+              </p>
+            )}
+
+            {(maarat.length > 0 || keinot.length > 0) && (
+              <p className="mt-2 text-xs text-ink-body">
+                {[...maarat, ...keinot].join(' · ')}
+              </p>
+            )}
+
+            {/* Kohdehenkilön tiedot vain täydellä lukuoikeudella. Karsitussa muodossa
+                kentät puuttuvat kokonaan, joten tämä lohko ei renderöidy lainkaan. */}
+            {(r.subjectLastName || r.subjectPersonalId || r.subjectAddress) && (
+              <div className="mt-2 border-t border-line-soft pt-2 text-xs text-ink-body">
+                <p className="font-bold text-ink-muted">Kohdehenkilö</p>
+                <p>
+                  {[r.subjectLastName, r.subjectFirstNames].filter(Boolean).join(', ')}
+                  {r.subjectPersonalId ? ` · ${r.subjectPersonalId}` : ''}
+                </p>
+                {r.subjectAddress && <p>{r.subjectAddress}</p>}
+                {r.subjectFeatures && <p>{r.subjectFeatures}</p>}
+                {r.subjectObservations && <p className="mt-1">{r.subjectObservations}</p>}
+              </div>
+            )}
+
+            {(r.liitteita || (r.attachments || []).length > 0) && (
+              <p className="mt-2 text-xs text-ink-muted">
+                {r.liitteita ?? (r.attachments || []).length} liitettä
+                {rajattu ? ' (ei avattavissa ilman raporttioikeutta)' : ''}
+              </p>
+            )}
+          </article>
+        );
+      })}
+    </div>
+  );
+};
+
 // --- Yksi tehtävä --------------------------------------------------------------------
 
 const TehtavaKortti = ({
@@ -236,6 +368,9 @@ const TehtavaKortti = ({
   const [kommentti, setKommentti] = useState('');
   const [perumassa, setPerumassa] = useState(false);
   const [peruSyy, setPeruSyy] = useState('');
+  // Onko ilmoitus luettu tässä istunnossa. 'virhe' = haku epäonnistui, jolloin ratkaisu
+  // sallitaan silti (ks. perustelu nappien kohdalla).
+  const [ilmoitusAvattu, setIlmoitusAvattu] = useState<'ei' | 'luettu' | 'virhe'>('ei');
 
   const odottaa = tehtava.tila === 'odottaa';
   const mukana = (tehtava.yksikot || []).filter((y) => !y.kieltaytyi);
@@ -283,9 +418,23 @@ const TehtavaKortti = ({
             {' '}pyytää lupaa poistua
           </p>
           <p className="mt-0.5 text-xs text-ink-muted">
-            Raportti on kirjattu {kellonaika(tehtava.hyvaksynta?.pyydetty)}. Käy se läpi
-            raporttilistalta ennen hyväksyntää.
+            Ilmoitus on kirjattu {kellonaika(tehtava.hyvaksynta?.pyydetty)}.
           </p>
+
+          {/* Ilmoitus luetaan TÄSSÄ eikä erillisellä raporttisivulla. Hyväksyntänappi
+              jonka vieressä ei ole sitä tekstiä jota hyväksytään ei ole hyväksyntä vaan
+              kuittaus (käyttäjän havainto 14.9.2026).
+
+              Luku on painikkeen takana eikä automaattinen, koska jokainen luku jää
+              auditlokiin: automaattinen haku tuottaisi merkinnän joka kerta kun
+              hälytyskeskus päivittyy, ja loki lakkaisi kertomasta kuka ilmoituksen
+              oikeasti luki. */}
+          <Ilmoitus
+            tehtavaId={tehtava.id}
+            avattu={ilmoitusAvattu}
+            onAvattu={setIlmoitusAvattu}
+          />
+
           {saaMuokata ? (
             <>
               <textarea
@@ -295,10 +444,18 @@ const TehtavaKortti = ({
                 placeholder="Jos et hyväksy poistumista: mitä toimenpiteitä puuttuu?"
                 className="mt-2 w-full rounded-lg border border-line-soft p-2 text-sm"
               />
+              {/* Ratkaisu on lukemisen takana. Ei siksi että päivystäjää epäiltäisiin,
+                  vaan siksi että kumpikin nappi on päätös ilmoituksen sisällöstä —
+                  hyväksyntä sanoo "toimenpiteet on tehty" ja hylkäys "jokin puuttuu".
+
+                  POIKKEUS: jos ilmoituksen haku epäonnistui, napit avautuvat silti.
+                  Muuten verkkovirhe hälytyskeskuksen päässä jättäisi vartijan seisomaan
+                  kohteeseen odottamaan lupaa jota kukaan ei voi antaa. */}
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  disabled={tyoskentelee}
+                  disabled={tyoskentelee || ilmoitusAvattu === 'ei'}
+                  title={ilmoitusAvattu === 'ei' ? 'Lue ilmoitus ensin.' : undefined}
                   onClick={() => onRatkaise(true, kommentti)}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-success px-3 py-2 text-sm font-medium text-white hover:brightness-95 disabled:opacity-50"
                 >
@@ -307,8 +464,10 @@ const TehtavaKortti = ({
                 </button>
                 <button
                   type="button"
-                  disabled={tyoskentelee || !kommentti.trim()}
-                  title={kommentti.trim() ? undefined : 'Kirjoita ensin mitä toimenpiteitä puuttuu.'}
+                  disabled={tyoskentelee || ilmoitusAvattu === 'ei' || !kommentti.trim()}
+                  title={ilmoitusAvattu === 'ei'
+                    ? 'Lue ilmoitus ensin.'
+                    : kommentti.trim() ? undefined : 'Kirjoita ensin mitä toimenpiteitä puuttuu.'}
                   onClick={() => onRatkaise(false, kommentti)}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-danger/40 bg-danger-soft px-3 py-2 text-sm font-medium text-danger-ink hover:brightness-95 disabled:opacity-50"
                 >

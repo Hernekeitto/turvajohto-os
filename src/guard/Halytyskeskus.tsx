@@ -33,7 +33,10 @@ import {
 import { AVAIMEN_TILA } from '../shared/kalusto';
 import { onVoimassa } from '../shared/tiedotteet';
 import { osuu } from '../shared/haku';
+import { ilmoita, piippaa, pyydaIlmoituslupa, varmistaAani } from '../shared/aani';
 import { ikaTekstina } from '../shared/sijainninLahetys';
+import type { Sijainti } from '../shared/kanava';
+import { PANEELIT, avaaIkkunassa, type PaneeliId } from './halke/paneelit';
 import {
   kentalla, kohteenTilanne, tapahtumavirta, type Kiireys, type Lahteet,
 } from './tilannekuva';
@@ -46,6 +49,9 @@ import type { Halytystehtava } from './halytystehtavat';
 // "ei tapahtumia" ja "ei oikeutta nähdä" välillä.
 type Oikeudet = {
   kierrokset: boolean;
+  // Vartijoiden sijainnit (erä 23). Oma solmunsa guard_locations, koska tilannekuvan
+  // näkeminen ja henkilöstön sijainnin näkeminen ovat eri asioita.
+  sijainnit: boolean;
   kalusto: boolean;
   tiedotteet: boolean;
 };
@@ -66,6 +72,15 @@ type Props = {
   // GuardAppissa kuten muukin data, jotta kanavan päivitys osuu yhteen paikkaan.
   tehtavat: Halytystehtava[];
   saaMuokataTehtavia: boolean;
+  // Viimeksi tiedetyt sijainnit. Tulevat GuardAppista kuten muukin data, jotta
+  // kanavan työntämä päivitys osuu yhteen paikkaan.
+  sijainnit: Sijainti[];
+  // Näytettävä paneeli (erä 24). null = koostenäkymä, jossa kaikki paneelit ovat
+  // allekkain. Muu arvo tarkoittaa että tämä ikkuna on irrotettu yhdelle näytölle.
+  paneeli: PaneeliId | null;
+  // Seinätaulutila: ikkuna on katsottavaksi eikä kosketettavaksi. Suurempi teksti,
+  // ei hakukenttiä eikä toimintopainikkeita. Vain paneelinäkymässä.
+  taulu: boolean;
   onTehtavaMuutos: () => void;
   onMuutos: (halytys: Halytys) => void;
   onVirkista: () => void;
@@ -210,41 +225,16 @@ const VIRRAN_TYYLI: Record<Kiireys, string> = {
   rauhallinen: 'text-ink-body',
 };
 
-// Lyhyt äänimerkki ilman ääniraitatiedostoa. Oma oskillaattorinsa siksi, että mp3 pitäisi
-// ladata verkosta juuri sillä hetkellä kun sitä tarvitaan — eli silloin kun verkko voi
-// olla poikki. Selain vaatii käyttäjän eleen ennen äänen soittamista, ja se ele on
-// äänimerkin päälle kytkeminen.
-function piippaa() {
-  try {
-    const Konteksti = window.AudioContext
-      || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Konteksti) return;
-    const konteksti = new Konteksti();
-    const soita = (alkuS: number, taajuus: number) => {
-      const oskillaattori = konteksti.createOscillator();
-      const voimakkuus = konteksti.createGain();
-      oskillaattori.type = 'square';
-      oskillaattori.frequency.value = taajuus;
-      voimakkuus.gain.value = 0.12;
-      oskillaattori.connect(voimakkuus);
-      voimakkuus.connect(konteksti.destination);
-      oskillaattori.start(konteksti.currentTime + alkuS);
-      oskillaattori.stop(konteksti.currentTime + alkuS + 0.22);
-    };
-    soita(0, 880);
-    soita(0.3, 1175);
-    soita(0.6, 880);
-    window.setTimeout(() => konteksti.close().catch(() => {}), 1500);
-  } catch {
-    // Ääni on lisä eikä toiminto: sen epäonnistuminen ei saa kaataa näkymää.
-  }
-}
+// Äänimerkki ja järjestelmäilmoitus ovat jaetussa moduulissa (shared/aani.ts) erästä 23
+// alkaen. Kenttäpuoli tarvitsi saman koneiston toistuvana hälytysäänenä, ja kaksi
+// toteutusta samasta oskillaattorista olisi erkaantunut toisistaan ensimmäisellä
+// korjauksella.
 
 const AANI_AVAIN = 'turvajohto-halke-aani';
 
 export const Halytyskeskus = ({
   kohteet, lahteet, kayttaja, saaKuitata, oikeudet, yhteys, sijaintiseuranta,
-  tehtavat, saaMuokataTehtavia, onTehtavaMuutos,
+  tehtavat, saaMuokataTehtavia, onTehtavaMuutos, sijainnit, paneeli, taulu,
   onMuutos, onVirkista, onAvaaKohde, onTakaisin,
 }: Props) => {
   const [nyt, setNyt] = useState(Date.now());
@@ -440,13 +430,12 @@ export const Halytyskeskus = ({
     if (uudet.length === 0) return;
     if (aani) piippaa();
     try {
-      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        for (const h of uudet) {
-          new Notification(`HÄLYTYS · ${kohdeNimi(h.eventId)}`, {
-            body: `${TYYPPI_LABEL[h.tyyppi]} · ${h.vartija}${h.kuvaus ? ` — ${h.kuvaus}` : ''}`,
-            tag: h.id,
-          });
-        }
+      for (const h of uudet) {
+        ilmoita(
+          `HÄLYTYS · ${kohdeNimi(h.eventId)}`,
+          `${TYYPPI_LABEL[h.tyyppi]} · ${h.vartija}${h.kuvaus ? ` — ${h.kuvaus}` : ''}`,
+          h.id,
+        );
       }
     } catch {
       // Ilmoitusrajapinta puuttuu tai on estetty. Ääni ja ruutu kertovat silti.
@@ -464,14 +453,9 @@ export const Halytyskeskus = ({
     if (!paalle) return;
     // Lupa kysytään samassa eleessä: selain hyväksyy sekä äänen että ilmoitusluvan vain
     // käyttäjän painalluksesta.
+    await varmistaAani();
     piippaa();
-    try {
-      if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-        await Notification.requestPermission();
-      }
-    } catch {
-      // Lupaa ei saatu. Äänimerkki toimii silti.
-    }
+    await pyydaIlmoituslupa();
   };
 
   // Tekstiviestieskaloinnin tila. Hälytys lähtee kohteen hälytysnumeroihin tekstiviestinä,
@@ -534,6 +518,19 @@ export const Halytyskeskus = ({
     } catch {
       setVirhe('Lähimpien hakeminen epäonnistui: ei yhteyttä palvelimeen.');
     }
+  };
+
+  // Näkyykö paneeli tässä ikkunassa. Koostenäkymässä kaikki; irrotetussa ikkunassa
+  // vain se yksi. Sama komponentti molemmissa tarkoituksella: kaksi toteutusta samasta
+  // paneelista erkanisi ensimmäisellä korjauksella, ja valvomon ruuduista toinen
+  // näyttäisi eri tilannetta kuin toinen.
+  const nayta = (id: PaneeliId) => paneeli === null || paneeli === id;
+
+  // Selain voi estää ponnahdusikkunan. Painallus joka ei tee mitään on pahempi kuin
+  // puuttuva painike, joten esto sanotaan ääneen.
+  const [ikkunaEstetty, setIkkunaEstetty] = useState(false);
+  const irrota = (id: PaneeliId, tauluna: boolean) => {
+    setIkkunaEstetty(!avaaIkkunassa(id, tauluna));
   };
 
   const kohteetKriittisia = tilanteet.filter((t) => t.tilanne.kiireys === 'kriittinen').length;
@@ -620,16 +617,29 @@ export const Halytyskeskus = ({
     (t) => osuu([t.otsikko, t.teksti, t.kuka, kohdeNimi(t.kohdeId)], haku('virta'))
   );
 
+  const nykyinen = PANEELIT.find((p) => p.id === paneeli) || null;
+
   return (
-    <div>
-      <TakaisinLinkki onClick={onTakaisin}>Takaisin etusivulle</TakaisinLinkki>
+    // Seinätaulutila on LUOKKA eikä erillinen komponenttipuu: sama näkymä, isompi
+    // teksti ja toiminnot piilotettuna (ks. index.css: .halke-taulu). Erillinen puu
+    // tarkoittaisi kahta paikkaa joissa sama paneeli voi näyttää eri asiaa.
+    <div className={taulu ? "halke-taulu" : undefined}>
+      {/* Irrotetussa ikkunassa ei ole paluulinkkiä etusivulle: ikkuna on avattu yhtä
+          paneelia varten, ja sen sulkee ikkunan oma rasti. Paluulinkki veisi sen
+          koostenäkymään, jolloin näyttö lakkaisi näyttämästä sitä mitä varten se on. */}
+      {!paneeli && (
+        <TakaisinLinkki onClick={onTakaisin}>Takaisin etusivulle</TakaisinLinkki>
+      )}
 
       <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
         <div>
-          <h2 className="text-2xl font-bold text-ink-strong mb-1">Hälytyskeskus</h2>
+          <h2 className="text-2xl font-bold text-ink-strong mb-1">
+            {nykyinen ? nykyinen.label : "Hälytyskeskus"}
+          </h2>
           <p className="text-sm text-ink-muted leading-relaxed">
-            Kaikkien kohteiden tilanne yhdellä ruudulla. Päivittyy itsestään —
-            hälytyksiä ei tarvitse hakea.
+            {nykyinen
+              ? nykyinen.kuvaus
+              : "Kaikkien kohteiden tilanne yhdellä ruudulla. Päivittyy itsestään — hälytyksiä ei tarvitse hakea."}
           </p>
         </div>
         {/* Järjestelmän tila ja äänimerkki samassa laatikossa. Äänimerkki on painike eikä
@@ -682,6 +692,55 @@ export const Halytyskeskus = ({
         </div>
       </div>
 
+      {/* --- Näyttöjen hallinta (erä 24) -----------------------------------------
+
+          Päivystäjällä on usein kaksi näyttöä, eikä selain voi levittää yhtä ikkunaa
+          kahdelle ruudulle. Jokainen paneeli avataan siis omaan ikkunaansa, jonka
+          päivystäjä raahaa haluamalleen näytölle — selain muistaa paikan.
+
+          Seinätaulu ja työtila ovat sama paneeli eri kuoressa: seinätaulussa teksti on
+          isompi eikä nappeja ole, koska sitä katsotaan kolmen metrin päästä. */}
+      {!paneeli && (
+        <div className="mb-6 rounded-xl border border-line bg-surface p-4">
+          <p className="text-sm font-bold text-ink-strong mb-1">Avaa omaan ikkunaan</p>
+          <p className="text-xs text-ink-muted mb-3">
+            Toiselle näytölle. Työtilassa toiminnot ovat käytössä, seinätaulussa eivät —
+            seinätaulu on katsottavaksi.
+          </p>
+          {ikkunaEstetty && (
+            <p className="mb-3 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-xs text-warning-ink">
+              Selain esti ikkunan avaamisen. Salli ponnahdusikkunat tältä sivustolta.
+            </p>
+          )}
+          <ul className="space-y-2">
+            {PANEELIT.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-2">
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-ink">{p.label}</span>
+                  <span className="block text-xs text-ink-muted">{p.kuvaus}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => irrota(p.id, false)}
+                  className="shrink-0 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink-body hover:bg-sunken transition-colors"
+                >
+                  Työtila
+                </button>
+                {p.taulukelpoinen && (
+                  <button
+                    type="button"
+                    onClick={() => irrota(p.id, true)}
+                    className="shrink-0 rounded-lg bg-action px-3 py-1.5 text-xs font-medium text-white hover:bg-action-hover transition-colors"
+                  >
+                    Seinätaulu
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {virhe && (
         <p className="mb-4 text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">
           {virhe}
@@ -724,6 +783,7 @@ export const Halytyskeskus = ({
         />
       </div>
 
+      {nayta('keikat') && (<>
       {/* --- Hälytystehtävät (erä 22) --------------------------------------------
           Ennen lauenneita hälytyksiä, ja ero on siinä kumpaan päivystäjä voi vaikuttaa:
           lauennut hälytys on tapahtunut asia, hälytystehtävä on työ jota hän parhaillaan
@@ -736,7 +796,9 @@ export const Halytyskeskus = ({
           onMuutos={onTehtavaMuutos}
         />
       </div>
+      </>)}
 
+      {nayta('halytykset') && (<>
       {/* --- Lauenneet hälytykset ------------------------------------------------ */}
       <Osio otsikko="Lauenneet hälytykset" ikoni={Siren} maara={lauenneet.length} kiire={lauenneet.length > 0}>
         <Hakukentta
@@ -898,7 +960,9 @@ export const Halytyskeskus = ({
           </div>
         )}
       </Osio>
+      </>)}
 
+      {nayta('halytykset') && (<>
       {/* --- Ajastimet ja tarkistukset vierekkäin --------------------------------
           Sama aihe kahdesta suunnasta: mikä ajastin juoksee nyt ja miten pyydetyt
           tarkistukset päättyivät. Vierekkäin ne luetaan yhtenä kysymyksenä. */}
@@ -1004,7 +1068,9 @@ export const Halytyskeskus = ({
       </Osio>
 
       </div>
+      </>)}
 
+      {nayta('kohteet') && (<>
       {/* --- Kohdetaulu ---------------------------------------------------------- */}
       <Osio otsikko="Kohteet" ikoni={Building2} maara={kohteet.length}>
         {kohteet.length === 0 ? (
@@ -1071,7 +1137,9 @@ export const Halytyskeskus = ({
           </div>
         )}
       </Osio>
+      </>)}
 
+      {nayta('vartijat') && (<>
       {/* --- Vuorossa nyt --------------------------------------------------------
 
           ERI LISTA KUIN "Kentällä juuri nyt", ja ero on tämän osion koko olemassaolon syy.
@@ -1187,7 +1255,77 @@ export const Halytyskeskus = ({
       </Osio>
 
       </div>
+      </>)}
 
+      {nayta('vartijat') && (<>
+      {/* --- Vartijoiden sijainnit (erä 23) --------------------------------------
+
+          KOLMAS LISTA IHMISISTÄ, ja ero kahteen edelliseen on se mihin kysymykseen se
+          vastaa. "Kentällä juuri nyt" kertoo kuka on kirjannut jotain, "Vuorossa nyt"
+          kuka on töissä — tämä kertoo MISSÄ. Päivystäjä tarvitsee kaikki kolme, koska
+          hiljainen vartija on vuorolistalla, kirjaava vartija toimintalistalla ja
+          lähin vartija vain tällä.
+
+          IKÄ ON YHTÄ TÄRKEÄ KUIN SIJAINTI. Selain ei paikanna taustalla lukitulla
+          näytöllä, joten tämä on VIIMEKSI TIEDETTY sijainti eikä nykyinen. Ilman ikää
+          lista väittäisi tietävänsä missä ihminen on nyt. */}
+      <Osio otsikko="Vartijoiden sijainnit" ikoni={MapPin} maara={oikeudet.sijainnit ? sijainnit.length : null}>
+        {!oikeudet.sijainnit ? (
+          <EiOikeutta mita="vartijoiden sijainteihin" />
+        ) : !sijaintiseuranta ? (
+          // Tyhjä lista ja pois kytketty seuranta ovat eri asioita, ja sekoitettuina
+          // valvomon ruutu väittäisi ettei kukaan ole missään.
+          <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3 leading-relaxed">
+            Sijaintiseuranta ei ole käytössä, joten sijainteja ei kerätä lainkaan. Tämä ei
+            tarkoita ettei kukaan olisi kentällä — se tarkoittaa ettei kukaan tiedä missä.
+            Seuranta kytketään palvelimella, ja se on työntekijöihin kohdistuvaa teknistä
+            valvontaa: käyttöönotto vaatii yhteistoimintakäsittelyn ja informoinnin.
+          </p>
+        ) : sijainnit.length === 0 ? (
+          <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
+            Yhdenkään vartijan sijaintia ei tiedetä. Sijainti vanhenee puolessa tunnissa,
+            ja se päivittyy vain kun sovellus on auki.
+          </p>
+        ) : (
+          <ul className="divide-y divide-line-soft border border-line rounded-lg overflow-hidden">
+            {[...sijainnit].sort((a, b) => a.ikaMs - b.ikaMs).map((s) => (
+              <li key={s.username} className="px-4 py-3 bg-surface flex flex-wrap items-center gap-3">
+                <MapPin size={16} className="text-ink-subtle shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-ink-strong">
+                    {s.nimi || s.username}
+                    <span className="text-ink-muted font-normal">
+                      {' · '}{s.eventId ? kohdeNimi(s.eventId) : 'ei kohdetta'}
+                    </span>
+                  </p>
+                  <p className="text-xs text-ink-muted mt-0.5 tabular-nums">
+                    {s.gps
+                      ? `${s.gps.lat.toFixed(5)}, ${s.gps.lon.toFixed(5)}`
+                        + (s.gps.tarkkuus !== null ? ` · ±${Math.round(s.gps.tarkkuus)} m` : '')
+                      : 'vain pohjakartalla'}
+                  </p>
+                </div>
+                {/* Vanhentuva sijainti nostetaan varoitusväreihin. Puoli tuntia on se
+                    raja jolla palvelin unohtaa sijainnin kokonaan (server/sijainti.js),
+                    joten kymmenen minuutin jälkeen tieto on jo matkalla pois. */}
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-bold border shrink-0 ${
+                    s.ikaMs > 10 * 60_000
+                      ? 'bg-warning-soft text-warning-ink border-warning/40'
+                      : 'bg-sunken text-ink-body border-line'
+                  }`}
+                >
+                  <Activity size={12} />
+                  {ikaTekstina(s.ikaMs)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Osio>
+      </>)}
+
+      {nayta('tausta') && (<>
       {/* --- Kierrokset ja kalusto vierekkäin ------------------------------------ */}
       <div className="grid gap-6 lg:grid-cols-2 mb-8">
       <Osio pari otsikko="Kierrokset kesken" ikoni={Route} maara={oikeudet.kierrokset ? kierroksetKesken.length : null}>
@@ -1274,7 +1412,9 @@ export const Halytyskeskus = ({
       </Osio>
 
       </div>
+      </>)}
 
+      {nayta('tausta') && (<>
       {/* --- Tiedotteet ---------------------------------------------------------- */}
       <Osio otsikko="Voimassa olevat tiedotteet" ikoni={Megaphone} maara={oikeudet.tiedotteet ? voimassaTiedotteet.length : null}>
         {!oikeudet.tiedotteet ? (
@@ -1309,7 +1449,9 @@ export const Halytyskeskus = ({
           </ul>
         )}
       </Osio>
+      </>)}
 
+      {nayta('tausta') && (<>
       {/* --- Tapahtumavirta ------------------------------------------------------ */}
       <Osio otsikko="Tapahtumavirta" ikoni={History} maara={null}>
         <p className="text-xs text-ink-subtle mb-3">
@@ -1369,6 +1511,7 @@ export const Halytyskeskus = ({
           )}
         </div>
       </Osio>
+      </>)}
 
     </div>
   );

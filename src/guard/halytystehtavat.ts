@@ -70,6 +70,48 @@ export type TehtavanKohde = {
   onMasterkoodi: boolean;
 };
 
+// Tehtävään liitetty tapahtumailmoitus sellaisena kuin päivystäjä sen näkee.
+//
+// Kentät ovat GuardRaportin kenttiä, mutta tyyppi on oma: karsitussa muodossa
+// kohdehenkilön kentät PUUTTUVAT kokonaan eivätkä ole tyhjiä, ja `liitteita` korvaa
+// liitelistan. Jos tämä olisi `Partial<GuardRaportti>`, karsinta näyttäisi näkymässä
+// samalta kuin täyttämättä jätetty kenttä.
+export type TehtavanRaportti = {
+  id: string;
+  siteId: string;
+  type: string;
+  author: string;
+  date: string;
+  time: string;
+  place?: string;
+  summary?: string;
+  description?: string;
+  denied?: number;
+  removed?: number;
+  detained?: number;
+  force?: boolean;
+  tools?: boolean;
+  firearm?: boolean;
+  firstAid?: boolean;
+  attachments?: { id: string; name?: string }[];
+  // Milloin ilmoitus lähetettiin tehtävälle ja minkä yksikön toimesta. Eri asia kuin
+  // raportin oma `time`: vartija voi kirjata tapahtuman kellonajaksi sen hetken jolloin
+  // se tapahtui, ei sitä jolloin hän kirjoitti siitä.
+  lahetetty?: string;
+  yksikko?: string;
+  // Vain karsitussa muodossa.
+  liitteita?: number;
+  kohdehenkiloKarsittu?: boolean;
+  // Karsitussa muodossa nämä puuttuvat kokonaan.
+  licenseHolder?: string;
+  subjectLastName?: string;
+  subjectFirstNames?: string;
+  subjectPersonalId?: string;
+  subjectAddress?: string;
+  subjectFeatures?: string;
+  subjectObservations?: string;
+};
+
 export type Halytystehtava = {
   id: string;
   laji: HalytysLaji;
@@ -191,6 +233,31 @@ export async function haeKaikkiTehtavat(kaikki = false): Promise<
     const data = await vastaus.json();
     return data?.ok === true
       ? { tehtavat: (data.tehtavat || []) as Halytystehtava[], saaMuokata: data.saaMuokata === true }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// Tehtävään liitetyt raportit. Oma hakunsa eikä listahaun kenttä: raportin runko on
+// pitkä ja se luetaan vain silloin kun poistumispyyntöä ratkaistaan, ja jokainen luku
+// jää auditlokiin (server/index.js). Listahaun mukana tuleva raportti tuottaisi
+// merkinnän joka kerta kun hälytyskeskus päivittyy.
+//
+// `rajattu: true` tarkoittaa että kohdehenkilön LYTP-kentät on karsittu, koska lukijalla
+// ei ole raporttisolmun lukuoikeutta kyseiseen kohteeseen. Se on NÄYTETTÄVÄ: muuten
+// puuttuva nimi näyttää siltä että vartija jätti kentät täyttämättä.
+export async function haeTehtavanRaportit(id: string): Promise<
+  { raportit: TehtavanRaportti[]; rajattu: boolean } | null
+> {
+  try {
+    const vastaus = await fetch(`/api/halytystehtava/${encodeURIComponent(id)}/raportit`, {
+      credentials: 'include',
+    });
+    if (!vastaus.ok) return null;
+    const data = await vastaus.json();
+    return data?.ok === true
+      ? { raportit: (data.raportit || []) as TehtavanRaportti[], rajattu: data.rajattu === true }
       : null;
   } catch {
     return null;
