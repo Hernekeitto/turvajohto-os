@@ -17,7 +17,13 @@
 
 set -euo pipefail
 
-KONFIGURAATIO="${KONFIGURAATIO:-/etc/nginx/sites-available/turvajohto-os}"
+# Konfiguraatiotiedosto ETSITÄÄN, EI ARVATA.
+#
+# Ensimmäinen versio tästä skriptistä oletti polun /etc/nginx/sites-available/turvajohto-os.
+# Sitä tiedostoa ei ollut olemassa, ja skripti kaatui vasta kirjoitettuaan snipetin —
+# eli puolitiehen. Polku tulee nyt etsinnästä, ja jos osumia on muu kuin yksi, skripti
+# kertoo ne eikä valitse puolestasi.
+KONFIGURAATIO="${KONFIGURAATIO:-}"
 SNIPPETTI="${SNIPPETTI:-/etc/nginx/snippets/turvajohto-tiilet.conf}"
 HAKEMISTO="${HAKEMISTO:-/var/lib/turvajohto-tiilet}"
 OSOITE="${OSOITE:-https://turvajohto-os.fi}"
@@ -35,6 +41,31 @@ if ! ls "$HAKEMISTO"/*.pmtiles >/dev/null 2>&1; then
 fi
 echo "Tiilipaketit:"
 ls -lh "$HAKEMISTO"/*.pmtiles
+
+# --- 1b. Konfiguraatiotiedoston etsintä ---------------------------------------------
+#
+# Etsitään se tiedosto jossa on ssl_certificate: se on portin 443 lohko eli varsinainen
+# sivusto. Symlinkit puretaan (sites-enabled osoittaa yleensä sites-availableen), koska
+# muokkaus on tehtävä kohteeseen eikä linkkiin — muuten muutos katoaisi seuraavassa
+# symlinkin uudelleenluonnissa.
+if [ -z "$KONFIGURAATIO" ]; then
+  osumat=$(grep -rl "ssl_certificate " /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx/sites-available 2>/dev/null \
+    | xargs -r -n1 readlink -f | sort -u || true)
+  maara=$(printf '%s\n' "$osumat" | grep -c . || true)
+  if [ "$maara" -eq 0 ]; then
+    echo "KESKEYTETTY: ssl_certificate-riviä ei löytynyt mistään nginx-konfiguraatiosta."
+    echo "Anna polku itse: KONFIGURAATIO=/polku/tiedostoon bash /root/tiilet-nginx.sh"
+    exit 1
+  fi
+  if [ "$maara" -gt 1 ]; then
+    echo "KESKEYTETTY: useampi kuin yksi ehdokas. Valitse itse:"
+    printf '%s\n' "$osumat"
+    echo "KONFIGURAATIO=<valittu> bash /root/tiilet-nginx.sh"
+    exit 1
+  fi
+  KONFIGURAATIO="$osumat"
+fi
+echo "Konfiguraatio: $KONFIGURAATIO"
 
 # --- 2. Snippetti -------------------------------------------------------------------
 
