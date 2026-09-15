@@ -58,6 +58,24 @@ const DIREKTIIVIT = {
   // jo. Direktiivi on jätetty pois tarkoituksella, jotta TÄMÄ MERKKIJONO ON TÄSMÄLLEEN
   // SAMA kuin tuotannon nginxissä — kaksi lähes samanlaista CSP:tä on pahempi kuin yksi,
   // koska eron huomaa vasta kun jokin toimii vain toisessa ympäristössä.
+  //
+  // KARTTA (erä 24) EI VAADI TÄHÄN MITÄÄN, JA SE ON EHDOLLINEN TULOS.
+  //
+  // maplibre-gl luo oman työntekijänsä. Oletusasetuksilla se ei löydä työntekijää
+  // Viten buildista ja käärii sen varareitikseen blob-osoitteeseen — silloin tarvittaisiin
+  // `worker-src blob:`, eli poikkeus joka sallii mielivaltaisen ajonaikaisesti kootun
+  // skriptin suorittamisen työntekijänä. Sitä ei tarvita, koska
+  // `src/guard/kartta/lataa.ts` osoittaa työntekijän Viten niputtamaan tiedostoon samasta
+  // originista (`setWorkerUrl`).
+  //
+  // Mitattu 15.9.2026 sekä kehityksessä että tuotantobuildissa tämän otsakkeen alla:
+  // työntekijä latautui polusta /assets/maplibre-gl-worker-*.js, blob-osoitteita ei
+  // syntynyt, konsolissa ei yhtään CSP-rikkomusta.
+  //
+  // Jos joku joskus poistaa setWorkerUrl-kutsun, päivittää maplibren versioon joka
+  // pakottaa blobin, tai lisää kirjaston joka luo työntekijän itse, OIKEA KORJAUS ON
+  // PALAUTTAA SAMA ORIGIN — ei löysätä tätä riviä. `worker-src blob:` on iso myönnytys
+  // pienestä mukavuudesta.
 
   // Ei plugineja. Liitteet avataan tavallisina linkkeinä (<a href>), joten mitään
   // upotettavaa ei ole — PDF:kin aukeaa selaimen omaan katseluun.
