@@ -36,13 +36,16 @@ import { osuu } from '../shared/haku';
 import { ilmoita, piippaa, pyydaIlmoituslupa, varmistaAani } from '../shared/aani';
 import { ikaTekstina } from '../shared/sijainninLahetys';
 import type { Sijainti } from '../shared/kanava';
+import {
+  TILAT, TILAN_KIRJAIN, TILAN_NIMI, TILAN_VARI, yksikonTila, type Tila,
+} from './yksikontila';
 import { PANEELIT, avaaIkkunassa, type PaneeliId } from './halke/paneelit';
 import {
   kentalla, kohteenTilanne, tapahtumavirta, type Kiireys, type Lahteet,
 } from './tilannekuva';
 import type { Kohde } from './tyypit';
 import { KeskuksenTehtavat } from './KeskuksenTehtavat';
-import type { Halytystehtava } from './halytystehtavat';
+import { LAJIN_NIMI, type Halytystehtava } from './halytystehtavat';
 
 // Osioiden lukuoikeudet. Hälytyskeskus ei myönnä yhtään uutta lukuoikeutta: se näyttää
 // saman datan jonka käyttäjä näkee muutenkin, kootusti. Lipuilla osio osaa sanoa eron
@@ -354,6 +357,33 @@ export const Halytyskeskus = ({
     [kohteet, lahteet]
   );
   const kentallaNyt = useMemo(() => kentalla(lahteet, nyt), [lahteet, nyt]);
+
+  // Sijainnit tiloineen (erä 24). Tila EI tule palvelimelta vaan lasketaan tässä samasta
+  // datasta jonka päivystäjä muutenkin näkee — sama sääntö kuin koko näkymässä: mikään
+  // täällä näkyvä ei ole uutta tietoa, vain koottua.
+  const yksikot = useMemo(
+    () => sijainnit
+      .map((s) => ({ sijainti: s, ...yksikonTila(s.username, { tehtavat, kierrokset: lahteet.kierrokset }) }))
+      // Kiireellisin ensin ja sen sisällä tuorein: päivystäjä lukee listaa ylhäältä alas,
+      // ja ikä ratkaisee kumpaan kahdesta tehtävällä olevasta voi luottaa.
+      .sort((a, b) => {
+        const ero = TILAT.indexOf(a.tila) - TILAT.indexOf(b.tila);
+        return ero !== 0 ? ero : a.sijainti.ikaMs - b.sijainti.ikaMs;
+      }),
+    [sijainnit, tehtavat, lahteet.kierrokset]
+  );
+
+  // Suodatin on JOUKKO eikä yksi valinta: "näytä vapaat ja kierroksella olevat" on se
+  // kysymys jonka päivystäjä esittää etsiessään ketä voi lähettää (ks. onIrrotettavissa).
+  const [tilaSuodatin, setTilaSuodatin] = useState<Set<Tila>>(new Set());
+  const suodatetutYksikot = tilaSuodatin.size === 0
+    ? yksikot
+    : yksikot.filter((y) => tilaSuodatin.has(y.tila));
+  const tilaMaarat = useMemo(() => {
+    const maarat = new Map<Tila, number>();
+    for (const y of yksikot) maarat.set(y.tila, (maarat.get(y.tila) || 0) + 1);
+    return maarat;
+  }, [yksikot]);
   // Tapahtumavirran pituus. Oletus 10 eikä 40: virta on silmäiltävä lista siitä mitä juuri
   // tapahtui, ja neljänkymmenen rivin mittaisena se työntää kaiken muun pois ruudulta.
   // Pidemmät valinnat ovat siellä missä ne tarvitaan — listan alla, kun kymmenen ei
@@ -1287,40 +1317,139 @@ export const Halytyskeskus = ({
             ja se päivittyy vain kun sovellus on auki.
           </p>
         ) : (
-          <ul className="divide-y divide-line-soft border border-line rounded-lg overflow-hidden">
-            {[...sijainnit].sort((a, b) => a.ikaMs - b.ikaMs).map((s) => (
-              <li key={s.username} className="px-4 py-3 bg-surface flex flex-wrap items-center gap-3">
-                <MapPin size={16} className="text-ink-subtle shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-ink-strong">
-                    {s.nimi || s.username}
-                    <span className="text-ink-muted font-normal">
-                      {' · '}{s.eventId ? kohdeNimi(s.eventId) : 'ei kohdetta'}
-                    </span>
-                  </p>
-                  <p className="text-xs text-ink-muted mt-0.5 tabular-nums">
-                    {s.gps
-                      ? `${s.gps.lat.toFixed(5)}, ${s.gps.lon.toFixed(5)}`
-                        + (s.gps.tarkkuus !== null ? ` · ±${Math.round(s.gps.tarkkuus)} m` : '')
-                      : 'vain pohjakartalla'}
-                  </p>
-                </div>
-                {/* Vanhentuva sijainti nostetaan varoitusväreihin. Puoli tuntia on se
-                    raja jolla palvelin unohtaa sijainnin kokonaan (server/sijainti.js),
-                    joten kymmenen minuutin jälkeen tieto on jo matkalla pois. */}
-                <span
-                  className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-bold border shrink-0 ${
-                    s.ikaMs > 10 * 60_000
-                      ? 'bg-warning-soft text-warning-ink border-warning/40'
-                      : 'bg-sunken text-ink-body border-line'
-                  }`}
+          <>
+            {/* Tilajakauma. Seinätaulussa nämä ovat lukuja eivätkä painikkeita: .halke-taulu
+                piilottaa button-elementit kokonaan, ja piilotettu suodatin jättäisi
+                taulun näyttämään vain osan yksiköistä ilman että kukaan näkee miksi. */}
+            <div className="flex flex-wrap gap-2 mb-3">
+              {TILAT.filter((t) => (tilaMaarat.get(t) || 0) > 0).map((t) => {
+                const maara = tilaMaarat.get(t) || 0;
+                const valittu = tilaSuodatin.has(t);
+                const sisalto = (
+                  <>
+                    <TilaMerkki tila={t} />
+                    {TILAN_NIMI[t]}
+                    <span className="tabular-nums opacity-70">{maara}</span>
+                  </>
+                );
+                const luokat = 'inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium border';
+                return taulu ? (
+                  <span key={t} className={`${luokat} bg-sunken text-ink-body border-line`}>{sisalto}</span>
+                ) : (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTilaSuodatin((edellinen) => {
+                      const uusi = new Set(edellinen);
+                      if (uusi.has(t)) uusi.delete(t); else uusi.add(t);
+                      return uusi;
+                    })}
+                    aria-pressed={valittu}
+                    className={`${luokat} transition-colors ${
+                      valittu
+                        ? 'bg-action text-ink-on-dark border-action'
+                        : 'bg-surface text-ink-body border-line hover:bg-sunken'
+                    }`}
+                  >
+                    {sisalto}
+                  </button>
+                );
+              })}
+              {tilaSuodatin.size > 0 && !taulu && (
+                <button
+                  type="button"
+                  onClick={() => setTilaSuodatin(new Set())}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-ink-muted hover:text-ink-strong"
                 >
-                  <Activity size={12} />
-                  {ikaTekstina(s.ikaMs)}
-                </span>
-              </li>
-            ))}
-          </ul>
+                  <X size={12} /> Poista rajaus
+                </button>
+              )}
+            </div>
+
+            {/* PUUTTUVA OIKEUS EI SAA NÄYTTÄÄ VAPAALTA. Kierros on yksi neljästä tilasta,
+                ja ilman lukuoikeutta kierroslista tulee tänne tyhjänä — jolloin
+                kierroksella oleva vartija näkyisi vihreänä ja hänelle lähetettäisiin
+                keikka. Osio ei voi korjata sitä, mutta se voi sanoa sen. */}
+            {!oikeudet.kierrokset && (
+              <p className="text-xs text-warning-ink bg-warning-soft border border-warning/40 rounded-lg px-3 py-2 mb-3 leading-relaxed">
+                Sinulla ei ole lukuoikeutta kierroksiin, joten kierroksella oleva yksikkö
+                näkyy tässä vapaana.
+              </p>
+            )}
+
+            <ul className="divide-y divide-line-soft border border-line rounded-lg overflow-hidden">
+              {suodatetutYksikot.map(({ sijainti: s, tila, tehtavaId, kierrosId }) => (
+                <li key={s.username} className="px-4 py-3 bg-surface flex flex-wrap items-center gap-3">
+                  <TilaMerkki tila={tila} iso />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink-strong">
+                      {s.nimi || s.username}
+                      <span className="text-ink-muted font-normal">
+                        {' · '}{s.eventId ? kohdeNimi(s.eventId) : 'ei kohdetta'}
+                      </span>
+                    </p>
+                    <p className="text-xs text-ink-muted mt-0.5">
+                      {/* MIHIN yksikkö on kiinni, ei vain että se on. Irrotuspäätös on
+                          päivystäjän, ja "kierroksella" yksin ei kerro mitä hän
+                          keskeyttäisi — yökierros ja kolmen minuutin ovenavaus ovat eri
+                          hintaisia keskeytyksiä. */}
+                      {TILAN_NIMI[tila]}
+                      {(() => {
+                        // Löytymätön tehtävä tai kierros EI saa tuottaa arvausta: tyhjä
+                        // selite on oikein, keksitty laji olisi väärää tietoa
+                        // irrotuspäätöksen pohjaksi.
+                        const t = tehtavaId ? tehtavat.find((x) => x.id === tehtavaId) : null;
+                        if (t) return <span>{`: ${LAJIN_NIMI[t.laji]} · ${t.siteNimi}`}</span>;
+                        const k = kierrosId ? lahteet.kierrokset.find((x) => x.id === kierrosId) : null;
+                        if (k) return <span>{`: ${k.templateNimi}`}</span>;
+                        return null;
+                      })()}
+                      <span className="tabular-nums">
+                        {' · '}
+                        {s.gps
+                          ? `${s.gps.lat.toFixed(5)}, ${s.gps.lon.toFixed(5)}`
+                            + (s.gps.tarkkuus !== null ? ` · ±${Math.round(s.gps.tarkkuus)} m` : '')
+                          : 'vain pohjakartalla'}
+                      </span>
+                      {/* Nopeus näytetään vain liikkeessä. Nolla metriä sekunnissa on
+                          rivillä pelkkää kohinaa, ja "0 km/h" seisovan yksikön kohdalla
+                          näyttäisi mittaukselta vaikka laite ei anna nopeutta lainkaan
+                          silloin kun se ei liiku. */}
+                      {typeof s.gps?.nopeus === 'number' && s.gps.nopeus > 1 && (
+                        <span className="tabular-nums">
+                          {' · '}{Math.round(s.gps.nopeus * 3.6)} km/h
+                        </span>
+                      )}
+                      {/* Selain paikantaa vain näkyvissä ollessaan. Tämä on se selitys
+                          jonka päivystäjä tarvitsee kun ikä kasvaa: laitteella vanha
+                          sijainti on vika, selaimella se on normaalia. */}
+                      {s.lahde === 'selain' && s.ikaMs > 10 * 60_000 && (
+                        <span>{' · '}selain taustalla</span>
+                      )}
+                    </p>
+                  </div>
+                  {/* Vanhentuva sijainti nostetaan varoitusväreihin. Puoli tuntia on se
+                      raja jolla palvelin unohtaa sijainnin kokonaan (server/sijainti.js),
+                      joten kymmenen minuutin jälkeen tieto on jo matkalla pois. */}
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-bold border shrink-0 ${
+                      s.ikaMs > 10 * 60_000
+                        ? 'bg-warning-soft text-warning-ink border-warning/40'
+                        : 'bg-sunken text-ink-body border-line'
+                    }`}
+                  >
+                    <Activity size={12} />
+                    {ikaTekstina(s.ikaMs)}
+                  </span>
+                </li>
+              ))}
+              {suodatetutYksikot.length === 0 && (
+                <li className="px-4 py-3 bg-surface text-sm text-ink-muted">
+                  Yksikään yksikkö ei ole valitussa tilassa.
+                </li>
+              )}
+            </ul>
+          </>
         )}
       </Osio>
       </>)}
@@ -1566,6 +1695,28 @@ const Osio = ({
 
 // Puuttuva oikeus sanotaan ääneen. Tyhjä osio antaisi ymmärtää ettei kohteissa ole mitään
 // menossa — se on väärä tieto valvomon ruudulla.
+// Yksikön tilamerkki: värillinen ympyrä jonka sisällä on tilan kirjain.
+//
+// KIRJAIN EI OLE KORISTE. Vihreä, oranssi ja punainen ovat juuri se yhdistelmä jonka
+// yleisin värinäön poikkeama sekoittaa, ja valvomossa virhettä ei huomaa kukaan ennen kuin
+// väärä yksikkö on lähetetty väärään paikkaan. Sama merkki toistuu suodatinpainikkeessa ja
+// rivillä, jotta niiden yhteys on nähtävissä eikä pääteltävissä.
+//
+// title-attribuutti antaa tilan nimen myös silloin kun merkki on yksin (suodattimessa
+// nimi on vieressä, rivillä se on alarivillä).
+const TilaMerkki = ({ tila, iso = false }: { tila: Tila; iso?: boolean }) => (
+  <span
+    title={TILAN_NIMI[tila]}
+    aria-label={TILAN_NIMI[tila]}
+    className={`inline-flex items-center justify-center rounded-full font-bold text-white shrink-0 ${
+      iso ? 'w-6 h-6 text-[11px]' : 'w-4 h-4 text-[9px]'
+    }`}
+    style={{ backgroundColor: TILAN_VARI[tila] }}
+  >
+    {TILAN_KIRJAIN[tila]}
+  </span>
+);
+
 const EiOikeutta = ({ mita }: { mita: string }) => (
   <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
     Käyttäjätasollasi ei ole lukuoikeutta {mita}. Tämä osio ei siis kerro tilanteesta

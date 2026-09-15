@@ -47,6 +47,10 @@ type Props = {
   // tilan; muuttaminen tapahtuu kohteen tiedoissa hälytyskeskuksen toimesta.
   mandown: boolean;
   mandownMin: number;
+  // Sijaintiseuranta (erä 24). TILA eikä kytkin, samasta syystä kuin man-down: se on
+  // työnantajan asetus palvelimella. Vartijan on silti tiedettävä onko se päällä NYT,
+  // koska jatkuva sijainnin seuranta on hänen työhönsä kohdistuvaa teknistä valvontaa.
+  sijaintiPaalla: boolean;
   // Hälytysääni (erä 23). `valittu` on käyttäjän asetus, `armed` se onko selain
   // oikeasti antanut luvan. Ne ovat ERI ASIA ja molemmat on näytettävä: valittu mutta
   // armaamaton ääni on juuri se tila jossa vartija luulee saavansa hälytyksen mutta
@@ -82,7 +86,7 @@ const kellonaika = (iso: string) => {
 
 export const MobiiliKehys = ({
   otsikko, vuoro, ilmoitukset, onIlmoitus, linkit, onLinkki,
-  mandown, mandownMin, liikelupa, natiivi,
+  mandown, mandownMin, liikelupa, natiivi, sijaintiPaalla,
   aaniValittu, aaniArmed, onAani,
   onKamera, onTilatieto, onPaataVuoro, onTyopoyta, onLogout,
   pikavalinnat = [], onPikavalinta, onTakaisin = null, children,
@@ -329,6 +333,37 @@ export const MobiiliKehys = ({
                   Asetuksen tekee hälytyskeskus kohteen tiedoissa. Isku ja sitä seuraava
                   liikkumattomuus kysyvät aina, kun valvonta on käytössä.
                 </p>
+              </div>
+
+              {/* Sijainti: TILA eikä kytkin, kuten man-down.
+
+                  TÄMÄ RIVI ON OLEMASSA VARTIJAA VARTEN EIKÄ TOIMINNON VUOKSI. Jatkuva
+                  sijainnin seuranta on työntekijään kohdistuvaa teknistä valvontaa, ja
+                  sen läpinäkyvyys ei ole kohteliaisuus vaan edellytys: valvonta jonka
+                  kohde ei tiedä olevansa valvottuna on eri asia kuin valvonta josta on
+                  kerrottu. Tässä se kerrotaan siellä missä vartija on, joka vuoro.
+
+                  Älä muuta tätä pelkäksi ikoniksi äläkä siirrä asetussivulle. */}
+              <div className="mb-6 border-t border-white/10 pt-5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-base font-medium">Sijainti</span>
+                  <span className={`text-base font-bold ${sijaintiPaalla ? 'text-success' : 'text-ink-on-dark-muted'}`}>
+                    {sijaintiPaalla ? 'näkyy hälytyskeskukselle' : 'ei seurannassa'}
+                  </span>
+                </div>
+                {sijaintiPaalla ? (
+                  <p className="text-sm text-ink-on-dark-muted mt-2 leading-relaxed">
+                    Hälytyskeskus näkee missä olit viimeksi ja kuinka kauan siitä on.
+                    {natiivi
+                      ? ' Puhelinsovellus päivittää sijaintia koko vuoron ajan.'
+                      : ' Selain päivittää sijaintia vain kun sovellus on auki.'}
+                    {' '}Seuranta päättyy vuoron päättyessä ja uloskirjautuessa.
+                  </p>
+                ) : (
+                  <p className="text-sm text-ink-on-dark-muted mt-2 leading-relaxed">
+                    Sijaintiasi ei kerätä eikä hälytyskeskus näe missä olet.
+                  </p>
+                )}
               </div>
 
               <nav className="border-t border-white/10 pt-3">

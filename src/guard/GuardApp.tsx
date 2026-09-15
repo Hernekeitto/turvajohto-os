@@ -2448,6 +2448,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         onLinkki={avaaMobiiliLinkki}
         mandown={mandown}
         mandownMin={mandownMin}
+        // Sama ehto kuin useSijainninLahetys-kutsussa, eikä pelkkä session-lippu: ilman
+        // aktiivista kohdetta selain ei lähetä mitään, ja "näkyy hälytyskeskukselle"
+        // olisi silloin väärä lupaus kumpaankin suuntaan.
+        sijaintiPaalla={session?.sijaintiseuranta === true && !!aktiivinenKohde}
         aaniValittu={aaniValittu}
         aaniArmed={aaniArmed}
         onAani={vaihdaAani}
