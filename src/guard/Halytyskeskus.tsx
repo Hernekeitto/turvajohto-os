@@ -794,7 +794,8 @@ export const Halytyskeskus = ({
             </p>
           )}
           <ul className="space-y-2">
-            {PANEELIT.map((p) => (
+            {/* Kesken olevat eivät näy valikossa, ks. paneelit.ts. Osoite toimii yhä. */}
+            {PANEELIT.filter((p) => !p.kesken).map((p) => (
               <li key={p.id} className="flex flex-wrap items-center gap-2">
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium text-ink">{p.label}</span>

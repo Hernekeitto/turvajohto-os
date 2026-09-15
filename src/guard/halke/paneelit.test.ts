@@ -62,3 +62,24 @@ test('kärkipaneelit ovat olemassa olevia paneeleita', () => {
     assert.ok(PANEELIT.some((p) => p.id === id), `tuntematon kärkipaneeli: ${id}`);
   }
 });
+
+test('kesken oleva paneeli ei näy valikossa mutta osoite toimii', () => {
+  // Julkaisuventtiili: keskeneräinen paneeli voi mennä tuotantoon koodina, koska se ei
+  // häiritse ketään jos siihen ei ole tietä. Valikon rivi on lupaus, ja lupaus jonka
+  // takaa aukeaa tyhjä ruutu on huonompi kuin puuttuva rivi.
+  const kesken = PANEELIT.filter((p) => p.kesken);
+  assert.ok(kesken.length > 0, 'testi olettaa että ainakin yksi paneeli on kesken');
+  for (const p of kesken) {
+    // Osoite toimii yhä, jotta selvitystyötä voi jatkaa tuotantoa vasten.
+    assert.equal(lueOsoite(p.polku, '').paneeli, p.id, `osoite ${p.polku}`);
+  }
+});
+
+test('valmiit paneelit eivät ole kesken', () => {
+  // Suoja sille että lippu jää vahingossa päälle: jos joku lisää kesken-lipun
+  // kärkipaneeliin, se katoaisi valikosta hiljaa.
+  for (const id of KARKIPANEELIT) {
+    const p = PANEELIT.find((x) => x.id === id);
+    assert.equal(p?.kesken, undefined, `kärkipaneeli ${id} ei saa olla kesken`);
+  }
+});
