@@ -41,6 +41,24 @@ MAXZOOM="${MAXZOOM:-15}"
 HAKEMISTO="${HAKEMISTO:-/var/lib/turvajohto-tiilet}"
 CLI_VERSIO="${CLI_VERSIO:-1.31.2}"
 
+# Rinnakkaisten latauspyyntöjen määrä.
+#
+# MITATTU SYY: ensimmäinen ajo 15.9.2026 kaatui 99 %:ssa noin kymmenen minuutin ja
+# 2,7 gigatavun jälkeen virheeseen "stream error ... INTERNAL_ERROR; received from peer".
+# Se ei ole levy- eikä levytilaongelma vaan vastapään katkaisema HTTP/2-virta. Mitä
+# useampi virta on auki yhtä aikaa ja mitä pidempään, sitä todennäköisemmin yksi niistä
+# katkeaa — ja koska poiminta on kaikki-tai-ei-mitään, yksi katkennut virta hukkaa koko
+# ajon.
+THREADS="${THREADS:-4}"
+
+# Montako kertaa poiminta yritetään.
+#
+# Poiminta ei jatku keskeytyskohdasta, joten yritys on aina koko 2,7 GB alusta. Se on
+# silti oikea ratkaisu: ajo on valvomaton ja kestää kymmenen minuuttia, joten kolme
+# lisäyritystä maksaa pahimmillaan puoli tuntia palvelimen taustalla eikä mitään
+# ihmisen aikaa. Vaihtoehto on että joku huomaa aamulla ettei mitään tapahtunut.
+YRITYKSET="${YRITYKSET:-4}"
+
 # Vaadittu vapaa tila. Suomen poiminnan kokoa ei tiedetä etukäteen — se MITATAAN
 # tällä ajolla — joten varataan moninkertainen marginaali arvioon nähden. Jos tila ei
 # riitä, työ keskeytyy tähän eikä kesken lataukseen: täyteen ajettu juurilevy kaataa
@@ -92,13 +110,40 @@ if [ -f "$valmis" ]; then
   exit 0
 fi
 
-rm -f "$kesken"
-echo "Poiminta alkaa $(date -Is) — tämä kestää kymmeniä minuutteja."
-pmtiles extract \
-  "https://build.protomaps.com/${PLANEETTA_PVM}.pmtiles" \
-  "$kesken" \
-  --bbox="$BBOX" \
-  --maxzoom="$MAXZOOM"
+onnistui=0
+for yritys in $(seq 1 "$YRITYKSET"); do
+  # Keskeneräinen tiedosto pois ENNEN jokaista yritystä: pmtiles ei jatka
+  # keskeytyskohdasta, ja edellisen yrityksen tynkä vain veisi levytilaa.
+  rm -f "$kesken"
+  echo "--- Yritys $yritys/$YRITYKSET alkoi $(date -Is) (threads=$THREADS) ---"
+  if pmtiles extract \
+      "https://build.protomaps.com/${PLANEETTA_PVM}.pmtiles" \
+      "$kesken" \
+      --bbox="$BBOX" \
+      --maxzoom="$MAXZOOM" \
+      --download-threads="$THREADS"; then
+    onnistui=1
+    break
+  fi
+  echo "Yritys $yritys epäonnistui $(date -Is)."
+  # Pieni tauko ennen seuraavaa: jos vastapää rajoittaa tai on hetkellisesti huonossa
+  # kunnossa, välitön uusi yritys osuu samaan tilanteeseen.
+  #
+  # `if` eikä `[ … ] && sleep`: set -e on päällä, ja AND-lista jonka ehto on epätosi
+  # palauttaa ykkösen. Viimeisellä kierroksella se lopettaisi skriptin kesken silmukan,
+  # jolloin alla oleva virheilmoitus jäisi tulostamatta ja loki päättyisi kuin mitään
+  # ei olisi tapahtunut.
+  if [ "$yritys" -lt "$YRITYKSET" ]; then
+    sleep 30
+  fi
+done
+
+if [ "$onnistui" -ne 1 ]; then
+  rm -f "$kesken"
+  echo "KESKEYTETTY: poiminta ei onnistunut $YRITYKSET yrityksellä."
+  echo "Kokeile pienempää rinnakkaisuutta: THREADS=2 bash /root/tiilet.sh"
+  exit 1
+fi
 
 mv "$kesken" "$valmis"
 chmod 0644 "$valmis"
