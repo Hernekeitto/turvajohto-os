@@ -20,7 +20,7 @@
 // palautuu index.html:ään ilman palvelinmuutosta. Polut pysyvät myös manifestin
 // scopessa (/guard), joten asennettu sovellus ei putoa selaimeen.
 
-export type PaneeliId = 'keikat' | 'halytykset' | 'vartijat' | 'kohteet' | 'tausta';
+export type PaneeliId = 'keikat' | 'halytykset' | 'vartijat' | 'kartta' | 'kohteet' | 'tausta';
 
 export type Paneeli = {
   id: PaneeliId;
@@ -55,6 +55,16 @@ export const PANEELIT: Paneeli[] = [
     polku: '/guard/halke/vartijat',
     label: 'Vartijat',
     kuvaus: 'Kuka on vuorossa, kuka on kirjannut jotain ja missä kukin viimeksi tiedettiin.',
+    taulukelpoinen: true,
+  },
+  {
+    id: 'kartta',
+    polku: '/guard/halke/kartta',
+    label: 'Kartta',
+    kuvaus: 'Yksiköt ja kohteet kartalla. Sama tilaväri kuin vartijalistassa.',
+    // Seinätaulukelpoinen, ja tämä on se paneeli jota varten seinätaulu ensisijaisesti
+    // on: kartta kertoo tilanteen yhdellä silmäyksellä kolmen metrin päästä, mihin
+    // yksikään lista ei pysty.
     taulukelpoinen: true,
   },
   {

@@ -326,6 +326,40 @@ html {
   display: none !important;
 }
 
+/* Kartan hätämerkki (erä 24).
+
+   HÄTÄ EROTETAAN MUODOLLA JA LIIKKEELLÄ, EI VÄRILLÄ. Punainen on jo yhden yksikkötilan
+   väri (tehtävällä), ja jos vartijan oma hätähälytys olisi myös punainen, se katoaisi
+   punaisten pisteiden joukkoon juuri silloin kun sen pitää erottua ensimmäisenä.
+   Laajeneva rengas erottuu myös silmäkulmasta ja kaukaa seinätaululta.
+
+   Renkaan väri on kiinteä hälytyspunainen eikä token, koska se ei saa vaihtua teeman
+   mukana: tämä on se yksi merkki jonka on näytettävä samalta kaikissa näkymissä. */
+.kartta-hata::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  border: 3px solid #e80140;
+  animation: kartta-hata-pulssi 1.4s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes kartta-hata-pulssi {
+  0%   { transform: scale(0.85); opacity: 1; }
+  100% { transform: scale(1.8);  opacity: 0; }
+}
+
+/* Liikkeen vähentämistä pyytävälle näytetään sama tieto ilman animaatiota. Rengas jää
+   paikalleen täydellä peitolla — hätämerkkiä EI saa piilottaa, vain sen liike. */
+@media (prefers-reduced-motion: reduce) {
+  .kartta-hata::before {
+    animation: none;
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
 /* Otsikot ja luvut isommiksi samassa suhteessa. Tailwindin omat kokoluokat ovat
    rem-pohjaisia, joten juuren kasvatus ei riitä — ne on nostettava erikseen. */
 .halke-taulu .text-xs { font-size: 0.95rem; }

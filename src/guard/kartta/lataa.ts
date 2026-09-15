@@ -14,45 +14,81 @@
 
 import type { Map as MapLibreMap, MapOptions } from 'maplibre-gl';
 
-// TYÖNTEKIJÄTIEDOSTON OSOITE ON ANNETTAVA ITSE, JA ILMAN TÄTÄ KARTTA EI TOIMI
-// TUOTANNOSSA LAINKAAN — mutta toimii kehityksessä, mikä tekee viasta juuri sen lajin
-// jonka tämä projekti haluaa löytää etukäteen.
+// TYÖNTEKIJÄN OSOITE ON ANNETTAVA ITSE MOLEMMISSA YMPÄRISTÖISSÄ, JA ERI MUODOSSA.
 //
 // maplibre päättelee työntekijän osoitteen ajonaikana omasta osoitteestaan:
 //
 //     new URL('./maplibre-gl-worker.mjs', import.meta.url).href
 //
-// Kehityksessä se osuu oikeaan tiedostoon, koska Vite tarjoilee paketin sellaisenaan.
-// Buildissa ei: maplibren oma koodi on minifioitu muotoon jota Viten staattinen analyysi
-// ei tunnista työntekijäksi, joten tiedostoa EI kopioida dist-hakemistoon. Osoite
-// osoittaisi tuotannossa polkuun /assets/maplibre-gl-worker.mjs, jota ei ole olemassa.
-// (Todennettu buildatusta nipusta 15.9.2026.)
+// Se ei osu kummassakaan ympäristössä. Kehityksessä moduuli tarjoillaan Viten
+// optimoidusta `deps`-hakemistosta, jonka vierellä työntekijätiedostoa ei ole.
+// Tuotantobuildissa maplibren minifioitua koodia Viten staattinen analyysi ei tunnista
+// työntekijäksi, joten tiedostoa ei kopioida dist-hakemistoon lainkaan.
 //
-// `?url` pyytää Viteä kopioimaan tiedoston sellaisenaan ja antamaan sen osoitteen. Näin
-// työntekijä on SAMASTA ORIGINISTA, jolloin `new Worker(url, {type:'module'})` onnistuu
-// eikä maplibre joudu varareitilleen, joka käärii työntekijän blob-osoitteeseen.
-// Se varareitti olisi vaatinut CSP:hen `worker-src blob:` -poikkeuksen — nyt ei vaadi
-// mitään, ja se on parempi lopputulos kuin löysempi CSP.
-import tyontekijanOsoite from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+// MOLEMMISSA TAPAUKSISSA SEURAUS ON SAMA JA TÄYSIN HILJAINEN: maplibre putoaa
+// varareitilleen, joka käärii työntekijän blob-osoitteeseen, CSP estää sen, työntekijää
+// ei synny — ja koska maplibre odottaa työntekijää eikä katso kelloa, TYYLI EI LATAUDU
+// KOSKAAN. Näkymään jää ikuinen "Ladataan karttaa…". Konsolissa näkyy yksi
+// CSP-ilmoitus, ei yhtään maplibren virhettä, eikä `error`-tapahtuma laukea.
+//
+// Kaksi eri muotoa, koska ne ratkaisevat kaksi eri puutetta:
+//
+//   kehitys    `?url` antaa osoitteen paketin omaan tiedostoon. Se tuo mukanaan
+//              `maplibre-gl-shared.mjs`:n vierestään, ja Vite tarjoilee sen
+//              node_modulesista — joten tuonti toimii.
+//   tuotanto   `?worker&url` niputtaa työntekijän ja sen riippuvuudet YHDEKSI
+//              tiedostoksi. Pelkkä `?url` kopioisi vain työntekijän, ja sen vieressä
+//              oleva `maplibre-gl-shared.mjs`-tuonti osoittaisi tyhjään.
+//
+// Kumpikaan ei tarvitse CSP-poikkeusta: työntekijä on samasta originista, joten
+// `new Worker(url, {type:'module'})` onnistuu eikä blobia synny.
+//
+// TUOTANNON TUONTI ON DYNAAMINEN JA EHDON SISÄLLÄ. Staattisena se rekisteröisi
+// työntekijän Viten moduulipuuhun myös kehityksessä, ja pelkkä rekisteröinti riitti
+// rikkomaan kartan devissä. `import.meta.env.PROD` on käännösaikainen vakio, joten
+// haara katoaa dev-nipusta kokonaan.
+import tyontekijaDev from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 
-// Protokolla rekisteröidään VAIN KERRAN prosessin elinaikana. maplibre pitää
-// protokollarekisteriä moduulitasolla, ja saman nimen rekisteröinti uudestaan korvaisi
-// edellisen kesken lennon — paneelin avaaminen toista kertaa nollaisi silloin
-// ensimmäisen paneelin tiilihaut.
-let rekisteroity = false;
+// maplibren oma tyylitiedosto. EI VALINNAINEN: merkkien sijoittelu (`position:absolute`
+// ja siirtymän lähtöpiste) tulee luokasta `.maplibregl-marker`, ei elementin omista
+// tyyleistä. Ilman tätä merkit saavat oikean transformin mutta väärän lähtöpisteen ja
+// valuvat kartan ulkopuolelle — kartta näyttää tyhjältä vaikka kaikki data on paikallaan
+// ja DOM:ssa on oikea määrä merkkejä. (Löytyi juuri niin: 8 merkkiä DOM:ssa, 0 ruudulla.)
+//
+// Tuonti on TÄSSÄ tiedostossa, jotta se päätyy samaan laiskaan nippuun kuin kirjasto
+// itse eikä sovelluksen perustyyleihin. CSP sallii sen (`style-src 'self'`), koska Vite
+// niputtaa sen omaksi tiedostokseen.
+import 'maplibre-gl/dist/maplibre-gl.css';
 
-// Ladattu moduuli talteen: toinen avaus ei saa hakea nippua uudestaan.
-let ladattu: typeof import('maplibre-gl') | null = null;
+// KESKEN OLEVA LATAUS TALTEEN, EI VAIN VALMIS TULOS.
+//
+// Tämä oli aluksi `let ladattu: … | null` joka asetettiin vasta awaitien jälkeen, ja se
+// oli kilpailutilanne: karttakomponentti kutsuu tätä KOLMESTA efektistä yhtä aikaa
+// (kartan luonti, yksikkömerkit, kohdemerkit). Kaikki kolme näkivät välimuistin tyhjänä,
+// kaikki kolme latasivat kirjaston, ja kaikki kolme ajoivat rekisteröinnin: setWorkerUrl
+// ja addProtocol useaan kertaan, osa niistä sen jälkeen kun maplibre oli jo alkanut
+// käyttää edellistä arvoa.
+//
+// Oire oli satunnainen ja täysin hiljainen: kartta joko latautui tai jäi ikuisesti
+// "Ladataan"-tilaan pyytämättä yhtään tiiltä, saman koodin ja saman sivun kanssa.
+// Sama sivu toimi ja ei toiminut peräkkäisillä latauksilla.
+//
+// Lupauksen tallentaminen tekee tästä yhden ainoan suorituksen riippumatta siitä kuinka
+// monta kutsujaa on: myöhemmät saavat saman lupauksen ja odottavat sen valmistumista.
+let lataus: Promise<typeof import('maplibre-gl')> | null = null;
 
 /**
  * Lataa maplibre-gl ja rekisteröi PMTiles-protokollan.
  *
  * Palauttaa moduulin, ei karttaa: kartan luonti tarvitsee DOM-elementin, joka on
- * komponentin asia eikä tämän.
+ * komponentin asia eikä tämän. Turvallinen kutsua monta kertaa ja rinnakkain.
  */
-export async function lataaKarttakirjasto() {
-  if (ladattu) return ladattu;
+export function lataaKarttakirjasto() {
+  if (!lataus) lataus = teeLataus();
+  return lataus;
+}
 
+async function teeLataus() {
   // Rinnakkain: kumpikaan ei riipu toisesta, ja sarjassa ladattuina käyttäjä odottaisi
   // turhaan kahden hakukierroksen verran.
   const [maplibre, pmtiles] = await Promise.all([
@@ -60,16 +96,20 @@ export async function lataaKarttakirjasto() {
     import('pmtiles'),
   ]);
 
-  if (!rekisteroity) {
-    // Osoite ENNEN ensimmäistä karttaa: maplibre lukee sen työntekijää luodessaan, ja
-    // luonti tapahtuu heti kun ensimmäinen lähde tarvitsee tiilten jäsentämistä.
-    maplibre.setWorkerUrl(tyontekijanOsoite);
-    const protokolla = new pmtiles.Protocol();
-    maplibre.addProtocol('pmtiles', protokolla.tile);
-    rekisteroity = true;
+  // Osoite ENNEN ensimmäistä karttaa: maplibre lukee sen työntekijää luodessaan.
+  // Perustelu kummallekin muodolle on tiedoston alussa.
+  if (import.meta.env.PROD) {
+    const tyontekija = await import('maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url');
+    maplibre.setWorkerUrl(tyontekija.default);
+  } else {
+    maplibre.setWorkerUrl(tyontekijaDev);
   }
 
-  ladattu = maplibre;
+  // Protokollan rekisteröinti kerran. Erillistä lippua ei tarvita: tämä funktio ajetaan
+  // kerran koko prosessin elinaikana, koska kutsuja saa aina saman lupauksen.
+  const protokolla = new pmtiles.Protocol();
+  maplibre.addProtocol('pmtiles', protokolla.tile);
+
   return maplibre;
 }
 
