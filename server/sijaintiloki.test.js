@@ -17,7 +17,9 @@ import path from 'node:path';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'sijaintiloki-'));
 process.env.DATA_DIR = TMP;
 
-const { kirjaa, lue, siivoa, SAILYTYS_VRK, lokiHakemisto } = await import('./sijaintiloki.js');
+const {
+  kirjaa, lue, siivoa, harvenna, SAILYTYS_VRK, lokiHakemisto,
+} = await import('./sijaintiloki.js');
 
 const PAIVA = 24 * 60 * 60 * 1000;
 const T0 = Date.parse('2026-09-15T12:00:00.000Z');
@@ -174,4 +176,36 @@ test('siivous ei koske muihin tiedostoihin', () => {
   kirjaa(piste(), T0 - (SAILYTYS_VRK + 2) * PAIVA);
   siivoa(T0);
   assert.equal(fs.existsSync(muu), true);
+});
+
+// --- Harvennus ---------------------------------------------------------------------
+
+test('lyhyt jälki säilyy koskemattomana', () => {
+  const pisteet = [1, 2, 3].map((n) => ({ ts: n }));
+  assert.deepEqual(harvenna(pisteet, 10), pisteet);
+});
+
+test('pitkä jälki harvennetaan tarkalleen maksimiin', () => {
+  const pisteet = Array.from({ length: 5000 }, (_, i) => ({ ts: i }));
+  assert.equal(harvenna(pisteet, 100).length, 100);
+});
+
+test('ensimmäinen ja viimeinen piste säilyvät aina', () => {
+  // Ne ovat ne kaksi joiden pitää vastata tehtävän alkua ja loppua. Jos viimeinen
+  // katoaisi, jälki näyttäisi siltä että yksikkö pysähtyi kesken tehtävän.
+  const pisteet = Array.from({ length: 999 }, (_, i) => ({ ts: i }));
+  const h = harvenna(pisteet, 50);
+  assert.equal(h[0].ts, 0);
+  assert.equal(h[h.length - 1].ts, 998);
+});
+
+test('harvennus säilyttää aikajärjestyksen', () => {
+  const pisteet = Array.from({ length: 1000 }, (_, i) => ({ ts: i }));
+  const h = harvenna(pisteet, 37);
+  for (let i = 1; i < h.length; i += 1) assert.ok(h[i].ts > h[i - 1].ts);
+});
+
+test('kelvoton syöte ei kaada', () => {
+  assert.deepEqual(harvenna(null), []);
+  assert.deepEqual(harvenna(undefined), []);
 });

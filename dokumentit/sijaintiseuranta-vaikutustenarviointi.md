@@ -48,35 +48,67 @@ mitään.
 
 ## 3. Säilytys ja poistaminen
 
-**Seurantakerros ei kirjoita levylle lainkaan.** Sijainnit ovat palvelimen muistissa
-(`server/sijainti.js`), avaimena käyttäjätunnus, yksi tietue per henkilö — uusi korvaa
-vanhan. Historiaa ei muodostu.
+Sijaintitietoa on **kolmessa paikassa**, ja niillä on eri elinkaari. Tämä on
+käyttöönoton kannalta se kohta joka on ymmärrettävä kokonaan.
 
-Tietue poistetaan:
+### 3.1 Viimeksi tiedetty sijainti (muisti)
+
+Palvelimen muistissa (`server/sijainti.js`), avaimena käyttäjätunnus, yksi tietue per
+henkilö — uusi korvaa vanhan. Tämä on se mitä hälytyskeskus näkee kartalla ja listassa.
+
+Poistuu:
 
 - **30 minuutin kuluttua** viimeisestä päivityksestä, automaattisesti
 - **uloskirjautuessa**
 - **vuoron päättyessä** (korjattu 15.9.2026; tätä ennen sijainti jäi muistiin
-  vanhenemiseen asti — ks. kohta 8)
-- **palvelimen uudelleenkäynnistyksessä**, koska muistissa oleva tieto katoaa
+  vanhenemiseen asti, vaikka koodi lupasi toisin)
+- **palvelimen uudelleenkäynnistyksessä**
 
-### POIKKEUS: hälytykseen liitetty sijainti säilyy levyllä
+### 3.2 Sijaintihistoria — 45 vuorokautta
 
-Kun vartija laukaisee hälytyksen (hätäpainike, man-down, ajastin, vyöhykepoikkeama),
-**sen hetken sijainti tallentuu `alerts`-kokoelmaan levylle**. Tämä on pysyvää
-henkilötietoa, eikä se katoa 30 minuutissa.
+**Käyttäjän päätös 15.9.2026: historiaa säilytetään.** Jokainen hyväksytty
+sijaintipäivitys kirjataan `server/sijaintiloki.js`:ään päiväkohtaisiin JSONL-tiedostoihin
+(`DATA_DIR/sijaintiloki/YYYY-MM-DD.jsonl`).
 
-Kaksi seurausta jotka on ratkaistava:
+**Käyttötarkoitus on rajattu: hälytysten ja kierrosten jälkikäteinen selvitys ja
+varmentaminen. Ei työsuorituksen seuranta.** Rajaus ei ole tekninen — mikään koodissa ei
+estä katsomasta jälkeä muusta syystä — mutta se on se peruste jolla keruu on arvioitu,
+ja sen laajentaminen on uusi arviointi eikä uusi ominaisuus.
 
-1. **Sijaintia ei salata levylle.** Kenttäsalaus toimii vain merkkijonoille, ja
-   koordinaatti on numeroita (`server/store.js`). Hälytyksen vapaat tekstit salataan,
-   sijainti ei.
-2. **`alerts`-kokoelmalle ei ole määriteltyä säilytysaikaa.** Lakisääteinen kahden vuoden
-   säilytys koskee tapahtumailmoituksia (`src/shared/sailytysaika.ts`), ei hälytyksiä.
-   Nykytilassa hälytyksiin liittyvä sijaintihistoria säilyy **toistaiseksi**.
+Säilytysaika on **45 vuorokautta**. Toteutus poistaa säilytysajan ylittäneet
+päivätiedostot kerran vuorokaudessa ja jokaisessa palvelimen käynnistyksessä, ja poistot
+kirjataan auditlokiin (`sijaintiloki_siivous`). Päiväkohtainen tiedostojako on valittu
+juuri tämän takia: poisto on tiedoston poisto, ja `ls` kertoo yhdellä silmäyksellä onko
+säilytysaikaa noudatettu.
 
-Väite "sijainnit elävät vain muistissa" pitää paikkansa seurantakerroksesta muttei
-hälytyksistä. Arvioinnissa ja informoinnissa on puhuttava molemmista.
+Lokiin kirjataan aika, käyttäjätunnus, kohde, koordinaatti, tarkkuus, nopeus, suunta ja
+lähde. **Nimimerkkiä ei kirjata** — pitkäikäiseen lokiin ei toisteta henkilötietoa jota
+saa muualta.
+
+### 3.3 Hälytystehtävän jälki — LYTP:n tapahtumailmoitusaika
+
+**Käyttäjän päätös 15.9.2026.** Kun hälytyskeskus hyväksyy poistumisen, kunkin yksikön
+sijaintijälki **siitä hetkestä kun tehtävä otettiin vastaan siihen kun lupa poistua
+annettiin** kopioidaan tehtävän tietueeseen (`guardDispatch`). Siihen sovelletaan
+LYTP:n tapahtumailmoitusaikaa: kaksi vuotta laatimisvuoden päättymisestä, hävitys
+viipymättä ja viimeistään kuukauden kuluessa.
+
+Kopio eikä viittaus: viittaus lokiin näyttäisi jäljeltä mutta katoaisi 45
+vuorokaudessa, jolloin kahden vuoden päästä tehtävässä olisi linkki tyhjään.
+
+Jälkeen tallennetaan **vain aika, koordinaatti ja tarkkuus**. Nopeutta ja suuntaa ei
+tarvita sen todentamiseen missä yksikkö oli. Yli 2000 pisteen jälki harvennetaan, ja
+harvennus merkitään tietueeseen — kahden vuoden päästä lukijan on tiedettävä katsooko
+hän täyttä jälkeä vai otosta siitä.
+
+Kieltäytyneelle yksikölle ei jälkeä: hän ei ollut tehtävällä.
+
+### 3.4 Hälytykseen liitetty piste
+
+Kun vartija laukaisee hälytyksen (hätäpainike, man-down, ajastin, vyöhykepoikkeama), sen
+hetken sijainti tallentuu `alerts`-kokoelmaan. **Sijaintia ei salata levylle**:
+kenttäsalaus toimii vain merkkijonoille ja koordinaatti on numeroita
+(`server/store.js`). Hälytyksen vapaat tekstit salataan, sijainti ei.
 
 ## 4. Kuka näkee
 
@@ -123,25 +155,32 @@ Nämä ovat toteutettuja, eivät suunniteltuja:
 | Riski | Nykyinen suoja | Jäännösriski |
 |---|---|---|
 | Seuranta vapaa-ajalla | Keruu vain vuorossa; poisto uloskirjautuessa ja vuoron päättyessä | Vuoro joka unohtuu päättää — hälytyskeskus voi päättää sen, mutta siihen asti keruu jatkuu |
-| Liikkeiden jälkikäteinen tarkastelu | Ei historiaa seurantakerroksessa | Hälytyksiin liittyvät sijainnit säilyvät toistaiseksi |
-| Tiedon katsominen ilman syytä | Oikeus on erillinen ja rajattu | **Katsomista ei kirjata**, joten väärinkäyttöä ei voi jälkikäteen todeta |
-| Työsuorituksen arviointi sijainnin perusteella | Ei työkaluja siihen järjestelmässä | Ei teknistä estettä sille että päivystäjä tekee sen silmämääräisesti |
+| Liikkeiden jälkikäteinen tarkastelu | Historia 45 vrk; käyttötarkoitus rajattu määrittelyssä | **Jälki on olemassa.** 45 vuorokautta kattaa kokonaisen liikehistorian, ja hälytystehtävien osalta se säilyy kaksi vuotta |
+| Tiedon katsominen ilman syytä | Katselu kirjataan auditlokiin (15 min jaksoina), kohdelista mukana | Jäljen lukemiselle ei ole vielä käyttöliittymää eikä omaa oikeutta — kun se tehdään, se on kirjattava erikseen |
+| Työsuorituksen arviointi sijainnin perusteella | Käyttötarkoitus rajattu määrittelyssä; ei työkaluja siihen | **Ei teknistä estettä.** Rajaus on organisatorinen, ja se on sanottava sellaisena eikä teeskenneltävä tekniseksi |
 | Epätarkka sijainti johtaa väärään päätelmään | Tarkkuus näkyy lukuna ja kehänä kartalla | — |
 
-## 8. Päätettävää ennen käyttöönottoa
+## 8. Päätökset 15.9.2026 ja niiden tila
 
-Nämä eivät ole teknisiä kysymyksiä eikä niitä voi ratkaista koodissa ilman päätöstä.
+| Päätös | Tila |
+|---|---|
+| Hälytystehtävän jälki → LYTP:n tapahtumailmoitusaika | Toteutettu |
+| Muu sijaintidata → 45 vrk | Toteutettu |
+| Sijainnin katsominen auditlokiin | Toteutettu |
+| Historian käyttötarkoitus: hälytysten ja kierrosten jälkikäteinen selvitys ja varmentaminen | Kirjattu määrittelyyn |
+| Vuoron päättäminen hälytyskeskuksesta | Oli jo olemassa |
+| Ilmoitus unohtuneesta vuorosta 15 min päättymisajan jälkeen | **Tekemättä** |
 
-1. **`alerts`-kokoelman säilytysaika.** Kuinka kauan hälytykseen liitetty sijainti
-   säilytetään? Nyt: toistaiseksi. Tämä on arvioinnin selvin puute.
-2. **Kirjataanko sijainnin katsominen auditlokiin?** Suositus: kyllä. Se on ainoa tapa
-   jolla työntekijä voi jälkikäteen tarkistaa kuka on katsonut hänen sijaintiaan, ja se
-   on myös se suoja jonka olemassaolo kannattaa kertoa yt-käsittelyssä.
-3. **Säilytetäänkö sijaintihistoriaa?** Tuotepäätös joka on ollut auki koko erän ajan.
-   Jos vastaus on kyllä, tämä asiakirja on kirjoitettava olennaisilta osin uudelleen.
-4. **Mitä tapahtuu unohtuneelle vuorolle?** Automaattinen päättäminen esimerkiksi
-   vuorotyypin päättymisajan jälkeen rajaisi keruuta ilman että kukaan muistaa tehdä
-   mitään.
+### Yhä avoinna
+
+1. **`alerts`-kokoelman säilytysaika.** Päätös 1 koski hälytys*tehtävän* jälkeä. Erillisen
+   turvahälytyksen (hätäpainike, man-down) mukana tallentuva yksittäinen piste on eri
+   tietue eri kokoelmassa, eikä sille ole yhä määriteltyä säilytysaikaa.
+2. **Ilmoitus unohtuneesta vuorosta** ja se mitä ilmoitus tekee: rivi hälytyskeskuksen
+   listaan, kuittausta vaativa hälytys, vai viesti vartijalle itselleen.
+3. **Kuka saa katsoa jälkeä ja mistä?** Historian lukemiselle ei ole vielä
+   käyttöliittymää eikä omaa oikeussolmuaan. Kun se tehdään, se on oma pääsypäätöksensä
+   — jäljen katsominen on eri asia kuin nykyisen sijainnin näkeminen.
 
 ## 9. Tarkistuslista käyttöönotolle
 

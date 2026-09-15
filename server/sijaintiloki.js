@@ -156,5 +156,33 @@ export function siivoa(nyt = Date.now()) {
   return poistetut;
 }
 
+// Enimmäismäärä pisteitä jotka liitetään yhteen hälytystehtävään.
+//
+// Tehtävän tietue kirjoitetaan levylle kokonaan joka muutoksella (guardDispatch on
+// tavallinen kokoelma), joten jäljen koko on sen tietueen koko. Kahdentoista tunnin
+// tehtävä 15 sekunnin välein olisi lähes 3000 pistettä yksikköä kohden.
+//
+// 2000 pistettä riittää: se on 8 tuntia 15 sekunnin välein tai vuorokausi minuutin
+// välein, eli kattaa tavanomaisen tehtävän harventamatta.
+export const JALJEN_MAX = 2000;
+
+/**
+ * Harventaa jäljen enintään `max` pisteeseen.
+ *
+ * HARVENNUS EIKÄ KATKAISU. Katkaistu jälki näyttää siltä että yksikkö pysähtyi
+ * paikalleen kesken tehtävän — se on väärä tieto, ei puuttuva. Harvennettu jälki
+ * piirtää saman reitin karkeammin, ja ENSIMMÄINEN JA VIIMEINEN PISTE SÄILYVÄT AINA,
+ * koska ne ovat ne kaksi joiden pitää vastata tehtävän alkuun ja loppuun.
+ */
+export function harvenna(pisteet, max = JALJEN_MAX) {
+  if (!Array.isArray(pisteet) || pisteet.length <= max || max < 2) return pisteet || [];
+  const askel = (pisteet.length - 1) / (max - 1);
+  const tulos = [];
+  for (let i = 0; i < max; i += 1) {
+    tulos.push(pisteet[Math.round(i * askel)]);
+  }
+  return tulos;
+}
+
 /** Testejä varten. */
 export const lokiHakemisto = () => LOKI_DIR;

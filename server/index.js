@@ -73,6 +73,10 @@ import {
 } from './sijainti.js';
 import { taydennaKuvakoordinaatti } from './georeferointi.js';
 import {
+  kirjaa as kirjaaHistoriaan, lue as lueHistoria, siivoa as siivoaSijaintiloki,
+  harvenna as harvennaJalki, SAILYTYS_VRK as SIJAINTI_SAILYTYS_VRK,
+} from './sijaintiloki.js';
+import {
   tarkistaIlmoitus,
   lomakkeenTila,
   // saaLahettaa on jo varattu hätäviestien oikeustarkistukselle tässä tiedostossa,
@@ -2813,6 +2817,60 @@ app.get('/api/halytystehtava/:id/raportit', requireAuth, guardPortti, (req, res)
   res.json({ ok: true, raportit, rajattu: !taysiLuku });
 });
 
+/**
+ * Liittää yksiköiden sijaintijäljen suljettuun hälytystehtävään.
+ *
+ * TÄMÄ ON SE KOHTA JOSSA SÄILYTYSAIKA VAIHTUU (käyttäjän päätös 15.9.2026). Sijaintiloki
+ * säilyy 45 vuorokautta ja katoaa sen jälkeen, mutta hälytystehtävän ajalta kertyvä jälki
+ * kuuluu siihen tapahtumaan josta ilmoitus tehdään — ja siihen sovelletaan LYTP:n
+ * tapahtumailmoitusaikaa. Kopioimalla jälki tehtävän tietueeseen se elää tehtävän mukana
+ * eikä ole enää lokin siivouksen varassa.
+ *
+ * Kopio eikä viittaus, ja se on tarkoituksellista: viittaus lokiin näyttäisi jäljeltä
+ * mutta katoaisi 45 vuorokaudessa, jolloin kahden vuoden päästä tehtävässä olisi linkki
+ * tyhjään.
+ *
+ * AIKAVÄLI ON VASTAANOTOSTA POISTUMISEEN. Se on täsmälleen se väli jonka käyttäjä
+ * määritteli: siitä hetkestä kun vartija otti tehtävän vastaan siihen kun hälytyskeskus
+ * antoi luvan poistua. Vartijan liikkeet ennen tehtävää tai sen jälkeen eivät kuulu
+ * tähän tietueeseen — ne ovat lokissa ja katoavat 45 vuorokaudessa kuten muukin.
+ *
+ * Kieltäytyneelle ei jälkeä: hän ei ollut tehtävällä.
+ */
+function liitaJalki(tehtava) {
+  try {
+    const yksikot = (tehtava.yksikot || []).map((y) => {
+      if (!y?.vartija || y.kieltaytyi || !y.vastaanotti) return y;
+      const alku = Date.parse(y.vastaanotti);
+      const loppu = Date.parse(y.poistui || new Date().toISOString());
+      if (!Number.isFinite(alku) || !Number.isFinite(loppu)) return y;
+
+      const pisteet = lueHistoria({ username: y.vartija, alku, loppu });
+      if (pisteet.length === 0) return y;
+
+      // Vain aika ja paikka. Käyttäjätunnus on jo yksikkörivillä, eikä nopeutta tai
+      // suuntaa tarvita sen todentamiseen missä yksikkö oli — tämä on minimointi, ei
+      // unohdus.
+      const jalki = harvennaJalki(pisteet).map((p) => ({
+        ts: p.ts, lat: p.lat, lon: p.lon, tarkkuus: p.tarkkuus ?? null,
+      }));
+      return {
+        ...y,
+        jalki,
+        // Kerrotaan jos jälki on harvennettu: kahden vuoden päästä lukijan on tiedettävä
+        // katsooko hän täyttä jälkeä vai otosta siitä.
+        ...(jalki.length < pisteet.length ? { jalkiHarvennettu: pisteet.length } : {}),
+      };
+    });
+    return { ...tehtava, yksikot };
+  } catch (err) {
+    // Jäljen liittäminen ei saa estää poistumisluvan antamista: vartija seisoo
+    // kohteessa odottamassa, ja lokin lukuvirhe on huono syy pitää häntä siellä.
+    console.error('Sijaintijäljen liittäminen epäonnistui:', err.message);
+    return tehtava;
+  }
+}
+
 // Päivystäjä ratkaisee poistumispyynnön. Hylkäys vaatii kommentin (halytystehtava.js).
 app.post('/api/halytystehtava/:id/hyvaksynta', requireAuth, guardPortti, (req, res) => {
   if (!saaPaivystaa(req)) {
@@ -2820,9 +2878,14 @@ app.post('/api/halytystehtava/:id/hyvaksynta', requireAuth, guardPortti, (req, r
   }
   const hyvaksy = req.body?.hyvaksy === true;
   return muutaTehtava(req, res, {
-    saanto: (tehtava) => ratkaiseHyvaksynta({
-      tehtava, kasittelija: req.username, hyvaksy, kommentti: req.body?.kommentti,
-    }),
+    saanto: (tehtava) => {
+      const tulos = ratkaiseHyvaksynta({
+        tehtava, kasittelija: req.username, hyvaksy, kommentti: req.body?.kommentti,
+      });
+      // Jälki liitetään VAIN hyväksyttäessä. Palautettu poistumispyyntö tarkoittaa että
+      // tehtävä jatkuu, eikä keskeneräisestä tehtävästä ole vielä lopullista jälkeä.
+      return tulos.ok && hyvaksy ? { ...tulos, tehtava: liitaJalki(tulos.tehtava) } : tulos;
+    },
     action: hyvaksy ? 'halytystehtava_hyvaksytty' : 'halytystehtava_palautettu',
   });
 });
@@ -5555,6 +5618,15 @@ function kasitteleKanavaViesti(istunto, viesti) {
   const edellinen = haeSijainti(istunto?.username);
   const tietue = paivitaSijainti(istunto?.username, viesti.eventId, taydennetty);
   if (!tietue) return;
+
+  // Historiaan VASTA hyväksytty päivitys. paivitaSijainti palauttaa nullin jos seuranta
+  // on pois päältä tai syöte oli kelvoton, ja kumpikaan ei kuulu lokiin: pois kytketty
+  // seuranta ei saa kerätä mitään, eikä hylätty syöte ole sijainti.
+  //
+  // Sama tietue kuin muistissa ja kanavalla, jotta jälki vastaa sitä mitä päivystäjä
+  // näki ruudulla. Kaksi eri suodatusta tuottaisi jäljen joka on eri kuin tilannekuva.
+  kirjaaHistoriaan(tietue);
+
   lahetaViesti(
     { tyyppi: 'sijainnit', eventId: tietue.eventId, sijainnit: [{ ...tietue, ikaMs: 0 }] },
     { suodatin: (vastaanottaja) => saaNahdaSijainnit(vastaanottaja, tietue.eventId) }
@@ -5580,6 +5652,36 @@ const palvelin = app.listen(PORT, '127.0.0.1', () => {
   // silloin kun sitä eniten tarvitaan, eli kun puhelin on sammunut.
   setInterval(kasitteleHalytykset, HALYTYSKIERROS_MS).unref();
   kasitteleHalytykset();
+
+  // Sijaintihistorian siivous. Säilytysaika on 45 vrk (sijaintiloki.js), ja se on
+  // TOTEUTETTAVA eikä vain luvattava — säilytysaika jota mikään ei valvo on
+  // dokumentaatiota eikä suojaa.
+  //
+  // Kerran vuorokaudessa JA heti käynnistyksessä. Jälkimmäinen on se joka oikeasti
+  // ratkaisee: palvelin käynnistyy jokaisessa julkaisussa, joten siivous ajetaan
+  // käytännössä useammin kuin kerran päivässä — ja pitkään alhaalla ollut palvelin
+  // siivoaa heti eikä vasta vuorokauden kuluttua.
+  //
+  // Poistot auditlokiin: säilytysajan noudattaminen on voitava osoittaa jälkikäteen,
+  // eikä hiljainen poisto osoita mitään.
+  const siivoaHistoria = () => {
+    try {
+      const poistetut = siivoaSijaintiloki();
+      if (poistetut.length > 0) {
+        logAudit({
+          user: 'jarjestelma',
+          action: 'sijaintiloki_siivous',
+          collection: 'sijaintiloki',
+          tiedostot: poistetut,
+          sailytysVrk: SIJAINTI_SAILYTYS_VRK,
+        });
+      }
+    } catch (err) {
+      console.error('Sijaintilokin siivous epäonnistui:', err.message);
+    }
+  };
+  setInterval(siivoaHistoria, 24 * 60 * 60 * 1000).unref();
+  siivoaHistoria();
 
   if (onkoKonfiguroitu()) {
     setInterval(() => { tarkistaSaldo().catch(() => {}); }, SALDO_TARKISTUSVALI_MS).unref();
