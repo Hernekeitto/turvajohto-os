@@ -133,6 +133,56 @@ export function kaikki({ eventId = null, nyt = Date.now() } = {}) {
 
 export const VANHENEE = VANHENEE_MS;
 
+// --- Katselun kirjaaminen ----------------------------------------------------------
+//
+// Sijainnin katsominen kirjataan auditlokiin (päätös 15.9.2026). Se on ainoa tapa jolla
+// työntekijä voi jälkikäteen tarkistaa kuka on katsonut hänen sijaintiaan — järjestelmä
+// kirjaa jo master-koodin katsomisen ja kohdehenkilötietojen lukemisen, eikä ole
+// perustetta sille miksi henkilöstön sijainti olisi vähemmän arka.
+//
+// MUTTA JOKAISEN HAUN KIRJAAMINEN TEKISI LOKISTA KÄYTTÖKELVOTTOMAN. Käyttöliittymä
+// hakee sijainnit 60 sekunnin välein niin kauan kuin näkymä on auki (GuardApp.tsx),
+// eli noin 480 riviä yhtä kahdeksan tunnin vuoroa ja päivystäjää kohden. Loki, josta ei
+// löydä mitään, ei suojaa ketään — se vain näyttää suojalta.
+//
+// Siksi kirjataan KATSELUJAKSO eikä yksittäinen pyyntö: ensimmäinen haku kirjataan, ja
+// seuraavat saman katsojan haut vaikenevat kunnes ikkuna umpeutuu. Rivi kertoo kuka
+// katsoi, milloin ja keitä — ja se on juuri se tieto jota työntekijä kysyisi.
+//
+// VIIDENTOISTA MINUUTIN IKKUNA on kompromissi: lyhyempi tuottaa kohinaa, pidempi
+// piilottaa sen että sama henkilö palasi katsomaan uudestaan. Päivystäjä jolla näkymä on
+// auki koko vuoron tuottaa 32 riviä kahdeksassa tunnissa — luettava määrä, ja siitä näkee
+// että näkymä on ollut auki jatkuvasti.
+const KATSELU_IKKUNA_MS = 15 * 60 * 1000;
+
+// katsoja -> viimeisimmän kirjatun katselun aikaleima.
+const katselut = new Map();
+
+/**
+ * Pitääkö tämä katselu kirjata, vai onko se saman jakson jatkoa.
+ *
+ * Sivuvaikutuksellinen tarkoituksella: kutsuja kysyy tämän kerran ja kirjaa jos vastaus
+ * on tosi. Kahteen funktioon jaettuna kutsuja voisi unohtaa merkitä jakson alkaneeksi,
+ * ja silloin jokainen pyyntö kirjautuisi uudelleen.
+ */
+export function kirjataankoKatselu(katsoja, nyt = Date.now()) {
+  if (!katsoja) return false;
+  const edellinen = katselut.get(katsoja);
+  // `!== undefined` eikä totuusarvo: aikaleima 0 on kelvollinen arvo mutta epätosi, ja
+  // totuusarvotarkistus ohittaisi ikkunan kokonaan. Tuotannossa Date.now() ei ole
+  // koskaan nolla, joten tämä ei olisi näkynyt siellä — testi löysi sen.
+  if (edellinen !== undefined && nyt - edellinen < KATSELU_IKKUNA_MS) return false;
+  katselut.set(katsoja, nyt);
+  return true;
+}
+
+/** Nollaa katselujaksot. Testejä varten; tuotannossa ne vanhenevat itsestään. */
+export function tyhjennaKatselut() {
+  katselut.clear();
+}
+
+export const KATSELU_IKKUNA = KATSELU_IKKUNA_MS;
+
 // --- Näkyvyys ---------------------------------------------------------------------
 //
 // Kenelle yksittäinen sijaintirivi näytetään. TÄÄLLÄ EIKÄ index.js:ssä, jotta sääntö on

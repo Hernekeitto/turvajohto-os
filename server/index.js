@@ -69,7 +69,7 @@ import { liitaKanava, laheta as lahetaKanavalle, lahetaViesti } from './kanava.j
 import {
   seurantaKaytossa, paivita as paivitaSijainti, kaikki as sijainnit,
   hae as haeSijainti, unohda as unohdaSijainti,
-  saaNahdaSijainteja, saaNahdaSijaintirivin,
+  saaNahdaSijainteja, saaNahdaSijaintirivin, kirjataankoKatselu,
 } from './sijainti.js';
 import { taydennaKuvakoordinaatti } from './georeferointi.js';
 import {
@@ -756,6 +756,23 @@ app.get('/api/sijainnit', requireAuth, (req, res) => {
       ...sija,
       nimi: findUser(sija.username)?.nickname || sija.username,
     }));
+
+  // Katselu auditlokiin (päätös 15.9.2026). Jakso eikä yksittäinen pyyntö — perustelu
+  // ikkunalle on sijainti.js:ssä. `kohteet` on lista niistä joiden sijainti näytettiin,
+  // koska työntekijän kysymys ei ole "kuka avasi näkymän" vaan "kuka katsoi MINUA".
+  //
+  // Tyhjää listaa ei kirjata: näkymän avaaminen silloin kun kukaan ei ole kentällä ei
+  // ole kenenkään sijainnin katsomista.
+  if (lista.length > 0 && kirjataankoKatselu(req.username)) {
+    logAudit({
+      user: req.username,
+      action: 'sijainti_katselu',
+      collection: 'sijainnit',
+      eventId,
+      kohteet: lista.map((s) => s.username),
+    });
+  }
+
   res.json({ ok: true, kaytossa: true, sijainnit: lista });
 });
 
@@ -3759,6 +3776,22 @@ app.get('/api/lahin', requireAuth, (req, res) => {
     .filter((v) => v.etaisyysM !== null)
     .sort((a, b) => a.etaisyysM - b.etaisyysM)
     .slice(0, 10);
+
+  // JOKAINEN HAKU KIRJATAAN, ei jaksoittain kuten listahaussa. Ero on tarkoituksellinen:
+  // tätä ei pollata vaan se tehdään nimenomaisesti, ja kysyjä antaa koordinaatin jota
+  // vasten haetaan. Se on kohdennettu kysely henkilöstön sijainneista — juuri se laji
+  // jota työntekijä haluaisi tarkastella jälkikäteen, ja niitä on vuorossa yksittäisiä.
+  if (vartijat.length > 0) {
+    logAudit({
+      user: req.username,
+      action: 'sijainti_lahin',
+      collection: 'sijainnit',
+      eventId,
+      // Piste jota vasten haettiin: ilman sitä rivistä ei näe miksi haku tehtiin.
+      piste: { lat, lon },
+      kohteet: vartijat.map((v) => v.username),
+    });
+  }
 
   res.json({ ok: true, kaytossa: true, vartijat });
 });

@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {
   seurantaKaytossa, paivita, kaikki, unohda, tyhjenna, lueSijainti, VANHENEE,
   saaNahdaSijainteja, saaNahdaSijaintirivin,
+  kirjataankoKatselu, tyhjennaKatselut, KATSELU_IKKUNA,
 } from './sijainti.js';
 
 const alkuperainenLippu = process.env.SIJAINTISEURANTA;
@@ -186,4 +187,49 @@ test('kohteeton rivi EI näy pelkällä tapahtumapuolen locations-oikeudella', (
 test('rajaamaton eventAccess näkee kaikkien kohteiden rivit', () => {
   const k = kysyja({ eventAccess: [], permissions: solmu('guard_locations') });
   assert.equal(saaNahdaSijaintirivin(k, { eventId: 'mika-tahansa' }), true);
+});
+
+// --- Katselun kirjaaminen ----------------------------------------------------------
+//
+// Nämä testit ovat olemassa siksi, että kirjaamisen VÄÄRÄ mitoitus on yhtä paha kuin
+// kirjaamatta jättäminen: 60 sekunnin välein pollattu näkymä tuottaisi satoja rivejä
+// vuorossa, ja loki josta ei löydä mitään ei suojaa ketään — se vain näyttää suojalta.
+
+test('ensimmäinen katselu kirjataan', () => {
+  tyhjennaKatselut();
+  assert.equal(kirjataankoKatselu('paivystaja', 0), true);
+});
+
+test('saman jakson sisällä ei kirjata uudestaan', () => {
+  tyhjennaKatselut();
+  kirjataankoKatselu('paivystaja', 0);
+  // Pollaus minuutin välein: ilman tätä sääntöä jokainen olisi oma rivinsä.
+  assert.equal(kirjataankoKatselu('paivystaja', 60_000), false);
+  assert.equal(kirjataankoKatselu('paivystaja', KATSELU_IKKUNA - 1), false);
+});
+
+test('ikkunan umpeuduttua kirjataan taas', () => {
+  // Uusi jakso on oma tietonsa: siitä näkee että sama henkilö palasi katsomaan.
+  tyhjennaKatselut();
+  kirjataankoKatselu('paivystaja', 0);
+  assert.equal(kirjataankoKatselu('paivystaja', KATSELU_IKKUNA + 1), true);
+});
+
+test('eri katsojat ovat eri jaksoja', () => {
+  // Yhden päivystäjän katselu ei saa vaientaa toisen kirjausta.
+  tyhjennaKatselut();
+  assert.equal(kirjataankoKatselu('paivystaja1', 0), true);
+  assert.equal(kirjataankoKatselu('paivystaja2', 0), true);
+});
+
+test('tunnukseton katselu ei kirjaudu eikä kaada', () => {
+  tyhjennaKatselut();
+  assert.equal(kirjataankoKatselu('', 0), false);
+  assert.equal(kirjataankoKatselu(null, 0), false);
+});
+
+test('katselujakso ei riipu sijaintien vanhenemisesta', () => {
+  // Kaksi eri ikkunaa (30 min vs 15 min) eivät saa sekoittua: sijainti vanhenee
+  // puolessa tunnissa, katselujakso umpeutuu vartissa.
+  assert.notEqual(KATSELU_IKKUNA, VANHENEE);
 });
