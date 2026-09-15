@@ -2599,11 +2599,25 @@ app.post('/api/halytystehtava', requireAuth, guardPortti, (req, res) => {
 
   const tehtavat = readCollection('guardDispatch') || [];
   writeCollection('guardDispatch', [tulos.tehtava, ...tehtavat]);
+  // Ruudut ensin, puhelimet sitten. kerroTehtavasta päivittää auki olevat näkymät,
+  // herataTehtavasta herättää kohdennettujen vartijoiden puhelimet.
+  kerroTehtavasta(tulos.tehtava);
+
+  // KÄSIN LUOTU TEHTÄVÄ HERÄTTÄÄ SAMOIN KUIN AUTOMAATTINEN (korjattu 15.9.2026).
+  //
+  // Ensimmäinen versio kytki herätyksen vain turvahälytyksestä syntyvään
+  // tarkistustehtävään, ja käsin luotu hälytystehtävä lähti kanavalle pelkkänä
+  // kokoelmamuutoksena — jonka sovellus ohittaa tarkoituksella. Seuraus: päivystäjä
+  // lähetti murtohälytyksen eikä vartijan puhelimessa tapahtunut mitään.
+  //
+  // Se oli aukko eikä valinta. Kohdennetun tehtävän koko tarkoitus on tavoittaa vartija,
+  // eikä kello kolmelta yöllä lähetetty murtohälytys tavoita ketään jos se odottaa että
+  // joku sattuu avaamaan sovelluksen.
+  const heratetty = herataTehtavasta(tulos.tehtava, kohde);
   logAudit({
     user: req.username, action: 'halytystehtava_luotu', collection: 'guardDispatch',
-    recordId: tulos.tehtava.id, eventId: siteId, laji,
+    recordId: tulos.tehtava.id, eventId: siteId, laji, laitteita: heratetty,
   });
-  kerroTehtavasta(tulos.tehtava);
   res.json({ ok: true, tehtava: tulos.tehtava });
 });
 
@@ -3594,24 +3608,27 @@ function eskalointiLoki({ halytys, runko, vastaanottajat, uniikit, tulos }) {
  * todennäköisesti se joka ei vastaa. Täysruutuhälytys hänen omalle laitteelleen olisi
  * parhaimmillaankin hyödytön ja pahimmillaan häiriö kesken hätätilanteen.
  */
-function herataTarkistukseen(tehtava, kohde, halytys) {
+function herataTehtavasta(tehtava, kohde, { halyttaja = null } = {}) {
   const vuorot = readCollection('guardShifts') || [];
   return lahetaViesti(
     {
-      tyyppi: 'tarkistustehtava',
+      tyyppi: 'halytystehtava',
       id: tehtava.id,
-      // Nämä kolme ovat se mitä vartija tarvitsee heti ruudulle: mistä on kyse, missä ja
-      // ketä. Enempää ei lähetetä — tehtävän koko sisältö haetaan sovelluksessa
-      // normaalin oikeustarkistuksen läpi, eikä kanavaviesti saa olla oikotie sen ohi.
+      // Nämä ovat se mitä vartija tarvitsee heti ruudulle: mistä on kyse ja missä.
+      // Enempää ei lähetetä — tehtävän koko sisältö haetaan sovelluksessa normaalin
+      // oikeustarkistuksen läpi, eikä kanavaviesti saa olla oikotie sen ohi.
       laji: tehtava.laji,
       kohde: tehtava.siteNimi || '',
-      vartija: findUser(halytys.vartija)?.nickname || halytys.vartija,
+      // Vain tarkistustehtävällä: kenen takia ollaan menossa. Muissa lajeissa ei ole
+      // hälyttäjää vaan asiakkaan hälytinjärjestelmä tai päivystäjän päätös.
+      ...(halyttaja ? { vartija: findUser(halyttaja)?.nickname || halyttaja } : {}),
     },
     {
       suodatin: (istunto) => {
         if (!istunto?.username) return false;
         if (!(istunto.tuotteet || []).includes('guard')) return false;
-        if (istunto.username === halytys.vartija) return false;
+        // Hädässä oleva ei herätä itseään, ks. luoTarkistustehtava.
+        if (halyttaja && istunto.username === halyttaja) return false;
         return nakeeTehtavan({
           tehtava,
           kohde,
@@ -3687,7 +3704,7 @@ function luoTarkistustehtava(halytys) {
     // Herätys ERIKSEEN kanavailmoituksen jälkeen: edellinen päivittää auki olevat ruudut,
     // tämä herättää puhelimet. Laitemäärä kirjataan, koska "kukaan ei herännyt" on eri
     // tieto kuin "herätys lähetettiin" — ja jälkikäteen kysytään juuri sitä.
-    const heratetty = herataTarkistukseen(tulos.tehtava, kohde, halytys);
+    const heratetty = herataTehtavasta(tulos.tehtava, kohde, { halyttaja: halytys.vartija });
     logAudit({
       user: halytys.vartija, action: 'tarkistustehtava_heratys',
       collection: 'guardDispatch', recordId: tulos.tehtava.id,

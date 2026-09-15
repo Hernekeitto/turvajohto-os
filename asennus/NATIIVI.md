@@ -204,12 +204,25 @@ kokoelma.
 | `tyyppi` | Mistä | Mitä sovellus tekee |
 |---|---|---|
 | `tarkistus` | Päivystäjä painaa "Pyydä tarkistus" | `Kuittaus.pakotettu` → "Oletko kunnossa?" |
-| `tarkistustehtava` | Turvahälytys eskaloituu (erä 24) | `Ilmoitukset.tarkistustehtava` → herätys ja sovelluksen avaus |
+| `halytystehtava` | Kohdennettu tehtävä: päivystäjän luoma **tai** turvahälytyksestä syntyvä tarkistus | `Ilmoitukset.tehtava` → herätys ja sovelluksen avaus |
 
-Nimet muistuttavat toisiaan mutta kysyvät eri asiaa: `tarkistus` kysyy **minulta** olenko
-kunnossa, `tarkistustehtava` kertoo että **joku muu** ei ehkä ole. Ne käyttävät eri
-ilmoituskanavaa, eri tunnusta ja eri värinäkuviota juuri siksi — taskussa värisevästä
-puhelimesta on voitava erottaa kumpi on kyseessä.
+`tarkistus` kysyy **minulta** olenko kunnossa; `halytystehtava` antaa minulle työn. Sama
+sana toistuu mutta kysymys on eri, ja ne käyttävät eri ilmoituskanavaa, eri tunnusta ja
+eri värinäkuviota juuri siksi.
+
+`halytystehtava` jakautuu vielä kahtia `laji`-kentän perusteella:
+
+| `laji` | Kanava | Värinä | Miksi erikseen |
+|---|---|---|---|
+| `tarkistus` | `tarkistustehtava` | pitkä | Kollega on hädässä |
+| `murto`, `vartijakutsu`, `ovenavaus` | `halytystehtava` | lyhyt | Keikka joka on tehtävä |
+
+Molemmat herättävät puhelimen ja ohittavat häiriönestotilan — keikka kello kolme yöllä on
+yhtä lailla työ joka on tehtävä. Ero on siinä että **taskussa värisevästä puhelimesta on
+voitava erottaa onko joku pulassa vai onko tullut keikka**, kaivamatta puhelinta esiin.
+
+Myös ilmoitustunnukset ovat eri, jotta saapuva keikka ei pyyhi kollegan hätäkutsua
+ruudulta eikä päinvastoin: kaksi tehtävää voi olla auki yhtä aikaa.
 
 ## Ominaisuus 5: hätäpainike sovelluksen ulkopuolelta
 
