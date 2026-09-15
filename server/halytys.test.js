@@ -16,6 +16,8 @@ import {
   luoAjastin, luoHalytys, jatka, laukaise, peru, kuittaa,
   eraantyneet, eskaloitavat, merkitseEskaloitu, viestiTeksti,
   puhdistaGps, onAvoin, TYYPIT, AJASTIN_MAX_MIN, AJASTIN_MIN_MIN, VIESTIN_MAX,
+  SIJAINTISAANNOT, kerataankoSijainti, TYYPPI_IDT,
+  siivoaVyohykeSijainnit, GEOFENCE_SAILYTYS_VRK,
 } from './halytys.js';
 
 const T0 = Date.parse('2026-09-03T22:00:00Z');
@@ -318,4 +320,113 @@ test('ajastimen kesto mahtuu ajastimen omiin rajoihin kuittausvalin ylarajalla',
   assert.ok(KUITTAUS_MAX_MIN + KUITTAUS_VASTAUSAIKA_MIN <= AJASTIN_MAX_MIN,
     `kuittausvalin ylaraja ${KUITTAUS_MAX_MIN} + vastausaika ${KUITTAUS_VASTAUSAIKA_MIN} ei mahdu ajastimeen ${AJASTIN_MAX_MIN}`);
   assert.ok(KUITTAUS_MIN_MIN + KUITTAUS_VASTAUSAIKA_MIN >= AJASTIN_MIN_MIN);
+});
+
+// --- Sijainti hälytyslajeittain (käyttäjän päätös 15.9.2026) ------------------------
+
+test('varustepoikkeama ei tallenna sijaintia lainkaan', () => {
+  // MINIMOINTI LÄHTEELLÄ eikä säilytysaika: koordinaatti ei päädy levylle, joten sitä ei
+  // tarvitse myöhemmin poistaa eikä sen säilymistä valvoa. Poistettava tieto on aina
+  // tieto jonka poisto voi unohtua.
+  const tulos = luoHalytys({
+    id: 'h1', tyyppi: 'varuste', vartija: 'matti', eventId: 'kohde-a',
+    kuvaus: 'Radiopuhelin rikki', gps: { lat: 60.17, lon: 24.94, tarkkuus: 10 },
+  });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.halytys.gps, null);
+});
+
+test('hätäpainike, man-down ja vyöhykepoikkeama tallentavat sijainnin', () => {
+  for (const tyyppi of ['panic', 'mandown', 'geofence']) {
+    const tulos = luoHalytys({
+      id: `h-${tyyppi}`, tyyppi, vartija: 'matti', eventId: 'kohde-a',
+      gps: { lat: 60.17, lon: 24.94, tarkkuus: 10 },
+      ...(tyyppi === 'geofence' ? { vyohyke: { id: 'v1', nimi: 'Piha' } } : {}),
+    });
+    assert.equal(tulos.ok, true, tyyppi);
+    assert.equal(tulos.halytys.gps?.lat, 60.17, tyyppi);
+  }
+});
+
+test('sijaintisäännöt kattavat jokaisen hälytyslajin', () => {
+  // Uusi laji ilman sääntöä jäisi oletuksena keräämättä sijaintia — turvallinen oletus,
+  // mutta hiljainen. Tämä testi pakottaa päättämään.
+  for (const tyyppi of TYYPPI_IDT) {
+    assert.ok(SIJAINTISAANNOT[tyyppi], `sijaintisääntö puuttuu lajilta ${tyyppi}`);
+  }
+});
+
+test('sijaintia keräävällä lajilla on säilytysaika ja keräämättömällä ei', () => {
+  for (const [tyyppi, saanto] of Object.entries(SIJAINTISAANNOT)) {
+    if (saanto.kerataan) {
+      assert.ok(saanto.sailytys, `säilytysaika puuttuu lajilta ${tyyppi}`);
+    } else {
+      assert.equal(saanto.sailytys, null, `keräämätön laji ${tyyppi} ei tarvitse säilytysaikaa`);
+    }
+  }
+});
+
+test('tuntematon laji ei kerää sijaintia', () => {
+  assert.equal(kerataankoSijainti('jokinMuu'), false);
+  assert.equal(kerataankoSijainti(undefined), false);
+});
+
+// --- Vyöhykepoikkeaman sijainnin säilytysaika ---------------------------------------
+
+const PAIVA = 24 * 60 * 60 * 1000;
+const NYT_T = Date.parse('2026-09-15T12:00:00.000Z');
+const gh = (osat) => ({
+  id: 'g1', tyyppi: 'geofence', vartija: 'matti', alkoi: new Date(NYT_T).toISOString(),
+  gps: { lat: 60.17, lon: 24.94, tarkkuus: 10 }, ...osat,
+});
+
+test('tuore vyöhykepoikkeama säilyttää sijaintinsa', () => {
+  const { halytykset, poistettu } = siivoaVyohykeSijainnit([gh({})], NYT_T);
+  assert.equal(poistettu, 0);
+  assert.equal(halytykset[0].gps.lat, 60.17);
+});
+
+test('säilytysajan ylittänyt vyöhykepoikkeama menettää sijaintinsa', () => {
+  const vanha = gh({ alkoi: new Date(NYT_T - (GEOFENCE_SAILYTYS_VRK + 1) * PAIVA).toISOString() });
+  const { halytykset, poistettu } = siivoaVyohykeSijainnit([vanha], NYT_T);
+  assert.equal(poistettu, 1);
+  assert.equal(halytykset[0].gps, null);
+});
+
+test('sijainti poistuu mutta hälytys jää', () => {
+  // Hälytystietueella on arvoa tapahtumana senkin jälkeen kun koordinaatti on poistettu:
+  // kuka, milloin, mikä vyöhyke. Arka osa on sijainti, ei se että poikkeama tapahtui.
+  const vanha = gh({
+    alkoi: new Date(NYT_T - 100 * PAIVA).toISOString(),
+    vyohyke: { id: 'v1', nimi: 'Piha', saanto: 'poistuminen' },
+  });
+  const { halytykset } = siivoaVyohykeSijainnit([vanha], NYT_T);
+  assert.equal(halytykset[0].id, 'g1');
+  assert.equal(halytykset[0].vartija, 'matti');
+  assert.equal(halytykset[0].vyohyke.nimi, 'Piha');
+  assert.equal(halytykset[0].gps, null);
+});
+
+test('muiden lajien sijaintiin ei kosketa', () => {
+  // panic, mandown ja ajastin noudattavat LYTP-aikaa eivätkä tätä siivousta.
+  const vanhaPanic = {
+    id: 'p1', tyyppi: 'panic', vartija: 'matti',
+    alkoi: new Date(NYT_T - 500 * PAIVA).toISOString(),
+    gps: { lat: 60.17, lon: 24.94, tarkkuus: 10 },
+  };
+  const { halytykset, poistettu } = siivoaVyohykeSijainnit([vanhaPanic], NYT_T);
+  assert.equal(poistettu, 0);
+  assert.equal(halytykset[0].gps.lat, 60.17);
+});
+
+test('sijainniton vyöhykepoikkeama ei kasvata laskuria', () => {
+  const vanha = gh({ alkoi: new Date(NYT_T - 100 * PAIVA).toISOString(), gps: null });
+  assert.equal(siivoaVyohykeSijainnit([vanha], NYT_T).poistettu, 0);
+});
+
+test('kelvoton aikaleima tulkitaan vanhaksi', () => {
+  // Sijaintia jonka ikää ei voi todeta ei voi myöskään todeta säilytysajan sisällä
+  // olevaksi.
+  const rikki = gh({ alkoi: 'ei ole aika' });
+  assert.equal(siivoaVyohykeSijainnit([rikki], NYT_T).poistettu, 1);
 });

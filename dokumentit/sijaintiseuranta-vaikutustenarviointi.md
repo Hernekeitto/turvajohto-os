@@ -103,12 +103,37 @@ hän täyttä jälkeä vai otosta siitä.
 
 Kieltäytyneelle yksikölle ei jälkeä: hän ei ollut tehtävällä.
 
-### 3.4 Hälytykseen liitetty piste
+### 3.4 Turvahälytykseen liitetty piste — lajikohtainen
 
-Kun vartija laukaisee hälytyksen (hätäpainike, man-down, ajastin, vyöhykepoikkeama), sen
-hetken sijainti tallentuu `alerts`-kokoelmaan. **Sijaintia ei salata levylle**:
-kenttäsalaus toimii vain merkkijonoille ja koordinaatti on numeroita
-(`server/store.js`). Hälytyksen vapaat tekstit salataan, sijainti ei.
+Kun vartija laukaisee turvahälytyksen, sen hetken sijainti tallentuu `alerts`-kokoelmaan
+yhtenä pisteenä (ei jälkenä). **Käyttäjän päätös 15.9.2026: sääntö on lajikohtainen**, ja
+se luetaan yhdestä paikasta (`server/halytys.js`: `SIJAINTISAANNOT`).
+
+| Laji | Sijainti | Säilytys |
+|---|---|---|
+| `panic` hätäpainike | Kerätään | LYTP |
+| `mandown` | Kerätään | LYTP |
+| `ajastin` | Kerätään | LYTP |
+| `geofence` vyöhykepoikkeama | Kerätään | 45 vrk |
+| `varuste` varustepoikkeama | **Ei kerätä lainkaan** | — |
+
+**Varusteesta sijainti on poistettu lähteeltä, ei säilytysajalla.** Kriittinen
+varustepoikkeama kertoo että varuste on rikki tai puuttuu — kysymys on siitä kuka tuo
+toimivan tilalle, ei siitä missä vartija seisoo. Koordinaatti ei päädy levylle lainkaan,
+joten sitä ei tarvitse myöhemmin poistaa eikä sen säilymistä valvoa: **poistettava tieto
+on aina tieto jonka poisto voi unohtua.**
+
+`panic`, `mandown` ja `ajastin` johtavat tarkistustehtävään toisille vartijoille ja siitä
+tapahtumailmoitukseen, joten sijainti on osa sitä tapahtumaa ja noudattaa LYTP:n
+säilytysaikaa.
+
+Vyöhykepoikkeama on työnjohdollinen havainto eikä ihmisen hätä, eikä siitä synny
+tapahtumailmoitusta. Sen sijainti poistetaan 45 vuorokauden jälkeen samassa
+päivittäisessä ajossa kuin sijaintiloki — **sijainti poistuu, hälytys jää**. Tietueella on
+arvoa tapahtumana senkin jälkeen: kuka, milloin, mikä vyöhyke, kuittasiko joku.
+
+**Sijaintia ei salata levylle**: kenttäsalaus toimii vain merkkijonoille ja koordinaatti
+on numeroita (`server/store.js`). Hälytyksen vapaat tekstit salataan, sijainti ei.
 
 ## 4. Kuka näkee
 
@@ -171,16 +196,29 @@ Nämä ovat toteutettuja, eivät suunniteltuja:
 | Vuoron päättäminen hälytyskeskuksesta | Oli jo olemassa |
 | Ilmoitus unohtuneesta vuorosta 15 min päättymisajan jälkeen | **Tekemättä** |
 
+### Turvahälytysten sijainnit (päätös 15.9.2026)
+
+| Päätös | Tila |
+|---|---|
+| Varustepoikkeamasta sijainti pois kokonaan | Toteutettu |
+| panic / mandown / ajastin → LYTP | Toteutettu (noudattaa tietueen elinkaarta) |
+| geofence → 45 vrk, sijainti poistuu ja hälytys jää | Toteutettu |
+
 ### Yhä avoinna
 
-1. **`alerts`-kokoelman säilytysaika.** Päätös 1 koski hälytys*tehtävän* jälkeä. Erillisen
-   turvahälytyksen (hätäpainike, man-down) mukana tallentuva yksittäinen piste on eri
-   tietue eri kokoelmassa, eikä sille ole yhä määriteltyä säilytysaikaa.
-2. **Ilmoitus unohtuneesta vuorosta** ja se mitä ilmoitus tekee: rivi hälytyskeskuksen
-   listaan, kuittausta vaativa hälytys, vai viesti vartijalle itselleen.
-3. **Kuka saa katsoa jälkeä ja mistä?** Historian lukemiselle ei ole vielä
+1. **Kuka saa katsoa jälkeä ja mistä?** Historian lukemiselle ei ole vielä
    käyttöliittymää eikä omaa oikeussolmuaan. Kun se tehdään, se on oma pääsypäätöksensä
    — jäljen katsominen on eri asia kuin nykyisen sijainnin näkeminen.
+2. **LYTP-säilytyksen valvonta.** `panic`, `mandown` ja `ajastin` noudattavat LYTP:n
+   säilytysaikaa, mutta järjestelmässä ei ole automaattista poistoa joka toteuttaisi sen
+   — tapahtumailmoitusten säilytysaika on tänään katselunäkymä ja käsin tehtävä poisto
+   (`src/shared/asetukset/Sailytysajat.tsx`). Tämä koskee koko LYTP-säilytystä eikä vain
+   sijaintia, mutta se on kirjattava tähän: säilytysaika jota mikään ei valvo on
+   dokumentaatiota eikä suojaa.
+3. **Tarkistustehtävä toisille vartijoille.** Päätöksen perusteluna oli että panic,
+   mandown ja ajastin muuttuvat tarkistustehtäväksi muille vartijoille. Nykyinen
+   eskalointi lähettää hätäviestin; varsinaista tehtävän luontia toisille vartijoille ei
+   ole toteutettu.
 
 ## 9. Tarkistuslista käyttöönotolle
 

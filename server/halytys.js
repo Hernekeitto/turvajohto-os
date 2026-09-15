@@ -70,6 +70,73 @@ export const TYYPIT = {
   },
 };
 
+// --- Sijainti ja säilytysaika hälytyslajeittain (käyttäjän päätös 15.9.2026) --------
+//
+// Sijaintitieto ei ole kaikissa hälytyslajeissa perusteltu, eikä sama säilytysaika sovi
+// niille kaikille. Molemmat on määritelty TÄSSÄ eikä siellä missä hälytys luodaan, jotta
+// sääntö luetaan yhdestä paikasta — hajallaan se erkanisi lajeittain huomaamatta.
+//
+//   panic, mandown, ajastin   Sijainti kerätään. Nämä johtavat tarkistustehtävään
+//                             toisille vartijoille ja siitä tapahtumailmoitukseen, joten
+//                             sijainti on osa sitä tapahtumaa: LYTP:n säilytysaika.
+//
+//   geofence                  Sijainti kerätään, säilytysaika 45 vrk. Vyöhykepoikkeama
+//                             on työnjohdollinen havainto eikä ihmisen hätä, eikä siitä
+//                             synny tapahtumailmoitusta.
+//
+//   varuste                   SIJAINTIA EI KERÄTÄ LAINKAAN. Kriittinen varustepoikkeama
+//                             kertoo että varuste on rikki tai puuttuu — kysymys on
+//                             siitä kuka tuo toimivan tilalle, ei siitä missä vartija
+//                             seisoo. Sijainti ei vastaa mihinkään kysymykseen jonka
+//                             tämä hälytys esittää.
+//
+// VARUSTEEN KOHDALLA TÄMÄ ON MINIMOINTIA LÄHTEELLÄ EIKÄ SÄILYTYSAIKA: koordinaatti ei
+// päädy levylle lainkaan, joten sitä ei tarvitse myöhemmin poistaa eikä sen säilymistä
+// tarvitse valvoa. Poistettava tieto on aina tieto jonka poisto voi unohtua.
+export const SIJAINTISAANNOT = {
+  ajastin: { kerataan: true, sailytys: 'lytp' },
+  mandown: { kerataan: true, sailytys: 'lytp' },
+  panic: { kerataan: true, sailytys: 'lytp' },
+  geofence: { kerataan: true, sailytys: '45vrk' },
+  varuste: { kerataan: false, sailytys: null },
+};
+
+/** Kerätäänkö tämän hälytyslajin yhteydessä sijainti. Tuntematon laji: ei kerätä. */
+export const kerataankoSijainti = (tyyppi) => SIJAINTISAANNOT[tyyppi]?.kerataan === true;
+
+// Vyöhykepoikkeaman sijainnin säilytysaika vuorokausina. Sama luku kuin muulla
+// sijaintidatalla (sijaintiloki.js), ja tarkoituksella sama: vyöhykepoikkeaman
+// koordinaatti on sijaintitieto siinä missä jälkikin, eikä kahdelle eri luvulle ole
+// perustetta.
+export const GEOFENCE_SAILYTYS_VRK = 45;
+
+/**
+ * Poistaa säilytysajan ylittäneet sijainnit vyöhykepoikkeamista.
+ *
+ * SIJAINTI POIS, HÄLYTYS JÄÄ. Hälytystietueella on arvoa tapahtumana senkin jälkeen kun
+ * koordinaatti on poistettu: kuka, milloin, mikä vyöhyke, kuittasiko joku. Koko tietueen
+ * poistaminen hävittäisi sen tiedon turhaan — arka osa on sijainti, ei se että poikkeama
+ * tapahtui.
+ *
+ * Palauttaa uuden listan ja poistettujen määrän. Ei kirjoita mihinkään: kutsuja päättää
+ * tallennuksesta ja kirjaamisesta, jotta tämä pysyy testattavana ilman levyä.
+ */
+export function siivoaVyohykeSijainnit(halytykset, nyt = Date.now()) {
+  const raja = nyt - GEOFENCE_SAILYTYS_VRK * 24 * 60 * 60 * 1000;
+  let poistettu = 0;
+  const tulos = (halytykset || []).map((h) => {
+    if (h?.tyyppi !== 'geofence' || !h.gps) return h;
+    const alkoi = Date.parse(h.alkoi);
+    // Kelvoton aikaleima tulkitaan vanhaksi: sijaintia jonka ikää ei voi todeta ei voi
+    // myöskään todeta säilytysajan sisällä olevaksi. Sama tulkinta kuin
+    // kirjaukset.js:n säilytysaikatarkistuksessa.
+    if (Number.isFinite(alkoi) && alkoi > raja) return h;
+    poistettu += 1;
+    return { ...h, gps: null };
+  });
+  return { halytykset: tulos, poistettu };
+}
+
 export const TYYPPI_IDT = Object.keys(TYYPIT);
 
 // Ajastimen kesto. Alaraja estää vahingossa asetetun nollan; yläraja on siinä, että yli
@@ -321,7 +388,9 @@ export function luoHalytys({ id, tyyppi, vartija, eventId, kuvaus, gps, vyohyke,
       kuvaus: lyhenna(kuvaus, KUVAUS_MAX),
       laukesi: iso(nyt),
       paattyi: null,
-      gps: puhdistaGps(gps),
+      // Lajikohtainen sääntö, ks. SIJAINTISAANNOT. Varustepoikkeamalla tämä on aina
+      // null, eikä koordinaatti päädy levylle lainkaan.
+      gps: kerataankoSijainti(tyyppi) ? puhdistaGps(gps) : null,
       vyohyke: vyohyke && vyohyke.id
         ? { id: String(vyohyke.id), nimi: lyhenna(vyohyke.nimi, 120), saanto: vyohyke.saanto || null }
         : null,
@@ -369,7 +438,12 @@ export function laukaise({ halytys, syy = 'Määräaika umpeutui ilman kuittaust
       ...halytys,
       tila: 'lauennut',
       laukesi: iso(nyt),
-      gps: puhdistaGps(gps) || halytys.gps || null,
+      // Lajikohtainen sääntö myös laukeamishetkellä: laukeava hälytys ei saa saada
+      // sijaintia jota sen laji ei kerää. Käytännössä vain ajastin laukeaa tätä kautta,
+      // mutta sääntö luetaan lajista eikä oleteta.
+      gps: kerataankoSijainti(halytys.tyyppi)
+        ? (puhdistaGps(gps) || halytys.gps || null)
+        : null,
       historia: [...(halytys.historia || []), merkinta('laukesi', { teksti: syy }, nyt)],
     },
   };

@@ -120,6 +120,7 @@ import {
   peru as peruHalytys, kuittaa as kuittaaHalytys, eraantyneet, eskaloitavat,
   merkitseEskaloitu, viestiTeksti, TYYPIT as HALYTYSTYYPIT, mandownAsetukset,
   kuittausAsetukset, KUITTAUS_VASTAUSAIKA_MIN, merkinta,
+  siivoaVyohykeSijainnit, GEOFENCE_SAILYTYS_VRK,
 } from './halytys.js';
 import { arvioi as arvioiVyohykkeet } from './geofence.js';
 import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti, parsiJson } from './bulksms.js';
@@ -5708,6 +5709,30 @@ const palvelin = app.listen(PORT, '127.0.0.1', () => {
       }
     } catch (err) {
       console.error('Sijaintilokin siivous epäonnistui:', err.message);
+    }
+
+    // Vyöhykepoikkeamien sijainnit, sama 45 vrk (käyttäjän päätös 15.9.2026).
+    //
+    // SIJAINTI POIS, HÄLYTYS JÄÄ. Hälytystietueella on arvoa tapahtumana senkin jälkeen
+    // kun koordinaatti on poistettu: kuka, milloin, mikä vyöhyke, kuittasiko joku.
+    //
+    // panic, mandown ja ajastin EIVÄT kuulu tähän: ne johtavat tarkistustehtävään ja
+    // tapahtumailmoitukseen, joten niiden sijainti noudattaa LYTP:n säilytysaikaa.
+    try {
+      const halytykset = readCollection('alerts') || [];
+      const { halytykset: siivotut, poistettu } = siivoaVyohykeSijainnit(halytykset);
+      if (poistettu > 0) {
+        writeCollection('alerts', siivotut);
+        logAudit({
+          user: 'jarjestelma',
+          action: 'vyohykesijainti_siivous',
+          collection: 'alerts',
+          poistettu,
+          sailytysVrk: GEOFENCE_SAILYTYS_VRK,
+        });
+      }
+    } catch (err) {
+      console.error('Vyöhykepoikkeamien sijaintien siivous epäonnistui:', err.message);
     }
   };
   setInterval(siivoaHistoria, 24 * 60 * 60 * 1000).unref();
