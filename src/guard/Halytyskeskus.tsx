@@ -28,7 +28,8 @@ import {
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { muotoileLaskuri } from '../shared/ajat';
 import {
-  TYYPPI_LABEL, ajastinTeksti, jaljella, kellonaika, kuittaaHalytys, type Halytys,
+  TYYPPI_LABEL, ajastinTeksti, jaljella, kellonaika, kuittaaHalytys, onAvoin,
+  type Halytys,
 } from '../shared/halytykset';
 import { AVAIMEN_TILA } from '../shared/kalusto';
 import { onVoimassa } from '../shared/tiedotteet';
@@ -39,6 +40,7 @@ import type { Sijainti } from '../shared/kanava';
 import {
   TILAT, TILAN_KIRJAIN, TILAN_NIMI, TILAN_VARI, yksikonTila, type Tila,
 } from './yksikontila';
+import { GuardKartta } from './kartta/GuardKartta';
 import { PANEELIT, avaaIkkunassa, type PaneeliId } from './halke/paneelit';
 import {
   kentalla, kohteenTilanne, tapahtumavirta, type Kiireys, type Lahteet,
@@ -373,9 +375,49 @@ export const Halytyskeskus = ({
     [sijainnit, tehtavat, lahteet.kierrokset]
   );
 
+  // Kartan merkit SAMASTA LÄHTEESTÄ kuin lista (erä 24). Tämä on koko syy siihen miksi
+  // merkki on DOM-elementti eikä maplibren symbolikerros: päivystäjä katsoo karttaa ja
+  // listaa yhtä aikaa, ja jos ne laskisivat tilansa eri paikoissa, ne voisivat erota
+  // toisistaan — eikä ruudulta näkisi kumpi on oikeassa.
+  //
+  // `hata` tulee avoimista hälytyksistä eikä tilasta: tila kertoo mitä yksikkö TEKEE,
+  // hätä että hän on vaarassa. Ne ovat eri kysymyksiä ja molemmat on näytettävä yhtä
+  // aikaa — vaarassa oleva vartija voi olla keskellä tavallista tehtävää.
+  const karttaYksikot = useMemo(() => {
+    const hatatilassa = new Set(
+      lahteet.halytykset.filter(onAvoin).map((h) => h.vartija)
+    );
+    return yksikot
+      // Ilman GPS:ää ei ole paikkaa kartalla. Rivi säilyy silti listassa, joten yksikkö
+      // ei katoa päivystäjältä — se vain ei ole piirrettävissä.
+      .filter((y) => y.sijainti.gps)
+      .map((y) => ({
+        username: y.sijainti.username,
+        nimi: y.sijainti.nimi || y.sijainti.username,
+        tila: y.tila,
+        gps: y.sijainti.gps as { lat: number; lon: number; tarkkuus: number | null },
+        ikaMs: y.sijainti.ikaMs,
+        hata: hatatilassa.has(y.sijainti.username),
+      }));
+  }, [yksikot, lahteet.halytykset]);
+
+  // Kohteet kartalle. Vain ne joilla on koordinaatti: kohde jonka sijaintia ei ole
+  // syötetty ei voi olla kartalla, eikä sitä saa arvata pohjakartan kalibroinnista
+  // täällä — palvelin tekee sen oman sääntönsä mukaan (halytystehtava.js:
+  // kohteenSijainti), ja kaksi eri arvausta näyttäisi kohteen kahdessa paikassa.
+  const karttaKohteet = useMemo(
+    () => kohteet
+      .filter((k) => k.gps && Number.isFinite(k.gps.lat) && Number.isFinite(k.gps.lon))
+      .map((k) => ({ id: k.id, nimi: k.name, gps: k.gps as { lat: number; lon: number } })),
+    [kohteet]
+  );
+
   // Suodatin on JOUKKO eikä yksi valinta: "näytä vapaat ja kierroksella olevat" on se
   // kysymys jonka päivystäjä esittää etsiessään ketä voi lähettää (ks. onIrrotettavissa).
   const [tilaSuodatin, setTilaSuodatin] = useState<Set<Tila>>(new Set());
+  // Kartalta klikattu yksikkö. EI SUODATIN vaan korostus: suodatin piilottaisi muut, ja
+  // päivystäjä menettäisi juuri sen vertailun jota varten hän kartalle katsoi.
+  const [valittuYksikko, setValittuYksikko] = useState<string | null>(null);
   const suodatetutYksikot = tilaSuodatin.size === 0
     ? yksikot
     : yksikot.filter((y) => tilaSuodatin.has(y.tila));
@@ -1287,6 +1329,43 @@ export const Halytyskeskus = ({
       </div>
       </>)}
 
+      {nayta('kartta') && (<>
+      {/* --- Kartta (erä 24) ------------------------------------------------------
+
+          Sama data kuin alla olevassa listassa, eri kysymykseen. Lista vastaa "kuka on
+          vapaana", kartta "kuka on lähellä". Kumpikaan ei korvaa toista: listasta näkee
+          iän ja tilan rinnakkain, kartalta etäisyydet ja suunnat.
+
+          Osio on oma paneelinsa, joten sen voi irrottaa toiselle näytölle tai laittaa
+          seinätaululle — ja juuri siksi kartta tehtiin. */}
+      <Osio
+        otsikko="Kartta"
+        ikoni={MapPin}
+        maara={oikeudet.sijainnit ? karttaYksikot.length : null}
+      >
+        {!oikeudet.sijainnit ? (
+          <EiOikeutta mita="vartijoiden sijainteihin" />
+        ) : !sijaintiseuranta ? (
+          <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3 leading-relaxed">
+            Sijaintiseuranta ei ole käytössä, joten kartalla ei ole ketään. Kohteet
+            näkyvät silti.
+          </p>
+        ) : null}
+        {oikeudet.sijainnit && (
+          <GuardKartta
+            yksikot={karttaYksikot}
+            kohteet={karttaKohteet}
+            taulu={taulu}
+            // Klikkaus KOROSTAA rivin alla olevassa listassa. Kartalta näkee missä
+            // yksikkö on, listasta sen iän, tehtävän ja tarkkuuden — ja merkin
+            // yhdistäminen oikeaan riviin on juuri se askel joka muuten tehdään
+            // silmämääräisesti nimen perusteella.
+            onValitse={setValittuYksikko}
+          />
+        )}
+      </Osio>
+      </>)}
+
       {nayta('vartijat') && (<>
       {/* --- Vartijoiden sijainnit (erä 23) --------------------------------------
 
@@ -1379,7 +1458,14 @@ export const Halytyskeskus = ({
 
             <ul className="divide-y divide-line-soft border border-line rounded-lg overflow-hidden">
               {suodatetutYksikot.map(({ sijainti: s, tila, tehtavaId, kierrosId }) => (
-                <li key={s.username} className="px-4 py-3 bg-surface flex flex-wrap items-center gap-3">
+                <li
+                  key={s.username}
+                  className={`px-4 py-3 flex flex-wrap items-center gap-3 ${
+                    s.username === valittuYksikko
+                      ? 'bg-accent-soft ring-2 ring-inset ring-accent'
+                      : 'bg-surface'
+                  }`}
+                >
                   <TilaMerkki tila={tila} iso />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-ink-strong">
