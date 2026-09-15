@@ -17,9 +17,21 @@ export type Sijainti = {
   nimi?: string;
   eventId: string | null;
   img: { x: number; y: number } | null;
-  gps: { lat: number; lon: number; tarkkuus: number | null } | null;
+  gps: {
+    lat: number;
+    lon: number;
+    tarkkuus: number | null;
+    // Nopeus (m/s) ja kulkusuunta (astetta, 0 = pohjoinen). Molemmat voivat puuttua:
+    // laite antaa ne vain liikkeessä, ja tukiasemapaikannus ei koskaan.
+    nopeus?: number | null;
+    suunta?: number | null;
+  } | null;
   at: number;
   ikaMs: number;
+  // Tuliko päivitys selaimesta vai natiivisovelluksesta. Vastaa käyttöliittymässä
+  // kysymykseen "miksi tämä piste on vanha": selain paikantaa vain näkyvissä ollessaan.
+  // Valinnainen, koska vanhemmat palvelinversiot eivät lähetä kenttää.
+  lahde?: 'selain' | 'laite';
 };
 
 export type KanavaViesti =

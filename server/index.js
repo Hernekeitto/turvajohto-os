@@ -69,6 +69,7 @@ import { liitaKanava, laheta as lahetaKanavalle, lahetaViesti } from './kanava.j
 import {
   seurantaKaytossa, paivita as paivitaSijainti, kaikki as sijainnit,
   hae as haeSijainti, unohda as unohdaSijainti,
+  saaNahdaSijainteja, saaNahdaSijaintirivin,
 } from './sijainti.js';
 import { taydennaKuvakoordinaatti } from './georeferointi.js';
 import {
@@ -719,19 +720,42 @@ function saaNahdaSijaintilistan(req, eventId) {
     || canView(req.permissions, eventId, 'guard_locations');
 }
 
+// KOHTEETON KUTSU ON HÄLYTYSKESKUKSEN NORMAALITAPAUS, EI POIKKEUS.
+//
+// Yllä oleva tarkistus vastaa kysymykseen "saanko nähdä kohteen X sijainnit". GUARDissa
+// päivystäjä kysyy toista kysymystä: "missä yksikköni ovat". Sitä ei voi esittää
+// kohdekohtaisesti kahdesta syystä:
+//
+//   1. Piirivuorossa oleva yksikkö ei kuulu yhteenkään kohteeseen. Sen sijaintirivin
+//      eventId on null, eikä sitä siis palauta mikään kohdekohtainen kysely.
+//   2. Kaupungin päivystäjällä on kymmeniä kohteita. Kysely per kohde olisi kymmeniä
+//      kyselyitä, ja karttanäkymä rakentuisi paloissa.
+//
+// Kohteeton kutsu (eventId puuttuu) päätyi ennen tähän: eventAllowed(access, null)
+// palauttaa false aina kun eventAccess on rajattu, joten rajatuilla oikeuksilla varustettu
+// päivystäjä sai 403:n eikä listaa voinut saada millään. Ainoa tunnus jolle se toimi oli
+// admin tai rajaamaton — eli juuri se tunnus jolla testattiin.
+//
+// Portti on kaksitasoinen: onko kysyjällä sijaintioikeutta LAINKAAN, ja sen jälkeen
+// rivikohtainen näkyvyys. Molemmat säännöt ovat sijainti.js:ssä eivätkä täällä, koska
+// index.js:llä ei ole testitiedostoa — ks. sen kommentti.
+
 app.get('/api/sijainnit', requireAuth, (req, res) => {
   if (!seurantaKaytossa()) return res.json({ ok: true, kaytossa: false, sijainnit: [] });
   const eventId = typeof req.query.eventId === 'string' ? req.query.eventId : null;
-  if (!saaNahdaSijaintilistan(req, eventId)) {
+  const sallittu = eventId ? saaNahdaSijaintilistan(req, eventId) : saaNahdaSijainteja(req);
+  if (!sallittu) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta henkilöstön sijainteihin.' });
   }
   // Nimimerkki mukaan: käyttäjätunnus on kirjautumista varten, ja valvomon ruudulla
   // lukisi muuten "mvirtanen" siinä missä kaikkialla muualla lukee "Matti Virtanen".
   // Kenttä on lisäys eikä korvaus, joten tapahtumapuolen kartta toimii ennallaan.
-  const lista = sijainnit({ eventId }).map((sija) => ({
-    ...sija,
-    nimi: findUser(sija.username)?.nickname || sija.username,
-  }));
+  const lista = sijainnit({ eventId })
+    .filter((sija) => saaNahdaSijaintirivin(req, sija))
+    .map((sija) => ({
+      ...sija,
+      nimi: findUser(sija.username)?.nickname || sija.username,
+    }));
   res.json({ ok: true, kaytossa: true, sijainnit: lista });
 });
 
@@ -3688,7 +3712,13 @@ app.post('/api/halytys/:id/kuittaa', requireAuth, (req, res) => {
 app.get('/api/lahin', requireAuth, (req, res) => {
   if (!seurantaKaytossa()) return res.json({ ok: true, kaytossa: false, vartijat: [] });
   const eventId = typeof req.query.eventId === 'string' ? req.query.eventId : null;
-  if (!saaNahdaSijaintilistan(req, eventId)) {
+  // Sama kaksitasoinen portti kuin /api/sijainnit — ja tässä kohteeton kutsu on vielä
+  // selvemmin pääkäyttötapaus kuin siellä: "kuka on lähinnä tätä osoitetta" kysytään
+  // hälytystehtävää jaettaessa, ja vastaus saa tulla mistä tahansa kohteesta tai
+  // piirivuorosta. Kohdekohtainen rajaus jättäisi lähimmän yksikön pois juuri silloin
+  // kun se on toisen kohteen pihassa.
+  const sallittu = eventId ? saaNahdaSijaintilistan(req, eventId) : saaNahdaSijainteja(req);
+  if (!sallittu) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta henkilöstön sijainteihin.' });
   }
 
@@ -3699,6 +3729,7 @@ app.get('/api/lahin', requireAuth, (req, res) => {
   }
 
   const vartijat = sijainnit({ eventId })
+    .filter((s) => saaNahdaSijaintirivin(req, s))
     .map((s) => ({
       username: s.username,
       ikaMs: s.ikaMs,
@@ -5391,13 +5422,22 @@ function tunnistaKanava(req) {
 
 // Kuka saa nähdä henkilöstön sijainnit. Oma sivukartta-solmunsa: kaikki tapahtuman
 // katselijat eivät saa nähdä missä työntekijät ovat, vaikka näkisivät kirjaukset.
+// SAMA SÄÄNTÖ KUIN HAUSSA, EIKÄ VAIN SAMANLAINEN. Kanavan suodatin ja /api/sijainnit
+// kutsuvat molemmat sijainti.js:n saaNahdaSijaintirivin-funktiota, koska niiden
+// erkaneminen ei näkyisi mistään: jos haku palauttaa piiriyksikön mutta kanava ei kerro
+// sen liikkeistä, yksikkö ilmestyy kartalle kerran ja jähmettyy siihen. Jähmettynyt
+// merkki on pahempi kuin puuttuva, koska se näyttää tuoreelta.
+//
+// Oikeudet luetaan roleId:stä vasta tässä eikä yhteyttä avattaessa, jotta tason muokkaus
+// vaikuttaa heti — ks. tunnistaKanava.
 function saaNahdaSijainnit(istunto, eventId) {
   if (!istunto) return false;
-  if (istunto.role === 'admin') return true;
-  if (!eventAllowed(istunto.eventAccess, eventId)) return false;
-  const perms = rolePermissions(istunto.roleId);
-  // Molemmat puolet, ks. saaNahdaSijaintilistan.
-  return canView(perms, eventId, 'locations') || canView(perms, eventId, 'guard_locations');
+  const kysyja = {
+    role: istunto.role,
+    eventAccess: istunto.eventAccess,
+    permissions: rolePermissions(istunto.roleId),
+  };
+  return saaNahdaSijaintirivin(kysyja, { eventId });
 }
 
 // Sijaintiviesti kentältä. Palvelin päättää sekä aikaleiman että sen kenelle tieto

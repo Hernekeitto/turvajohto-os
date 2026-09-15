@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 
 import {
   seurantaKaytossa, paivita, kaikki, unohda, tyhjenna, lueSijainti, VANHENEE,
+  saaNahdaSijainteja, saaNahdaSijaintirivin,
 } from './sijainti.js';
 
 const alkuperainenLippu = process.env.SIJAINTISEURANTA;
@@ -94,5 +95,95 @@ test('unohda poistaa sijainnin kokonaan', () => {
 
 test('lueSijainti karsii ylimääräiset kentät', () => {
   const s = lueSijainti({ img: { x: 0.5, y: 0.5, salaisuus: 'x' }, muu: 1 });
-  assert.deepEqual(s, { img: { x: 0.5, y: 0.5 }, gps: null });
+  assert.deepEqual(s, { img: { x: 0.5, y: 0.5 }, gps: null, lahde: 'selain' });
+});
+
+test('nopeus ja suunta tulevat mukaan GPS:n kanssa', () => {
+  const s = lueSijainti({ gps: { lat: 60.17, lon: 24.94, tarkkuus: 12, nopeus: 14.2, suunta: 271 } });
+  assert.equal(s.gps.nopeus, 14.2);
+  assert.equal(s.gps.suunta, 271);
+});
+
+test('mahdoton nopeus hylätään mutta sijainti kelpaa', () => {
+  // 200 m/s = 720 km/h. Piste on yhä käyttökelpoinen, nuoli ei olisi — ja koko rivin
+  // hylkääminen yhden kentän takia poistaisi yksikön kartalta kokonaan.
+  const s = lueSijainti({ gps: { lat: 60.17, lon: 24.94, nopeus: 200, suunta: 400 } });
+  assert.equal(s.gps.lat, 60.17);
+  assert.equal(s.gps.nopeus, null);
+  assert.equal(s.gps.suunta, null);
+});
+
+test('lähde on selain ellei lähettäjä sano muuta', () => {
+  assert.equal(lueSijainti({ gps: { lat: 60, lon: 24 } }).lahde, 'selain');
+  assert.equal(lueSijainti({ gps: { lat: 60, lon: 24 }, lahde: 'laite' }).lahde, 'laite');
+  // Tuntematon arvo ei saa mennä läpi sellaisenaan: käyttöliittymä valitsee sen
+  // perusteella selitetekstin, ja kolmas arvo jäisi näyttämättä kokonaan.
+  assert.equal(lueSijainti({ gps: { lat: 60, lon: 24 }, lahde: 'roskaa' }).lahde, 'selain');
+});
+
+// --- Näkyvyys ---------------------------------------------------------------------
+//
+// Nämä testit ovat olemassa siksi, että edellinen versio läpäisi käsitestin: se tehtiin
+// pääkäyttäjänä, ja admin ohittaa koko tarkistuksen. Jokainen testi alla ajetaan siis
+// EI-ADMIN-tunnuksella, ja adminille on vain yksi oma testi.
+
+const kysyja = (osat = {}) => ({
+  role: 'guard',
+  eventAccess: [],
+  permissions: { __default__: {} },
+  ...osat,
+});
+
+const solmu = (nimi) => ({ __default__: { [nimi]: { view: true } } });
+
+test('admin näkee jokaisen rivin ilman erillisiä oikeuksia', () => {
+  const a = kysyja({ role: 'admin', eventAccess: ['vain-tama'] });
+  assert.equal(saaNahdaSijainteja(a), true);
+  assert.equal(saaNahdaSijaintirivin(a, { eventId: 'toinen-kohde' }), true);
+  assert.equal(saaNahdaSijaintirivin(a, { eventId: null }), true);
+});
+
+test('ilman kumpaakaan solmua ei ole sijaintioikeutta lainkaan', () => {
+  // Tämä erottaa 403:n tyhjästä listasta: ilman tätä valvomon ruudulla "ei oikeutta" ja
+  // "kukaan ei ole kentällä" näyttäisivät samalta.
+  assert.equal(saaNahdaSijainteja(kysyja()), false);
+});
+
+test('guard_locations riittää sijaintioikeudeksi ilman kohdetta', () => {
+  assert.equal(saaNahdaSijainteja(kysyja({ permissions: solmu('guard_locations') })), true);
+});
+
+test('locations riittää myös — tapahtumapuoli toimii ennallaan', () => {
+  assert.equal(saaNahdaSijainteja(kysyja({ permissions: solmu('locations') })), true);
+});
+
+test('rajattu eventAccess näkee oman kohteensa rivin', () => {
+  const k = kysyja({ eventAccess: ['kohde-a'], permissions: solmu('guard_locations') });
+  assert.equal(saaNahdaSijaintirivin(k, { eventId: 'kohde-a' }), true);
+});
+
+test('rajattu eventAccess EI näe toisen kohteen riviä', () => {
+  const k = kysyja({ eventAccess: ['kohde-a'], permissions: solmu('guard_locations') });
+  assert.equal(saaNahdaSijaintirivin(k, { eventId: 'kohde-b' }), false);
+});
+
+test('kohteeton rivi (piirivuoro) näkyy guard_locations-oikeudella vaikka eventAccess on rajattu', () => {
+  // TÄMÄ ON SE KORJAUS. Ennen eventAllowed(['kohde-a'], null) palautti false, joten
+  // piirivartija ei näkynyt kenellekään muulle kuin adminille tai rajaamattomalle
+  // tunnukselle — eikä vika näkynyt mistään, koska tyhjä lista näytti odotetulta.
+  const k = kysyja({ eventAccess: ['kohde-a'], permissions: solmu('guard_locations') });
+  assert.equal(saaNahdaSijaintirivin(k, { eventId: null }), true);
+});
+
+test('kohteeton rivi EI näy pelkällä tapahtumapuolen locations-oikeudella', () => {
+  // Piirivuoro on GUARD-puolen käsite. Tapahtuman katselija ei saa nähdä
+  // vartiointiliikkeen partioita sillä perusteella että hän näkee oman tapahtumansa
+  // henkilöstön.
+  const k = kysyja({ permissions: solmu('locations') });
+  assert.equal(saaNahdaSijaintirivin(k, { eventId: null }), false);
+});
+
+test('rajaamaton eventAccess näkee kaikkien kohteiden rivit', () => {
+  const k = kysyja({ eventAccess: [], permissions: solmu('guard_locations') });
+  assert.equal(saaNahdaSijaintirivin(k, { eventId: 'mika-tahansa' }), true);
 });

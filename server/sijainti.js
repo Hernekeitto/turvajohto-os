@@ -19,6 +19,8 @@
 // vartijat kartalla, sijainnin ikä näkyvissä ja lähimmän haku. Historia on sen jälkeen
 // oma pieni lisäyksensä eikä uudelleenkirjoitus.
 
+import { canView, eventAllowed } from './permissions.js';
+
 // Sijainti vanhenee: puhelin sammui, sovellus suljettiin tai vuoro loppui. Vanhentunut
 // sijainti on pahempi kuin puuttuva — se väittää tietävänsä missä ihminen on.
 const VANHENEE_MS = 30 * 60 * 1000;
@@ -48,13 +50,31 @@ export function lueSijainti(syote) {
         // Tarkkuus metreinä. Yli kymmenen kilometrin "tarkkuus" on käytännössä
         // tieto siitä missä maakunnassa ollaan, eikä sitä kannata näyttää kartalla.
         tarkkuus: luku(syote.gps.tarkkuus, 0, 10000),
+        // Nopeus (m/s) ja kulkusuunta (astetta, 0 = pohjoinen). Androidin Location antaa
+        // molemmat ilmaiseksi, ja kaupunkimittakaavan kartalla ne vastaavat kysymykseen
+        // johon pelkkä piste ei vastaa: onko tämä yksikkö liikkeessä vai pysähtynyt, ja
+        // mihin suuntaan. Ilman niitä sen näkee vain vertaamalla kahta peräkkäistä
+        // mittausta — eikä kahta ole silloin kun laite on juuri aloittanut vuoron.
+        //
+        // Yläraja 100 m/s = 360 km/h ei ole ajoneuvon nopeus vaan kelvollisuusraja:
+        // sitä suuremmat lukemat ovat paikannusvirheitä, ja kartalla ne piirtäisivät
+        // nuolen joka väittää partion olevan lentokoneessa.
+        nopeus: luku(syote.gps.nopeus, 0, 100),
+        suunta: luku(syote.gps.suunta, 0, 360),
       }
     : null;
+
+  // Mistä päivitys tuli. DIAGNOSTIIKKAA EIKÄ PÄÄSYNVALVONTAA: kenttä tulee lähettäjältä
+  // eikä yhteydestä, joten selain voisi väittää olevansa laite. Sillä ei ole väliä, koska
+  // kenttä ei avaa mitään — se vastaa vain kysymykseen "miksi tämä piste on kymmenen
+  // minuuttia vanha". Selain paikantaa vain näkyvissä ollessaan ja laite koko vuoron ajan,
+  // ja ilman tätä eroa vanha piste näyttää samalta vialta kummassakin tapauksessa.
+  const lahde = syote.lahde === 'laite' ? 'laite' : 'selain';
 
   const imgOk = img && img.x !== null && img.y !== null;
   const gpsOk = gps && gps.lat !== null && gps.lon !== null;
   if (!imgOk && !gpsOk) return null;
-  return { img: imgOk ? img : null, gps: gpsOk ? { ...gps } : null };
+  return { img: imgOk ? img : null, gps: gpsOk ? { ...gps } : null, lahde };
 }
 
 // Palauttaa tallennetun sijainnin tai nullin jos syöte oli kelvoton. Aikaleima tulee
@@ -112,3 +132,48 @@ export function kaikki({ eventId = null, nyt = Date.now() } = {}) {
 }
 
 export const VANHENEE = VANHENEE_MS;
+
+// --- Näkyvyys ---------------------------------------------------------------------
+//
+// Kenelle yksittäinen sijaintirivi näytetään. TÄÄLLÄ EIKÄ index.js:ssä, jotta sääntö on
+// testattavissa ilman palvelinta — index.js:llä ei ole testitiedostoa, ja juuri tämä
+// sääntö on se jota EI voi todentaa silmämääräisesti. Edellinen versio hyväksyttiin
+// pääkäyttäjänä testattuna, ja admin ohittaa koko tarkistuksen.
+//
+// KUTSUJA on `{ role, eventAccess, permissions }`: sama muoto kuin requireAuthin
+// täydentämä req, mutta oliona jotta testi voi rakentaa sen ilman pyyntöä.
+
+/**
+ * Onko kysyjällä sijaintioikeutta lainkaan.
+ *
+ * Tämä on eri kysymys kuin rivikohtainen näkyvyys, ja ero on tarkoituksellinen:
+ * puuttuva oikeus vastaa 403:lla ja riittävä oikeus tyhjällä listalla. Valvomon ruudulla
+ * "ei oikeutta" ja "kukaan ei ole kentällä" eivät saa näyttää samalta.
+ */
+export function saaNahdaSijainteja(kysyja) {
+  if (kysyja?.role === 'admin') return true;
+  // Molemmat solmut luetaan __default__-asetuksesta: guard_locations on GLOBAL_NODES-
+  // listalla, ja locations luetaan oletusasetuksesta kun eventId on null.
+  return canView(kysyja?.permissions, null, 'locations')
+    || canView(kysyja?.permissions, null, 'guard_locations');
+}
+
+/**
+ * Yhden sijaintirivin näkyvyys.
+ *
+ * Kohteellinen rivi rajautuu eventAccessillä kuten kaikki muukin. KOHTEETON rivi on
+ * piirivuorossa oleva yksikkö: eventAccess ei voi rajata sitä, koska ei ole mitään mihin
+ * verrata, joten portiksi jää solmu. `guard_locations` eikä `locations`, koska piirivuoro
+ * on määritelmällisesti GUARD-puolen käsite — tapahtumapuolen katselija ei saa nähdä
+ * vartiointiliikkeen partioita sillä perusteella että hänellä on oikeus oman
+ * tapahtumansa henkilöstöön.
+ */
+export function saaNahdaSijaintirivin(kysyja, tietue) {
+  if (kysyja?.role === 'admin') return true;
+  if (tietue?.eventId) {
+    return eventAllowed(kysyja?.eventAccess, tietue.eventId)
+      && (canView(kysyja?.permissions, tietue.eventId, 'locations')
+        || canView(kysyja?.permissions, tietue.eventId, 'guard_locations'));
+  }
+  return canView(kysyja?.permissions, null, 'guard_locations');
+}

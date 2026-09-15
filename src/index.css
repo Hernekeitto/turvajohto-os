@@ -171,6 +171,23 @@
   --color-neutral: #64748b;
   --color-neutral-soft: #eceef2; /* johdettu */
   --color-neutral-ink: #475569;  /* johdettu */
+
+  /* --- Yksikön tila kartalla ja listassa (käyttäjän päätös 15.9.2026) -------
+
+     OMA SARJANSA eikä status-tokenien uudelleenkäyttö, ja syy on hälytys:
+     --color-danger on vartijan oma hätähälytys, joka on valvomon ruudun tärkein
+     asia. Jos "vartija on rutiinitehtävällä" käyttäisi samaa punaista, hätämerkki
+     ei erottuisi ruudulla joka on täynnä punaisia pisteitä. Nämä värit ovat siksi
+     erikseen, ja hätä erotetaan lisäksi MUODOLLA JA LIIKKEELLÄ eikä värillä.
+
+     Väri ei myöskään ole ainoa ero näiden kesken: merkkiin piirretään kirjain
+     (ks. TILAN_KIRJAIN, src/guard/yksikontila.ts), koska vihreä–oranssi–punainen
+     on juuri se yhdistelmä jonka yleisin värinäön poikkeama sekoittaa. */
+  --yksikko-vapaa: #019765;        /* Turvavihreä */
+  --yksikko-matkalla: #d8730b;     /* ohjeiston warning */
+  --yksikko-tehtavalla: #e80140;   /* ohjeiston hälytyspunainen */
+  --yksikko-kierroksella: #b5179e; /* magenta, käyttäjän valinta */
+  --yksikko-ei-tietoa: #9da1a9;    /* ohjeiston muted */
 }
 
 /* ---------------------------------------------------------------------------

@@ -59,6 +59,12 @@ export function useSijainninLahetys({ kaytossa, eventId, laheta, muunnos = null 
             lat: sijainti.coords.latitude,
             lon: sijainti.coords.longitude,
             tarkkuus: sijainti.coords.accuracy,
+            // Selain antaa nopeuden ja suunnan samasta mittauksesta kun laite liikkuu ja
+            // nullin kun se ei liiku. Lähetetään ne samassa muodossa kuin natiivi, jotta
+            // kartta piirtää saman nuolen riippumatta siitä kummasta päivitys tuli —
+            // palvelin hylkää epäkelvot arvot (server/sijainti.js).
+            nopeus: sijainti.coords.speed,
+            suunta: sijainti.coords.heading,
           };
           const img = muunnosRef.current ? muunnosRef.current(gps) : null;
           laheta({ tyyppi: 'sijainti', eventId, gps, ...(img ? { img } : {}) });
