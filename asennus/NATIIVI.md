@@ -194,6 +194,23 @@ FCM tarvitaan vasta yhteen asiaan: vartijan tavoittamiseen silloin kun hänen vu
 myös vartijalle — "vuoron ulkopuolella sovellus ei hälytä" on tieto jonka puuttuminen
 on vaarallista.
 
+### Kanavan nimetyt komennot
+
+Sovellus ohittaa kokoelmamuutosilmoitukset tarkoituksella (`Kanava.kasitteleViesti`:
+*"Vain nimetty komento tehdään"*) — muuten jokainen kenen tahansa tekemä kirjaus
+herättäisi jokaisen puhelimen. Uusi herätys on siis aina uusi nimetty komento, ei uusi
+kokoelma.
+
+| `tyyppi` | Mistä | Mitä sovellus tekee |
+|---|---|---|
+| `tarkistus` | Päivystäjä painaa "Pyydä tarkistus" | `Kuittaus.pakotettu` → "Oletko kunnossa?" |
+| `tarkistustehtava` | Turvahälytys eskaloituu (erä 24) | `Ilmoitukset.tarkistustehtava` → herätys ja sovelluksen avaus |
+
+Nimet muistuttavat toisiaan mutta kysyvät eri asiaa: `tarkistus` kysyy **minulta** olenko
+kunnossa, `tarkistustehtava` kertoo että **joku muu** ei ehkä ole. Ne käyttävät eri
+ilmoituskanavaa, eri tunnusta ja eri värinäkuviota juuri siksi — taskussa värisevästä
+puhelimesta on voitava erottaa kumpi on kyseessä.
+
 ## Ominaisuus 5: hätäpainike sovelluksen ulkopuolelta
 
 Kaksi paikkaa, joista kumpikaan ei vaadi sovelluksen avaamista:
