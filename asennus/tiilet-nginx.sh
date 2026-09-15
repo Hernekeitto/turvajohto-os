@@ -49,7 +49,15 @@ ls -lh "$HAKEMISTO"/*.pmtiles
 # muokkaus on tehtävä kohteeseen eikä linkkiin — muuten muutos katoaisi seuraavassa
 # symlinkin uudelleenluonnissa.
 if [ -z "$KONFIGURAATIO" ]; then
-  osumat=$(grep -rl "ssl_certificate " /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx/sites-available 2>/dev/null \
+  # VAIN SE MITÄ NGINX OIKEASTI LATAA: sites-enabled ja conf.d.
+  #
+  # Ensimmäinen versio haki myös sites-availablesta, ja sieltä löytyi kahdeksan osumaa
+  # joista seitsemän oli varmuuskopioita (sivusto.bak-20260813181947 ja vastaavat).
+  # Varmuuskopio sites-availablessa ei ole käytössä eikä siihen saa kirjoittaa — mutta
+  # nimen perusteella suodattaminen olisi arvausta, koska seuraava varmuuskopio voi
+  # yhtä hyvin olla nimeltään "sivusto-vanha". sites-enabled sen sijaan kertoo
+  # yksiselitteisesti mikä on käytössä.
+  osumat=$(grep -rl "ssl_certificate " /etc/nginx/sites-enabled /etc/nginx/conf.d 2>/dev/null \
     | xargs -r -n1 readlink -f | sort -u || true)
   maara=$(printf '%s\n' "$osumat" | grep -c . || true)
   if [ "$maara" -eq 0 ]; then
