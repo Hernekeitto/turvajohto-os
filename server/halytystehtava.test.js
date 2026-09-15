@@ -363,3 +363,75 @@ test('vyöhykepoikkeama ja varustepoikkeama eivät vaadi tarkistusta', () => {
   assert.equal(TARKISTUSTA_VAATIVAT.has('geofence'), false);
   assert.equal(TARKISTUSTA_VAATIVAT.has('varuste'), false);
 });
+
+// --- Tarkistustehtävän herätyksen kohdennus -----------------------------------------
+//
+// Herätys avaa vastaanottajan puhelimeen täysruutuhälytyksen. Väärä kohdennus on siksi
+// eri luokan virhe kuin väärä listarivi: se herättää ihmisiä yöllä. Nämä testit kattavat
+// saman nakeeTehtavan-säännön jota herataTarkistukseen käyttää suodattimenaan.
+
+const tarkistusTehtava = () => luoTehtava({
+  laji: 'tarkistus', kohde: { id: 'kohde-a', name: 'Kauppakeskus' }, id: 'tt1', nyt: T0,
+}).tehtava;
+
+test('kohteen vuorossa oleva herätetään', () => {
+  const osuma = nakeeTehtavan({
+    tehtava: tarkistusTehtava(),
+    kohde: { id: 'kohde-a', name: 'Kauppakeskus' },
+    vartija: 'liisa',
+    vuoro: { tila: 'kesken', siteId: 'kohde-a', vartija: 'liisa' },
+    sijainti: null,
+  });
+  assert.equal(osuma.nakee, true);
+  assert.equal(osuma.peruste, 'vuoro');
+});
+
+test('piirivuorossa oleva herätetään myös toisesta kohteesta', () => {
+  const osuma = nakeeTehtavan({
+    tehtava: tarkistusTehtava(),
+    kohde: { id: 'kohde-a', name: 'Kauppakeskus' },
+    vartija: 'liisa',
+    vuoro: { tila: 'kesken', siteId: 'kohde-b', piiri: true, vartija: 'liisa' },
+    sijainti: null,
+  });
+  assert.equal(osuma.nakee, true);
+  assert.equal(osuma.peruste, 'piiri');
+});
+
+test('muualla vuorossa oleva ei herää ilman piirivuoroa tai sädettä', () => {
+  // Tämä on se joka on pysyttävä epätotena: yöllä herätetty ihminen jolla ei ole mitään
+  // tekemistä tapauksen kanssa.
+  const osuma = nakeeTehtavan({
+    tehtava: tarkistusTehtava(),
+    kohde: { id: 'kohde-a', name: 'Kauppakeskus', gps: { lat: 60.17, lon: 24.94 } },
+    vartija: 'liisa',
+    vuoro: { tila: 'kesken', siteId: 'kohde-b', vartija: 'liisa' },
+    // Sata kilometriä pohjoiseen.
+    sijainti: { gps: { lat: 61.07, lon: 24.94 } },
+  });
+  assert.equal(osuma.nakee, false);
+});
+
+test('säteellä oleva herätetään', () => {
+  const osuma = nakeeTehtavan({
+    tehtava: tarkistusTehtava(),
+    kohde: { id: 'kohde-a', name: 'Kauppakeskus', gps: { lat: 60.17, lon: 24.94 } },
+    vartija: 'liisa',
+    vuoro: null,
+    sijainti: { gps: { lat: 60.18, lon: 24.95 } },
+    sadeKm: 5,
+  });
+  assert.equal(osuma.nakee, true);
+  assert.equal(osuma.peruste, 'sade');
+});
+
+test('vuoroton ja sijainniton ei herää', () => {
+  const osuma = nakeeTehtavan({
+    tehtava: tarkistusTehtava(),
+    kohde: { id: 'kohde-a', name: 'Kauppakeskus', gps: { lat: 60.17, lon: 24.94 } },
+    vartija: 'liisa',
+    vuoro: null,
+    sijainti: null,
+  });
+  assert.equal(osuma.nakee, false);
+});

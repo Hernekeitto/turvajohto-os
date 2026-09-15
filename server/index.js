@@ -3572,6 +3572,60 @@ function eskalointiLoki({ halytys, runko, vastaanottajat, uniikit, tulos }) {
 // kutsuja merkitsee myös epäonnistumisen hälytykseen, jotta samaa viestiä ei yritetä
 // lähettää uudelleen joka kierroksella.
 /**
+ * Herättää kohdennetut vartijat tarkistustehtävään.
+ *
+ * NIMETTY KOMENTO EIKÄ KOKOELMAMUUTOS, ja tämä on koko herätyksen ydin. Natiivisovellus
+ * ohittaa tietokantamuutosilmoitukset tarkoituksella (Kanava.java: "Vain nimetty komento
+ * tehdään") — muuten jokainen kirjaus kenen tahansa toimesta herättäisi jokaisen
+ * puhelimen. Sovellus reagoi vain tähän viestiin, ja tämä viesti lähetetään vain silloin
+ * kun joku on oikeasti hädässä.
+ *
+ * FCM:ÄÄ EI TARVITA. Kanava on auki koko vuoron ajan etualan palvelun sisällä
+ * (VuoroService: Kanava.avaa), ja etualan palvelu on vapautettu Dozen
+ * verkkorajoituksista. Viesti tulee perille myös sammuneelle näytölle, ja sovellus avaa
+ * täysruutuaikeen — tai jos lupaa ei ole, huomioilmoituksen äänellä ja värinällä.
+ *
+ * KOHDENNUS ON TIUKEMPI KUIN KANAVAN NÄKYVYYS. kerroTehtavasta päästää läpi myös
+ * päivystäjät ja pääkäyttäjät, koska heidän RUUTUNSA pitää päivittyä. Heitä ei saa
+ * herättää täysruutuhälytyksellä: he katsovat valvomon näyttöä, eivät odota puhelimensa
+ * heräävän. Tässä läpi menevät vain ne vartijat jotka tehtävä oikeasti koskee.
+ *
+ * HÄDÄSSÄ OLEVA EI HERÄTÄ ITSEÄÄN. Hän on jo tilanteessa, ja hänen puhelimensa on
+ * todennäköisesti se joka ei vastaa. Täysruutuhälytys hänen omalle laitteelleen olisi
+ * parhaimmillaankin hyödytön ja pahimmillaan häiriö kesken hätätilanteen.
+ */
+function herataTarkistukseen(tehtava, kohde, halytys) {
+  const vuorot = readCollection('guardShifts') || [];
+  return lahetaViesti(
+    {
+      tyyppi: 'tarkistustehtava',
+      id: tehtava.id,
+      // Nämä kolme ovat se mitä vartija tarvitsee heti ruudulle: mistä on kyse, missä ja
+      // ketä. Enempää ei lähetetä — tehtävän koko sisältö haetaan sovelluksessa
+      // normaalin oikeustarkistuksen läpi, eikä kanavaviesti saa olla oikotie sen ohi.
+      laji: tehtava.laji,
+      kohde: tehtava.siteNimi || '',
+      vartija: findUser(halytys.vartija)?.nickname || halytys.vartija,
+    },
+    {
+      suodatin: (istunto) => {
+        if (!istunto?.username) return false;
+        if (!(istunto.tuotteet || []).includes('guard')) return false;
+        if (istunto.username === halytys.vartija) return false;
+        return nakeeTehtavan({
+          tehtava,
+          kohde,
+          vartija: istunto.username,
+          vuoro: keskenOlevaVuoro(vuorot, istunto.username) || null,
+          sijainti: haeSijainti(istunto.username),
+          sadeKm: kohde?.halytysSadeKm,
+        }).nakee;
+      },
+    }
+  );
+}
+
+/**
  * Luo tarkistustehtävän vartijan turvahälytyksestä (käyttäjän päätös 15.9.2026).
  *
  * panic, mandown ja ajastin tarkoittavat että vartijalle voi olla sattunut jotain, ja
@@ -3629,6 +3683,16 @@ function luoTarkistustehtava(halytys) {
       eventId: halytys.eventId, alarmType: halytys.tyyppi, halytysId: halytys.id,
     });
     kerroTehtavasta(tulos.tehtava);
+
+    // Herätys ERIKSEEN kanavailmoituksen jälkeen: edellinen päivittää auki olevat ruudut,
+    // tämä herättää puhelimet. Laitemäärä kirjataan, koska "kukaan ei herännyt" on eri
+    // tieto kuin "herätys lähetettiin" — ja jälkikäteen kysytään juuri sitä.
+    const heratetty = herataTarkistukseen(tulos.tehtava, kohde, halytys);
+    logAudit({
+      user: halytys.vartija, action: 'tarkistustehtava_heratys',
+      collection: 'guardDispatch', recordId: tulos.tehtava.id,
+      eventId: halytys.eventId, laitteita: heratetty,
+    });
   } catch (err) {
     // Tarkistustehtävän luonti ei saa kaataa eskalointia: tekstiviesti on se kanava joka
     // tavoittaa sammuneen puhelimen, ja se on tärkeämpi kuin tämä.
