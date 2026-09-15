@@ -112,41 +112,49 @@ echo "Kirjoitettu $SNIPPETTI"
 
 # --- 3. Include oikeaan server-lohkoon ----------------------------------------------
 
-if grep -q "turvajohto-tiilet.conf" "$KONFIGURAATIO"; then
-  echo "Include on jo paikallaan — konfiguraatiota ei muuteta."
-else
-  varmuuskopio="${KONFIGURAATIO}.ennen-tiilia-$(date +%Y%m%d%H%M%S)"
-  cp "$KONFIGURAATIO" "$varmuuskopio"
-  echo "Varmuuskopio: $varmuuskopio"
+varmuuskopio="${KONFIGURAATIO}.ennen-tiilia-$(date +%Y%m%d%H%M%S)"
+cp "$KONFIGURAATIO" "$varmuuskopio"
+echo "Varmuuskopio: $varmuuskopio"
 
-  # OIKEA LOHKO ETSITÄÄN ssl_certificate-RIVISTÄ. Tiedostossa on tyypillisesti kaksi
-  # server-lohkoa: portin 80 uudelleenohjaus ja portin 443 varsinainen sivusto. Jos
-  # include menisi ohjauslohkoon, /tiilet/ vastaisi 301:llä eikä kartta lataisi mitään
-  # — ja vika näyttäisi sovelluksen vialta.
-  ssl_rivi=$(grep -n "ssl_certificate " "$KONFIGURAATIO" | head -1 | cut -d: -f1 || true)
-  if [ -z "$ssl_rivi" ]; then
-    echo "KESKEYTETTY: ssl_certificate-riviä ei löytynyt, oikeaa server-lohkoa ei voi tunnistaa."
-    exit 1
-  fi
-  # Lähin sitä edeltävä server-lohkon aloitus.
-  server_rivi=$(head -n "$ssl_rivi" "$KONFIGURAATIO" | grep -n "server\s*{" | tail -1 | cut -d: -f1)
-  echo "Lisätään include riville $((server_rivi + 1)) (server-lohko rivillä $server_rivi, ssl rivillä $ssl_rivi)."
+# VANHA INCLUDE POIS ENSIN, aina. Skripti oli aiemmin idempotentti sillä tavalla että
+# se OHITTI koko muutoksen jos include löytyi mistä tahansa — ja juuri niin se jätti
+# väärään server-lohkoon osuneen rivin paikalleen ja raportoi "on jo paikallaan".
+# Poisto ja uudelleenlisäys korjaa myös väärin menneen ajon.
+sed -i "/include snippets\/turvajohto-tiilet.conf;/d" "$KONFIGURAATIO"
 
-  sed -i "${server_rivi}a\\    include snippets/turvajohto-tiilet.conf;" "$KONFIGURAATIO"
-
-  # --- 4. Testi ennen käyttöönottoa -------------------------------------------------
-  #
-  # Rikkinäinen konfiguraatio ei kaada käynnissä olevaa nginxiä, mutta se estää
-  # seuraavan uudelleenkäynnistyksen — ja se tapahtuisi seuraavan deployn yhteydessä,
-  # jolloin koko sivusto katoaisi syystä joka ei liity siihen julkaisuun mitenkään.
-  if ! nginx -t; then
-    echo "nginx -t EPÄONNISTUI. Palautetaan varmuuskopio."
-    cp "$varmuuskopio" "$KONFIGURAATIO"
-    exit 1
-  fi
-  systemctl reload nginx
-  echo "nginx ladattu uudelleen."
+# INCLUDE MENEE ssl_certificate-RIVIN ETEEN, EI SERVER-LOHKON ALKUUN.
+#
+# Aiempi versio etsi lähintä `server {` -riviä ennen ssl_certificate-riviä ja lisäsi
+# includen sen jälkeen. Se osui väärään lohkoon: tiedostossa ssl on rivillä 103 mutta
+# haku palautti server-lohkon riviltä 1, eli portin 80 uudelleenohjauksen. Seuraus oli
+# hiljainen — /tiilet/ päätyi SPA-varakäsittelyyn ja palautti index.html:n 206-koodilla,
+# jolloin tarkistus näytti vihreältä ja kartta olisi saanut 4,5 kilotavua HTML:ää
+# tiilten sijasta.
+#
+# ssl_certificate on server-lohkon oma direktiivi, joten sen viereen lisätty rivi on
+# määritelmän mukaan oikeassa lohkossa. nginx ei välitä direktiivien järjestyksestä
+# lohkon sisällä, joten "ennen" on yhtä hyvä kuin "jälkeen" — ja se ei vaadi lohkon
+# rajojen päättelyä lainkaan.
+ssl_rivi=$(grep -n "ssl_certificate " "$KONFIGURAATIO" | head -1 | cut -d: -f1 || true)
+if [ -z "$ssl_rivi" ]; then
+  echo "KESKEYTETTY: ssl_certificate-riviä ei löytynyt tiedostosta $KONFIGURAATIO."
+  exit 1
 fi
+echo "Lisätään include riville $ssl_rivi (ssl_certificate-rivin eteen)."
+sed -i "${ssl_rivi}i\\    include snippets/turvajohto-tiilet.conf;" "$KONFIGURAATIO"
+
+# --- 4. Testi ennen käyttöönottoa ---------------------------------------------------
+#
+# Rikkinäinen konfiguraatio ei kaada käynnissä olevaa nginxiä, mutta se estää seuraavan
+# uudelleenkäynnistyksen — ja se tapahtuisi seuraavan deployn yhteydessä, jolloin koko
+# sivusto katoaisi syystä joka ei liity siihen julkaisuun mitenkään.
+if ! nginx -t; then
+  echo "nginx -t EPÄONNISTUI. Palautetaan varmuuskopio."
+  cp "$varmuuskopio" "$KONFIGURAATIO"
+  exit 1
+fi
+systemctl reload nginx
+echo "nginx ladattu uudelleen."
 
 # --- 5. Todennus --------------------------------------------------------------------
 #
@@ -154,17 +162,44 @@ fi
 # lataa sitä kokonaan; jos nginx vastaa 200:lla, jokainen tiilipyyntö vetäisi gigatavuja
 # eikä kartta latautuisi koskaan. Ero 206:n ja 200:n välillä ei näy mistään muusta.
 
-tiedosto=$(basename "$(ls -1 "$HAKEMISTO"/*.pmtiles | head -1)")
+polku=$(ls -1 "$HAKEMISTO"/*.pmtiles | head -1)
+tiedosto=$(basename "$polku")
+levylla=$(stat -c %s "$polku")
 url="$OSOITE/tiilet/$tiedosto"
 echo "Testataan: $url"
+echo "Levyllä: $levylla tavua"
 otsakkeet=$(curl -sI -r 0-99 "$url" || true)
 koodi=$(printf '%s' "$otsakkeet" | head -1)
 echo "$koodi"
-printf '%s' "$otsakkeet" | grep -i -e content-range -e content-length -e cache-control || true
+printf '%s' "$otsakkeet" | grep -i -e content-range -e cache-control || true
 
-if printf '%s' "$koodi" | grep -q "206"; then
-  echo "=== OK: range-pyyntö toimii. Tiilet ovat tarjolla osoitteessa /tiilet/$tiedosto ==="
-else
-  echo "=== VAROITUS: vastaus ei ollut 206. Kartta ei toimi ennen kuin tämä on kunnossa. ==="
+# KOKO ON TARKISTETTAVA, EI PELKKÄ KOODI.
+#
+# Tämä skripti raportoi kerran "OK" tilanteessa jossa /tiilet/ osui SPA-varakäsittelyyn
+# ja palautti index.html:n. Vastaus oli 206 ja Content-Range oli mukana, koska nginx
+# tukee range-pyyntöjä myös HTML-tiedostolle — tarkistus siis läpäisi täysin rikkinäisen
+# asetuksen. Ainoa asia joka olisi paljastanut sen oli Content-Rangen kokonaiskoko:
+# 4584 tavua siinä missä tiilipaketti on 2,6 gigatavua.
+#
+# Nyt verrataan sitä lukua levyllä olevan tiedoston kokoon. Se on ainoa tarkistus joka
+# todella vastaa kysymykseen "tarjoillaanko juuri tätä tiedostoa".
+kokonaiskoko=$(printf '%s' "$otsakkeet" | grep -i content-range | sed -n 's|.*/\([0-9][0-9]*\).*|\1|p' | head -1)
+
+if ! printf '%s' "$koodi" | grep -q "206"; then
+  echo "=== VIRHE: vastaus ei ollut 206. Range-pyynnöt eivät toimi. ==="
   exit 1
 fi
+if [ -z "$kokonaiskoko" ]; then
+  echo "=== VIRHE: Content-Range puuttuu, kokonaiskokoa ei voi tarkistaa. ==="
+  exit 1
+fi
+if [ "$kokonaiskoko" != "$levylla" ]; then
+  echo "=== VIRHE: tarjoiltu tiedosto on $kokonaiskoko tavua, levyllä oleva $levylla tavua."
+  echo "Osoite /tiilet/ ei osu tiilihakemistoon vaan johonkin muuhun — todennäköisesti"
+  echo "sovelluksen SPA-varakäsittelyyn. Tarkista että include meni oikeaan"
+  echo "server-lohkoon: grep -n turvajohto-tiilet $KONFIGURAATIO ==="
+  exit 1
+fi
+
+echo "=== OK: tarjoiltu $kokonaiskoko tavua vastaa levyllä olevaa tiedostoa."
+echo "Tiilet ovat tarjolla osoitteessa /tiilet/$tiedosto ==="
