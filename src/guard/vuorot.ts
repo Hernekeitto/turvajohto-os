@@ -85,6 +85,9 @@ export type PalvelimenVuoro = {
   tehtavat: VuoronTehtava[];
   pohjat: VuoronTehtava[];
   perehdytysPoikkeus?: { myontaja: string; syy: string; este: string; aika: string } | null;
+  // Milloin vuoron oli MÄÄRÄ päättyä (palvelin laskee vuorotyypin kellonajasta, ks.
+  // server/vuorot.js: vuoronPaattymisaika). null = kellonaikaa ei ole.
+  paattyyArvio?: string | null;
 };
 
 export type AloitusTulos =
@@ -250,4 +253,44 @@ export async function haePerehdytettavat(siteId: string): Promise<Perehdytettava
   if (!vastaus.ok) return [];
   const data = await vastaus.json().catch(() => null);
   return data?.ok ? (data.kayttajat || []) : [];
+}
+
+// --- Unohtunut vuoro (käyttäjän päätös 15.9.2026) ------------------------------------
+//
+// Vuoron päättäminen kuuluu vartijan työvelvollisuuteen eikä sitä päätetä
+// automaattisesti. Mutta päälle jäänyt vuoro pitää sijaintiseurannan käynnissä ja
+// näyttää hälytyskeskukselle siltä että vartija on yhä töissä, joten siitä
+// huomautetaan kahdessa vaiheessa:
+//
+//   +10 min   huomio VARTIJALLE — mahdollisuus korjata itse
+//   +15 min   rivi HÄLYTYSKESKUKSEEN — päivystäjä alkaa selvittää
+//
+// Kaksi vaihetta eikä yksi: ensimmäinen on muistutus, toinen on tehtävä jonka joku ottaa
+// hoitaakseen. Ilman väliä jokainen viisi minuuttia myöhässä oleva vuoronvaihto
+// työllistäisi päivystäjää.
+export const UNOHTUNUT_VARTIJA_MIN = 10;
+export const UNOHTUNUT_HALKE_MIN = 15;
+
+/**
+ * Kuinka monta minuuttia vuoro on yli määräajan, tai null jos ei ole.
+ *
+ * LASKENTA ON SELAIMESSA JA MÄÄRÄAIKA PALVELIMELTA, ja työnjako on harkittu. Määräajan
+ * laskeminen kellonajasta ("07:00") vaatii tiedon siitä ylittääkö vuoro puolenyön, ja se
+ * on palvelimen tehtävä koska vuorotyyppi on kohteen kenttä (server/vuorot.js:
+ * vuoronPaattymisaika). Myöhästymisminuuttien laskeminen taas on pelkkä vähennyslasku —
+ * mutta se on tehtävä TIKITTÄVÄSTÄ kellosta.
+ *
+ * Jos palvelin laskisi minuutit, vartijan puhelin näyttäisi sen luvun joka oli voimassa
+ * sovellusta avattaessa: oma vuoro haetaan kerran eikä sitä pollata. Huomio ei
+ * ilmestyisi koskaan kesken vuoron, eli juuri silloin kun se tarvitaan.
+ */
+export function myohassaMinuutteina(
+  paattyyArvio: string | null | undefined,
+  nyt: number = Date.now()
+): number | null {
+  if (!paattyyArvio) return null;
+  const maaraaika = Date.parse(paattyyArvio);
+  if (!Number.isFinite(maaraaika)) return null;
+  const min = Math.floor((nyt - maaraaika) / 60_000);
+  return min > 0 ? min : null;
 }

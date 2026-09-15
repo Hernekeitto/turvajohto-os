@@ -53,7 +53,7 @@ import {
 } from '../shared/aani';
 import {
   aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, haeVuoronKooste, lisaaVuoroon,
-  paataVuoroPalvelimella,
+  paataVuoroPalvelimella, myohassaMinuutteina, UNOHTUNUT_VARTIJA_MIN,
   type PalvelimenVuoro, type VuoronKooste, type Vuorokohde, type VuoroVaihtoehto,
 } from './vuorot';
 import {
@@ -1761,7 +1761,46 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       }))
     : [];
 
-  const mobiiliIlmoitukset: MobiiliIlmoitus[] = [...tehtavaIlmoitukset, ...omatHalytysIlmoitukset];
+  // Tikittävä kello minuutin tarkkuudella. Tarvitaan siihen että myöhästymishuomio
+  // ilmestyy KESKEN vuoron: oma vuoro haetaan kerran sovellusta avattaessa, joten ilman
+  // tätä ilmoitus näkyisi vain jos vartija sattuu avaamaan sovelluksen uudelleen
+  // päättymisajan jälkeen — eli juuri silloin kun hän ei sitä enää tarvitse.
+  //
+  // Minuutti eikä sekunti: näytettävä luku on minuutteja, ja sekunnin välein pyörivä
+  // uudelleenrenderöinti maksaisi akkua kentällä ilman että mikään muuttuu.
+  const [nyt, setNyt] = useState(() => Date.now());
+  useEffect(() => {
+    const ajastin = window.setInterval(() => setNyt(Date.now()), 60_000);
+    return () => window.clearInterval(ajastin);
+  }, []);
+
+  // UNOHTUNUT VUORO (käyttäjän päätös 15.9.2026). Kymmenen minuuttia yli ilmoitetun
+  // päättymisajan, ja vartija saa huomion omaan sovellukseensa.
+  //
+  // TÄMÄ ON MUISTUTUS EIKÄ HÄLYTYS, ja taso on siksi `perus`. Vuoron päättäminen kuuluu
+  // vartijan työvelvollisuuteen, ja useimmiten kyse on siitä että vuoronvaihto venyi
+  // viisi minuuttia — ei siitä että jotain on sattunut. Kriittinen taso tekisi tästä
+  // ilmoituksen joka tulee joka vuorossa ja jota kukaan ei lue.
+  //
+  // Viiden minuutin päästä tästä sama asia nousee hälytyskeskuksen listaan, ja silloin
+  // se on päivystäjän selvitettävä. Tämä on vartijan mahdollisuus hoitaa se itse ensin.
+  //
+  // Lasketaan `nyt`-tilasta eikä haun hetkestä: oma vuoro haetaan kerran sovellusta
+  // avattaessa, joten ilman tikittävää kelloa huomio ei ilmestyisi koskaan kesken vuoron.
+  const vuoroMyohassaMin = myohassaMinuutteina(palvelimenVuoro?.paattyyArvio, nyt);
+  const unohtunutVuoroIlmoitus: MobiiliIlmoitus[] =
+    vuoroMyohassaMin !== null && vuoroMyohassaMin >= UNOHTUNUT_VARTIJA_MIN
+      ? [{
+        id: 'vuoro-myohassa',
+        otsikko: 'Vuoro on yhä käynnissä',
+        kuvaus: `${vuoroMyohassaMin} min yli päättymisajan. Päätä vuoro jos olet lopettanut.`,
+        taso: 'perus' as const,
+      }]
+      : [];
+
+  const mobiiliIlmoitukset: MobiiliIlmoitus[] = [
+    ...tehtavaIlmoitukset, ...omatHalytysIlmoitukset, ...unohtunutVuoroIlmoitus,
+  ];
 
   const avaaIlmoitus = (id: string) => {
     if (id.startsWith('tehtava:')) {

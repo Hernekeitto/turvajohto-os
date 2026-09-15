@@ -30,7 +30,7 @@ import {
 } from './laite.js';
 import {
   JOUSTO_MIN, aloitaVuoro, keskenOlevaVuoro, kohteetPerehdytyksenMukaan, lisaaVuoroon,
-  paataVuoro, vuorovaihtoehdot,
+  paataVuoro, vuorovaihtoehdot, vuoronPaattymisaika,
 } from './vuorot.js';
 import {
   joSiirrossa, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto, omatSiirrot, peruSiirto,
@@ -1849,11 +1849,30 @@ app.get('/api/vuoro/kaynnissa', requireAuth, guardPortti, (req, res) => {
     return canView(req.permissions, v.siteId, 'alarms')
       || canView(req.permissions, v.siteId, 'guard_alarms');
   });
+  // Vuoron MÄÄRÄAIKA mukaan (käyttäjän päätös 15.9.2026: unohtunut vuoro).
+  //
+  // Palvelin laskee määräajan, selain laskee myöhästymisminuutit. Työnjako on harkittu:
+  // määräajan laskeminen kellonajasta ("07:00") vaatii tiedon siitä ylittääkö vuoro
+  // puolenyön, ja vuorotyyppi on kohteen kenttä jota tämä lista ei muuten palauta —
+  // selain joutuisi hakemaan jokaisen kohteen tiedot vain kertoakseen että vuoro on
+  // myöhässä. Minuuttien laskeminen taas on vähennyslasku joka on tehtävä tikittävästä
+  // kellosta, eikä palvelimen luku vanhene oikein selaimen välimuistissa.
+  const kohteet = readCollection('guardSites') || [];
+  const maaraaika = (v) => {
+    const kohde = kohteet.find((k) => k?.id === v.siteId);
+    const tyyppi = (kohde?.vuorotyypit || []).find((t) => t?.id === v.vuorotyyppiId);
+    const loppu = vuoronPaattymisaika(v.alkoi, tyyppi?.paattyy);
+    return loppu ? loppu.toISOString() : null;
+  };
+
   res.json({
     ok: true,
     vuorot: vuorot.map((v) => ({
       id: v.id, vartija: v.vartija, siteId: v.siteId, alkoi: v.alkoi,
       vuorotyyppiNimi: v.vuorotyyppiNimi || null,
+      // null = vuorotyypillä ei ole kellonaikaa. Kellonajaton lisävuoro ei voi olla
+      // myöhässä, koska sillä ei ole aikaa josta myöhästyä.
+      paattyyArvio: maaraaika(v),
     })),
   });
 });
@@ -1960,9 +1979,20 @@ app.get('/api/vuoro/oma', requireAuth, guardPortti, (req, res) => {
   const kohde = vuoro
     ? (readCollection('guardSites') || []).find((k) => k?.id === vuoro.siteId)
     : null;
+  // Oman vuoron määräaika. Vartija saa huomion kymmenen minuutin jälkeen — se on hänen
+  // mahdollisuutensa korjata asia itse ennen kuin hälytyskeskus alkaa selvittää.
+  //
+  // Määräaika eikä minuuttiluku, ja tässä syy on erityisen selvä: oma vuoro haetaan
+  // kerran sovellusta avattaessa eikä sitä pollata. Palvelimella laskettu minuuttiluku
+  // olisi se mikä se oli avaushetkellä, eikä huomio ilmestyisi koskaan kesken vuoron.
+  const omaTyyppi = vuoro
+    ? (kohde?.vuorotyypit || []).find((t) => t?.id === vuoro.vuorotyyppiId)
+    : null;
+  const omaPaattyy = vuoro ? vuoronPaattymisaika(vuoro.alkoi, omaTyyppi?.paattyy) : null;
+
   res.json({
     ok: true,
-    vuoro,
+    vuoro: vuoro ? { ...vuoro, paattyyArvio: omaPaattyy ? omaPaattyy.toISOString() : null } : vuoro,
     mandown: vuoro ? mandownAsetukset(kohde) : null,
     kuittaus: vuoro ? kuittausAsetukset(kohde) : null,
   });

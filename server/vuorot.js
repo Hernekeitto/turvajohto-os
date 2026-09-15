@@ -342,3 +342,55 @@ export function kohteetPerehdytyksenMukaan({ kohteet = [], username, vuorot = []
   );
   return kohteet.filter((k) => avoimet.has(k?.id) || perehdytetytVuorot(k, username).size > 0);
 }
+
+// --- Unohtunut vuoro (käyttäjän päätös 15.9.2026) ----------------------------------
+//
+// Vuoron päättäminen kuuluu vartijan työvelvollisuuteen, eikä sitä päätetä automaattisesti.
+// Mutta unohtunut vuoro pitää keruun käynnissä ja näyttää hälytyskeskukselle siltä että
+// vartija on yhä töissä, joten siitä huomautetaan kahdessa vaiheessa:
+//
+//   +10 min   huomio VARTIJALLE sovellukseen — mahdollisuus korjata itse
+//   +15 min   rivi HÄLYTYSKESKUKSEN listaan — päivystäjä alkaa selvittää
+//
+// Kaksi vaihetta eikä yksi: ensimmäinen on muistutus, toinen on tehtävä jonka joku
+// ottaa hoitaakseen. Jos näiden väliä ei olisi, jokainen viisi minuuttia myöhässä oleva
+// vuoronvaihto työllistäisi päivystäjää.
+export const UNOHTUNUT_VARTIJA_MIN = 10;
+export const UNOHTUNUT_HALKE_MIN = 15;
+
+/**
+ * Milloin tämän vuoron oli määrä päättyä.
+ *
+ * `paattyy` on kellonaika ("07:00") eikä päivämäärä, joten siitä on laskettava hetki.
+ * SÄÄNTÖ: ensimmäinen kyseinen kellonaika vuoron ALKAMISEN JÄLKEEN.
+ *
+ * Tämä on koko funktion syy. Yövuoro alkaa 22:00 ja päättyy 07:00 — jos kellonaika
+ * sijoitettaisiin alkamispäivään, vuoro näyttäisi päättyneen viisitoista tuntia ennen
+ * kuin se alkoi, ja jokainen yövuoro olisi "unohtunut" heti alkamishetkellään.
+ *
+ * Palauttaa null jos kellonaikaa ei ole: kellonajaton lisävuoro ei voi olla myöhässä,
+ * koska sillä ei ole aikaa josta myöhästyä.
+ */
+export function vuoronPaattymisaika(alkoi, paattyy) {
+  const min = minuutit(paattyy);
+  if (min === null) return null;
+  const alku = new Date(alkoi);
+  if (Number.isNaN(alku.getTime())) return null;
+
+  const loppu = new Date(alku);
+  loppu.setHours(Math.floor(min / 60), min % 60, 0, 0);
+  // Sama tai aiempi hetki kuin alku tarkoittaa että kellonaika osuu seuraavaan
+  // vuorokauteen. Yhtäsuuruus mukaan: vuorokauden mittainen vuoro päättyy seuraavana
+  // päivänä samaan aikaan, ei alkamishetkellään.
+  if (loppu.getTime() <= alku.getTime()) loppu.setDate(loppu.getDate() + 1);
+  return loppu;
+}
+
+// HUOM: myöhästymisminuutteja EI lasketa täällä vaan käyttöliittymässä
+// (src/guard/vuorot.ts: myohassaMinuutteina). Palvelin kertoo MÄÄRÄAJAN, selain vertaa
+// sitä kelloonsa.
+//
+// Syy on vartijan puhelin: oma vuoro haetaan kerran sovellusta avattaessa eikä sitä
+// pollata. Palvelimella laskettu minuuttiluku olisi siis se mikä se oli avaushetkellä,
+// ja huomio myöhästymisestä ei ilmestyisi koskaan kesken vuoron — juuri silloin kun se
+// tarvitaan. Määräaika sen sijaan ei vanhene.

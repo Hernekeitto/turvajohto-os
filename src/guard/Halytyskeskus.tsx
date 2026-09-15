@@ -46,6 +46,7 @@ import {
   kentalla, kohteenTilanne, tapahtumavirta, type Kiireys, type Lahteet,
 } from './tilannekuva';
 import type { Kohde } from './tyypit';
+import { myohassaMinuutteina, UNOHTUNUT_HALKE_MIN } from './vuorot';
 import { KeskuksenTehtavat } from './KeskuksenTehtavat';
 import { LAJIN_NIMI, type Halytystehtava } from './halytystehtavat';
 
@@ -255,7 +256,15 @@ export const Halytyskeskus = ({
   // kirjauksista: vartija joka ei ole kirjannut mitään ei näy siinä, ja juuri hänestä
   // päivystäjä on huolissaan.
   const [vuorossa, setVuorossa] = useState<
-    { id: string; vartija: string; siteId: string; alkoi: string; vuorotyyppiNimi: string | null }[]
+    {
+      id: string; vartija: string; siteId: string; alkoi: string;
+      vuorotyyppiNimi: string | null;
+      // Milloin vuoron oli MÄÄRÄ päättyä. null = vuorotyypillä ei ole kellonaikaa, eikä
+      // kellonajaton lisävuoro voi olla myöhässä. Palvelin laskee tämän, koska
+      // päättymiskellonaika on kohteen kenttä eikä tule tämän listan mukana — mutta
+      // myöhästymisminuutit lasketaan täällä tikittävästä kellosta.
+      paattyyArvio?: string | null;
+    }[]
   >([]);
 
   useEffect(() => {
@@ -1241,9 +1250,24 @@ export const Halytyskeskus = ({
           <EiOsumia haku={haku('vuorossa')} />
         ) : (
           <ul className="divide-y divide-line-soft border border-line rounded-lg overflow-hidden">
-            {vuorossaNakyvat.map((v) => (
-              <li key={v.id} className="px-4 py-3 bg-surface flex flex-wrap items-center gap-3">
-                <ShieldCheck size={16} className="text-ink-subtle shrink-0" />
+            {vuorossaNakyvat.map((v) => {
+              // UNOHTUNUT VUORO (käyttäjän päätös 15.9.2026). Vartija on saanut huomion
+              // omaan sovellukseensa jo kymmenen minuutin kohdalla; tämä on se hetki
+              // jolloin asia siirtyy päivystäjän selvitettäväksi.
+              //
+              // Vuoro joka jää päälle pitää sijaintiseurannan käynnissä ja näyttää
+              // hälytyskeskukselle siltä että vartija on yhä töissä. Kumpikaan ei ole
+              // vaaratonta, ja kumpaakaan ei huomaa ilman että joku kertoo.
+              const myohassa = myohassaMinuutteina(v.paattyyArvio, nyt);
+              const unohtunut = myohassa !== null && myohassa >= UNOHTUNUT_HALKE_MIN;
+              return (
+              <li
+                key={v.id}
+                className={`px-4 py-3 flex flex-wrap items-center gap-3 ${
+                  unohtunut ? 'bg-warning-soft' : 'bg-surface'
+                }`}
+              >
+                <ShieldCheck size={16} className={unohtunut ? 'text-warning-ink shrink-0' : 'text-ink-subtle shrink-0'} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-ink-strong">
                     {v.vartija}
@@ -1255,6 +1279,12 @@ export const Halytyskeskus = ({
                     {v.vuorotyyppiNimi ? `${v.vuorotyyppiNimi} · ` : ''}
                     alkoi {ikaTekstina(Math.max(0, nyt - Date.parse(v.alkoi)))} sitten
                   </p>
+                  {unohtunut && (
+                    <p className="text-xs font-bold text-warning-ink mt-1">
+                      Vuoro on {myohassa} min yli päättymisajan — selvitä onko vartija
+                      poistunut.
+                    </p>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -1267,7 +1297,8 @@ export const Halytyskeskus = ({
                   {tarkistettava === v.vartija ? 'Pyydetään…' : 'Pyydä tarkistus'}
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </Osio>

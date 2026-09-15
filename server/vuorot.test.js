@@ -14,6 +14,7 @@ import {
   JOUSTO_MIN,
   minuutit, onKytketty, perehdytetytVuorot, saakoAloittaa, vuoroIkkunassa, vuorovaihtoehdot,
   aloitaVuoro, keskenOlevaVuoro, kohteetPerehdytyksenMukaan, lisaaVuoroon, paataVuoro,
+  vuoronPaattymisaika, UNOHTUNUT_VARTIJA_MIN, UNOHTUNUT_HALKE_MIN,
 } from './vuorot.js';
 
 // Kello annetaan aina paikallisena, koska vuoroikkuna on paikallista aikaa: vartija tulee
@@ -438,4 +439,44 @@ test('kytkemätön tai tyhjä perehdytys ei avaa kohdetta', () => {
     kohteetPerehdytyksenMukaan({ kohteet: [kytkematon, tyhja], username: 'vartija1' }).map((k) => k.id),
     []
   );
+});
+
+// --- Unohtunut vuoro ----------------------------------------------------------------
+//
+// Painopiste on YÖVUOROSSA. Jos päättymiskellonaika sijoitettaisiin vuoron alkamispäivään,
+// 22:00 alkanut ja 07:00 päättyvä vuoro näyttäisi päättyneen viisitoista tuntia ennen kuin
+// se alkoi — ja jokainen yövuoro olisi "unohtunut" heti alkamishetkellään. Se olisi
+// ilmoitus joka tulee joka yö, eli ilmoitus jota kukaan ei lue.
+
+test('päivävuoron päättymisaika on samana päivänä', () => {
+  const loppu = vuoronPaattymisaika('2026-09-15T07:00:00', '15:00');
+  assert.equal(loppu.getDate(), 15);
+  assert.equal(loppu.getHours(), 15);
+});
+
+test('yövuoron päättymisaika on seuraavana päivänä', () => {
+  const loppu = vuoronPaattymisaika('2026-09-15T22:00:00', '07:00');
+  assert.equal(loppu.getDate(), 16);
+  assert.equal(loppu.getHours(), 7);
+});
+
+test('vuorokauden mittainen vuoro päättyy seuraavana päivänä', () => {
+  // paattyy === alkamisaika ei ole nollan mittainen vuoro, sama tulkinta kuin
+  // vuoroIkkunassa-funktiossa.
+  const loppu = vuoronPaattymisaika('2026-09-15T08:00:00', '08:00');
+  assert.equal(loppu.getDate(), 16);
+});
+
+test('kellonajaton vuoro ei voi olla myöhässä', () => {
+  // Kellonajaton lisävuoro on olemassa, eikä puuttuvaa rajoitetta saa tulkita
+  // rajoitteeksi.
+  assert.equal(vuoronPaattymisaika('2026-09-15T08:00:00', null), null);
+  assert.equal(vuoronPaattymisaika('2026-09-15T08:00:00', ''), null);
+});
+
+test('rajat ovat 10 ja 15 minuuttia', () => {
+  assert.equal(UNOHTUNUT_VARTIJA_MIN, 10);
+  assert.equal(UNOHTUNUT_HALKE_MIN, 15);
+  // Vartija ennen hälytyskeskusta: ensimmäinen on muistutus, toinen on tehtävä.
+  assert.ok(UNOHTUNUT_VARTIJA_MIN < UNOHTUNUT_HALKE_MIN);
 });
