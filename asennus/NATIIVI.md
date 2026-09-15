@@ -1692,6 +1692,132 @@ hyöty. Iskun tunnistus paranee 100 ms:llä joka tapauksessa kolminkertaisesti a
 Jos laitteella tehty iskutesti joskus osoittaa 10 Hz:n riittämättömäksi, `PYYNTO_MS` on se
 jota lasketaan — mutta silloin perusteena on mittaus.
 
+#### v27 15.9.2026: kaatumissääntö ei ollut voinut laueta koskaan
+
+Ensimmäinen laitteella tehty iskutesti ei tuottanut yhtäkään havaintoa. Testi tehtiin
+kahdessa osassa juuri siksi että ne erottaisivat kaksi eri vikaa toisistaan: A oli
+yhtäjaksoinen yli 2,5 g:n liike, jota näytetahti ei voi ohittaa, ja B oli oikea pudotus.
+Kumpikaan ei tuottanut mitään — ja se sulki pois näytetahdin, jota oli epäilty koko
+edellisen päivän.
+
+##### Vika
+
+`syota`:n liikehaara nollasi iskun mistä tahansa liikkeestä:
+
+```java
+if (!paikallaan) {
+    return new Tulos(new Tila(EI, EI, v), null);   // iskuTs pyyhitään aina
+}
+```
+
+Perustelu kuului "jos ihminen kaatui ja nousi, mitään ei ole tapahtunut". Perustelu on
+oikea, mutta ehto ei vastannut sitä: se pyyhki iskun myös siitä liikkeestä joka **kuuluu
+kaatumiseen itseensä**. Laite ei pysähdy sillä hetkellä kun se osuu — se kimpoaa, liukuu ja
+asettuu.
+
+`KAATUMINEN` vaati siis siirtymän yli 2,5 g:stä täysin paikalleen kahdessa näytteessä ilman
+yhtäkään välissä olevaa liikahdusta. Mitattu työpöydän JVM:llä:
+
+```
+isku + 0 ms asettumista    -> KAATUMINEN
+isku + 160 ms asettumista  -> null
+isku + 500 ms asettumista  -> null
+isku + 2000 ms asettumista -> null
+```
+
+`ISKUN_IKKUNA_MS = 3000` lupasi kolme sekuntia aikaa pysähtyä. Todellinen ikkuna oli noin
+kaksi näytettä, eli vakio oli kuollut koko olemassaolonsa ajan.
+
+##### Miksi 14 testiä meni läpi
+
+Jokainen iskuvektori — sekä `MandownTest.java`:ssa että `mandown.test.ts`:ssä — meni
+iskusta **suoraan lepoon**. Yksikään ei sisältänyt asettumista, koska vektorit oli
+kirjoitettu säännön kuvauksesta eikä siitä mitä laite fyysisesti tekee. Testit todistivat
+että toteutus vastaa kuvausta; kumpikaan ei vastannut todellisuutta.
+
+Korjauksen mukana tuli vektori `lyhyt asettuminen iskun jälkeen ei estä kaatumista`, ja se
+todennettiin hajoamaan ilman korjausta (12/13 läpi, oikea testi punaisena).
+
+##### Seuraus jota ei ollut ennen
+
+Korjaus avaa polun jota rikkinäisellä säännöllä ei ollut: **puhelimen laskeminen napakasti
+pöydälle ja siihen jättäminen** voi tuottaa kaatumisepäilyn, jos lasku ylittää 2,5 g ja
+laite jää paikalleen 12 sekunniksi. Onko näin, ei ole arvattavissa — ja siksi `iskuja=`
+on tärkeämpi kuin itse korjaus.
+
+##### Mittari joka puuttui
+
+Loki kirjasi vain säännön **tuloksen**. Kun kenttätesti ei tuottanut mitään, lokista ei
+voinut päätellä kumpi kahdesta täysin eri viasta oli kyseessä:
+
+```
+isku ei koskaan ylittänyt 25:tä      -> raja tai näytetahti on väärä
+isku ylitti mutta epäily ei syntynyt -> sääntö on väärä
+```
+
+Vastaus löytyi työpöytäajolla, koska mittaria ei ollut. Mittari joka kirjaa vain
+onnistumiset ei kerro epäonnistumisesta mitään — ja juuri epäonnistuminen on se jota
+testataan. Nyt jokainen rajan ylitys kirjataan nousevasta reunasta omana rivinään, ja
+lyöntirivillä on minuutin huippu:
+
+```
+anturi_isku v=41
+lyonti anturi=600 raakoja=600 huippu=41 iskuja=3
+```
+
+`huippu=` on minuutin huippu eikä vuoron ennätys: ennätys olisi yksi luku vuorossa,
+minuuttihuippu on aikasarja josta näkee milloin laitetta käsiteltiin ja kuinka lujaa.
+
+##### Laitteella mitattu tulos 15.9.2026
+
+Korjattu sääntö koeteltiin samalla laitteella heti asennuksen jälkeen. Puhelin pudotettiin
+noin metristä pehmeälle alustalle, käsi pois heti.
+
+| Aika | Isku | Seuraus |
+|---|---|---|
+| 14:25:10 | v=26 | — (liikettä perään) |
+| 14:25:17 | v=58 | kaatuminen 14:25:30 |
+| 14:25:48 | v=84 | kaatuminen 14:26:00 |
+| 14:26:16 | v=145 | kaatuminen 14:26:29 |
+| 14:26:50 | v=43 | kaatuminen 14:27:02 |
+| 14:27:42 | v=27 | — |
+| 14:27:43 | v=64 | — |
+
+Epäily tuli joka kerta 12–13 s iskun jälkeen eli täsmälleen `ISKUN_JALKEEN_MS`. Kaikki
+neljä kuitattiin 11–14 sekunnissa, joten hälytystä ei lähtenyt kertaakaan. Kolme iskua
+ilman seurausta ovat oikea tulos: niiden jälkeen laite liikkui.
+
+**Isku ei ole yhden näytteen tapahtuma.** Huiput olivat 26–172 m/s² (2,7–17,5 g), ja
+14:27:42–43 kirjautui kaksi erillistä nousevaa reunaa sekunnin sisään. Ylitys kestää siis
+kymmeniä millisekunteja. Tämä kumoaa sen oletuksen jonka varassa koko v23–v26-ketju
+tehtiin: että iskun piikki olisi niin lyhyt että portti voisi ohittaa sen kokonaan.
+
+**Tahti oli testin ajan huonoimmillaan, eikä sillä ollut väliä.** Suhde oli 1,19 eli portti
+hylkäsi kuudenneksen näytteistä koko testin ajan, ja tunnistus onnistui silti neljä kertaa
+neljästä. `NAYTEVALI_MS`:n laskemiselle ei siis ole perustetta — osuma ei ollut siitä
+kiinni.
+
+##### Portti = toimitusväli palaa, kun muut kuuntelevat
+
+v26:n perustelu oli että portti 80 ms on tiukasti pyynnön 100 ms alla. Se pitää paikkansa
+**vain kun toimitusväli on se mitä pyydettiin**. Mitattu 15.9.2026 kaapeli kiinni ja ruutu
+päällä:
+
+```
+raakoja=750/min  ->  toimitus 80,0 ms
+anturi=548/min   ->  portin läpi 109 ms
+suhde 1,37
+```
+
+Muut kuuntelijat (käyttöliittymä 66,7 ms) nostivat laitteiston tahtia, ja toimitusväli
+asettui täsmälleen portin arvoon 80 ms — sama kolikonheitto joka pilasi v24:n ja v25:n.
+Kaapeli irti ja ruutu pois toimitusväli on 100 ms ja suhde 1,000.
+
+Tätä ei korjattu v27:ssä, eikä sitä tarvitse korjata. Iskutesti ajettiin täsmälleen tämän
+ilmiön vallitessa — suhde 1,19 koko testin ajan — ja tunnistus onnistui neljä kertaa
+neljästä. Portin laskeminen olisi ollut kolmas arvaus samasta vakiosta, ja tällä kertaa se
+olisi tehty ongelmaan jota ei ole.
+
 ### Erä 13 — Hätäpainike sovelluksen ulkopuolelta
 
 | Osa | Uutta |
@@ -1763,7 +1889,22 @@ Kalenterin määrää käytännössä juridiikka, ei koodi.
    samalla lattia: pyyntö vaikuttaa toimitukseen, mutta hitaampaa kuin 100 ms ei saa.
    Näyteväli laskettiin v26:ssa 100 ms:n pyyntöön ja 80 ms:n porttiin, kahden
    epäonnistuneen yrityksen jälkeen. Mitattu suhde on nyt 1,000 eli jokainen toimitettu
-   tapahtuma käsitellään. Ks. "v23–v26 14.9.2026".
-5. **Iskusääntö on yhä testaamatta laitteella.** Kaatumista ei ole kertaakaan simuloitu
-   oikealla puhelimella, eikä 100 ms:n näytevälin vaikutusta paikallaanolosääntöön ole
-   mitattu kannettavalla puhelimella — se on toistaiseksi perusteltu arvio.
+   tapahtuma käsitellään — mutta vain kun mikään muu ei kuuntele anturia, ks. kohta 7.
+   Ks. "v23–v26 14.9.2026".
+5. ~~**Iskusääntö on yhä testaamatta laitteella.**~~ **Ratkaistu 15.9.2026.** Ensimmäinen
+   iskutesti paljasti että sääntö ei ollut voinut laueta koskaan; korjaus on v27:ssä.
+   Korjattu sääntö tunnisti neljä kaatumista neljästä oikeasta pudotuksesta, epäily 12–13 s
+   iskun jälkeen, eikä yksikään kolmesta iskusta joita seurasi liike tuottanut väärää
+   epäilyä. Ks. "v27 15.9.2026".
+6. **Paikallaanolosäännön herkkyys 100 ms:n tahdilla on arvio, ei mittaus.**
+   `LIIKKUMATTA_MUUTOS = 0.35` vertaa peräkkäisiä näytteitä, ja tiheämmin otettuina sama
+   fyysinen liike tuottaa pienemmän eron. Lepokohina on mitattu (0,026 keskimäärin,
+   0,110 suurin), mutta kannettavalla puhelimella tehtyä ajoa uudella tahdilla ei ole.
+7. ~~**Portti ja toimitusväli osuvat yhteen kun muut sovellukset kuuntelevat anturia.**~~
+   **Mitattu merkityksettömäksi 15.9.2026.** Ilmiö on todellinen — toimitus 80 ms, portti
+   80 ms, suhde 1,19–1,37 — mutta iskutesti onnistui 4/4 juuri sen vallitessa, koska
+   ylitys kestää kymmeniä millisekunteja eikä yhtä näytettä. `NAYTEVALI_MS` jää 80 ms:iin.
+8. **Väärien kaatumisten määrää tavallisessa käytössä ei ole mitattu.** v27 avasi polun
+   jota rikkinäisellä säännöllä ei ollut: napakasti pöydälle laskettu ja siihen jätetty
+   puhelin voi ylittää 2,5 g ja jäädä paikalleen 12 sekunniksi. `iskuja=` lyöntirivillä
+   on se luku jota seurataan seuraavassa pitkässä ajossa.

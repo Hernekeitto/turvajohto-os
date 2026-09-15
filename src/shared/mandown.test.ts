@@ -67,6 +67,19 @@ test('isku ja sen jälkeinen liikkumattomuus tunnistetaan kaatumiseksi', () => {
   assert.equal(epaily, 'kaatuminen');
 });
 
+// Tämä on se vektori jonka puuttuminen päästi virheen läpi: kaatuvan laitteen
+// kimpoaminen ja asettuminen on liikettä, ja liikehaara nollasi iskun. Kaikki aiemmat
+// iskuvektorit menivät iskusta suoraan lepoon, joten yksikään ei koskettanut tätä.
+test('lyhyt asettuminen iskun jälkeen ei estä kaatumista', () => {
+  const epaily = aja([
+    { voimakkuus: ISKU_RAJA + 10, kesto: 0 },
+    // Puoli sekuntia kimpoamista ja liukumista, selvästi ISKUN_IKKUNA_MS:n alla.
+    { voimakkuus: 13, kesto: 500, liike: true },
+    { voimakkuus: LEPO, kesto: ISKUN_JALKEEN_MS + 1000 },
+  ]);
+  assert.equal(epaily, 'kaatuminen');
+});
+
 test('isku josta noustaan ei ole kaatuminen', () => {
   const epaily = aja([
     { voimakkuus: ISKU_RAJA + 10, kesto: 0 },

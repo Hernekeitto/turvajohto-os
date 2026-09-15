@@ -61,6 +61,9 @@ export const LIIKKUMATTA_MUUTOS = 0.35;
 export const ISKUN_JALKEEN_MS = 12_000;
 
 // Kuinka pian iskun jälkeen liikkumattomuuden on alettava, jotta se liittyy iskuun.
+// Kolme sekuntia, koska kaatuva laite kimpoaa ja liukuu eikä ole liikkumaton sillä
+// hetkellä kun se osuu. Vakio oli alusta asti pelkkä lupaus — syota() nollasi iskun
+// jokaisesta liikahduksesta — ja korjattiin 15.9.2026; ks. liikehaaran perustelu.
 export const ISKUN_IKKUNA_MS = 3_000;
 
 // Liikkumattomuus ilman iskua. Tunti eikä viisi minuuttia: raja nostettiin 13.9.2026
@@ -161,8 +164,19 @@ export function syota(
 
   const paikallaan = Math.abs(v - tila.edellinen) <= LIIKKUMATTA_MUUTOS;
   if (!paikallaan) {
-    // Liike nollaa myös iskun: jos ihminen kaatui ja nousi, mitään ei ole tapahtunut.
-    return { tila: { paikallaanAlkaen: null, iskuTs: null, edellinen: v }, epaily: null };
+    // Liike nollaa iskun VASTA kun iskun ikkuna on umpeutunut.
+    //
+    // Tässä nollattiin 15.9.2026 asti aina, perusteluna "jos ihminen kaatui ja nousi,
+    // mitään ei ole tapahtunut". Perustelu on oikea mutta ehto oli väärä: se pyyhki iskun
+    // myös siitä liikkeestä joka kuuluu kaatumiseen itseensä — kimpoamisesta, liukumisesta
+    // ja asettumisesta. KAATUMINEN vaati siis siirtymän yli 2,5 g:stä täysin paikalleen
+    // kahdessa näytteessä, ja ISKUN_IKKUNA_MS oli kuollut vakio. Mitattu: 0 ms
+    // asettumista -> kaatuminen, 160 ms -> ei mitään. Ks. natiivin Mandown.java.
+    const iskuTuore = tila.iskuTs !== null && ts - tila.iskuTs <= ISKUN_IKKUNA_MS;
+    return {
+      tila: { paikallaanAlkaen: null, iskuTs: iskuTuore ? tila.iskuTs : null, edellinen: v },
+      epaily: null,
+    };
   }
 
   const alkaen = tila.paikallaanAlkaen ?? ts;
