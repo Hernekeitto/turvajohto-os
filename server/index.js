@@ -3608,7 +3608,7 @@ function eskalointiLoki({ halytys, runko, vastaanottajat, uniikit, tulos }) {
  * todennäköisesti se joka ei vastaa. Täysruutuhälytys hänen omalle laitteelleen olisi
  * parhaimmillaankin hyödytön ja pahimmillaan häiriö kesken hätätilanteen.
  */
-function herataTehtavasta(tehtava, kohde, { halyttaja = null } = {}) {
+function herataTehtavasta(tehtava, kohde, { halyttaja = null, halyttajanSijainti = null } = {}) {
   const vuorot = readCollection('guardShifts') || [];
   return lahetaViesti(
     {
@@ -3619,9 +3619,17 @@ function herataTehtavasta(tehtava, kohde, { halyttaja = null } = {}) {
       // oikeustarkistuksen läpi, eikä kanavaviesti saa olla oikotie sen ohi.
       laji: tehtava.laji,
       kohde: tehtava.siteNimi || '',
-      // Vain tarkistustehtävällä: kenen takia ollaan menossa. Muissa lajeissa ei ole
-      // hälyttäjää vaan asiakkaan hälytinjärjestelmä tai päivystäjän päätös.
+      // OSOITE MUKAAN, koska vartija lukee tämän ruudulta ennen kuin avaa sovelluksen.
+      // Kohteen nimi kertoo mistä on kyse, osoite kertoo minne ajetaan — ja yöllä
+      // herätetty ihminen tarvitsee molemmat samalla silmäyksellä.
+      osoite: kohde?.address || '',
+      // Vain tarkistustehtävällä: kenen takia ollaan menossa ja missä hänet viimeksi
+      // tiedettiin. Muissa lajeissa ei ole hälyttäjää vaan asiakkaan hälytinjärjestelmä
+      // tai päivystäjän päätös.
       ...(halyttaja ? { vartija: findUser(halyttaja)?.nickname || halyttaja } : {}),
+      ...(halyttajanSijainti
+        ? { sijainti: `${halyttajanSijainti.lat.toFixed(5)}, ${halyttajanSijainti.lon.toFixed(5)}` }
+        : {}),
     },
     {
       suodatin: (istunto) => {
@@ -3704,7 +3712,13 @@ function luoTarkistustehtava(halytys) {
     // Herätys ERIKSEEN kanavailmoituksen jälkeen: edellinen päivittää auki olevat ruudut,
     // tämä herättää puhelimet. Laitemäärä kirjataan, koska "kukaan ei herännyt" on eri
     // tieto kuin "herätys lähetettiin" — ja jälkikäteen kysytään juuri sitä.
-    const heratetty = herataTehtavasta(tulos.tehtava, kohde, { halyttaja: halytys.vartija });
+    const heratetty = herataTehtavasta(tulos.tehtava, kohde, {
+      halyttaja: halytys.vartija,
+      // Viimeksi tiedetty sijainti mukaan ruudulle. Se on tavallisesti ainoa vihje siitä
+      // mistä ihmistä lähdetään etsimään, ja sen on oltava luettavissa ilman että
+      // sovellusta avataan.
+      halyttajanSijainti: halytys.gps || null,
+    });
     logAudit({
       user: halytys.vartija, action: 'tarkistustehtava_heratys',
       collection: 'guardDispatch', recordId: tulos.tehtava.id,
