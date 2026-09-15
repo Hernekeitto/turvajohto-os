@@ -2059,6 +2059,23 @@ app.post('/api/vuoro/:id/paata', requireAuth, guardPortti, (req, res) => {
   if (tulos.duplikaatti) return res.json({ ok: true, vuoro: tulos.vuoro, duplikaatti: true });
 
   writeCollection('guardShifts', vuorot.map((v) => (v.id === vuoro.id ? tulos.vuoro : v)));
+
+  // VUORON PÄÄTTYMINEN UNOHTAA SIJAINNIN.
+  //
+  // sijainti.js on luvannut tämän kommentissaan alusta asti, mutta sitä ei ollut
+  // toteutettu: vain uloskirjautuminen poisti sijainnin, ja vuoron päättänyt vartija jäi
+  // hälytyskeskuksen listalle puoleksi tunniksi kunnes tietue vanheni itsestään.
+  //
+  // Ero ei ole tekninen vaan periaatteellinen, ja se on juuri se lause joka
+  // työntekijälle kerrotaan: seuranta koskee työaikaa. Vartija joka päättää vuoronsa ja
+  // jää vaihtamaan vaatteita ei ole enää työvuorossa, eikä hänen sijaintinsa kuulu
+  // kenellekään — eikä sovellus välttämättä ole edes auki, jolloin uloskirjautumista
+  // ei tapahdu lainkaan.
+  //
+  // `vuoro.vartija` eikä `req.username`: hälytyskeskus voi päättää unohtuneen vuoron
+  // toisen puolesta, ja silloin unohdettava sijainti on sen vartijan eikä päivystäjän.
+  unohdaSijainti(vuoro.vartija);
+
   logAudit({
     user: req.username, action: 'vuoro_paattyi', collection: 'guardShifts',
     recordId: vuoro.id, eventId: vuoro.siteId,
