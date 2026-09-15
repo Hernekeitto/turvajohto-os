@@ -18,7 +18,9 @@ import {
   OLETUS_SADE_KM,
   etaisyysKm, kieltaydy, kohteenSijainti, lahetaRaportti, lisaaHavainto, luoTehtava,
   merkitseVaihe, nakeeTehtavan, omatToiminnot, peruTehtava, ratkaiseHyvaksynta, vastaanota,
+  LAJIN_NIMI,
 } from './halytystehtava.js';
+import { TARKISTUSTA_VAATIVAT, SIJAINTISAANNOT } from './halytys.js';
 
 const T0 = Date.parse('2026-09-14T18:04:00Z');
 const min = (n) => T0 + n * 60_000;
@@ -316,4 +318,48 @@ test('hyväksyntää odottaessa valikko ei tarjoa mitään tehtävää', () => {
     [v.vastaanota, v.ajoon, v.paikalla, v.raportoi, v.odottaa],
     [false, false, false, false, true]
   );
+});
+
+// --- Tarkistustehtävä (käyttäjän päätös 15.9.2026) ----------------------------------
+
+test('tarkistus on kelvollinen laji', () => {
+  const tulos = luoTehtava({
+    laji: 'tarkistus', kohde: { id: 'k1', name: 'Kauppakeskus' }, id: 't1',
+  });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.tehtava.laji, 'tarkistus');
+});
+
+test('tarkistustehtävä on tavallinen tehtävä eikä erillinen käsite', () => {
+  // Sama kohdennus, sama vastaanotto, sama poistumislupa ja sama tapahtumailmoitus.
+  // Jos tämä alkaisi poiketa, vastaanottava vartija joutuisi opettelemaan kaksi
+  // erilaista tehtävää.
+  const t = luoTehtava({
+    laji: 'tarkistus', kohde: { id: 'k1', name: 'Kauppakeskus' }, id: 't1',
+  }).tehtava;
+  assert.equal(t.tila, 'avoin');
+  assert.deepEqual(t.yksikot, []);
+  assert.equal(t.hyvaksynta, null);
+});
+
+test('tarkistuksen nimi erottaa sen vartijakutsusta', () => {
+  // Vastaanottavan vartijan on tiedettävä kumpaa ollaan tekemässä: asiakas pyysi
+  // vartijan paikalle, vai onko kollega hädässä.
+  assert.notEqual(LAJIN_NIMI.tarkistus, LAJIN_NIMI.vartijakutsu);
+  assert.match(LAJIN_NIMI.tarkistus, /tarkistus/i);
+});
+
+test('tarkistusta vaativat lajit ovat samat kuin LYTP-sijaintilajit', () => {
+  // Ei sattuma: naista syntyy tarkistustehtava, tehtavasta tapahtumailmoitus, ja
+  // ilmoituksesta sailytysvelvollisuus. Jos listat erkanevat, toinen on vaarassa.
+  const lytp = Object.entries(SIJAINTISAANNOT)
+    .filter(([, s]) => s.sailytys === 'lytp')
+    .map(([t]) => t)
+    .sort();
+  assert.deepEqual([...TARKISTUSTA_VAATIVAT].sort(), lytp);
+});
+
+test('vyöhykepoikkeama ja varustepoikkeama eivät vaadi tarkistusta', () => {
+  assert.equal(TARKISTUSTA_VAATIVAT.has('geofence'), false);
+  assert.equal(TARKISTUSTA_VAATIVAT.has('varuste'), false);
 });

@@ -36,12 +36,16 @@
 
 // Hälytyslajit. Lista on tarkoituksella lyhyt: nämä kolme kattavat vartiointiliikkeen
 // hälytysliikenteen, ja neljäs laji lisätään vasta kun sille on oikea käyttötapaus.
-export const LAJIT = ['murto', 'vartijakutsu', 'ovenavaus'];
+export const LAJIT = ['murto', 'vartijakutsu', 'ovenavaus', 'tarkistus'];
 
 export const LAJIN_NIMI = {
   murto: 'Murtohälytys',
   vartijakutsu: 'Vartijakutsu',
   ovenavaus: 'Ovenavaus',
+  // Vartijan tarkistus (päätös 15.9.2026). OMA LAJINSA eikä vartijakutsu, koska
+  // vastaanottavan vartijan on tiedettävä kumpaa ollaan tekemässä: asiakas pyysi
+  // vartijan paikalle, vai onko kollega hädässä. Ne ovat eri tehtävä ja eri kiire.
+  tarkistus: 'Vartijan tarkistus',
 };
 
 // Tehtävän tilat.

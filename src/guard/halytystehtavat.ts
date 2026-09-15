@@ -9,7 +9,11 @@
 // (ajastin, man-down, hätäpainike) — tämä on työ jonka hälytyskeskus antaa vartijalle.
 // Kaksi eri kokoelmaa, kaksi eri moduulia, ja sama sana kansankielessä.
 
-export type HalytysLaji = 'murto' | 'vartijakutsu' | 'ovenavaus';
+// 'tarkistus' syntyy KONEELLISESTI vartijan oman turvahälytyksen eskaloituessa
+// (hätäpainike, man-down, ajastin) — muut lajit luo päivystäjä. Se on silti tavallinen
+// hälytystehtävä eikä erillinen käsite: sama kohdennus, sama vastaanotto, sama
+// poistumislupa ja sama tapahtumailmoitus.
+export type HalytysLaji = 'murto' | 'vartijakutsu' | 'ovenavaus' | 'tarkistus';
 export type TehtavanTila = 'avoin' | 'kaynnissa' | 'odottaa' | 'suljettu' | 'peruttu';
 
 // Millä perusteella tehtävä näytettiin tälle vartijalle. Näytetään käyttöliittymässä:
@@ -139,8 +143,16 @@ export const LAJIN_NIMI: Record<HalytysLaji, string> = {
   murto: 'Murtohälytys',
   vartijakutsu: 'Vartijakutsu',
   ovenavaus: 'Ovenavaus',
+  // OMA LAJINSA eikä vartijakutsu, koska vastaanottavan vartijan on tiedettävä kumpaa
+  // ollaan tekemässä: asiakas pyysi vartijan paikalle, vai onko kollega hädässä. Ne ovat
+  // eri tehtävä ja eri kiire.
+  tarkistus: 'Vartijan tarkistus',
 };
 
+// Ne lajit joita PÄIVYSTÄJÄ voi luoda käsin. `tarkistus` ei ole listassa: se syntyy
+// koneellisesti turvahälytyksen eskaloituessa, eikä käsin luotu "tarkistus" ilman
+// taustalla olevaa hälytystä tarkoittaisi mitään. Päivystäjä joka haluaa lähettää
+// vartijan katsomaan toista vartijaa luo vartijakutsun.
 export const LAJIT: HalytysLaji[] = ['murto', 'vartijakutsu', 'ovenavaus'];
 
 export const TILAN_NIMI: Record<TehtavanTila, string> = {

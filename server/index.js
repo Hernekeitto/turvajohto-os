@@ -120,7 +120,7 @@ import {
   peru as peruHalytys, kuittaa as kuittaaHalytys, eraantyneet, eskaloitavat,
   merkitseEskaloitu, viestiTeksti, TYYPIT as HALYTYSTYYPIT, mandownAsetukset,
   kuittausAsetukset, KUITTAUS_VASTAUSAIKA_MIN, merkinta,
-  siivoaVyohykeSijainnit, GEOFENCE_SAILYTYS_VRK,
+  siivoaVyohykeSijainnit, GEOFENCE_SAILYTYS_VRK, TARKISTUSTA_VAATIVAT,
 } from './halytys.js';
 import { arvioi as arvioiVyohykkeet } from './geofence.js';
 import { onkoKonfiguroitu, haeSaldo, lahetaViestit, laskeViesti, parsiJson } from './bulksms.js';
@@ -3571,6 +3571,71 @@ function eskalointiLoki({ halytys, runko, vastaanottajat, uniikit, tulos }) {
 // Yhden hälytyksen eskalointi tekstiviestiksi. Palauttaa aina tuloksen eikä heitä:
 // kutsuja merkitsee myös epäonnistumisen hälytykseen, jotta samaa viestiä ei yritetä
 // lähettää uudelleen joka kierroksella.
+/**
+ * Luo tarkistustehtävän vartijan turvahälytyksestä (käyttäjän päätös 15.9.2026).
+ *
+ * panic, mandown ja ajastin tarkoittavat että vartijalle voi olla sattunut jotain, ja
+ * silloin joku menee katsomaan. Siitä syntyy tavallinen hälytystehtävä: sama kohdennus,
+ * sama vastaanotto, sama poistumislupa ja sama tapahtumailmoitus — ja sitä kautta sama
+ * LYTP:n säilytysaika jonka perusteella näiden lajien sijaintia säilytetään.
+ *
+ * VYÖHYKEPOIKKEAMA JA VARUSTEPOIKKEAMA EIVÄT LUO TEHTÄVÄÄ. Vyöhykepoikkeama on
+ * työnjohdollinen havainto eikä ihmisen hätä; varustepoikkeama tarkoittaa että joku tuo
+ * toimivan varusteen, mikä on eri työ eikä tarkistus.
+ *
+ * KOHTEETON HÄLYTYS EI TUOTA TEHTÄVÄÄ, ja se on tiedossa oleva puute. Hälytystehtävä on
+ * rakenteeltaan kohteen tehtävä (siteId on sen oikeusavain ja kohdennuksen perusta),
+ * eikä piirivuorossa ilman aktiivista kohdetta painettu hätäpainike voi tuottaa
+ * sellaista. Näissä tapauksissa eskalointi jää tekstiviestin varaan — mikä on juuri se
+ * syy miksi viestiä ei poisteta.
+ */
+function luoTarkistustehtava(halytys) {
+  if (!TARKISTUSTA_VAATIVAT.has(halytys?.tyyppi)) return;
+  try {
+    if (!halytys.eventId) {
+      logAudit({
+        user: halytys.vartija, action: 'tarkistustehtava_ei_kohdetta',
+        collection: 'guardDispatch', recordId: halytys.id, alarmType: halytys.tyyppi,
+      });
+      return;
+    }
+    const kohde = (readCollection('guardSites') || []).find((k) => k?.id === halytys.eventId);
+    if (!kohde) return;
+
+    const nimi = findUser(halytys.vartija)?.nickname || halytys.vartija;
+    const tulos = luoTehtava({
+      laji: 'tarkistus',
+      kohde,
+      luoja: null,
+      id: uusiId(),
+      havaintoId: () => uusiId(),
+      havainnot: [
+        // Havainto kertoo vastaanottajalle sen mitä hän tarvitsee heti: kuka, mikä
+        // hälytys ja missä hänet viimeksi tiedettiin. Sijainti on tavallisesti ainoa
+        // vihje siitä mistä ihmistä lähdetään etsimään.
+        `${HALYTYSTYYPIT[halytys.tyyppi]?.label || halytys.tyyppi}: ${nimi}.`
+        + (halytys.gps
+          ? ` Viimeksi tiedetty sijainti ${halytys.gps.lat.toFixed(5)}, ${halytys.gps.lon.toFixed(5)}.`
+          : ' Sijaintia ei ole tiedossa.'),
+      ],
+    });
+    if (!tulos.ok) return;
+
+    const tehtavat = readCollection('guardDispatch') || [];
+    writeCollection('guardDispatch', [tulos.tehtava, ...tehtavat]);
+    logAudit({
+      user: halytys.vartija, action: 'tarkistustehtava_luotu',
+      collection: 'guardDispatch', recordId: tulos.tehtava.id,
+      eventId: halytys.eventId, alarmType: halytys.tyyppi, halytysId: halytys.id,
+    });
+    kerroTehtavasta(tulos.tehtava);
+  } catch (err) {
+    // Tarkistustehtävän luonti ei saa kaataa eskalointia: tekstiviesti on se kanava joka
+    // tavoittaa sammuneen puhelimen, ja se on tärkeämpi kuin tämä.
+    console.error('Tarkistustehtävän luonti epäonnistui:', err.message);
+  }
+}
+
 async function eskaloiHalytys(halytys) {
   try {
     const { kohteenNimi, vastaanottajat, lahde } = halytysVastaanottajat({
@@ -3655,6 +3720,23 @@ async function kasitteleHalytykset() {
     }
 
     for (const h of eskaloitavat(lista, nyt)) {
+      // TARKISTUSTEHTÄVÄ TOISILLE VARTIJOILLE (käyttäjän päätös 15.9.2026).
+      //
+      // Luodaan ENNEN viestin lähetystä: tehtävän luonti on paikallinen eikä voi jäädä
+      // odottamaan verkkoa, ja eskaloinnin hidas kohta on ulkoinen HTTP-kutsu.
+      //
+      // RINNALLE EIKÄ TILALLE, ja tämä on turvallisuuspäätös eikä varovaisuutta.
+      // Tekstiviesti tavoittaa sammuneen ja taskussa olevan puhelimen; hälytystehtävä
+      // ilmestyy vain sen ruudulle jolla sovellus on auki, koska taustaherätystä ei ole
+      // vielä olemassa (ks. asennus/NATIIVI.md: push-kanava). Jos viesti korvattaisiin
+      // tehtävällä nyt, hätäpainikkeen tavoittavuus olisi sovelluksen aukiolon varassa.
+      //
+      // Kun push-kanava herättää puhelimen, viestin poistaminen on oma harkintansa —
+      // huomaa silti että viesti menee kohteen HÄLYTYSNUMEROIHIN (asiakas, päivystys) ja
+      // tehtävä VARTIJOILLE. Ne eivät ole samat vastaanottajat, eikä toinen korvaa
+      // toista pelkästään siksi että molemmat "ilmoittavat".
+      luoTarkistustehtava(h);
+
       const tulos = await eskaloiHalytys(h);
       // Kokoelma luetaan UUDELLEEN lähetyksen jälkeen: odotuksen aikana hälytys on voitu
       // kuitata tai uusia on voinut syntyä, eikä vanhaan kopioon kirjoittaminen saa

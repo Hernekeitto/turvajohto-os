@@ -104,6 +104,18 @@ export const SIJAINTISAANNOT = {
 /** Kerätäänkö tämän hälytyslajin yhteydessä sijainti. Tuntematon laji: ei kerätä. */
 export const kerataankoSijainti = (tyyppi) => SIJAINTISAANNOT[tyyppi]?.kerataan === true;
 
+// Ne hälytyslajit joista syntyy tarkistustehtävä toisille vartijoille (käyttäjän päätös
+// 15.9.2026). Nämä kolme tarkoittavat että vartijalle voi olla sattunut jotain.
+//
+// Vyöhykepoikkeama ja varustepoikkeama eivät ole tässä: edellinen on työnjohdollinen
+// havainto eikä ihmisen hätä, jälkimmäinen tarkoittaa että joku tuo toimivan varusteen —
+// mikä on eri työ eikä tarkistus.
+//
+// SAMA KOLMIKKO KUIN LYTP-SÄILYTYKSESSÄ, eikä se ole sattuma: näistä syntyy
+// tarkistustehtävä, tehtävästä tapahtumailmoitus, ja ilmoituksesta säilytysvelvollisuus.
+// Jos listat joskus erkanevat, toinen niistä on väärässä.
+export const TARKISTUSTA_VAATIVAT = new Set(['panic', 'mandown', 'ajastin']);
+
 // Vyöhykepoikkeaman sijainnin säilytysaika vuorokausina. Sama luku kuin muulla
 // sijaintidatalla (sijaintiloki.js), ja tarkoituksella sama: vyöhykepoikkeaman
 // koordinaatti on sijaintitieto siinä missä jälkikin, eikä kahdelle eri luvulle ole
