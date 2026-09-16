@@ -242,6 +242,25 @@ if (!pisin) {
 console.log(`\n=== TULOS: ${luku(nopeus(pisin))} %/h`);
 console.log(`    (pisin yhtäjaksoinen purkautuminen, ${luku(kesto(pisin))} h)`);
 
+// KUINKA MONEEN ASKELEESEEN LUKU PERUSTUU — ja miksi se ratkaisee.
+//
+// Akku raportoi kokonaisia prosentteja, joten mittaus on askelten laskemista. Ikkunan
+// MOLEMMAT PÄÄT ovat katkaistuja: emme tiedä milloin ensimmäinen lukema alkoi emmekä
+// milloin viimeinen päättyy. Yhdellä havaitulla askeleella virhe on siis suunnilleen
+// ±100 % — luku voi olla mitä tahansa kahden ja kymmenen välillä.
+//
+// Tämä varoitus on olemassa siksi, että ilman sitä skripti tulostaa "2,78 %/h"
+// kahdenkymmenen minuutin ikkunasta täsmälleen samalla varmuudella kuin kahdeksan
+// tunnin ajosta. Se on sama vika kuin kolme aiempaa: uskottava luku, ei virhettä.
+const askeleet = pudotus(pisin);
+const virhearvio = Math.round((100 / askeleet));
+if (askeleet < 4 || kesto(pisin) < 1) {
+  console.log('\n*** EI VIELÄ LUOTETTAVA ***');
+  console.log(`    Luku perustuu ${askeleet} prosenttiaskeleeseen ${luku(kesto(pisin))} tunnissa.`);
+  console.log(`    Ikkunan molemmat päät ovat katkaistuja, joten virhe on luokkaa ±${virhearvio} %.`);
+  console.log('    Luotettava luku vaatii vähintään neljä askelta, käytännössä 3–4 tuntia.');
+}
+
 // Akun ensimmäiset prosentit purkautuvat epälineaarisesti, joten täydestä alkava luku on
 // aina hieman optimistinen. Tämä on sama rajaus jota aiemmissa mittauksissa on käytetty.
 const alle95 = pisin.filter((r) => r.akku <= 95);
