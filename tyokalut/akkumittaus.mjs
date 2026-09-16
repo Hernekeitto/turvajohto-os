@@ -19,9 +19,36 @@
 
 import { readFileSync } from 'node:fs';
 
-const tiedosto = process.argv[2];
+// Vuoroloki on kiertävä ja kattaa useita vuorokausia. Ilman rajausta skripti vertailee
+// keskenään jaksoja jotka eivät liity toisiinsa — eilinen ajo, yön lataus ja tämä vuoro.
+// Rajaus on operaattorin tieto: hän tietää milloin kaapeli irtosi, loki ei.
+//
+//   node tyokalut/akkumittaus.mjs loki.txt --alkaen "2026-09-16 07:50" --asti "2026-09-16 16:00"
+const argumentit = process.argv.slice(2);
+const lippu = (nimi) => {
+  const i = argumentit.indexOf(nimi);
+  return i >= 0 ? argumentit[i + 1] : null;
+};
+// Tiedostonimi on se argumentti joka ei ole lippu eikä lipun arvo.
+const LIPUT = ['--alkaen', '--asti'];
+const tiedosto = argumentit.find(
+  (a, i) => !a.startsWith('--') && !LIPUT.includes(argumentit[i - 1]),
+);
+
+const raja = (arvo, nimi) => {
+  if (!arvo) return null;
+  const d = new Date(arvo.replace(' ', 'T'));
+  if (Number.isNaN(d.getTime())) {
+    console.error(`${nimi}: aikaa "${arvo}" ei voi lukea. Muoto: "2026-09-16 07:50"`);
+    process.exit(1);
+  }
+  return d.getTime();
+};
+const alkaen = raja(lippu('--alkaen'), '--alkaen');
+const asti = raja(lippu('--asti'), '--asti');
+
 if (!tiedosto) {
-  console.error('Anna lokitiedosto: node tyokalut/akkumittaus.mjs <vuoroloki.txt>');
+  console.error('Anna lokitiedosto: node tyokalut/akkumittaus.mjs <vuoroloki.txt> [--alkaen "…"] [--asti "…"]');
   process.exit(1);
 }
 
@@ -54,6 +81,7 @@ const rivit = readFileSync(tiedosto, 'utf8')
     };
   })
   .filter((r) => !Number.isNaN(r.ms))
+  .filter((r) => (alkaen === null || r.ms >= alkaen) && (asti === null || r.ms <= asti))
   .sort((a, b) => a.ms - b.ms);
 
 if (rivit.length < 2) {
@@ -65,17 +93,66 @@ const akulliset = rivit.filter((r) => r.akku !== null);
 
 // --- Purkautumisjaksot ---------------------------------------------------------------
 //
-// Jakso katkeaa kun akku NOUSEE. Yhden prosentin nousu riittää: akku ei nouse itsestään,
-// joten nousu on aina latausta. Laskeva ja tasainen kuuluvat samaan jaksoon.
+// Jakso katkeaa kahdesta syystä, ja TOINEN NIISTÄ OPITTIIN VASTA OIKEALLA DATALLA.
+//
+// 1. Akku NOUSEE. Akku ei nouse itsestään, joten nousu on aina latausta.
+//
+// 2. Akku seisoo paikallaan liian kauan. Tämä on se jonka ensimmäinen versio jätti
+//    tekemättä, ja seuraus oli nolla varoitusta ja täysin uskottava väärä luku:
+//    yön laturissa viettänyt puhelin näytti "17,77 h purkautumista, 0,62 %/h", koska
+//    100 %:ssa seisova akku ei koskaan noussut eikä siis katkaissut jaksoa. Luku oli
+//    kymmenkertaisesti väärässä ja näytti parhaalta mittaukselta koko lokissa.
+//
+// Syy on datassa eikä tässä: LOKISSA EI OLE LATAUSLIPPUA, joten "laturissa täytenä" ja
+// "purkautuu hyvin hitaasti" ovat kirjaimellisesti sama rivi. Ainoa käytettävissä oleva
+// erotin on kesto. Todellisella kulutuksella (3–5 %/h) yksi prosentti kestää 12–20
+// minuuttia; tunti samaa lukemaa ei ole hidas purkautuminen vaan laturi.
+//
+// Raja on tarkoituksella reilu: liian tiukka pilkkoisi oikean mittauksen paloiksi, ja
+// pilkottu mittaus on vaikeampi huomata vääräksi kuin kokonaan puuttuva.
+const TASANNE_MIN = 60;
+
+// 3. Lokissa on AUKKO. Tämäkin löytyi oikealla datalla: vuoro päättyi 21:02 ja alkoi
+//    uudelleen 07:50, eikä väliltä ole riviäkään. Ilman tätä katkoa jakso liimautui
+//    aukon yli ja tuotti "12,77 h, 100 % → 89 %" — luku joka sisälsi yhdentoista tunnin
+//    ajan jolta ei ole mitään tietoa. Palvelu ei kirjaa riviä kertoakseen ettei se
+//    kirjaa rivejä, joten aukko on tunnistettava aikaleimoista.
+//
+//    Lyönti on minuutin välein, joten kymmenen minuuttia on jo selvästi poikkeavaa
+//    eikä normaalin vaihtelun rajoissa.
+const KATKO_MIN = 10;
+
 const jaksot = [];
 let nykyinen = [akulliset[0]];
+// Milloin nykyinen lukema nähtiin ensimmäisen kerran — tasanteen pituus mitataan siitä.
+let tasanteenAlku = akulliset[0];
+const katkaise = (rivi) => {
+  jaksot.push(nykyinen);
+  nykyinen = [rivi];
+  tasanteenAlku = rivi;
+};
+
 for (let i = 1; i < akulliset.length; i += 1) {
-  if (akulliset[i].akku > akulliset[i - 1].akku) {
-    jaksot.push(nykyinen);
-    nykyinen = [akulliset[i]];
-  } else {
-    nykyinen.push(akulliset[i]);
+  const r = akulliset[i];
+  if ((r.ms - akulliset[i - 1].ms) / 60_000 > KATKO_MIN) {
+    katkaise(r);
+    continue;
   }
+  if (r.akku > akulliset[i - 1].akku) {
+    katkaise(r);
+    continue;
+  }
+  if (r.akku < akulliset[i - 1].akku) {
+    tasanteenAlku = r;
+  } else if ((r.ms - tasanteenAlku.ms) / 60_000 > TASANNE_MIN) {
+    // Tasanne venyi yli rajan: katkaistaan siitä kohdasta jossa lukema viimeksi vaihtui,
+    // jotta laturissa seisottu aika ei jää kummankaan jakson kestoon.
+    const katkaisukohta = nykyinen.indexOf(tasanteenAlku);
+    if (katkaisukohta > 0) nykyinen = nykyinen.slice(0, katkaisukohta + 1);
+    katkaise(r);
+    continue;
+  }
+  nykyinen.push(r);
 }
 jaksot.push(nykyinen);
 
@@ -85,7 +162,14 @@ const nopeus = (j) => (kesto(j) > 0 ? pudotus(j) / kesto(j) : null);
 
 // Pisin AJALLISESTI, ei riveiltään: rivien määrä kertoo lyönneistä, ei kestosta.
 const kelvolliset = jaksot.filter((j) => j.length >= 2 && kesto(j) > 0);
-const pisin = kelvolliset.sort((a, b) => kesto(b) - kesto(a))[0];
+
+// Mitattavaksi kelpaa vain jakso jossa akku OIKEASTI laski. Laturissa täytenä seisova
+// puhelin tuottaa tasanteen joka kestää tasan TASANNE_MIN minuuttia ja näyttää
+// muodollisesti purkautumisjaksolta — nollan prosentin nopeudella. Ilman tätä rajausta
+// tunnin laturitasanne voisi voittaa 50 minuutin oikean mittauksen pelkällä kestollaan.
+const pisin = kelvolliset
+  .filter((j) => pudotus(j) >= 1)
+  .sort((a, b) => kesto(b) - kesto(a))[0];
 
 // Aikaleimat tulostetaan PAIKALLISENA, koska lokiin ne on kirjoitettu paikallisena
 // eikä vyöhyketietoa ole. `toISOString` siirtäisi ne UTC:hen, jolloin ruudulla lukisi
@@ -111,7 +195,9 @@ for (const j of kelvolliset) {
   console.log(
     `${kello(j[0].aika)} → ${kello(j[j.length - 1].aika)}  `
     + `${luku(kesto(j))} h  ${j[0].akku} % → ${j[j.length - 1].akku} %  `
-    + `= ${luku(nopeus(j))} %/h${j === pisin ? '   <= pisin' : ''}`,
+    + `= ${luku(nopeus(j))} %/h`
+    + (j === pisin ? '   <= mitattu' : '')
+    + (pudotus(j) < 1 ? '   (ei laskua — laturi)' : ''),
   );
 }
 
