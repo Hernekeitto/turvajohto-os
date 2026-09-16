@@ -147,9 +147,13 @@ hänelle on annettu pääsy. Piirivuorossa oleva yksikkö, jolla ei ole kohdetta
 
 Pääkäyttäjä näkee kaiken.
 
-**Sijainnin katsomista ei kirjata auditlokiin.** Järjestelmä kirjaa esimerkiksi
-master-koodin katsomisen ja kohdehenkilötietojen lukemisen, mutta ei sitä kuka katsoi
-kenen sijaintia. Ks. kohta 8.
+**Sijainnin katsominen kirjataan auditlokiin** (päätös ja toteutus 15.9.2026).
+Kirjaus tehdään istuntojaksoina, noin 15 minuutin ikkunassa, eikä jokaisesta
+rivipyynnöstä erikseen: tilannekuva päivittyy jatkuvasti, ja rivikohtainen kirjaus
+tuottaisi lokin jota kukaan ei lue eikä ehdi lukea.
+
+Loki on jälkikäteinen suoja eikä esto. Se ei estä katsomasta, vaan tekee katsomisen
+näkyväksi — ja se on eri asia, joka on sanottava sellaisena myös työntekijälle.
 
 ## 5. Mihin tietoa käytetään
 
@@ -194,7 +198,7 @@ Nämä ovat toteutettuja, eivät suunniteltuja:
 | Sijainnin katsominen auditlokiin | Toteutettu |
 | Historian käyttötarkoitus: hälytysten ja kierrosten jälkikäteinen selvitys ja varmentaminen | Kirjattu määrittelyyn |
 | Vuoron päättäminen hälytyskeskuksesta | Oli jo olemassa |
-| Ilmoitus unohtuneesta vuorosta 15 min päättymisajan jälkeen | **Tekemättä** |
+| Ilmoitus unohtuneesta vuorosta 15 min päättymisajan jälkeen | Toteutettu 15.9.2026 (vartijalle 10 min, hälytyskeskukselle 15 min) |
 
 ### Turvahälytysten sijainnit (päätös 15.9.2026)
 
@@ -203,6 +207,7 @@ Nämä ovat toteutettuja, eivät suunniteltuja:
 | Varustepoikkeamasta sijainti pois kokonaan | Toteutettu |
 | panic / mandown / ajastin → LYTP | Toteutettu (noudattaa tietueen elinkaarta) |
 | geofence → 45 vrk, sijainti poistuu ja hälytys jää | Toteutettu |
+| panic / mandown / ajastin luovat tarkistustehtävän toisille vartijoille | Toteutettu 15.9.2026; tehtävä herättää puhelimen näytön natiivin kanavan kautta |
 
 ### Yhä avoinna
 
@@ -215,15 +220,21 @@ Nämä ovat toteutettuja, eivät suunniteltuja:
    (`src/shared/asetukset/Sailytysajat.tsx`). Tämä koskee koko LYTP-säilytystä eikä vain
    sijaintia, mutta se on kirjattava tähän: säilytysaika jota mikään ei valvo on
    dokumentaatiota eikä suojaa.
-3. **Tarkistustehtävä toisille vartijoille.** Päätöksen perusteluna oli että panic,
-   mandown ja ajastin muuttuvat tarkistustehtäväksi muille vartijoille. Nykyinen
-   eskalointi lähettää hätäviestin; varsinaista tehtävän luontia toisille vartijoille ei
-   ole toteutettu.
+3. **Rekisteröidyn oikeuksien toteuttaminen käytännössä.** Tarkastuspyyntö omista
+   sijaintitiedoista on toistaiseksi käsin tehtävä toimenpide, koska historian lukemiselle
+   ei ole käyttöliittymää. Se on sama puute kuin kohdassa 1, mutta toisesta suunnasta:
+   sama näkymä palvelisi molempia, ja molemmat on ratkaistava yhtä aikaa — pääsy ja
+   sen kirjaaminen samalla kertaa.
 
 ## 9. Tarkistuslista käyttöönotolle
 
-- [ ] Yhteistoimintalain (1333/2021) mukainen käsittely teknisestä valvonnasta
-- [ ] Työntekijöiden informointi (mitä kerätään, milloin, kuka näkee, kuinka kauan)
+- [ ] Yhteistoimintalain (1333/2021) mukainen käsittely teknisestä valvonnasta —
+      aineisto laadittu 16.9.2026: `sijaintiseuranta-yt-aineisto.md`. Menettely itse on
+      yhä käymättä.
+- [ ] Työntekijöiden informointi (mitä kerätään, milloin, kuka näkee, kuinka kauan) —
+      mallipohja laadittu 16.9.2026: `sijaintiseuranta-informointi.md`. Täytettävät
+      kohdat ovat työnantajan päätöksiä, ja tiedote annetaan vasta menettelyn jälkeen
+      (759/2004 21 § 2 mom.).
 - [ ] Käsittelyperuste kirjattuna
 - [ ] Tarpeellisuusvaatimuksen (759/2004) arviointi kirjattuna
 - [ ] Vaikutustenarviointi viimeisteltynä ja hyväksyttynä
