@@ -113,22 +113,10 @@ async function teeLataus() {
   return maplibre;
 }
 
-// Tiilipaketin osoite.
-//
-// TIEDOSTONIMESSÄ ON PLANEETTABUILDIN PÄIVÄMÄÄRÄ, ja sen on vastattava sitä nimeä jonka
-// `asennus/tiilet.sh` tuotti palvelimelle (`suomi-<pvm>.pmtiles`). Nimi on osa sopimusta
-// eikä yksityiskohta: nginx tarjoilee tiedoston `immutable`-otsakkeella, koska sisältö ei
-// koskaan muutu tämän nimen alla. Uusi tiilipaketti on siis uusi nimi ja tämän rivin
-// muutos — ei välimuistin tyhjennystä, ei "päivitä ja toivo".
-//
-// Jos tämä ja palvelimen tiedostonimi erkanevat, kartta jää tyhjäksi ja verkkovälilehti
-// näyttää 404:n — se on ikävä mutta äänekäs vika, ja se on tarkoituksella parempi kuin
-// hiljainen vanhan paketin tarjoilu.
-//
-// Ympäristömuuttuja on kehitystä varten: `VITE_TIILET=http://…` osoittaa toiseen
-// pakettiin ilman koodimuutosta.
-export const TIILET =
-  (import.meta.env.VITE_TIILET as string | undefined) || '/tiilet/suomi-20260914.pmtiles';
+// Osoitteet ovat omassa tiedostossaan (osoitteet.ts), jotta karttatyylin voi tuoda
+// testiin ilman tämän moduulin sivuvaikutuksia. Uudelleenvienti pitää olemassa olevat
+// tuonnit ennallaan.
+export { TIILET, KIRJASIMET } from './osoitteet';
 
 /**
  * Kartan perusasetukset.
