@@ -73,19 +73,6 @@ export const PANEELIT: Paneeli[] = [
     // on: kartta kertoo tilanteen yhdellä silmäyksellä kolmen metrin päästä, mihin
     // yksikään lista ei pysty.
     taulukelpoinen: true,
-    // KESKEN: ei näy valikossa (erä 24).
-    //
-    // Karttakoodi on valmis ja todennettu oikeilla tiilillä, mutta siinä on avoin vika:
-    // kartta latautuu ensimmäisellä latauksella koodimuutoksen jälkeen ja jää
-    // "Ladataan"-tilaan seuraavilla, pyytämättä yhtään tiiltä. Ks. commit 32ceb3a.
-    //
-    // Piilotus tässä eikä koodin poistaminen: vika on kapea ja toistettava, eikä valmista
-    // työtä kannata purkaa sen takia. Osoite /guard/halke/kartta toimii yhä suoraan
-    // kirjoitettuna, joten selvitystyötä voi jatkaa tuotantoa vasten — mutta päivystäjä
-    // ei löydä valikosta riviä jonka takaa aukeaa tyhjä ruutu joka toinen kerta.
-    //
-    // POISTA TÄMÄ RIVI kun kartta latautuu luotettavasti.
-    kesken: true,
   },
   {
     id: 'kohteet',

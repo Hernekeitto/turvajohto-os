@@ -68,7 +68,8 @@ test('kesken oleva paneeli ei näy valikossa mutta osoite toimii', () => {
   // häiritse ketään jos siihen ei ole tietä. Valikon rivi on lupaus, ja lupaus jonka
   // takaa aukeaa tyhjä ruutu on huonompi kuin puuttuva rivi.
   const kesken = PANEELIT.filter((p) => p.kesken);
-  assert.ok(kesken.length > 0, 'testi olettaa että ainakin yksi paneeli on kesken');
+  // Lippu on nyt käyttämättä (karttapaneeli vapautettiin 16.9.2026), joten tyhjä lista
+  // on oikea tulos. Testi kattaa yhä sen että LIPPU toimii jos se otetaan käyttöön.
   for (const p of kesken) {
     // Osoite toimii yhä, jotta selvitystyötä voi jatkaa tuotantoa vasten.
     assert.equal(lueOsoite(p.polku, '').paneeli, p.id, `osoite ${p.polku}`);

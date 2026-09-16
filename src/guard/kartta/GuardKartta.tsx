@@ -78,6 +78,22 @@ export const GuardKartta = ({ yksikot, kohteet, taulu = false, onValitse }: Prop
           setVirheteksti(String(e?.error?.message || e?.error || 'tuntematon virhe'));
         });
 
+        // JOS KARTTA JÄÄ "LADATAAN"-TILAAN, KATSO ENSIN ONKO SIVU NÄKYVISSÄ.
+        //
+        // maplibre lykkää tyylin latauksen piirtoruutuun (requestAnimationFrame), eikä
+        // piilossa oleva sivu saa ruutuja lainkaan. Piilotetussa välilehdessä kartta jää
+        // siis ikuisesti lataukseen: `dataloading` ei laukea kertaakaan, tiiliä ei pyydetä
+        // ja `error`-tapahtuma ei tule. Näkyvässä ikkunassa kaikki toimii heti.
+        //
+        // Tämä maksoi 15.–16.9.2026 tuntikausia väärään suuntaan: oiretta pidettiin
+        // satunnaisena vikana kartassa ja epäiltiin työntekijää, CSP:tä, protokollan
+        // rekisteröintiä ja kilpailutilannetta. Kaikki olivat vääriä. Mitattu syy:
+        // selainpaneelin välilehti oli `document.visibilityState === 'hidden'`, ja
+        // rAF-korvauksella sama sivu latautui joka kerta.
+        //
+        // Sivu palautuu itsestään kun se tulee näkyviin — odottava rAF laukeaa silloin —
+        // joten tämä ei vaadi koodilta mitään. Se vaatii vain ettei sitä jahdata uudelleen.
+        //
         // KILPAILUTILANNE: `load` VOI OLLA JO TAPAHTUNUT.
         //
         // Tyyli on paikallinen olio eikä haettava tiedosto, joten maplibre voi saada sen
