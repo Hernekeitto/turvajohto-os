@@ -161,3 +161,92 @@ export function vartijavaihtoehdot(vuorot, nyt = Date.now()) {
     .sort((a, b) => b[1] - a[1])
     .map(([username, viimeksi]) => ({ username, viimeksi: new Date(viimeksi).toISOString() }));
 }
+
+// --- Hälytystehtävän ajalta haettava jälki ------------------------------------------
+//
+// KAKSI ERI LÄHDETTÄ, JA NIILLÄ ON ERI ELINKAARI. Tämä on koko tämän osan olennaisin
+// asia, ja se on tehtävä näkyväksi myös käyttäjälle:
+//
+//   tehtava  Kun päivystäjä hyväksyy poistumisen, kunkin yksikön jälki tehtävän
+//            vastaanotosta poistumislupaan KOPIOIDAAN tehtävän tietueeseen
+//            (index.js: liitaJalki). Siihen sovelletaan LYTP:n tapahtumailmoitusaikaa:
+//            kaksi vuotta laatimisvuoden päättymisestä. Tämä on SE JÄLKI JOKA
+//            HYVÄKSYTTIIN — todiste, ei näkymä.
+//
+//   loki     Sijaintiloki, 45 vuorokautta. Kattaa myös kesken olevat ja hyväksymättä
+//            jääneet tehtävät, mutta katoaa säilytysajan täytyttyä.
+//
+// Tehtävän oma jälki on siis AINA ensisijainen kun se on olemassa. Jos lokia käytettäisiin
+// ensin, sama tehtävä näyttäisi eri jäljen ennen ja jälkeen 45 vuorokauden — ensin lokista
+// luetun, sitten tyhjän — vaikka hyväksytty jälki on koko ajan tallessa tietueessa.
+
+/**
+ * Mistä tämän yksikön jälki haetaan tälle tehtävälle.
+ *
+ * Palauttaa joko valmiin jäljen (`lahde: 'tehtava'`) tai aikaikkunan jolla loki luetaan
+ * (`lahde: 'loki'`). Null jos yksikköä ei ole tehtävällä tai se kieltäytyi.
+ */
+export function tehtavanJalki(tehtava, vartija, nyt = Date.now()) {
+  const yksikko = (tehtava?.yksikot || []).find((y) => y?.vartija === vartija);
+  // Kieltäytyneelle ei jälkeä: hän ei ollut tehtävällä. Sama sääntö kuin liitaJalki'ssa,
+  // ja se on toistettava tässä — muuten kieltäytyneen sijainti tulisi lokista vaikka
+  // tehtävän tietueessa sitä ei ole.
+  if (!yksikko || yksikko.kieltaytyi) return null;
+
+  if (Array.isArray(yksikko.jalki) && yksikko.jalki.length > 0) {
+    return {
+      lahde: 'tehtava',
+      pisteet: yksikko.jalki,
+      harvennettu: yksikko.jalkiHarvennettu || null,
+    };
+  }
+
+  const alku = Date.parse(yksikko.vastaanotti);
+  if (!Number.isFinite(alku)) return null;
+  // Kesken olevalle tehtävälle loppu on NYT eikä tehtävän luotu-aika: päivystäjä katsoo
+  // jälkeä usein juuri silloin kun yksikkö on matkalla.
+  const loppu = Date.parse(yksikko.poistui || tehtava?.paattyi || '') || nyt;
+  return { lahde: 'loki', alku, loppu: Math.max(loppu, alku) };
+}
+
+/**
+ * Mitkä tehtävät voi valita haun kohteeksi.
+ *
+ * Mukaan tulevat ne joilla on vastaanottanut yksikkö — muista ei ole jälkeä eikä
+ * haettavaa. Rajaus on lisäksi kysyjän kohdepääsy: tehtävälista itsessään kertoo missä
+ * kohteissa on ollut hälytyksiä, eikä se ole tieto jonka rajattu päivystäjä saa muualta.
+ *
+ * SÄILYTYSAIKAA EI RAJATA TÄSSÄ. Tehtävän oma jälki säilyy kaksi vuotta, joten vanhempi
+ * tehtävä on yhä kelvollinen haun kohde — toisin kuin vapaassa aikavälihaussa, jossa
+ * 45 vuorokautta on kova raja.
+ */
+export function tehtavavaihtoehdot(tehtavat, kysyja, eventAllowed) {
+  const access = kysyja?.role === 'admin' ? [] : (kysyja?.eventAccess || []);
+  return (tehtavat || [])
+    .filter((t) => {
+      if (!t?.id) return false;
+      if (!eventAllowed(access, t.siteId)) return false;
+      return (t.yksikot || []).some((y) => y?.vartija && !y.kieltaytyi && y.vastaanotti);
+    })
+    .map((t) => ({
+      id: t.id,
+      laji: t.laji,
+      siteId: t.siteId || null,
+      siteNimi: t.siteNimi || '',
+      silmukka: t.silmukka || '',
+      luotu: t.luotu,
+      tila: t.tila,
+      yksikot: (t.yksikot || [])
+        .filter((y) => y?.vartija && !y.kieltaytyi && y.vastaanotti)
+        .map((y) => ({
+          vartija: y.vartija,
+          nimi: y.nimi || y.vartija,
+          vastaanotti: y.vastaanotti,
+          poistui: y.poistui || null,
+          // Kerrotaan ETUKÄTEEN kummasta lähteestä jälki tulee, jotta käyttöliittymä voi
+          // sanoa sen ennen hakua eikä vasta tuloksen yhteydessä.
+          lahde: Array.isArray(y.jalki) && y.jalki.length > 0 ? 'tehtava' : 'loki',
+        })),
+    }))
+    .sort((a, b) => String(b.luotu).localeCompare(String(a.luotu)));
+}

@@ -43,12 +43,46 @@ const IKKUNA_MAX_VRK = 7;
 
 type Vartija = { username: string; nimi: string; viimeksi: string };
 
+type TehtavanYksikko = {
+  vartija: string;
+  nimi: string;
+  vastaanotti: string;
+  poistui: string | null;
+  lahde: 'tehtava' | 'loki';
+};
+
+type Tehtava = {
+  id: string;
+  laji: string;
+  siteNimi: string;
+  silmukka: string;
+  luotu: string;
+  tila: string;
+  yksikot: TehtavanYksikko[];
+};
+
 type Tulos = {
   username: string;
   nimi: string;
   pisteet: Jalkipiste[];
   harvennettu?: number;
+  lahde?: 'tehtava' | 'loki';
+  tehtava?: { id: string; laji: string; siteNimi: string; silmukka: string; luotu: string };
 };
+
+// KAKSI HAKUTAPAA, ja ne vastaavat eri kysymykseen.
+//
+// `tehtava`  "Mitä tässä hälytyksessä tapahtui" — aikaväliä ei tarvitse tietää, se
+//            luetaan tehtävästä. Tämä on se tapa jota jälkiselvitys oikeasti käyttää:
+//            päivystäjä tietää minkä hälytyksen haluaa selvittää, ei sitä mihin
+//            kellonaikaan yksikkö sattui ottamaan sen vastaan.
+//
+// `aikavali` "Missä tämä ihminen liikkui tällä välillä" — laajempi ja tylympi työkalu,
+//            tarpeen silloin kun tapahtumaa ei ole kirjattu tehtäväksi.
+//
+// Tehtävä on oletus tarkoituksella: kapeampi haku on oikea lähtökohta, ja vapaa aikaväli
+// on se johon siirrytään kun tehtävä ei riitä.
+type Hakutapa = 'tehtava' | 'aikavali';
 
 const pvm = (d: Date) => {
   const p = (n: number) => String(n).padStart(2, '0');
@@ -63,7 +97,10 @@ const kello = (ts: string) => {
 };
 
 export const Sijaintihistoria = ({ onTakaisin }: { onTakaisin: () => void }) => {
+  const [hakutapa, setHakutapa] = useState<Hakutapa>('tehtava');
   const [vartijat, setVartijat] = useState<Vartija[]>([]);
+  const [tehtavat, setTehtavat] = useState<Tehtava[]>([]);
+  const [tehtavaId, setTehtavaId] = useState('');
   const [sailytysVrk, setSailytysVrk] = useState(45);
   const [kuka, setKuka] = useState('');
 
@@ -87,6 +124,35 @@ export const Sijaintihistoria = ({ onTakaisin }: { onTakaisin: () => void }) => 
         if (typeof d.sailytysVrk === 'number') setSailytysVrk(d.sailytysVrk);
       })
       .catch(() => setVirhe('Vartijalistaa ei saatu haettua.'));
+
+    fetch('/api/sijaintihistoria/tehtavat', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.ok) setTehtavat(d.tehtavat || []); })
+      .catch(() => { /* Tehtävälista puuttuu: aikavälihaku toimii yhä. */ });
+  }, []);
+
+  const valittuTehtava = tehtavat.find((t) => t.id === tehtavaId) || null;
+
+  // Yksikön valinta nollataan kun tehtävä vaihtuu, JA valitaan automaattisesti jos
+  // yksiköitä on vain yksi. Ilman jälkimmäistä yleisin tapaus vaatisi kaksi klikkausta
+  // joista toisessa ei ole vaihtoehtoja.
+  useEffect(() => {
+    if (hakutapa !== 'tehtava') return;
+    const yksikot = valittuTehtava?.yksikot || [];
+    setKuka(yksikot.length === 1 ? yksikot[0].vartija : '');
+  }, [tehtavaId, hakutapa, valittuTehtava]);
+
+  const haeOsoitteella = useCallback((params: URLSearchParams) => {
+    setHaetaan(true);
+    fetch(`/api/sijaintihistoria?${params}`, { credentials: 'include' })
+      .then(async (r) => {
+        const d = await r.json().catch(() => null);
+        if (!r.ok || !d?.ok) throw new Error(d?.error || `Haku epäonnistui (${r.status}).`);
+        return d as Tulos;
+      })
+      .then(setTulos)
+      .catch((e: Error) => setVirhe(e.message))
+      .finally(() => setHaetaan(false));
   }, []);
 
   // Haku on nappi eikä automaattinen. Automaattinen haku kirjaisi auditlokiin rivin joka
@@ -95,10 +161,25 @@ export const Sijaintihistoria = ({ onTakaisin }: { onTakaisin: () => void }) => 
     setVirhe('');
     setTulos(null);
 
+    if (hakutapa === 'tehtava' && !tehtavaId) { setVirhe('Valitse hälytystehtävä.'); return; }
     if (!kuka) { setVirhe('Valitse kenen jälkeä haetaan.'); return; }
     if (!syy) { setVirhe('Valitse katselun syy.'); return; }
     if (syy === 'muu' && tarkenne.trim().length < 3) {
       setVirhe('Kuvaa muu syy vähintään kolmella merkillä.');
+      return;
+    }
+
+    const yhteinen = {
+      username: kuka,
+      syy,
+      ...(tarkenne.trim() ? { tarkenne: tarkenne.trim() } : {}),
+    };
+
+    // Tehtäväpohjaisessa haussa aikaväliä EI lähetetä lainkaan. Se luetaan palvelimella
+    // tehtävästä — asiakas ei tiedä milloin yksikkö otti tehtävän vastaan, eikä sen
+    // arvaaminen tästä päästä tuottaisi kuin väärän ikkunan.
+    if (hakutapa === 'tehtava') {
+      haeOsoitteella(new URLSearchParams({ ...yhteinen, tehtavaId }));
       return;
     }
 
@@ -111,25 +192,10 @@ export const Sijaintihistoria = ({ onTakaisin }: { onTakaisin: () => void }) => 
       return;
     }
 
-    const params = new URLSearchParams({
-      username: kuka,
-      alku: String(alku),
-      loppu: String(loppu),
-      syy,
-      ...(tarkenne.trim() ? { tarkenne: tarkenne.trim() } : {}),
-    });
-
-    setHaetaan(true);
-    fetch(`/api/sijaintihistoria?${params}`, { credentials: 'include' })
-      .then(async (r) => {
-        const d = await r.json().catch(() => null);
-        if (!r.ok || !d?.ok) throw new Error(d?.error || `Haku epäonnistui (${r.status}).`);
-        return d as Tulos;
-      })
-      .then(setTulos)
-      .catch((e: Error) => setVirhe(e.message))
-      .finally(() => setHaetaan(false));
-  }, [kuka, syy, tarkenne, alkuPvm, loppuPvm]);
+    haeOsoitteella(new URLSearchParams({
+      ...yhteinen, alku: String(alku), loppu: String(loppu),
+    }));
+  }, [hakutapa, tehtavaId, kuka, syy, tarkenne, alkuPvm, loppuPvm, haeOsoitteella]);
 
   const pisteet = tulos?.pisteet || [];
 
@@ -142,8 +208,17 @@ export const Sijaintihistoria = ({ onTakaisin }: { onTakaisin: () => void }) => 
         <p className="text-sm text-ink-muted leading-relaxed max-w-3xl">
           Missä yksikkö liikkui työvuoron aikana. Käytetään hälytysten ja kierrosten
           jälkikäteiseen selvitykseen ja varmentamiseen — <strong>ei työsuorituksen
-          seurantaan</strong>. Jälki säilyy {sailytysVrk} vuorokautta, minkä jälkeen se
-          poistetaan automaattisesti.
+          seurantaan</strong>.
+        </p>
+        {/* KAKSI SÄILYTYSAIKAA, ja ne on sanottava molemmat. Pelkkä "45 vuorokautta"
+            olisi väärin hälytystehtävien osalta, ja pelkkä "kaksi vuotta" olisi väärin
+            kaiken muun osalta. Kumpikin yksin luettuna johtaisi väärään käsitykseen
+            siitä mitä järjestelmässä on tallessa. */}
+        <p className="text-sm text-ink-muted leading-relaxed max-w-3xl mt-2">
+          Tavallinen sijaintijälki säilyy <strong>{sailytysVrk} vuorokautta</strong>, minkä
+          jälkeen se poistetaan automaattisesti. Hälytystehtävään poistumisluvan yhteydessä
+          tallennettu jälki säilyy pidempään — siihen sovelletaan LYTP:n
+          tapahtumailmoitusaikaa.
         </p>
       </div>
 
@@ -158,49 +233,125 @@ export const Sijaintihistoria = ({ onTakaisin }: { onTakaisin: () => void }) => 
       </div>
 
       <div className="grid gap-4 rounded-2xl border border-line bg-surface p-5 sm:grid-cols-2">
-        <label className="text-sm">
-          <span className="block font-medium text-ink-strong mb-1">Kenen jälki</span>
-          <select
-            value={kuka}
-            onChange={(e) => setKuka(e.target.value)}
-            className="w-full rounded-lg border border-line bg-sunken px-3 py-2 text-ink-body"
-          >
-            <option value="">Valitse…</option>
-            {vartijat.map((v) => (
-              <option key={v.username} value={v.username}>{v.nimi}</option>
-            ))}
-          </select>
-          {/* Lista tulee vuoroista eikä käyttäjärekisteristä: vain ne joilla on ollut
-              vuoro säilytysaikana. Tyhjä lista on siis tieto eikä vika. */}
-          {vartijat.length === 0 && (
-            <span className="mt-1 block text-xs text-ink-muted">
-              Yhdelläkään vartijalla ei ole vuoroa viimeisen {sailytysVrk} vuorokauden
-              ajalta, joten haettavaa jälkeä ei ole.
-            </span>
-          )}
-        </label>
-
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <label>
-            <span className="block font-medium text-ink-strong mb-1">Alkaen</span>
-            <input
-              type="date" value={alkuPvm} max={tanaan}
-              onChange={(e) => setAlkuPvm(e.target.value)}
-              className="w-full rounded-lg border border-line bg-sunken px-3 py-2 text-ink-body"
-            />
-          </label>
-          <label>
-            <span className="block font-medium text-ink-strong mb-1">Päättyen</span>
-            <input
-              type="date" value={loppuPvm} max={tanaan}
-              onChange={(e) => setLoppuPvm(e.target.value)}
-              className="w-full rounded-lg border border-line bg-sunken px-3 py-2 text-ink-body"
-            />
-          </label>
-          <span className="col-span-2 text-xs text-ink-muted">
-            Enintään {IKKUNA_MAX_VRK} vuorokautta kerrallaan.
-          </span>
+        <div className="sm:col-span-2 flex flex-wrap gap-2">
+          {([
+            ['tehtava', 'Hälytystehtävän ajalta'],
+            ['aikavali', 'Vapaa aikaväli'],
+          ] as [Hakutapa, string][]).map(([id, teksti]) => (
+            <button
+              key={id} type="button"
+              onClick={() => { setHakutapa(id); setTulos(null); setVirhe(''); setKuka(''); }}
+              className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                hakutapa === id
+                  ? 'border-accent bg-accent/10 text-accent'
+                  : 'border-line bg-sunken text-ink-body hover:border-line-strong'
+              }`}
+            >
+              {teksti}
+            </button>
+          ))}
         </div>
+
+        {hakutapa === 'tehtava' ? (
+          <>
+            <label className="text-sm sm:col-span-2">
+              <span className="block font-medium text-ink-strong mb-1">Hälytystehtävä</span>
+              <select
+                value={tehtavaId}
+                onChange={(e) => setTehtavaId(e.target.value)}
+                className="w-full rounded-lg border border-line bg-sunken px-3 py-2 text-ink-body"
+              >
+                <option value="">Valitse…</option>
+                {tehtavat.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {kello(t.luotu)} · {t.siteNimi || 'Kohde tuntematon'}
+                    {t.silmukka ? ` · ${t.silmukka}` : ''} · {t.laji}
+                  </option>
+                ))}
+              </select>
+              {tehtavat.length === 0 && (
+                <span className="mt-1 block text-xs text-ink-muted">
+                  Yhdelläkään hälytystehtävällä ei ole vastaanottanutta yksikköä, joten
+                  haettavaa jälkeä ei ole. Käytä vapaata aikaväliä.
+                </span>
+              )}
+            </label>
+
+            {valittuTehtava && (
+              <label className="text-sm sm:col-span-2">
+                <span className="block font-medium text-ink-strong mb-1">Kenen jälki</span>
+                <select
+                  value={kuka}
+                  onChange={(e) => setKuka(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-sunken px-3 py-2 text-ink-body"
+                >
+                  <option value="">Valitse…</option>
+                  {valittuTehtava.yksikot.map((y) => (
+                    <option key={y.vartija} value={y.vartija}>
+                      {y.nimi} · {kello(y.vastaanotti)} → {y.poistui ? kello(y.poistui) : 'kesken'}
+                    </option>
+                  ))}
+                </select>
+                {/* LÄHDE KERROTAAN ENNEN HAKUA. Kahden vuoden päästä lokia ei enää ole,
+                    ja vain tehtävään liitetty jälki on jäljellä — katsojan on tiedettävä
+                    kumpaa hän on katsomassa, ei arvattava sitä tuloksesta. */}
+                {kuka && (
+                  <span className="mt-1 block text-xs text-ink-muted">
+                    {valittuTehtava.yksikot.find((y) => y.vartija === kuka)?.lahde === 'tehtava'
+                      ? 'Jälki on tallennettu tehtävään poistumisluvan yhteydessä (säilytys LYTP:n mukaan).'
+                      : `Jälki luetaan sijaintilokista (säilytys ${sailytysVrk} vrk). Tehtävään liitettyä jälkeä ei ole — poistumislupaa ei ole hyväksytty tai tehtävä on kesken.`}
+                  </span>
+                )}
+              </label>
+            )}
+          </>
+        ) : (
+          <>
+            <label className="text-sm">
+              <span className="block font-medium text-ink-strong mb-1">Kenen jälki</span>
+              <select
+                value={kuka}
+                onChange={(e) => setKuka(e.target.value)}
+                className="w-full rounded-lg border border-line bg-sunken px-3 py-2 text-ink-body"
+              >
+                <option value="">Valitse…</option>
+                {vartijat.map((v) => (
+                  <option key={v.username} value={v.username}>{v.nimi}</option>
+                ))}
+              </select>
+              {/* Lista tulee vuoroista eikä käyttäjärekisteristä: vain ne joilla on ollut
+                  vuoro säilytysaikana. Tyhjä lista on siis tieto eikä vika. */}
+              {vartijat.length === 0 && (
+                <span className="mt-1 block text-xs text-ink-muted">
+                  Yhdelläkään vartijalla ei ole vuoroa viimeisen {sailytysVrk} vuorokauden
+                  ajalta, joten haettavaa jälkeä ei ole.
+                </span>
+              )}
+            </label>
+
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <label>
+                <span className="block font-medium text-ink-strong mb-1">Alkaen</span>
+                <input
+                  type="date" value={alkuPvm} max={tanaan}
+                  onChange={(e) => setAlkuPvm(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-sunken px-3 py-2 text-ink-body"
+                />
+              </label>
+              <label>
+                <span className="block font-medium text-ink-strong mb-1">Päättyen</span>
+                <input
+                  type="date" value={loppuPvm} max={tanaan}
+                  onChange={(e) => setLoppuPvm(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-sunken px-3 py-2 text-ink-body"
+                />
+              </label>
+              <span className="col-span-2 text-xs text-ink-muted">
+                Enintään {IKKUNA_MAX_VRK} vuorokautta kerrallaan.
+              </span>
+            </div>
+          </>
+        )}
 
         <label className="text-sm">
           <span className="block font-medium text-ink-strong mb-1">Katselun syy</span>
@@ -244,11 +395,31 @@ export const Sijaintihistoria = ({ onTakaisin }: { onTakaisin: () => void }) => 
         <div className="space-y-4">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <h3 className="text-lg font-bold text-ink-strong">{tulos.nimi}</h3>
+            {tulos.tehtava && (
+              <span className="text-sm text-ink-body">
+                {tulos.tehtava.laji} · {tulos.tehtava.siteNimi}
+                {tulos.tehtava.silmukka ? ` · ${tulos.tehtava.silmukka}` : ''}
+                {' · '}{kello(tulos.tehtava.luotu)}
+              </span>
+            )}
             <span className="text-sm text-ink-muted">
               {pisteet.length === 0
                 ? 'Ei yhtään sijaintipistettä tältä ajalta.'
                 : `${pisteet.length} pistettä`}
             </span>
+            {/* Lähde myös tuloksessa eikä vain valinnassa: kuvakaappaus tästä näkymästä
+                voi päätyä selvityksen liitteeksi, ja silloin siitä on käytävä ilmi
+                kumpaa aineistoa se esittää. */}
+            {tulos.lahde === 'tehtava' && (
+              <span className="rounded-md border border-line bg-sunken px-2 py-0.5 text-xs font-bold text-ink-body">
+                Tehtävään tallennettu jälki
+              </span>
+            )}
+            {tulos.lahde === 'loki' && (
+              <span className="rounded-md border border-line bg-sunken px-2 py-0.5 text-xs font-bold text-ink-body">
+                Sijaintilokista ({sailytysVrk} vrk)
+              </span>
+            )}
             {/* Harvennus kerrotaan aina kun se on tehty: katsojan on tiedettävä katsooko
                 hän täyttä jälkeä vai otosta siitä. */}
             {tulos.harvennettu && (

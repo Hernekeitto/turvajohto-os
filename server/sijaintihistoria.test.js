@@ -12,7 +12,8 @@ import assert from 'node:assert/strict';
 
 import {
   IKKUNA_MAX_VRK, SYYT, TARKENNE_MAX,
-  saaNahdaHistorian, suodataPisteet, tarkistaIkkuna, tarkistaSyy, vartijavaihtoehdot,
+  saaNahdaHistorian, suodataPisteet, tarkistaIkkuna, tarkistaSyy, tehtavanJalki,
+  tehtavavaihtoehdot, vartijavaihtoehdot,
 } from './sijaintihistoria.js';
 import { canView, eventAllowed } from './permissions.js';
 
@@ -186,4 +187,114 @@ test('kelvottomat vuorot ohitetaan kaatumatta', () => {
 test('tyhjä tai puuttuva vuorolista ei kaada', () => {
   assert.deepEqual(vartijavaihtoehdot([], T0), []);
   assert.deepEqual(vartijavaihtoehdot(undefined, T0), []);
+});
+
+// --- Hälytystehtävän jälki ----------------------------------------------------------
+
+const yks = (osat = {}) => ({
+  vartija: 'matti',
+  nimi: 'Matti',
+  vastaanotti: new Date(T0 - 2 * 3600_000).toISOString(),
+  poistui: new Date(T0 - 3600_000).toISOString(),
+  kieltaytyi: null,
+  ...osat,
+});
+
+const tehtava = (osat = {}) => ({
+  id: 't1', laji: 'murto', siteId: 'A', siteNimi: 'Kohde A',
+  luotu: new Date(T0 - 3 * 3600_000).toISOString(), tila: 'paattynyt',
+  yksikot: [yks()],
+  ...osat,
+});
+
+test('tehtävän oma jälki voittaa lokin', () => {
+  // TÄMÄ ON KOKO OSAN TÄRKEIN TESTI. Tehtävään liitetty jälki säilyy LYTP:n mukaan kaksi
+  // vuotta; loki 45 vuorokautta. Jos loki luettaisiin ensin, sama tehtävä näyttäisi eri
+  // jäljen ennen ja jälkeen 45 vuorokauden — ensin oikean, sitten tyhjän — vaikka
+  // hyväksytty jälki on koko ajan tallessa.
+  const t = tehtava({ yksikot: [yks({ jalki: [{ ts: 'x', lat: 60, lon: 24 }], jalkiHarvennettu: 900 })] });
+  const tulos = tehtavanJalki(t, 'matti', T0);
+  assert.equal(tulos.lahde, 'tehtava');
+  assert.equal(tulos.pisteet.length, 1);
+  assert.equal(tulos.harvennettu, 900);
+});
+
+test('tyhjä jälkitaulukko ei ole jälki', () => {
+  // `jalki: []` syntyy kun hyväksynnän hetkellä lokissa ei ollut pisteitä. Silloin on
+  // luettava loki — muuten tulos olisi tyhjä myös silloin kun pisteitä on.
+  const t = tehtava({ yksikot: [yks({ jalki: [] })] });
+  assert.equal(tehtavanJalki(t, 'matti', T0).lahde, 'loki');
+});
+
+test('ilman liitettyä jälkeä luetaan loki yksikön ikkunalta', () => {
+  const tulos = tehtavanJalki(tehtava(), 'matti', T0);
+  assert.equal(tulos.lahde, 'loki');
+  assert.equal(tulos.alku, T0 - 2 * 3600_000);
+  assert.equal(tulos.loppu, T0 - 3600_000);
+});
+
+test('kesken oleva tehtävä ulottuu nykyhetkeen', () => {
+  // Päivystäjä katsoo jälkeä useimmiten juuri silloin kun yksikkö on matkalla.
+  const t = tehtava({ tila: 'avoin', paattyi: null, yksikot: [yks({ poistui: null })] });
+  const tulos = tehtavanJalki(t, 'matti', T0);
+  assert.equal(tulos.loppu, T0);
+});
+
+test('kieltäytyneelle ei jälkeä', () => {
+  // Hän ei ollut tehtävällä. Sama sääntö kuin liitaJalki:ssa — ja se on toistettava
+  // tässä, muuten kieltäytyneen sijainti tulisi lokista vaikka tietueessa sitä ei ole.
+  const t = tehtava({ yksikot: [yks({ kieltaytyi: new Date(T0).toISOString(), vastaanotti: null })] });
+  assert.equal(tehtavanJalki(t, 'matti', T0), null);
+});
+
+test('tuntematon vartija ei saa jälkeä', () => {
+  assert.equal(tehtavanJalki(tehtava(), 'kalle', T0), null);
+  assert.equal(tehtavanJalki(null, 'matti', T0), null);
+});
+
+// --- Mitkä tehtävät voi valita ------------------------------------------------------
+
+test('vain tehtävät joilla on vastaanottanut yksikkö', () => {
+  const lista = tehtavavaihtoehdot([
+    tehtava({ id: 'ok' }),
+    tehtava({ id: 'eiyksikoita', yksikot: [] }),
+    tehtava({ id: 'kieltaytyi', yksikot: [yks({ kieltaytyi: 'x', vastaanotti: null })] }),
+  ], { role: 'admin' }, eventAllowed);
+  assert.deepEqual(lista.map((t) => t.id), ['ok']);
+});
+
+test('kohdepääsy rajaa tehtävälistan', () => {
+  // Tehtävälista itsessään kertoo missä kohteissa on ollut hälytyksiä.
+  const lista = tehtavavaihtoehdot(
+    [tehtava({ id: 'a', siteId: 'A' }), tehtava({ id: 'b', siteId: 'B' })],
+    { role: 'user', eventAccess: ['A'] },
+    eventAllowed,
+  );
+  assert.deepEqual(lista.map((t) => t.id), ['a']);
+});
+
+test('lähde kerrotaan etukäteen jokaiselle yksikölle', () => {
+  const lista = tehtavavaihtoehdot([tehtava({
+    yksikot: [yks({ vartija: 'a', jalki: [{ ts: 'x' }] }), yks({ vartija: 'b' })],
+  })], { role: 'admin' }, eventAllowed);
+  assert.deepEqual(lista[0].yksikot.map((y) => y.lahde), ['tehtava', 'loki']);
+});
+
+test('säilytysaikaa EI rajata tehtävälistassa', () => {
+  // Tehtävän oma jälki säilyy kaksi vuotta, joten vuoden vanha tehtävä on yhä kelvollinen
+  // haun kohde — toisin kuin vapaassa aikavälihaussa.
+  const vanha = tehtava({
+    id: 'vanha',
+    luotu: new Date(T0 - 300 * VRK).toISOString(),
+    yksikot: [yks({ jalki: [{ ts: 'x' }] })],
+  });
+  assert.deepEqual(tehtavavaihtoehdot([vanha], { role: 'admin' }, eventAllowed).map((t) => t.id), ['vanha']);
+});
+
+test('uusin tehtävä ensin', () => {
+  const lista = tehtavavaihtoehdot([
+    tehtava({ id: 'vanha', luotu: new Date(T0 - 5 * VRK).toISOString() }),
+    tehtava({ id: 'uusi', luotu: new Date(T0 - 1 * VRK).toISOString() }),
+  ], { role: 'admin' }, eventAllowed);
+  assert.deepEqual(lista.map((t) => t.id), ['uusi', 'vanha']);
 });

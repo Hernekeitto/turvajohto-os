@@ -77,7 +77,8 @@ import {
   harvenna as harvennaJalki, SAILYTYS_VRK as SIJAINTI_SAILYTYS_VRK,
 } from './sijaintiloki.js';
 import {
-  saaNahdaHistorian, suodataPisteet, tarkistaIkkuna, tarkistaSyy, vartijavaihtoehdot,
+  saaNahdaHistorian, suodataPisteet, tarkistaIkkuna, tarkistaSyy, tehtavanJalki,
+  tehtavavaihtoehdot, vartijavaihtoehdot,
 } from './sijaintihistoria.js';
 import {
   tarkistaIlmoitus,
@@ -808,6 +809,16 @@ app.get('/api/sijaintihistoria/vartijat', requireAuth, (req, res) => {
   res.json({ ok: true, vartijat: lista, sailytysVrk: SIJAINTI_SAILYTYS_VRK });
 });
 
+// Hälytystehtävät joiden ajalta jäljen voi hakea. Saman portin takana kuin haku: lista
+// kertoo missä kohteissa on ollut hälytyksiä ja kuka niillä kävi.
+app.get('/api/sijaintihistoria/tehtavat', requireAuth, (req, res) => {
+  if (!saaNahdaHistorian(req, canView)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta sijaintihistoriaan.' });
+  }
+  const tehtavat = readCollection('guardDispatch') || [];
+  res.json({ ok: true, tehtavat: tehtavavaihtoehdot(tehtavat, req, eventAllowed) });
+});
+
 app.get('/api/sijaintihistoria', requireAuth, (req, res) => {
   if (!saaNahdaHistorian(req, canView)) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta sijaintihistoriaan.' });
@@ -816,11 +827,79 @@ app.get('/api/sijaintihistoria', requireAuth, (req, res) => {
   const username = typeof req.query.username === 'string' ? req.query.username : '';
   if (!username) return res.status(400).json({ ok: false, error: 'Kenen jälkeä haetaan?' });
 
-  const ikkuna = tarkistaIkkuna(req.query.alku, req.query.loppu);
-  if (!ikkuna.ok) return res.status(400).json({ ok: false, error: ikkuna.virhe });
-
+  // SYY TARKISTETAAN ENNEN TEHTÄVÄN HAKUA, jotta pakollisuus koskee molempia hakutapoja
+  // yhtä lailla. Jos tämä olisi vasta alempana, tehtäväpohjainen haara ohittaisi sen.
   const peruste = tarkistaSyy(req.query.syy, req.query.tarkenne);
   if (!peruste.ok) return res.status(400).json({ ok: false, error: peruste.virhe });
+
+  // --- Hälytystehtävän ajalta ------------------------------------------------------
+  //
+  // Aikaväliä ei anneta vaan se luetaan tehtävästä: päivystäjä tietää minkä hälytyksen
+  // haluaa selvittää, ei sitä mihin kellonaikaan yksikkö sattui ottamaan sen vastaan.
+  const tehtavaId = typeof req.query.tehtavaId === 'string' ? req.query.tehtavaId : '';
+  if (tehtavaId) {
+    const tehtava = (readCollection('guardDispatch') || []).find((t) => t?.id === tehtavaId);
+    if (!tehtava) return res.status(404).json({ ok: false, error: 'Tehtävää ei löytynyt.' });
+    if (!eventAllowed(req.role === 'admin' ? [] : req.eventAccess, tehtava.siteId)) {
+      return res.status(403).json({ ok: false, error: 'Ei oikeutta tämän kohteen tehtäviin.' });
+    }
+
+    const lahde = tehtavanJalki(tehtava, username);
+    if (!lahde) {
+      return res.status(404).json({
+        ok: false,
+        error: 'Yksikkö ei ollut tällä tehtävällä, tai se kieltäytyi.',
+      });
+    }
+
+    let pisteet;
+    let harvennettu = null;
+    if (lahde.lahde === 'tehtava') {
+      // Tehtävään liitetty jälki on JO suodatettu ja harvennettu hyväksynnän hetkellä,
+      // eikä siinä ole eventId-kenttiä. Sitä ei suodateta uudelleen: se on tämän kohteen
+      // tehtävän jälki, ja kohdepääsy on jo tarkistettu tehtävän siteId:llä yllä.
+      pisteet = lahde.pisteet;
+      harvennettu = lahde.harvennettu;
+    } else {
+      const kaikki = lueHistoria({ username, alku: lahde.alku, loppu: lahde.loppu });
+      const sallitut = suodataPisteet(req, kaikki, eventAllowed);
+      pisteet = harvennaJalki(sallitut).map((p) => ({
+        ts: p.ts, lat: p.lat, lon: p.lon, tarkkuus: p.tarkkuus ?? null, eventId: p.eventId || null,
+      }));
+      if (pisteet.length < sallitut.length) harvennettu = sallitut.length;
+    }
+
+    logAudit({
+      user: req.username,
+      action: 'sijaintihistoria_haku',
+      collection: 'sijaintiloki',
+      kohde: username,
+      syy: peruste.syy,
+      ...(peruste.tarkenne ? { tarkenne: peruste.tarkenne } : {}),
+      tehtavaId,
+      // Kumpi lähde: kahden vuoden päästä auditlokin lukijan on tiedettävä katsottiinko
+      // hyväksyttyä jälkeä vai lokia, koska vain edellinen on silloin enää olemassa.
+      lahde: lahde.lahde,
+      osumia: pisteet.length,
+    });
+
+    return res.json({
+      ok: true,
+      username,
+      nimi: findUser(username)?.nickname || username,
+      pisteet,
+      lahde: lahde.lahde,
+      tehtava: {
+        id: tehtava.id, laji: tehtava.laji, siteNimi: tehtava.siteNimi || '',
+        silmukka: tehtava.silmukka || '', luotu: tehtava.luotu,
+      },
+      ...(harvennettu ? { harvennettu } : {}),
+    });
+  }
+
+  // --- Vapaa aikaväli ---------------------------------------------------------------
+  const ikkuna = tarkistaIkkuna(req.query.alku, req.query.loppu);
+  if (!ikkuna.ok) return res.status(400).json({ ok: false, error: ikkuna.virhe });
 
   const kaikki = lueHistoria({ username, alku: ikkuna.alku, loppu: ikkuna.loppu });
   const sallitut = suodataPisteet(req, kaikki, eventAllowed);
