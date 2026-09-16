@@ -1848,6 +1848,74 @@ ilmiön vallitessa — suhde 1,19 koko testin ajan — ja tunnistus onnistui nel
 neljästä. Portin laskeminen olisi ollut kolmas arvaus samasta vakiosta, ja tällä kertaa se
 olisi tehty ongelmaan jota ei ole.
 
+#### C3 16.9.2026: mitä sijaintiseuranta maksaa akussa
+
+**Tulos: 4,49 %/h, 6 h 14 min, 96 % → 68 %.** Vertailuluku, joka lyötiin lukkoon ENNEN
+mittausta, oli **4,70 %/h** (päiväajo 12.–13.9., sama laite, man-down päällä, ei
+sijaintiseurantaa).
+
+Erotus on **−0,21 %/h**, eli sijaintiseurannan kanssa kulutettiin hitusen vähemmän kuin
+ilman sitä. Oikea johtopäätös ei ole "sijainti säästää akkua" vaan:
+
+> **Sijaintiseurannan marginaalikustannus ei erotu tämän menetelmän kohinasta.** Se on
+> pienempi kuin ajojen välinen vaihtelu, eikä sitä voi tästä mittauksesta lukea tarkemmin.
+
+Se riittää siihen päätökseen jota varten mittaus tehtiin: **sijaintiseuranta ei kaada
+akkubudjettia.** Kahdeksan tunnin vuoro kuluttaa 36 prosenttiyksikköä, kahdentoista tunnin
+54 — molemmat mahtuvat täyteen akkuun ilman välilatausta.
+
+| | |
+|---|---|
+| Ikkuna | 16.9. klo 09:24–15:38 (kaapeli irti) |
+| Akku | 96 % → 68 %, **28 askelta** |
+| 95 %:sta laskettuna | 4,41 %/h |
+| Lyöntejä | 400, pisin katko rivien välillä **60 s** |
+| `akkuvapautus` | `kylla` koko ajan |
+| `mittaustila` | `ei` — valvonta oli täysin päällä |
+
+##### Neljä varausta, ja ensimmäinen on painavin
+
+1. **Doze ei ollut sama molemmissa ajoissa.** Tässä ajossa `doze=kylla` 390 rivillä
+   1544:stä (ensimmäinen 11:31). Vertailuajossa 12.–13.9. luki `doze=ei` kaikilla 2 580
+   rivillä. Doze säästää virtaa, joten tällä ajolla oli etu joka **ei liity
+   sijaintiseurantaan**. Se voi hyvin peittää alleen muutaman kymmenyksen todellisen
+   kustannuksen. Tämä on se syy miksi tulosta ei pidä lukea tarkkana lukuna.
+
+2. **Paikannustapa vaihteli.** Tarkkuus oli aamulla 100 m tasan (tukiasemapaikannus),
+   klo 9:15 26 m (GPS-korjaus) ja mittauksen lopussa taas 100 m. Kokonaan ulkona
+   liikkuva vuoro maksaisi enemmän: GPS-korjaus otetaan useammin ja liikkeen 15 sekunnin
+   väli laukeaa.
+
+3. **Neljä man-down-kyselyä** (10:28, 13:59, 14:56, 15:27), joka kerta hälytysääni ja
+   kuittaus. Niitä oli myös vertailuajossa, joten ne eivät selitä eroa — mutta ne ovat
+   osa lukua eivätkä taustakohinaa.
+
+4. **Kuusi kanavakatkoa** (`EOFException`), jokainen palautui 2–3 sekunnissa. Neljä
+   niistä osuu omiin julkaisuihini samana päivänä: `EOFException` on palvelimen sulkema
+   yhteys, ja backend käynnistyy uudelleen jokaisessa deployssa. Kaksi (10:14 ja 10:37)
+   jää selittämättä. **Tämä on mittaajan aiheuttama häiriö, ja se on kirjattava
+   sellaisena** — pitkässä ajossa ei pitäisi julkaista.
+
+##### Mitä tämä EI ratkaise
+
+Tarkkaa marginaalikustannusta. Sen saisi vain **kontrolloidulla vertailulla samana
+päivänä**: sama laite, sama kesto, sama Doze-käytös, sijaintiseuranta päällä ja pois.
+Tässä verrattiin kahta eri päivää, ja ero päivien välillä on suurempi kuin mitattava
+suure.
+
+Erän 10 päätössääntö (*"yli 1 %/h → herätelukko vaihdetaan"*) ei koske tätä mittausta:
+se asetettiin herätelukon hinnalle, ja se on jo käsitelty erässä 11.
+
+##### Lokin kierto osui keskelle mittausta
+
+`vuoroloki.txt` kiersi 512 kilotavussa kesken ajon: mittauksen alkupää päätyi
+`vuoroloki.vanha.txt`:ään ja lopussa varsinaisessa lokissa oli enää 2,4 kt. Molemmat
+tiedostot on siis luettava, ja `tyokalut/akkumittaus.mjs` ottaa ne argumentteina.
+
+Pelkän `vuoroloki.txt`:n lukeminen olisi antanut muutaman minuutin ikkunan ja täysin
+uskottavan väärän luvun — ei virhettä. Kierto oli ennakoitu ja sen varalta varauduttu
+samana aamuna; tämä oli ensimmäinen kerta kun se oikeasti tapahtui.
+
 ### Erä 13 — Hätäpainike sovelluksen ulkopuolelta
 
 | Osa | Uutta |
