@@ -122,3 +122,88 @@ export const nayttaaSuunnan = (gps: Gps) =>
   typeof gps.suunta === 'number'
   && typeof gps.nopeus === 'number'
   && gps.nopeus >= NOPEUS_MIN_M_S;
+
+// --- Sijaintijälki (erä 24) --------------------------------------------------------
+
+export type Jalkipiste = {
+  ts: string;
+  lat: number;
+  lon: number;
+  tarkkuus?: number | null;
+};
+
+export type JalkiGeoJson = {
+  type: 'FeatureCollection';
+  features: unknown[];
+};
+
+export const TYHJA_JALKI: JalkiGeoJson = { type: 'FeatureCollection', features: [] };
+
+/**
+ * Jäljen geometria: viiva ja sen pisteet.
+ *
+ * SEKÄ VIIVA ETTÄ PISTEET, eikä vain toinen. Viiva yhdistää kaksi mittausta suoralla
+ * riippumatta siitä oliko niiden välissä minuutti vai puoli tuntia — se on luettava
+ * muotona mutta VALHE reittinä. Pisteet kertovat mistä mittaus oikeasti on, ja niiden
+ * harvuus kertoo missä jälki on arvausta.
+ *
+ * Jälkiselvityksessä juuri se ero ratkaisee: "yksikkö kulki tätä katua" ja "yksikön
+ * tiedetään olleen tässä ja sitten tuossa" ovat eri väitteitä, ja vain jälkimmäinen on
+ * tosi.
+ *
+ * Kelvottomat pisteet suodatetaan pois hiljaa: yksi rikkinäinen rivi 45 vuorokauden
+ * lokissa ei saa estää muun jäljen piirtämistä.
+ */
+export function jalkiGeoJson(pisteet: Jalkipiste[]): JalkiGeoJson {
+  const kelvolliset = (pisteet || []).filter(
+    (p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lon),
+  );
+  if (kelvolliset.length === 0) return TYHJA_JALKI;
+
+  const koordinaatit = kelvolliset.map((p) => [p.lon, p.lat]);
+  const features: unknown[] = [];
+
+  // Yhden pisteen jäljestä EI piirretä viivaa: kahden koordinaatin LineString jossa
+  // molemmat ovat samat on maplibrelle kelvollinen mutta näkymätön, ja tyhjä viiva
+  // näyttää samalta kuin puuttuva jälki.
+  if (koordinaatit.length >= 2) {
+    features.push({
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'LineString', coordinates: koordinaatit },
+    });
+  }
+
+  for (let i = 0; i < kelvolliset.length; i += 1) {
+    const p = kelvolliset[i];
+    // `paa` on merkkijono eikä totuusarvo, koska alku ja loppu saavat eri värin.
+    // Yhden pisteen jälki on molempia — silloin se merkitään alkupisteeksi, koska
+    // "tähän päättyi" on harhaanjohtava kun mitään ei alkanut.
+    const paa = i === 0 ? 'alku' : i === kelvolliset.length - 1 ? 'loppu' : null;
+    features.push({
+      type: 'Feature',
+      properties: {
+        ts: p.ts,
+        tarkkuus: p.tarkkuus ?? null,
+        ...(paa ? { paa } : {}),
+      },
+      geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+    });
+  }
+
+  return { type: 'FeatureCollection', features };
+}
+
+/** Jäljen rajat kartan sovitusta varten. Null jos jälkeä ei ole. */
+export function jaljenRajat(pisteet: Jalkipiste[]): [[number, number], [number, number]] | null {
+  const kelvolliset = (pisteet || []).filter(
+    (p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lon),
+  );
+  if (kelvolliset.length === 0) return null;
+  const lonit = kelvolliset.map((p) => p.lon);
+  const latit = kelvolliset.map((p) => p.lat);
+  return [
+    [Math.min(...lonit), Math.min(...latit)],
+    [Math.max(...lonit), Math.max(...latit)],
+  ];
+}

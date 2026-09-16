@@ -172,9 +172,12 @@ Jos jokin jää auki, se jää auki myös työntekijälle.
 
 1. **Käsittelyperuste.** Mikä se on ja miten se perustellaan? (Työsuhteessa suostumus ei
    yleensä kelpaa, koska sitä ei voi antaa vapaasti.)
-2. **Kuka saa katsoa sijaintihistoriaa, ja millä perusteella?** Nykyisessä
-   järjestelmässä historian lukemiselle ei ole käyttöliittymää eikä omaa oikeutta — se
-   on tehtävä ennen kuin historiaa käytetään.
+2. **Kenelle sijaintihistorian katseluoikeus annetaan?** Tekninen puoli on ratkaistu
+   16.9.2026: katsomisella on oma oikeutensa (`guard_location_history`), se ei tule
+   tilannekuvan oikeuden mukana, katselu vaatii rajatusta listasta valitun syyn, ja
+   jokainen haku kirjataan auditlokiin. Päätettäväksi jää **kenelle oikeus myönnetään** —
+   ja se on nimenomaan se kysymys jota ei pidä ratkaista "kaikille päivystäjille"
+   oletuksena.
 3. **Kuka valvoo käyttötarkoituksen rajausta**, ja mitä sen rikkomisesta seuraa?
 4. **Kuka huolehtii LYTP-säilytysajan päättymisestä ja poistosta?** Ks. kohta 6.
 5. **Mitä tapahtuu jos työntekijä kieltäytyy?** Onko työtehtäviä joita ei voi antaa?

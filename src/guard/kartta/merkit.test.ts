@@ -10,7 +10,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  KEHAN_MAX_M, KEHAN_MIN_M, nayttaaSuunnan, onEpatarkka, tarkkuuskehat, ympyra,
+  KEHAN_MAX_M, KEHAN_MIN_M, jalkiGeoJson, jaljenRajat, nayttaaSuunnan, onEpatarkka,
+  tarkkuuskehat, ympyra,
   type Yksikkomerkki,
 } from './merkit.ts';
 
@@ -112,4 +113,56 @@ test('ilman suuntaa tai nopeutta ei nuolta', () => {
   assert.equal(nayttaaSuunnan({ ...HELSINKI, nopeus: 20 }), false);
   assert.equal(nayttaaSuunnan({ ...HELSINKI, suunta: 90 }), false);
   assert.equal(nayttaaSuunnan({ ...HELSINKI }), false);
+});
+
+// --- Sijaintijälki -----------------------------------------------------------------
+
+const jp = (lon: number, lat: number, ts = '2026-09-16T10:00:00.000Z') => ({ ts, lat, lon });
+
+test('tyhjästä jäljestä ei synny piirrettävää', () => {
+  assert.equal(jalkiGeoJson([]).features.length, 0);
+  assert.equal(jaljenRajat([]), null);
+});
+
+test('yhden pisteen jäljestä ei piirretä viivaa', () => {
+  // Kahden identtisen koordinaatin LineString on kelvollinen mutta näkymätön, ja
+  // näkymätön viiva näyttää samalta kuin puuttuva jälki.
+  const f = jalkiGeoJson([jp(24.9, 60.1)]).features as Array<{ geometry: { type: string } }>;
+  assert.equal(f.length, 1);
+  assert.equal(f[0].geometry.type, 'Point');
+});
+
+test('jälki sisältää sekä viivan että jokaisen pisteen', () => {
+  // Molemmat tarvitaan: viiva on luettava muoto, pisteet kertovat mistä on oikeasti
+  // mittaus. Ilman pisteitä puolen tunnin aukko näyttäisi ajetulta reitiltä.
+  const f = jalkiGeoJson([jp(24.9, 60.1), jp(25.0, 60.2), jp(25.1, 60.3)])
+    .features as Array<{ geometry: { type: string } }>;
+  assert.equal(f.filter((x) => x.geometry.type === 'LineString').length, 1);
+  assert.equal(f.filter((x) => x.geometry.type === 'Point').length, 3);
+});
+
+test('alku ja loppu merkitään, välipisteet eivät', () => {
+  const f = jalkiGeoJson([jp(24.9, 60.1), jp(25.0, 60.2), jp(25.1, 60.3)])
+    .features as Array<{ properties: { paa?: string }; geometry: { type: string } }>;
+  const pisteet = f.filter((x) => x.geometry.type === 'Point');
+  assert.equal(pisteet[0].properties.paa, 'alku');
+  assert.equal(pisteet[1].properties.paa, undefined);
+  assert.equal(pisteet[2].properties.paa, 'loppu');
+});
+
+test('kelvottomat koordinaatit eivät kaada jälkeä', () => {
+  // Yksi rikkinäinen rivi 45 vuorokauden lokissa ei saa estää muun jäljen piirtämistä.
+  const rikki = [
+    jp(24.9, 60.1),
+    { ts: 'x', lat: Number.NaN, lon: 25.0 },
+    { ts: 'y', lat: 60.2, lon: Number.POSITIVE_INFINITY },
+    jp(25.1, 60.3),
+  ];
+  const f = jalkiGeoJson(rikki).features as Array<{ geometry: { type: string } }>;
+  assert.equal(f.filter((x) => x.geometry.type === 'Point').length, 2);
+});
+
+test('rajat kattavat kaikki pisteet', () => {
+  const rajat = jaljenRajat([jp(24.9, 60.3), jp(25.1, 60.1), jp(25.0, 60.2)]);
+  assert.deepEqual(rajat, [[24.9, 60.1], [25.1, 60.3]]);
 });

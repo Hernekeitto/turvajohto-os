@@ -16,7 +16,10 @@ import { useEffect, useRef, useState } from 'react';
 
 import { TILAN_KIRJAIN, TILAN_NIMI, TILAN_VARI } from '../yksikontila';
 import { lataaKarttakirjasto, KARTAN_ASETUKSET, type MapLibreMap } from './lataa';
-import { nayttaaSuunnan, onEpatarkka, tarkkuuskehat, type Yksikkomerkki } from './merkit';
+import {
+  jalkiGeoJson, jaljenRajat, nayttaaSuunnan, onEpatarkka, tarkkuuskehat, TYHJA_JALKI,
+  type Jalkipiste, type Yksikkomerkki,
+} from './merkit';
 import { karttatyyli } from './tyyli';
 
 export type Kohdemerkki = {
@@ -33,13 +36,23 @@ type Props = {
   // siihen asti kunnes joku huomaa.
   taulu?: boolean;
   onValitse?: (username: string) => void;
+  // Sijaintijälki (erä 24). Sama kartta eikä oma komponenttinsa, koska maplibren
+  // elinkaari, työntekijän osoite ja tyyli ovat kaikki tässä tiedostossa — toinen
+  // karttakomponentti tarkoittaisi toista kopiota niistä kaikista, ja juuri ne kolme
+  // ovat menneet tässä projektissa pieleen.
+  //
+  // Jälki EI ole yksiköiden korvaaja vaan niiden rinnalla: historianäkymässä yksiköt
+  // annetaan tyhjänä, mutta mikään ei estä näyttämästä molempia.
+  jalki?: Jalkipiste[];
 };
 
 // Merkin halkaisija pikseleinä. Kaksi kokoa: seinätaulua katsotaan metrien päästä.
 const KOKO = 26;
 const KOKO_TAULU = 40;
 
-export const GuardKartta = ({ yksikot, kohteet, taulu = false, onValitse }: Props) => {
+export const GuardKartta = ({
+  yksikot, kohteet, taulu = false, onValitse, jalki,
+}: Props) => {
   const sailioRef = useRef<HTMLDivElement | null>(null);
   const karttaRef = useRef<MapLibreMap | null>(null);
   // Merkit username-avaimella, jotta päivitys siirtää olemassa olevaa merkkiä eikä
@@ -123,6 +136,52 @@ export const GuardKartta = ({ yksikot, kohteet, taulu = false, onValitse }: Prop
             source: 'tarkkuus',
             paint: { 'line-color': '#94a3b8', 'line-opacity': 0.35, 'line-width': 1 },
           } as never);
+
+          // Sijaintijälki (erä 24). Lähde luodaan aina, myös kun jälkeä ei ole: tasojen
+          // lisääminen jälkikäteen vaatisi tietoa siitä onko tyyli valmis, ja se on juuri
+          // se ehto joka on tässä tiedostossa mennyt kahdesti pieleen. Tyhjä lähde ei
+          // piirrä mitään eikä maksa mitään.
+          kartta.addSource('jalki', { type: 'geojson', data: TYHJA_JALKI } as never);
+          kartta.addLayer({
+            // Reunaviiva jäljen alla: pelkkä kirkas viiva katoaa vaaleiden teiden päälle
+            // piirrettynä, ja jälki on juuri se jonka on erotuttava pohjasta.
+            id: 'jalki-reuna',
+            type: 'line',
+            source: 'jalki',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': '#0b1220', 'line-opacity': 0.7, 'line-width': 6 },
+          } as never);
+          kartta.addLayer({
+            id: 'jalki-viiva',
+            type: 'line',
+            source: 'jalki',
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': '#38bdf8', 'line-width': 3 },
+          } as never);
+          kartta.addLayer({
+            // Yksittäiset pisteet viivan päällä. NÄMÄ EIVÄT OLE KORISTE: viiva yhdistää
+            // kaksi mittausta suoralla, vaikka niiden välissä olisi kymmenen minuuttia ja
+            // kilometrejä. Pisteet kertovat mistä oikeasti on mittaus ja mikä on
+            // interpolaatiota — ja se ero on jälkiselvityksessä koko kysymys.
+            id: 'jalki-pisteet',
+            type: 'circle',
+            source: 'jalki',
+            filter: ['==', ['geometry-type'], 'Point'],
+            paint: {
+              // Päätepisteet isompina: jäljen suunta on luettava ilman legendaa, ja
+              // "mistä lähti, mihin päätyi" on se mitä jäljestä ensimmäisenä katsotaan.
+              'circle-radius': ['case', ['has', 'paa'], 6, 3],
+              'circle-color': [
+                'match', ['get', 'paa'],
+                'alku', '#22c55e',
+                'loppu', '#ef4444',
+                '#38bdf8',
+              ],
+              'circle-stroke-color': '#0b1220',
+              'circle-stroke-width': 1.5,
+            },
+          } as never);
+
           setTila('valmis');
         };
 
@@ -196,6 +255,45 @@ export const GuardKartta = ({ yksikot, kohteet, taulu = false, onValitse }: Prop
     });
     sovitettu.current = true;
   }, [yksikot, kohteet, tila, taulu]);
+
+  // --- Sijaintijälki ----------------------------------------------------------------
+  useEffect(() => {
+    const kartta = karttaRef.current;
+    if (!kartta || tila !== 'valmis') return;
+    const lahde = (kartta as unknown as {
+      getSource: (id: string) => { setData: (d: unknown) => void } | undefined;
+    }).getSource('jalki');
+    lahde?.setData(jalkiGeoJson(jalki || []));
+  }, [jalki, tila]);
+
+  // Jäljen sovitus on ERILLÄÄN yksiköiden sovituksesta, eikä se ole toistoa.
+  //
+  // Yksiköiden sovitus tapahtuu työtilassa vain KERRAN, jotta päivystäjän oma panorointi
+  // ei nyki takaisin minuutin välein. Jälki on päinvastainen tapaus: se vaihtuu vain kun
+  // käyttäjä tekee uuden haun, ja silloin näkymän ON siirryttävä sinne missä jälki on.
+  // Muuten uusi haku näyttäisi tyhjältä kartalta — jälki olisi piirretty, vain ruudun
+  // ulkopuolelle.
+  //
+  // Riippuvuutena on jäljen ENSIMMÄINEN JA VIIMEINEN aikaleima eikä taulukko itse:
+  // hakutulos on uusi taulukko joka kerta, ja sillä efekti ajautuisi myös silloin kun
+  // sisältö on sama.
+  const eka = jalki?.[0]?.ts;
+  const vika = jalki?.[jalki.length - 1]?.ts;
+  useEffect(() => {
+    const kartta = karttaRef.current;
+    if (!kartta || tila !== 'valmis') return;
+    const rajat = jaljenRajat(jalki || []);
+    if (!rajat) return;
+    (kartta as unknown as { fitBounds: (r: unknown, o: unknown) => void }).fitBounds(rajat, {
+      padding: 60,
+      // Väljempi kuin yksiköillä: yhden pisteen jälki (vartija seisoi paikallaan koko
+      // haetun jakson) sovitettaisiin muuten talon tarkkuudelle, eikä siitä näe missä
+      // päin ollaan.
+      maxZoom: 16,
+      animate: false,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eka, vika, tila]);
 
   // --- Tarkkuuskehät --------------------------------------------------------------
   useEffect(() => {

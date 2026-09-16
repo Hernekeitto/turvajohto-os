@@ -17,6 +17,7 @@ import { Kierrospohjat } from './Kierrospohjat';
 import { Kierros } from './Kierros';
 import { Halytykset } from './Halytykset';
 import { Etusivu } from './Etusivu';
+import { Sijaintihistoria } from './Sijaintihistoria';
 import { Halytyskeskus } from './Halytyskeskus';
 import { lueOsoite } from './halke/paneelit';
 import { Kohdenakyma } from './Kohdenakyma';
@@ -108,7 +109,8 @@ const JUURINAKYMA = 'etusivu';
 // 'kalusto' on Kohteiden ja Hälytyskeskuksen rinnalla eikä kohteen sisällä, koska pankki
 // on kohteiden YLI menevä rekisteri: sen kysymys on "mitä yrityksellä on ja missä", ja
 // kohteen sisältä katsottuna vastaus olisi aina yhden kohteen mittainen.
-type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus' | 'tehtavanjako' | 'kalusto' | 'tyontekijat';
+type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus' | 'tehtavanjako' | 'kalusto'
+  | 'tyontekijat' | 'sijaintihistoria';
 
 // Historiamerkinnän näkymätunniste -> kohteen toiminto. Mobiiliversion takaisin-nappi
 // tarvitsee tämän: siellä ei ole kohdevalikkoa johon palata, joten näkymä avataan
@@ -231,6 +233,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Vartijoiden sijainnit (erä 23). Oma solmunsa: tilannekuvan näkeminen ja henkilöstön
   // sijainnin näkeminen ovat eri asioita, ja jälkimmäinen on teknistä valvontaa.
   const saaNahdaSijainnit = isAdmin || canView(perms, null, 'guard_locations');
+  // Sijaintihistoria (erä 24). ERI SOLMU kuin yllä, eikä se ole hienojakoisuutta
+  // hienojakoisuuden vuoksi: nykyisen sijainnin näkeminen vanhenee 30 minuutissa ja
+  // tarvitaan tehtävän kohdentamiseen, jälki kattaa 45 vuorokautta eikä sitä tarvita
+  // yhdenkään tehtävän hoitamiseen. Katselupiiri on siksi pienempi.
+  const saaNahdaSijaintihistorian = isAdmin || canView(perms, null, 'guard_location_history');
   const saaNahdaRaportit = isAdmin
     || canView(perms, null, 'guard_site_info')
     || canView(perms, null, 'guard_report_action')
@@ -1387,6 +1394,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       : osio === 'halytyskeskus' ? 'halytyskeskus'
       : osio === 'kalusto' ? 'kalustopankki'
       : osio === 'tyontekijat' ? 'tyontekijapankki'
+      : osio === 'sijaintihistoria' ? 'sijaintihistoria'
       : raporttiKohde ? 'raportit'
       : tietoKohde ? 'kohteen-tiedot'
       : kalustoKohde ? 'kalusto'
@@ -1434,6 +1442,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         // purkaa sen samalla tavalla yhdeksi tasoksi.
         : tunniste === 'kalustopankki' ? 'kalusto'
           : tunniste === 'tyontekijapankki' ? 'tyontekijat'
+          : tunniste === 'sijaintihistoria' ? 'sijaintihistoria'
           : tunniste === JUURINAKYMA ? 'etusivu'
             : 'kohteet'
     );
@@ -1879,6 +1888,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     : osio === 'halytyskeskus' ? 'Hälytyskeskus'
     : osio === 'kalusto' ? 'Kalustopankki'
     : osio === 'tyontekijat' ? 'Työntekijäpankki'
+    : osio === 'sijaintihistoria' ? 'Sijaintihistoria'
     : raporttiKohde ? 'Raportointi'
     : tietoKohde ? 'Kohteen tiedot'
     : halytysKohde ? 'Hälytykset'
@@ -2063,6 +2073,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onTallenna={tallennaTyontekijat}
           onTakaisin={() => setOsio('etusivu')}
         />
+      ) : osio === 'sijaintihistoria' ? (
+        <Sijaintihistoria onTakaisin={() => setOsio('etusivu')} />
       ) : osio === 'tehtavanjako' ? (
         <Tehtavanjako onTakaisin={() => setOsio('etusivu')} />
       ) : osio === 'kalusto' ? (
@@ -2381,6 +2393,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           saaJakaaTehtavia={saaNahdaHalytyskeskus || !!isAdmin}
           saaNahdaKalusto={saaNahdaPankin}
           saaNahdaTyontekijat={saaNahdaTyontekijat}
+          saaNahdaSijaintihistorian={saaNahdaSijaintihistorian}
           kohteita={kohteet.length}
           lauenneita={halytykset.filter((h) => h.tila === 'lauennut').length}
           ajastimia={halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa').length}
@@ -2393,6 +2406,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onHalytyskeskus={() => setOsio('halytyskeskus')}
           onTehtavanjako={() => setOsio('tehtavanjako')}
           onTyontekijat={() => setOsio('tyontekijat')}
+          onSijaintihistoria={() => setOsio('sijaintihistoria')}
           onAsetukset={() => setAsetuksissa(true)}
         />
       ) : (

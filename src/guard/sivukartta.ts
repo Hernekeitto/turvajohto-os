@@ -72,6 +72,21 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   //
   // Globaali solmu samasta syystä kuin hälytyskeskus: päivystäjä katsoo kaikkia kohteita.
   { id: 'guard_locations', label: 'Vartijoiden sijainnit (tekninen valvonta, vaatii sijaintiseurannan)' },
+  // Sijaintihistoria. ERI SOLMU KUIN guard_locations, eikä se ole hienojakoisuutta
+  // hienojakoisuuden vuoksi:
+  //
+  //   guard_locations         "missä yksiköt ovat juuri nyt" — vanhenee 30 minuutissa,
+  //                           tarvitaan tehtävän kohdentamiseen
+  //   guard_location_history  "missä tämä ihminen on ollut" — 45 vuorokautta taaksepäin,
+  //                           ei tarvita yhdenkään tehtävän hoitamiseen
+  //
+  // Jälkimmäinen on se jota tarvitaan vain jälkiselvityksessä, ja sen katselupiiri on
+  // siksi pienempi. Vaikutustenarviointi kirjasi tämän avoimeksi kysymykseksi ("kuka saa
+  // katsoa jälkeä ja mistä"), ja tämä solmu on siihen vastaus.
+  //
+  // Katsominen vaatii lisäksi SYYN, joka kirjataan auditlokiin (käyttäjän päätös
+  // 16.9.2026). Oikeus avaa näkymän; syy kertoo mihin sitä käytettiin.
+  { id: 'guard_location_history', label: 'Sijaintihistoria (jälkiselvitys, katselu vaatii kirjatun syyn)' },
   // Pohjamoottorin lajit (erä 8). Omat solmunsa EVENT-puolen vastaavista samasta syystä
   // kuin muutkin GUARD-solmut: oikeudet tallennetaan yhteiseen olioon, joten sama nimi
   // molemmilla puolilla jakaisi vahingossa saman oikeuden.

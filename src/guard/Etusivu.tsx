@@ -11,7 +11,8 @@
 
 import type { ReactNode } from 'react';
 import {
-  ArrowRight, Boxes, Building2, ClipboardList, Siren, Settings, Timer, Route, TriangleAlert, Users,
+  ArrowRight, Boxes, Building2, ClipboardList, History, Siren, Settings, Timer, Route,
+  TriangleAlert, Users,
 } from 'lucide-react';
 
 type Props = {
@@ -29,6 +30,10 @@ type Props = {
   // Työntekijäpankki. Sama rekisteri ja sama solmu kuin tapahtumapuolella
   // (global_employee_bank) — GUARD ei saa omaa pankkiaan vaan oman näkymänsä samaan.
   saaNahdaTyontekijat: boolean;
+  // Sijaintihistoria (erä 24). Oma oikeutensa (guard_location_history) eikä
+  // guard_locations: nykyisen sijainnin näkeminen ja liikehistorian katsominen ovat eri
+  // asioita, ja jälkimmäisen katselupiiri on pienempi.
+  saaNahdaSijaintihistorian: boolean;
   kohteita: number;
   lauenneita: number;
   ajastimia: number;
@@ -41,15 +46,17 @@ type Props = {
   onHalytyskeskus: () => void;
   onTehtavanjako: () => void;
   onTyontekijat: () => void;
+  onSijaintihistoria: () => void;
   onAsetukset: () => void;
 };
 
 export const Etusivu = ({
   saaNahdaKohteet, saaNahdaHalytyskeskus, saaNahdaAsetukset, saaJakaaTehtavia, saaNahdaKalusto,
-  saaNahdaTyontekijat,
+  saaNahdaTyontekijat, saaNahdaSijaintihistorian,
   kohteita, lauenneita, ajastimia, kierroksiaKesken,
   kalustoa, kalustopyyntoja, kadonnuttaKalustoa,
-  onKohteet, onKalusto, onHalytyskeskus, onTehtavanjako, onTyontekijat, onAsetukset,
+  onKohteet, onKalusto, onHalytyskeskus, onTehtavanjako, onTyontekijat, onSijaintihistoria,
+  onAsetukset,
 }: Props) => (
   <div>
     <div className="mb-8">
@@ -194,6 +201,22 @@ export const Etusivu = ({
       >
         <ClipboardList size={16} />
         Tehtävien jako
+      </button>
+    )}
+
+    {/* Sijaintihistoria (erä 24). RIVIKSI EIKÄ KORTIKSI, ja perustelu on sama kuin
+        tehtävien jaolla mutta painavampi: kortit vastaavat kysymykseen "missä pitää olla
+        nyt", ja työntekijän liikehistoria ei ole koskaan se. Se on näkymä johon mennään
+        kun jotain selvitetään jälkikäteen — ei tilanne joka vaatii huomiota.
+        Etusivun kortti houkuttelisi avaamaan sen ohimennen. */}
+    {saaNahdaSijaintihistorian && (
+      <button
+        type="button"
+        onClick={onSijaintihistoria}
+        className="mt-6 mr-6 inline-flex items-center gap-2 text-sm font-medium text-ink-body hover:text-accent transition-colors"
+      >
+        <History size={16} />
+        Sijaintihistoria
       </button>
     )}
 

@@ -155,6 +155,47 @@ tuottaisi lokin jota kukaan ei lue eikä ehdi lukea.
 Loki on jälkikäteinen suoja eikä esto. Se ei estä katsomasta, vaan tekee katsomisen
 näkyväksi — ja se on eri asia, joka on sanottava sellaisena myös työntekijälle.
 
+### 4.1 Sijaintihistorian katsominen (toteutettu 16.9.2026)
+
+Jäljen katsomisella on **oma oikeussolmunsa** `guard_location_history`, joka ei tule
+`guard_locations`in mukana. Ero on koko oikeuden peruste:
+
+| | Kysymys johon vastaa | Ikä |
+|---|---|---|
+| `guard_locations` | "Kuka ehtii tähän osoitteeseen" | Vanhenee 30 minuutissa |
+| `guard_location_history` | "Missä tämä ihminen on ollut" | 45 vuorokautta |
+
+Jälkimmäistä ei tarvita yhdenkään tehtävän hoitamiseen, joten sen katselupiiri on
+pienempi. Näkymä on GUARDin etusivulla omana kohtanaan (`src/guard/Sijaintihistoria.tsx`).
+
+**Katselu vaatii syyn** (käyttäjän päätös 16.9.2026). Vaihtoehdot ovat rajattu lista —
+hälytyksen jälkiselvitys, kierroksen varmentaminen, työntekijän oma pyyntö, tai muu joka
+vaatii vähintään kolmen merkin tarkenteen. Vapaata tekstiä ei hyväksytä yksinään, koska
+siitä ei voi laskea mitään.
+
+**Jokainen haku kirjataan auditlokiin** (`sijaintihistoria_haku`): kuka haki, kenen
+jälkeä, miltä ajalta, millä syyllä ja kuinka monta pistettä palautui — myös nolla.
+Kirjaus on hakukohtainen eikä jaksoittainen kuten tilannekuvan katselussa: jäljen haku on
+tietoinen teko, tilannekuva päivittyy itsestään.
+
+Lisärajaukset:
+
+- **Enintään 7 vuorokautta kerrallaan.** Raja ei estä pidemmän jakson katsomista mutta
+  tekee siitä näkyvää: 45 vuorokauden jälki on seitsemän auditlokiriviä, ei yksi.
+- **Rivit rajautuvat `eventAccess`-listalla** kuten tilannekuvassa. Kohteeton piste
+  (piirivuoro) EI näy rajatulle katsojalle — tämä poikkeaa tarkoituksella
+  `/api/sijainnit`-säännöstä, jossa kohteeton yksikkö on näytettävä, koska siellä joku
+  odottaa apua.
+- **Haettavien lista tulee vuoroista eikä käyttäjärekisteristä**, ja vain säilytysajan
+  sisältä. Koko henkilöstön luetteleva valikko antaisi ymmärtää että kenen tahansa
+  jälkeä voi katsoa.
+
+**Mitä tämä EI ole.** Pakollinen syy ei tee käyttötarkoituksen rajauksesta teknistä.
+Katsoja voi valita minkä tahansa syyn. Suoja on siinä, että väärinkäyttö vaatii valheen
+kirjaamista pysyvään lokiin eikä pelkkää klikkausta — ja että työntekijä näkee omista
+tiedoistaan kuka katsoi ja mihin tarkoitukseen sanoi katsovansa. Se on eri asia kuin
+este, ja se on esitettävä sellaisena myös henkilöstölle.
+
 ## 5. Mihin tietoa käytetään
 
 1. **Hälytystehtävän kohdentaminen** — kohteen säteellä olevat yksiköt näkevät keikan
@@ -185,7 +226,8 @@ Nämä ovat toteutettuja, eivät suunniteltuja:
 |---|---|---|
 | Seuranta vapaa-ajalla | Keruu vain vuorossa; poisto uloskirjautuessa ja vuoron päättyessä | Vuoro joka unohtuu päättää — hälytyskeskus voi päättää sen, mutta siihen asti keruu jatkuu |
 | Liikkeiden jälkikäteinen tarkastelu | Historia 45 vrk; käyttötarkoitus rajattu määrittelyssä | **Jälki on olemassa.** 45 vuorokautta kattaa kokonaisen liikehistorian, ja hälytystehtävien osalta se säilyy kaksi vuotta |
-| Tiedon katsominen ilman syytä | Katselu kirjataan auditlokiin (15 min jaksoina), kohdelista mukana | Jäljen lukemiselle ei ole vielä käyttöliittymää eikä omaa oikeutta — kun se tehdään, se on kirjattava erikseen |
+| Tiedon katsominen ilman syytä | Katselu kirjataan auditlokiin (15 min jaksoina), kohdelista mukana | Loki on jälkikäteinen: se ei estä katsomista vaan tekee sen näkyväksi |
+| Jäljen katsominen ilman syytä | Oma oikeus, pakollinen syy, jokainen haku lokiin, enintään 7 vrk kerrallaan | Syy voi olla valheellinen. Suoja on se, että väärinkäyttö vaatii valheen kirjaamista — ei este |
 | Työsuorituksen arviointi sijainnin perusteella | Käyttötarkoitus rajattu määrittelyssä; ei työkaluja siihen | **Ei teknistä estettä.** Rajaus on organisatorinen, ja se on sanottava sellaisena eikä teeskenneltävä tekniseksi |
 | Epätarkka sijainti johtaa väärään päätelmään | Tarkkuus näkyy lukuna ja kehänä kartalla | — |
 
@@ -211,9 +253,7 @@ Nämä ovat toteutettuja, eivät suunniteltuja:
 
 ### Yhä avoinna
 
-1. **Kuka saa katsoa jälkeä ja mistä?** Historian lukemiselle ei ole vielä
-   käyttöliittymää eikä omaa oikeussolmuaan. Kun se tehdään, se on oma pääsypäätöksensä
-   — jäljen katsominen on eri asia kuin nykyisen sijainnin näkeminen.
+1. ~~**Kuka saa katsoa jälkeä ja mistä?**~~ **Ratkaistu 16.9.2026**, ks. kohta 4.1.
 2. **LYTP-säilytyksen valvonta.** `panic`, `mandown` ja `ajastin` noudattavat LYTP:n
    säilytysaikaa, mutta järjestelmässä ei ole automaattista poistoa joka toteuttaisi sen
    — tapahtumailmoitusten säilytysaika on tänään katselunäkymä ja käsin tehtävä poisto

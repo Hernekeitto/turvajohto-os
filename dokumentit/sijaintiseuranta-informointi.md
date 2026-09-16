@@ -184,8 +184,23 @@ Sinulla on oikeus:
 
 Pyynnöt: [nimi / rooli / sähköposti / puhelin]
 
-**Huom.** Sijaintihistorian lukemiselle ei ole vielä käyttöliittymää järjestelmässä.
-Tarkastuspyyntö hoidetaan toistaiseksi käsin: [kuvaa miten ja kuinka nopeasti].
+### Kuka on katsonut sinun jälkeäsi
+
+Sijaintihistorian katsominen on **oma erillinen oikeutensa**, joka ei tule muiden
+päivystysoikeuksien mukana. Se on annettu erikseen vain niille joiden työhön
+jälkiselvitys kuuluu.
+
+**Katsojan on valittava syy ennen kuin jälki avautuu**, ja jokaisesta hausta jää
+auditlokiin merkintä: kuka haki, kenen jälkeä, miltä ajalta, millä syyllä ja kuinka monta
+pistettä löytyi. Merkintä jää myös silloin kun haku ei palauta mitään.
+
+Syy valitaan rajatusta listasta: hälytyksen jälkiselvitys, kierroksen varmentaminen,
+työntekijän oma pyyntö omista tiedoistaan, tai muu syy jota on kuvattava tarkemmin.
+
+**Rehellisyyden nimissä:** tämä ei estä ketään katsomasta jälkeäsi muusta syystä. Se
+tekee siitä jälkikäteen tarkastettavaa — väärä syy on merkintä lokissa, ei pelkkä
+klikkaus. Voit pyytää nähtäväksi kuka on katsonut sinun jälkeäsi ja millä syyllä:
+[kenelle pyyntö osoitetaan ja missä ajassa siihen vastataan].
 
 ## 8. Kun paikannus ei toimi
 

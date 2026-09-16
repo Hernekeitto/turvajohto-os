@@ -62,6 +62,14 @@ const GLOBAL_NODES = new Set([
   // OMA SOLMUNSA eikä guard_dispatch: tilannekuvan näkeminen ja henkilöstön sijainnin
   // näkeminen ovat eri asioita, ja jälkimmäinen on teknistä valvontaa.
   'guard_locations',
+  // Sijaintihistoria. OMA SOLMUNSA myös guard_locationsista, ja se on vaikutusten-
+  // arvioinnin avoin kohta 1 suljettuna: nykyisen sijainnin näkeminen vanhenee 30
+  // minuutissa ja vastaa kysymykseen "kuka ehtii tähän osoitteeseen", jälki kattaa 45
+  // vuorokautta ja vastaa kysymykseen "missä tämä ihminen on ollut".
+  //
+  // Globaali samasta syystä kuin guard_locations; rivirajaus tulee eventAccessista
+  // (server/sijaintihistoria.js: suodataPisteet).
+  'guard_location_history',
   'global_reports',
   'global_archived_events',
   'global_employee_bank',

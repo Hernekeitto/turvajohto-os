@@ -77,6 +77,9 @@ import {
   harvenna as harvennaJalki, SAILYTYS_VRK as SIJAINTI_SAILYTYS_VRK,
 } from './sijaintiloki.js';
 import {
+  saaNahdaHistorian, suodataPisteet, tarkistaIkkuna, tarkistaSyy, vartijavaihtoehdot,
+} from './sijaintihistoria.js';
+import {
   tarkistaIlmoitus,
   lomakkeenTila,
   // saaLahettaa on jo varattu hätäviestien oikeustarkistukselle tässä tiedostossa,
@@ -779,6 +782,85 @@ app.get('/api/sijainnit', requireAuth, (req, res) => {
   }
 
   res.json({ ok: true, kaytossa: true, sijainnit: lista });
+});
+
+// Sijaintihistorian haku (erä 24). Säännöt ovat sijaintihistoria.js:ssä eivätkä täällä,
+// koska index.js:llä ei ole testitiedostoa — ja tämä on työntekijään kohdistuvan teknisen
+// valvonnan pääsyportti.
+//
+// KOLME PORTTIA, ja ne vastaavat kolmeen eri kysymykseen:
+//   1. saanko katsoa jälkiä lainkaan      → oma sivukarttasolmu
+//   2. onko minulla hyväksyttävä syy      → pakollinen ja auditlokiin kirjattava
+//   3. saanko nähdä juuri nämä pisteet    → eventAccess-rajaus riveittäin
+// Ketä voi hakea. Saman portin takana kuin haku itse: lista siitä kenen sijaintia on
+// kerätty on itsessään tieto jota ei anneta kenelle tahansa.
+app.get('/api/sijaintihistoria/vartijat', requireAuth, (req, res) => {
+  if (!saaNahdaHistorian(req, canView)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta sijaintihistoriaan.' });
+  }
+  const vuorot = readCollection('guardShifts') || [];
+  // Nimimerkki liitetään vasta tässä: sijaintilokiin sitä ei kirjata (sijaintiloki.js),
+  // ja vuororivillä on käyttäjätunnus.
+  const lista = vartijavaihtoehdot(vuorot).map((v) => ({
+    ...v,
+    nimi: findUser(v.username)?.nickname || v.username,
+  }));
+  res.json({ ok: true, vartijat: lista, sailytysVrk: SIJAINTI_SAILYTYS_VRK });
+});
+
+app.get('/api/sijaintihistoria', requireAuth, (req, res) => {
+  if (!saaNahdaHistorian(req, canView)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta sijaintihistoriaan.' });
+  }
+
+  const username = typeof req.query.username === 'string' ? req.query.username : '';
+  if (!username) return res.status(400).json({ ok: false, error: 'Kenen jälkeä haetaan?' });
+
+  const ikkuna = tarkistaIkkuna(req.query.alku, req.query.loppu);
+  if (!ikkuna.ok) return res.status(400).json({ ok: false, error: ikkuna.virhe });
+
+  const peruste = tarkistaSyy(req.query.syy, req.query.tarkenne);
+  if (!peruste.ok) return res.status(400).json({ ok: false, error: peruste.virhe });
+
+  const kaikki = lueHistoria({ username, alku: ikkuna.alku, loppu: ikkuna.loppu });
+  const sallitut = suodataPisteet(req, kaikki, eventAllowed);
+
+  // Harvennus vasta suodatuksen JÄLKEEN: toisin päin harvennus voisi pudottaa juuri ne
+  // pisteet jotka kysyjä saa nähdä ja jättää jäljelle ne joita hän ei saa.
+  const pisteet = harvennaJalki(sallitut).map((p) => ({
+    ts: p.ts, lat: p.lat, lon: p.lon, tarkkuus: p.tarkkuus ?? null, eventId: p.eventId || null,
+  }));
+
+  // JOKAINEN HAKU KIRJATAAN, ei jaksoittain kuten tilannekuvan katselu.
+  //
+  // Ero on tarkoituksellinen. Tilannekuva päivittyy itsestään minuutin välein, joten
+  // rivikohtainen kirjaus tuottaisi lokia jota kukaan ei ehdi lukea. Jäljen haku on
+  // päinvastainen: se on tietoinen teko, jonka joku teki jostain syystä — ja juuri se
+  // teko on se mitä työntekijällä on oikeus nähdä omista tiedoistaan.
+  //
+  // `osumia` kirjataan myös nollana: tyhjä tulos ei tarkoita ettei katsottu.
+  logAudit({
+    user: req.username,
+    action: 'sijaintihistoria_haku',
+    collection: 'sijaintiloki',
+    kohde: username,
+    syy: peruste.syy,
+    ...(peruste.tarkenne ? { tarkenne: peruste.tarkenne } : {}),
+    alku: new Date(ikkuna.alku).toISOString(),
+    loppu: new Date(ikkuna.loppu).toISOString(),
+    osumia: pisteet.length,
+    ...(sallitut.length < kaikki.length ? { rajattuPois: kaikki.length - sallitut.length } : {}),
+  });
+
+  res.json({
+    ok: true,
+    username,
+    nimi: findUser(username)?.nickname || username,
+    pisteet,
+    // Kerrotaan harvennuksesta samalla tavalla kuin tehtävän jäljessä: katsojan on
+    // tiedettävä katsooko hän täyttä jälkeä vai otosta siitä.
+    ...(pisteet.length < sallitut.length ? { harvennettu: sallitut.length } : {}),
+  });
 });
 
 app.put('/api/data/:name', requireAuth, (req, res) => {
