@@ -49,6 +49,7 @@ import {
 } from './halytystehtavat';
 import { lueVuoro, tallennaVuoro, unohdaVuoro, type Vuoro } from './mobiili/vuoro';
 import { lueAaniasetus, tallennaAaniasetus } from './mobiili/aaniasetus';
+import { uudetTehtavat } from './mobiili/halytetyt';
 import {
   aloitaHalytys, ilmoita, lopetaHalytys, pyydaIlmoituslupa, varmistaAani,
 } from '../shared/aani';
@@ -665,31 +666,45 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
   useEffect(() => { paivitaTehtavat(); }, [paivitaTehtavat]);
 
-  // Uusi hälytystehtävä soittaa äänen ja värisyttää (erä 23).
+  // Uusi hälytystehtävä soittaa äänen ja värisyttää (erä 23, korjattu erässä 25).
   //
-  // ENSIMMÄISELLÄ HAULLA EI SOITETA. Silloin kaikki avoimet tehtävät olisivat "uusia",
-  // ja sovelluksen avaaminen hälyttäisi keikoista jotka on jo otettu vastaan. Sama
-  // sääntö kuin hälytyskeskuksen äänimerkillä.
-  const tunnetutTehtavat = useRef<Set<string> | null>(null);
+  // YKSI HÄLYTYS YHTÄ KEIKKAA KOHDEN, ja se ratkaistaan LAITTEEN MUISTISTA eikä
+  // edellisestä hausta (mobiili/halytetyt.ts). Erässä 23 vertailukohtana oli edellinen
+  // lista, ja se tuotti kaksi toistoa joita kentällä ei voinut erottaa toisistaan:
+  //
+  //   1. Käynnistys. `tehtavat` on aluksi tyhjä ja täyttyy vasta kun haku vastaa, joten
+  //      jokainen avoin keikka oli "uusi" joka ainoalla avauksella. Kuittaus, puhelin
+  //      taskuun, ruutu lukkoon — ja seuraava avaus hälytti samasta keikasta uudelleen.
+  //   2. Kohdennuksen heilahtelu. Sädekohdennus lukee vartijan viimeksi tiedettyä
+  //      sijaintia, joka vanhenee puolessa tunnissa; vanhentuessaan keikka katosi
+  //      listalta ja palatessaan näytti uudelta.
+  //
+  // EI HÄLYTETÄ KEIKASTA JOHON VARTIJA ON JO VASTANNUT, vaikka laitteen muisti olisi
+  // tyhjä (uusi puhelin, tyhjennetty selain). Vastaanotettu tai kieltäydytty keikka on
+  // nähty, ja nähdystä keikasta hälyttäminen opettaa olemaan luottamatta ääneen.
   useEffect(() => {
-    const idt = new Set(tehtavat.map((t) => t.id));
-    const edelliset = tunnetutTehtavat.current;
-    tunnetutTehtavat.current = idt;
-    if (!edelliset) return;
-
-    const uudet = tehtavat.filter((t) => !edelliset.has(t.id));
-    if (uudet.length === 0) {
-      // Lista tyhjeni: hälytys on hoidettu tai peruttu, eikä ääni saa jäädä soimaan
+    if (tehtavat.length === 0) {
+      // Lista tyhjeni: keikka on hoidettu tai peruttu, eikä ääni saa jäädä soimaan
       // tyhjän listan päälle.
-      if (tehtavat.length === 0) lopetaHalytys();
+      lopetaHalytys();
       return;
     }
+
+    // uudetTehtavat MERKITSEE palauttamansa samalla kertaa, joten kaksi peräkkäistä
+    // hakua ei ehdi lukea samaa tunnistetta uutena.
+    const uudet = new Set(uudetTehtavat(tehtavat.map((t) => t.id)));
+    const halytettavat = tehtavat.filter(
+      (t) => uudet.has(t.id)
+        && !(t.yksikot || []).some((y) => y.vartija === session?.username)
+    );
+    if (halytettavat.length === 0) return;
+
     if (aaniValittu && aaniArmed) aloitaHalytys();
-    for (const t of uudet) {
+    for (const t of halytettavat) {
       ilmoita(`${TEHTAVAN_LAJI[t.laji].toUpperCase()} · ${t.siteNimi}`,
         t.silmukka ? `Silmukka: ${t.silmukka}` : 'Avaa sovellus ja ota tehtävä vastaan.', t.id);
     }
-  }, [tehtavat, aaniValittu, aaniArmed]);
+  }, [tehtavat, aaniValittu, aaniArmed, session?.username]);
 
   // Ääni vaikenee kun sovellus suljetaan. Ilman tätä ajastin jäisi pyörimään
   // komponentin purkamisen jälkeen.
