@@ -29,9 +29,21 @@ const lippu = (nimi) => {
   const i = argumentit.indexOf(nimi);
   return i >= 0 ? argumentit[i + 1] : null;
 };
-// Tiedostonimi on se argumentti joka ei ole lippu eikä lipun arvo.
+// TIEDOSTOJA VOI ANTAA MONTA, ja se on tarpeen eikä mukavuus.
+//
+// Vuoroloki kiertää 512 kilotavussa: täyttyessään `vuoroloki.txt` nimetään
+// `vuoroloki.vanha.txt`:ksi ja kirjoitus jatkuu tyhjään tiedostoon. Kasvuvauhti on noin
+// 39 kt/h, joten kierto osuu keskelle pitkää vuoroa — ja silloin mittausikkunan alkupää
+// on VANHASSA tiedostossa.
+//
+// Pelkän `vuoroloki.txt`:n lukeminen ei silloin epäonnistu vaan tuottaa lyhyemmän
+// ikkunan, joka näyttää aivan kelvolliselta mittaukselta. Siksi molemmat annetaan aina:
+//
+//   node tyokalut/akkumittaus.mjs vanha.txt loki.txt
+//
+// Rivit yhdistetään ja järjestetään ajan mukaan, joten antojärjestyksellä ei ole väliä.
 const LIPUT = ['--alkaen', '--asti'];
-const tiedosto = argumentit.find(
+const tiedostot = argumentit.filter(
   (a, i) => !a.startsWith('--') && !LIPUT.includes(argumentit[i - 1]),
 );
 
@@ -47,8 +59,11 @@ const raja = (arvo, nimi) => {
 const alkaen = raja(lippu('--alkaen'), '--alkaen');
 const asti = raja(lippu('--asti'), '--asti');
 
-if (!tiedosto) {
-  console.error('Anna lokitiedosto: node tyokalut/akkumittaus.mjs <vuoroloki.txt> [--alkaen "…"] [--asti "…"]');
+if (!tiedostot.length) {
+  console.error(
+    'Anna lokitiedosto(t): node tyokalut/akkumittaus.mjs [vuoroloki.vanha.txt] vuoroloki.txt'
+    + ' [--alkaen "2026-09-16 09:00"] [--asti "…"]',
+  );
   process.exit(1);
 }
 
@@ -61,8 +76,8 @@ const kentta = (rivi, nimi) => {
   return osuma ? osuma[1] : null;
 };
 
-const rivit = readFileSync(tiedosto, 'utf8')
-  .split(/\r?\n/)
+const rivit = tiedostot
+  .flatMap((t) => readFileSync(t, 'utf8').split(/\r?\n/))
   .filter((r) => r.trim() && AIKA.test(r))
   .map((rivi) => {
     const aika = new Date(rivi.match(AIKA)[1].replace(' ', 'T'));
@@ -180,7 +195,7 @@ const kello = (d) =>
   + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 const luku = (n, d = 2) => (n === null || !Number.isFinite(n) ? '—' : n.toFixed(d));
 
-console.log(`=== Akkumittaus: ${tiedosto}`);
+console.log(`=== Akkumittaus: ${tiedostot.join(' + ')}`);
 console.log(`Rivejä ${rivit.length}, akkulukema ${akulliset.length} rivillä`);
 console.log(`Loki alkaa ${kello(rivit[0].aika)}, päättyy ${kello(rivit[rivit.length - 1].aika)}`);
 console.log(`Kesto yhteensä ${luku((rivit[rivit.length - 1].ms - rivit[0].ms) / 3_600_000)} h`);
