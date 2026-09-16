@@ -143,7 +143,11 @@ for lohko in "0-255" "256-511"; do
   levylla=$(stat -c %s "$polku")
   url="$OSOITE/tiilet/kirjasimet-$SATSI/Noto%20Sans%20Regular/$lohko.pbf"
   otsakkeet=$(curl -sI "$url" || true)
-  koodi=$(printf '%s' "$otsakkeet" | head -1)
+  # `tr -d` EI OLE KOSMETIIKKAA. HTTP-otsakerivit päättyvät CRLF:ään, ja vaunupalautus
+  # vie kursorin rivin alkuun: ilman tätä tuloste näkyy muodossa " tarjoiltu=76044" ja
+  # lohkon nimi sekä statuskoodi katoavat oman rivinsä alta. Näin kävi ensimmäisellä
+  # ajolla — tarkistus meni läpi, mutta tuloste ei kertonut mitä tarkistettiin.
+  koodi=$(printf '%s' "$otsakkeet" | head -1 | tr -d '\r')
   tarjoiltu=$(printf '%s' "$otsakkeet" | grep -i '^content-length' | tr -dc '0-9' | head -c 12)
   echo "$lohko: $koodi tarjoiltu=${tarjoiltu:-?} levylla=$levylla"
   if [ "${tarjoiltu:-0}" != "$levylla" ]; then
