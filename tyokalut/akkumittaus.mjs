@@ -13,11 +13,15 @@
 // sekä koko jakson että 95 %:sta alkavan osuuden, jotta luvut ovat vertailukelpoisia
 // aiempien mittausten kanssa (ks. asennus/NATIIVI.md).
 //
-// AJO:
-//   adb shell cat /sdcard/Android/data/fi.turvajohto_os.guard/files/vuoroloki.txt > loki.txt
-//   node tyokalut/akkumittaus.mjs loki.txt
+// AJO (molemmat lokit, ks. kierto alempana):
+//   adb pull /sdcard/Android/data/fi.turvajohto_os.guard/files/vuoroloki.vanha.txt
+//   adb pull /sdcard/Android/data/fi.turvajohto_os.guard/files/vuoroloki.txt
+//   node tyokalut/akkumittaus.mjs vuoroloki.vanha.txt vuoroloki.txt
+//
+// `pull` eika `shell cat > tiedosto`: PowerShellin uudelleenohjaus lisaisi tiedoston
+// alkuun tavujarjestysmerkin, ja ensimmainen rivi jaisi lukematta.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 // Vuoroloki on kiertävä ja kattaa useita vuorokausia. Ilman rajausta skripti vertailee
 // keskenään jaksoja jotka eivät liity toisiinsa — eilinen ajo, yön lataus ja tämä vuoro.
@@ -76,7 +80,21 @@ const kentta = (rivi, nimi) => {
   return osuma ? osuma[1] : null;
 };
 
-const rivit = tiedostot
+// Puuttuva tiedosto OHITETAAN ja siitä kerrotaan. Vanhaa lokia on olemassa vain jos
+// kierto on tapahtunut, joten sama komento on voitava antaa kummassakin tapauksessa —
+// muuten komento olisi muistettava valita oikein, ja se on juuri se kohta jossa
+// unohdetaan. Ohitus on äänekäs, koska hiljainen ohitus lyhentäisi mittausikkunaa.
+const luettavat = tiedostot.filter((t) => {
+  if (existsSync(t)) return true;
+  console.log(`(ohitetaan: ${t} — ei ole olemassa, eli kiertoa ei ole tapahtunut)`);
+  return false;
+});
+if (!luettavat.length) {
+  console.error('Yhtäkään annetuista tiedostoista ei ole olemassa.');
+  process.exit(1);
+}
+
+const rivit = luettavat
   .flatMap((t) => readFileSync(t, 'utf8').split(/\r?\n/))
   .filter((r) => r.trim() && AIKA.test(r))
   .map((rivi) => {
@@ -195,7 +213,7 @@ const kello = (d) =>
   + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 const luku = (n, d = 2) => (n === null || !Number.isFinite(n) ? '—' : n.toFixed(d));
 
-console.log(`=== Akkumittaus: ${tiedostot.join(' + ')}`);
+console.log(`=== Akkumittaus: ${luettavat.join(' + ')}`);
 console.log(`Rivejä ${rivit.length}, akkulukema ${akulliset.length} rivillä`);
 console.log(`Loki alkaa ${kello(rivit[0].aika)}, päättyy ${kello(rivit[rivit.length - 1].aika)}`);
 console.log(`Kesto yhteensä ${luku((rivit[rivit.length - 1].ms - rivit[0].ms) / 3_600_000)} h`);
