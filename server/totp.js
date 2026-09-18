@@ -66,6 +66,15 @@ export function generateTotp(base32Secret, forTimeMs = Date.now(), timeStepSecon
   return hotp(base32Decode(base32Secret), counter);
 }
 
+// Vakioaikainen vertailu. Sama peruste kuin muualla sovelluksessa (shares.js:
+// tokenTasmaa, laite.js: tasmaa, smswebhook.js: salaisuusTasmaa) — tavallinen ===
+// vuotaisi ajastuksen kautta tietoa siitä kuinka moni numero osui oikein. Pituudet
+// ovat aina samat (kumpikin puoli on regexillä/padStartilla pakotettu 6 numeroon),
+// joten timingSafeEqual ei koskaan heitä pituuserosta.
+function koodiTasmaa(a, b) {
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
 // Sallitaan ±1 aikaikkuna (30s) kellon pienelle heitolle eri laitteiden välillä.
 export function verifyTotp(base32Secret, token, window = 1) {
   const clean = String(token || '').trim();
@@ -73,7 +82,7 @@ export function verifyTotp(base32Secret, token, window = 1) {
   if (!base32Secret) return false;
   const now = Date.now();
   for (let step = -window; step <= window; step++) {
-    if (generateTotp(base32Secret, now + step * 30000) === clean) return true;
+    if (koodiTasmaa(generateTotp(base32Secret, now + step * 30000), clean)) return true;
   }
   return false;
 }

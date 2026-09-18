@@ -1,7 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import cookie from 'cookie';
+import { parseCookie, stringifySetCookie } from 'cookie';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import QRCode from 'qrcode';
@@ -167,6 +167,9 @@ if (!JWT_SECRET) {
 
 const app = express();
 app.set('trust proxy', 1); // nginx on edessä
+// Ei syytä kertoa hyökkääjälle mitä kehystä palvelin ajaa. nginx ei suodata tätä
+// erikseen, joten poisto on tehtävä täällä eikä oletettava tuotannon konfiguraatiota.
+app.disable('x-powered-by');
 app.use(express.json({
   limit: '5mb',
   // Webhook-kuorman raakateksti talteen: BulkSMS:n viesti-id:t ovat niin suuria että
@@ -241,6 +244,13 @@ function isValidPassword(pw) {
   return typeof pw === 'string' && pw.length >= 10 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /[0-9]/.test(pw);
 }
 
+// Kiinteä bcrypt-tiiviste jota vasten verrataan kun käyttäjätunnusta ei löydy.
+// Ilman tätä bcrypt.compareSync jäisi kokonaan ajamatta olemattomalle tunnukselle,
+// ja se ajoero (bcrypt cost 12 vs. ei mitään) paljastaisi mitattavasti kumpi tapaus
+// oli kyseessä — pieni mutta tarpeeton käyttäjätunnusten luettelointireitti. Laskettu
+// kertaalleen käynnistyksessä (ei per pyyntö): bcrypt on tarkoituksella hidas.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('ei-oikea-kayttaja-vakioaikaista-vertailua-varten', 12);
+
 // `sovellus` = istunto on avattu asennetusta sovelluksesta (ks. istunto.js). Tieto
 // leivotaan tokeniin, jotta istunnon kesto päätetään KIRJAUTUMISHETKELLÄ eikä
 // jokaisessa pyynnössä erikseen: muuten sama eväste voisi vaihtaa pituuttaan sen
@@ -253,7 +263,9 @@ function setSessionCookie(res, username, role, sovellus = false) {
   });
   res.setHeader(
     'Set-Cookie',
-    cookie.serialize(COOKIE_NAME, token, {
+    stringifySetCookie({
+      name: COOKIE_NAME,
+      value: token,
       httpOnly: true,
       secure: true,
       sameSite: 'lax',
@@ -266,7 +278,9 @@ function setSessionCookie(res, username, role, sovellus = false) {
 function clearSessionCookie(res) {
   res.setHeader(
     'Set-Cookie',
-    cookie.serialize(COOKIE_NAME, '', { httpOnly: true, secure: true, sameSite: 'lax', path: '/', maxAge: 0 })
+    stringifySetCookie({
+      name: COOKIE_NAME, value: '', httpOnly: true, secure: true, sameSite: 'lax', path: '/', maxAge: 0,
+    })
   );
 }
 
@@ -274,7 +288,7 @@ function clearSessionCookie(res) {
 // tarvitaan kahta asiaa: käyttäjätunnus ja tieto siitä avattiinko istunto
 // sovelluksesta (istunnon uusiminen tarvitsee saman keston kuin kirjautuminen antoi).
 function lueIstuntoToken(req) {
-  const cookies = cookie.parse(req.headers.cookie || '');
+  const cookies = parseCookie(req.headers.cookie || '');
   const token = cookies[COOKIE_NAME];
   if (!token) return null;
   try {
@@ -412,7 +426,9 @@ app.post('/api/login', loginLimiter, (req, res) => {
   }
 
   const user = findUser(username);
-  const valid = user ? bcrypt.compareSync(password, user.password_hash) : false;
+  // bcrypt.compareSync ajetaan AINA, myös olemattomalle tunnukselle (DUMMY_PASSWORD_HASH
+  // vasten) — muuten olemattoman ja väärän salasanan tapaukset erottaisi ajoituksesta.
+  const valid = bcrypt.compareSync(password, user ? user.password_hash : DUMMY_PASSWORD_HASH) && !!user;
 
   if (!valid) {
     logAudit({ user: username, action: 'login_failed', reason: 'bad_credentials', ip: req.ip });

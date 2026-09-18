@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Salaisuudet: näitä ei koskaan pidä olla versionhallinnassa
+.env
+.env.*
+*.pem
+*.key
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

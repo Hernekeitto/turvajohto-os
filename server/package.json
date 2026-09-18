@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
-    "cookie": "^0.6.0",
+    "cookie": "^2.0.1",
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
     "jsonwebtoken": "^9.0.2",
