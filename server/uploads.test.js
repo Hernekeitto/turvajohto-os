@@ -82,3 +82,41 @@ test('listUploads listaa vain tiedostot', () => {
   deleteUpload(a);
   deleteUpload(b);
 });
+
+// --- Avaintyypin tunnistuskuvan lukuoikeus -------------------------------------------
+//
+// Kartan kuvat kulkevat samaa liitepolkua kuin raporttien valokuvat, ja polku on
+// oletuksena kiinni: liite avautuu vain jos jokin tietue viittaa siihen ja käyttäjällä
+// on oikeus SIIHEN tietueeseen. Avaintyyppi on uusi viittaaja, ja väärin kirjoitettuna
+// se avaisi joko liikaa (koko liitehakemiston) tai liian vähän (kartta olisi rikki
+// kaikille paitsi pääkäyttäjälle — juuri niille joille se on tarkoitettu).
+
+import { canReadGuardAttachment } from './permissions.js';
+
+const KARTTA = [{ id: 't1', nimi: 'Abloy Exec', uploadId: 'kuva.webp' }];
+const vartijanOikeudet = { __default__: { guard_site_assets: { view: true, edit: false } } };
+
+test('vartija saa avaintyypin kuvan ilman kohdeoikeutta', () => {
+  // Kuva on valmistajan tuotekuva eikä kenenkään kohteen tietoa, joten sitä ei rajata
+  // eventAccessilla. Vartija on se joka pitää tuntematonta avainta kädessään.
+  assert.equal(
+    canReadGuardAttachment('user', vartijanOikeudet, [], 'kuva.webp', [], [], [], KARTTA),
+    true
+  );
+});
+
+test('ilman kalusto-oikeutta avaintyypin kuva ei aukea', () => {
+  assert.equal(
+    canReadGuardAttachment('user', { __default__: {} }, [], 'kuva.webp', [], [], [], KARTTA),
+    false
+  );
+});
+
+test('kartan ulkopuolinen liite ei aukea kalusto-oikeudella', () => {
+  // Tämä on se virhe joka avaisi koko liitehakemiston: jos haara palauttaisi tosen
+  // tarkistamatta viittausta, kalusto-oikeus riittäisi minkä tahansa raportin kuvaan.
+  assert.equal(
+    canReadGuardAttachment('user', vartijanOikeudet, [], 'joku-muu.jpg', [], [], [], KARTTA),
+    false
+  );
+});

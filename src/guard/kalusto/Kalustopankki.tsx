@@ -30,9 +30,10 @@ import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
 import { useTakaisinEste } from '../../shared/navigointi';
 import { muotoileTunniste } from '../../shared/tunnisteet';
 import { kilpimerkkiDokumentti, tulostaDokumentti, type TulostettavaKilpimerkki } from '../../shared/tuloste';
+import { AvainkarttaNappi } from './Avainkartta';
 import { KalustoKortti } from './KalustoKortti';
 import { KilpiEsikatselu } from './KilpiEsikatselu';
-import { AVAINERAPOLKU } from '../../shared/laitevalinta';
+import { eranPolku } from '../../shared/laitevalinta';
 import { AVAINLAJIT, LAJIT, MUUT_LAJIT, avainJarjestys, onAvainlaji } from './lajit';
 import { tulostaLuovutuslomake } from './luovutuslomake';
 import {
@@ -182,6 +183,10 @@ export const Kalustopankki = ({
   // Lomake ja lajisuodatin tarjoavat vain sen välilehden lajit jolla ollaan. Muuten
   // avaimen voisi lisätä Kalusto-välilehdeltä, ja se katoaisi heti toiselle välilehdelle.
   const lajiValinnat = avainlehti ? AVAINLAJIT : MUUT_LAJIT;
+
+  // Millä lajilla eräkirjaus avataan. Suodatettu laji voittaa, koska silloin käyttäjä
+  // on juuri kertonut mitä hän katsoo; muuten välilehden ensimmäinen laji.
+  const eranLaji = lajiSuodatin !== 'kaikki' ? lajiSuodatin : lajiValinnat[0];
 
   // Lomakkeen avaus varmistaa että valittu laji kuuluu tälle välilehdelle. Laji voi olla
   // toisen välilehden jos välilehti vaihtui muuten kuin painikkeesta — skannattu kilpi
@@ -470,19 +475,20 @@ export const Kalustopankki = ({
                 {avainlehti ? 'Lisää avain tai kaappi' : 'Lisää kalustoa'}
               </button>
             )}
-            {/* Avainerä vain avainlehdellä: se kirjaa pelkkiä avaimia, eikä painike kuulu
-                näkymään jossa avaimia ei ole. */}
-            {saaHallita && avainlehti && (
+            {/* Eräkirjaus on kaikilla lajeilla sama työ: kymmeniä esineitä yhdestä
+                paperista. Laji tulee siitä mitä välilehdellä ollaan katsomassa, ja
+                sen voi vaihtaa vielä taulukkosivulla. */}
+            {saaHallita && (
               <button
                 type="button"
                 // Uusi selainvälilehti eikä näkymänvaihto: taulukko tarvitsee koko
                 // ruudun leveyden, ja pankki jää auki taustalle. Palattaessa lista on
-                // yhä siinä mihin se jäi, ja uudet avaimet ilmestyvät kanavan kautta.
-                onClick={() => window.open(AVAINERAPOLKU, '_blank', 'noopener')}
+                // yhä siinä mihin se jäi, ja uudet esineet ilmestyvät kanavan kautta.
+                onClick={() => window.open(eranPolku(eranLaji), '_blank', 'noopener')}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-line text-ink-body hover:bg-sunken"
               >
                 <Table2 size={15} />
-                Kirjaa avainerä
+                Kirjaa erä
               </button>
             )}
             {valitut.size > 0 && (
@@ -584,6 +590,17 @@ export const Kalustopankki = ({
                     key={kentta.avain}
                     otsikko={`${kentta.otsikko}${kentta.pakollinen ? ' (pakollinen)' : ''}`}
                     vihje={kentta.vihje}
+                    // Avaimen tyyppi on ainoa kenttä jossa oikea vastaus on
+                    // tunnistettava esineestä eikä luettavissa paperista.
+                    lisa={kentta.avain === 'avaintyyppi' ? (
+                      <AvainkarttaNappi
+                        saaHallita={saaHallita}
+                        valittuNimi={String(lomake.lisatiedot.avaintyyppi ?? '')}
+                        onValitse={(nimi) => setLomake((l) => ({
+                          ...l, lisatiedot: { ...l.lisatiedot, avaintyyppi: nimi },
+                        }))}
+                      />
+                    ) : undefined}
                   >
                     {kentta.totuusarvo ? (
                       <label className="flex items-center gap-2 text-sm text-ink-body py-2">
@@ -904,11 +921,17 @@ const Valilehtinappi = ({ aktiivinen, onClick, ikoni, nimi, luku, korosta }: {
   </button>
 );
 
-const LomakeKentta = ({ otsikko, vihje, children }: {
-  otsikko: string; vihje?: string; children: ReactNode;
+const LomakeKentta = ({ otsikko, vihje, lisa, children }: {
+  otsikko: string; vihje?: string; lisa?: ReactNode; children: ReactNode;
 }) => (
   <div>
-    <label className="block text-xs font-medium text-ink-muted mb-1">{otsikko}</label>
+    {/* Otsikon vieressä on paikka kentän omalle apurille (avainkartan infopallo).
+        Otsikon YHTEYDESSÄ eikä kentän sisällä: apuri koskee sitä mitä kenttään
+        kirjoitetaan, ja kentän sisällä se kilpailisi arvon kanssa tilasta. */}
+    <span className="flex items-center gap-1.5 mb-1">
+      <label className="block text-xs font-medium text-ink-muted">{otsikko}</label>
+      {lisa}
+    </span>
     {children}
     {vihje && <p className="text-xs text-ink-muted mt-1">{vihje}</p>}
   </div>

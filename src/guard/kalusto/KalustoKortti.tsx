@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 
 import { QrKoodi } from '../../shared/komponentit/QrKoodi';
+import { AvainkarttaNappi } from './Avainkartta';
 import { LAJIT } from './lajit';
 import { sailyttimenTapahtumat, suodataValille } from './sailytin';
 import {
@@ -319,7 +320,20 @@ export const KalustoKortti = ({
                 </Kentta>
               )}
               {(maar?.lisakentat || []).map((kentta) => (
-                <Kentta key={kentta.avain} otsikko={kentta.otsikko} vihje={kentta.vihje}>
+                <Kentta
+                  key={kentta.avain}
+                  otsikko={kentta.otsikko}
+                  vihje={kentta.vihje}
+                  lisa={kentta.avain === 'avaintyyppi' ? (
+                    <AvainkarttaNappi
+                      saaHallita={saaHallita}
+                      valittuNimi={String(muokkaus.lisatiedot.avaintyyppi ?? '')}
+                      onValitse={(nimi) => setMuokkaus((m) => ({
+                        ...m, lisatiedot: { ...m.lisatiedot, avaintyyppi: nimi },
+                      }))}
+                    />
+                  ) : undefined}
+                >
                   {kentta.totuusarvo ? (
                     <label className="flex items-center gap-2 text-sm text-ink-body">
                       <input
@@ -382,6 +396,12 @@ export const KalustoKortti = ({
                     key={kentta.avain}
                     otsikko={kentta.otsikko}
                     arvo={arvo === true ? 'Kyllä' : String(arvo)}
+                    // Lukunäkymässä kartta on hakuteos ilman valintaa: kysymys on
+                    // "onko tämä kädessäni oleva avain tätä mallia", ja vastaus
+                    // saadaan kuvasta. Vartija näkee tämän myös ilman muokkausoikeutta.
+                    lisa={kentta.avain === 'avaintyyppi'
+                      ? <AvainkarttaNappi saaHallita={false} valittuNimi={String(arvo)} />
+                      : undefined}
                   />
                 );
               })}
@@ -810,21 +830,24 @@ export const KalustoKortti = ({
   );
 };
 
-const Kentta = ({ otsikko, vihje, children }: {
-  otsikko: string; vihje?: string; children: ReactNode;
+const Kentta = ({ otsikko, vihje, lisa, children }: {
+  otsikko: string; vihje?: string; lisa?: ReactNode; children: ReactNode;
 }) => (
   <div>
-    <label className="block text-xs font-medium text-ink-muted mb-1">{otsikko}</label>
+    <span className="flex items-center gap-1.5 mb-1">
+      <label className="block text-xs font-medium text-ink-muted">{otsikko}</label>
+      {lisa}
+    </span>
     {children}
     {vihje && <p className="text-xs text-ink-muted mt-1">{vihje}</p>}
   </div>
 );
 
-const Tieto = ({ otsikko, arvo, mono, levea }: {
-  otsikko: string; arvo: string; mono?: boolean; levea?: boolean;
+const Tieto = ({ otsikko, arvo, mono, levea, lisa }: {
+  otsikko: string; arvo: string; mono?: boolean; levea?: boolean; lisa?: ReactNode;
 }) => (
   <div className={levea ? 'sm:col-span-2' : ''}>
-    <dt className="text-xs text-ink-muted">{otsikko}</dt>
+    <dt className="text-xs text-ink-muted flex items-center gap-1.5">{otsikko}{lisa}</dt>
     <dd className={`text-ink-body ${mono ? 'font-mono' : ''}`}>{arvo}</dd>
   </div>
 );

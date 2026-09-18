@@ -674,3 +674,66 @@ export function vuoronKalusto(kalusto, { siteId = null, employeeId = null } = {}
     })
     .map(ilmanKetjua);
 }
+
+// --- Avaintyyppikartta --------------------------------------------------------------
+//
+// Luettelo avainmalleista tunnistuskuvineen (Abloy Exec, iLOQ, Protec² CLIQ…). Avain
+// kirjataan pankkiin vapaana tekstinä `avaintyyppi`-kenttään, ja kartan tehtävä on tehdä
+// siitä tunnistettava: kirjaaja katsoo kuvaa ja valitsee oikean nimen sen sijaan että
+// kirjoittaisi "abloy exec" ja seuraava "Abloy EXEC".
+//
+// OMA KOKOELMANSA eikä kalustolajin luettelo (lajit.ts: alalajit), koska kartta muuttuu
+// käytön aikana: uusi avainmalli tulee käyttöön kesken vuoden, eikä sen lisääminen saa
+// vaatia ohjelmistopäivitystä. Kuva kulkee tavallisena liitteenä (uploads.js), jolloin
+// tunnistuskuvat pysyvät kirjautumisen takana eivätkä päädy julkiseen lähdekoodiin —
+// ne ovat valmistajien tuotekuvia eivätkä meidän omaamme.
+
+export const AVAINTYYPIN_NIMI_MAX = 60;
+
+// Nimen vertailumuoto päällekkäisyyden tunnistamiseen. Isot kirjaimet ja välilyönnit
+// vaihtelevat kirjaajan mukaan, ja kaksi riviä samalle avainmallille on kartassa
+// pahempaa kuin tiukka tarkistus: valittavana olisi kaksi identtiseltä näyttävää kuvaa.
+const vertailunimi = (nimi) => String(nimi || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+export function luoAvaintyyppi({ id, nimi, kuvaus = '', uploadId, kartta = [], user, nyt = Date.now() }) {
+  const puhdasNimi = siivoa(nimi, AVAINTYYPIN_NIMI_MAX);
+  if (!puhdasNimi) return { ok: false, error: 'Avaintyypille on annettava nimi.' };
+  if (!uploadId) return { ok: false, error: 'Avaintyypille on annettava tunnistuskuva.' };
+  if ((Array.isArray(kartta) ? kartta : []).some((t) => vertailunimi(t?.nimi) === vertailunimi(puhdasNimi))) {
+    return { ok: false, error: `Avaintyyppi "${puhdasNimi}" on jo kartassa.` };
+  }
+  return {
+    ok: true,
+    tyyppi: {
+      id,
+      nimi: puhdasNimi,
+      kuvaus: siivoa(kuvaus, KUVAUKSEN_MAX),
+      uploadId: String(uploadId),
+      luotu: new Date(nyt).toISOString(),
+      luoja: user || null,
+    },
+  };
+}
+
+export function paivitaAvaintyyppi({ tyyppi, muutokset, kartta = [] }) {
+  if (!tyyppi) return { ok: false, error: 'Avaintyyppiä ei löytynyt.' };
+  const puhdasNimi = siivoa(muutokset?.nimi ?? tyyppi.nimi, AVAINTYYPIN_NIMI_MAX);
+  if (!puhdasNimi) return { ok: false, error: 'Avaintyypille on annettava nimi.' };
+  // Päällekkäisyys tarkistetaan MUITA vastaan: oma rivi osuisi aina itseensä, jolloin
+  // pelkän kuvauksen muokkaus epäonnistuisi.
+  const muut = (Array.isArray(kartta) ? kartta : []).filter((t) => t?.id !== tyyppi.id);
+  if (muut.some((t) => vertailunimi(t?.nimi) === vertailunimi(puhdasNimi))) {
+    return { ok: false, error: `Avaintyyppi "${puhdasNimi}" on jo kartassa.` };
+  }
+  return {
+    ok: true,
+    tyyppi: {
+      ...tyyppi,
+      nimi: puhdasNimi,
+      kuvaus: siivoa(muutokset?.kuvaus ?? tyyppi.kuvaus, KUVAUKSEN_MAX),
+      // Kuvan vaihto on valinnainen: nimen korjaus ei saa vaatia kuvan lähettämistä
+      // uudelleen.
+      uploadId: muutokset?.uploadId ? String(muutokset.uploadId) : tyyppi.uploadId,
+    },
+  };
+}

@@ -22,6 +22,11 @@ import type { KalustoTietue, Laji } from './tyypit';
 export type Lisakentta = {
   avain: string;
   otsikko: string;
+  // Lyhyt otsikko taulukkosyöttöä varten (KalustoEra.tsx). Eräkirjauksessa sarakkeita
+  // on rinnakkain kymmenkunta, ja pitkä otsikko levittää taulukon vaakavieritettäväksi
+  // — juuri se on se tilanne jossa syötetään väärään sarakkeeseen. Puuttuessaan
+  // käytetään `otsikko`a.
+  lyhyt?: string;
   vihje?: string;
   totuusarvo?: boolean;
   pakollinen?: boolean;
@@ -54,9 +59,9 @@ export const LAJIT: Record<Laji, Lajimaarittely> = {
     sarjanumero: 'valinnainen',
     lisakentat: [
       { avain: 'avaintyyppi', otsikko: 'Avaimen tyyppi', vihje: 'Abloy Exec, iLOQ, Mul-T-Lock…' },
-      { avain: 'kohdeNimi', otsikko: 'Mihin kohteeseen käy', vihje: 'Kohteen nimi sellaisena kuin se on sopimuksessa' },
-      { avain: 'sarjanumerointi', otsikko: 'Sarjanumerointi', vihje: 'Toimeksiantajan oma numerointi, esim. 4/12' },
-      { avain: 'luovutussopimus', otsikko: 'Luovutussopimus', vihje: 'Sopimuksen numero tai päiväys' },
+      { avain: 'kohdeNimi', otsikko: 'Mihin kohteeseen käy', lyhyt: 'Mihin käy', vihje: 'Kohteen nimi sellaisena kuin se on sopimuksessa' },
+      { avain: 'sarjanumerointi', otsikko: 'Sarjanumerointi', lyhyt: 'Numerointi', vihje: 'Toimeksiantajan oma numerointi, esim. 4/12' },
+      { avain: 'luovutussopimus', otsikko: 'Luovutussopimus', lyhyt: 'Sopimus', vihje: 'Sopimuksen numero tai päiväys' },
     ],
   },
   avainkaappi: {
@@ -81,10 +86,10 @@ export const LAJIT: Record<Laji, Lajimaarittely> = {
     alalajit: ['Piiriauto', 'Pakettiauto', 'Henkilöauto', 'Peräkärry'],
     sarjanumero: 'valinnainen',
     lisakentat: [
-      { avain: 'rekisteri', otsikko: 'Rekisteritunnus', pakollinen: true },
+      { avain: 'rekisteri', otsikko: 'Rekisteritunnus', lyhyt: 'Rekisteri', pakollinen: true },
       { avain: 'merkki', otsikko: 'Merkki' },
       { avain: 'malli', otsikko: 'Malli' },
-      { avain: 'katsastusAsti', otsikko: 'Katsastus voimassa', vihje: 'pp.kk.vvvv' },
+      { avain: 'katsastusAsti', otsikko: 'Katsastus voimassa', lyhyt: 'Katsastus', vihje: 'pp.kk.vvvv' },
     ],
   },
   asuste: {
@@ -102,6 +107,7 @@ export const LAJIT: Record<Laji, Lajimaarittely> = {
       {
         avain: 'henkilokohtainen',
         otsikko: 'Henkilökohtainen',
+        lyhyt: 'Henk.koht.',
         totuusarvo: true,
         vihje: 'Luovutetaan vain nimetylle henkilölle, ei kohteelle eikä holviin. Tunnukset ovat aina henkilökohtaisia.',
       },
@@ -119,6 +125,7 @@ export const LAJIT: Record<Laji, Lajimaarittely> = {
       {
         avain: 'koulutusVaadittu',
         otsikko: 'Vaatii voimankäyttökoulutuksen',
+        lyhyt: 'Koulutus',
         totuusarvo: true,
         vihje: 'Merkintä ei estä luovutusta — se on muistutus siitä että koulutus on tarkistettava.',
       },
@@ -137,7 +144,7 @@ export const LAJIT: Record<Laji, Lajimaarittely> = {
     lisakentat: [
       { avain: 'lupanumero', otsikko: 'Luvan numero', pakollinen: true },
       { avain: 'kaliiperi', otsikko: 'Kaliiperi' },
-      { avain: 'sailytyspaikka', otsikko: 'Säilytyspaikka', vihje: 'Asekaapin tunnus tai sijainti' },
+      { avain: 'sailytyspaikka', otsikko: 'Säilytyspaikka', lyhyt: 'Säilytys', vihje: 'Asekaapin tunnus tai sijainti' },
     ],
   },
   tietotekniikka: {
@@ -152,7 +159,7 @@ export const LAJIT: Record<Laji, Lajimaarittely> = {
     sarjanumero: 'valinnainen',
     lisakentat: [
       { avain: 'imei', otsikko: 'IMEI' },
-      { avain: 'puhelinnumero', otsikko: 'Puhelinnumero' },
+      { avain: 'puhelinnumero', otsikko: 'Puhelinnumero', lyhyt: 'Puhelin' },
     ],
   },
 };

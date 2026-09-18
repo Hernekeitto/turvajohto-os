@@ -19,7 +19,7 @@ import { PaivitysKehote } from './shared/komponentit/PaivitysKehote.tsx'
 import { JonoTila } from './shared/komponentit/JonoTila.tsx'
 import { rekisteroiPalvelutyontekija } from './shared/palvelutyontekija.ts'
 import { asetaKuvakkeetJaManifesti } from './shared/kuvakkeet.ts'
-import { lueLaitevalinta, AVAINERAPOLKU, MOBIILIPOLKU, TYOPOYTAPOLKU } from './shared/laitevalinta.ts'
+import { lueLaitevalinta, ERAPOLKU, MOBIILIPOLKU, TYOPOYTAPOLKU } from './shared/laitevalinta.ts'
 
 // Tuotekohtaiset osat ladataan vasta tarvittaessa: mainossivu on julkinen ja sen
 // pitää aueta heti, eikä sen kuulu vetää mukanaan koko sovellusnippua.
@@ -28,7 +28,7 @@ const GuardApp = lazy(() => import('./guard/GuardApp.tsx'))
 // Avainerän taulukkosyöttö on oma sivunsa omassa selainvälilehdessään, ei näkymä
 // GuardAppin sisällä: se ei jaa mitään tilaa pankin kanssa eikä sitä tarvitse ladata
 // ennen kuin se avataan.
-const AvainEra = lazy(() => import('./guard/kalusto/AvainEra.tsx').then((m) => ({ default: m.AvainEra })))
+const KalustoEra = lazy(() => import('./guard/kalusto/KalustoEra.tsx').then((m) => ({ default: m.KalustoEra })))
 
 type Tuote = 'landing' | 'event' | 'guard'
 
@@ -57,11 +57,11 @@ function ratkaiseTuote(pathname: string): Tuote {
 // sovellus käynnistyy aina /guard-polkuun (manifestin start_url), joten ilman tätä
 // mobiiliversion valinnut vartija päätyisi työpöytäversioon joka ainoa kerta.
 // Nimenomainen /guard/mobile voittaa aina tallennetun valinnan.
-// Onko osoite avainerän taulukkosivu. Oma haaransa eikä GuardAppin sisäinen näkymä,
-// koska sivu avataan window.openilla omaan välilehteensä — silloin se on osoite, ja
-// osoitteet tulkitaan tässä tiedostossa.
-function onAvainEra(pathname: string): boolean {
-  return pathname.replace(LOPUN_KENOVIIVAT, '').toLowerCase() === AVAINERAPOLKU
+// Onko osoite eräkirjauksen taulukkosivu. Oma haaransa eikä GuardAppin sisäinen
+// näkymä, koska sivu avataan window.openilla omaan välilehteensä — silloin se on
+// osoite, ja osoitteet tulkitaan tässä tiedostossa.
+function onEra(pathname: string): boolean {
+  return pathname.replace(LOPUN_KENOVIIVAT, '').toLowerCase() === ERAPOLKU
 }
 
 // Onko osoite hälytyskeskuksen irrotettu paneeli (erä 24). Omat osoitteensa, koska
@@ -82,11 +82,11 @@ function ratkaiseGuardMobiili(pathname: string): boolean {
 // ja kaikki tuntemattomat polut mainossivulle (/), jotta kirjoitusvirhe ei jätä
 // käyttäjää katsomaan mainossivua väärässä osoitteessa.
 function normalisoiPolku(
-  tuote: Tuote, guardMobiili: boolean, avainEra: boolean, halkePaneeli: boolean,
+  tuote: Tuote, guardMobiili: boolean, era: boolean, halkePaneeli: boolean,
 ) {
-  // Avainerän osoite on kanoninen sellaisenaan: ilman tätä haaraa normalisointi
+  // Eräkirjauksen osoite on kanoninen sellaisenaan: ilman tätä haaraa normalisointi
   // kirjoittaisi sen /guard:ksi ja välilehti näyttäisi pankin taulukon sijaan.
-  if (avainEra) return
+  if (era) return
   // Sama koskee hälytyskeskuksen paneeleita. Ilman tätä irrotettu ikkuna menettäisi
   // paneelinsa heti latauksessa: normalisointi kirjoittaisi osoitteeksi /guard ennen
   // kuin GuardApp ehtii lukea sen, ja jokainen toiselle näytölle raahattu ikkuna
@@ -99,14 +99,14 @@ function normalisoiPolku(
 }
 
 const tuote = ratkaiseTuote(window.location.pathname)
-const avainEra = tuote === 'guard' && onAvainEra(window.location.pathname)
-const halkePaneeli = tuote === 'guard' && !avainEra && onHalkePaneeli(window.location.pathname)
-const guardMobiili = tuote === 'guard' && !avainEra && !halkePaneeli
+const era = tuote === 'guard' && onEra(window.location.pathname)
+const halkePaneeli = tuote === 'guard' && !era && onHalkePaneeli(window.location.pathname)
+const guardMobiili = tuote === 'guard' && !era && !halkePaneeli
   && ratkaiseGuardMobiili(window.location.pathname)
 // replaceState eikä uudelleenohjaus: sovellusnippu on jo ladattu, ja koko ero on siinä
 // mikä komponentti renderöidään. Uudelleenlataus tässä kohdassa maksaisi vartijalle
 // yhden ylimääräisen latauksen jokaisella käynnistyksellä.
-normalisoiPolku(tuote, guardMobiili, avainEra, halkePaneeli)
+normalisoiPolku(tuote, guardMobiili, era, halkePaneeli)
 
 // Väritokenien arvot ratkeavat juuren data-tuote-attribuutista (ks. index.css), jolloin
 // sama komponentti näyttää EVENT-puolella slate/indigo-ilmeeltä ja GUARD-puolella
@@ -154,7 +154,7 @@ createRoot(document.getElementById('root')!).render(
       <Suspense fallback={Latautuu}>
         <PasswordGate tuote={tuote}>
           {tuote === 'guard'
-            ? (avainEra ? <AvainEra /> : <GuardApp mobiili={guardMobiili} />)
+            ? (era ? <KalustoEra /> : <GuardApp mobiili={guardMobiili} />)
             : <EventApp />}
         </PasswordGate>
       </Suspense>

@@ -141,6 +141,11 @@ const COLLECTIONS = {
   // kohdekohtainen rekisteri osaa kertoa missä ne ovat. Palvelimen ylläpitämä, koska
   // luovutusketju on rekisterin ainoa sisältö.
   assets: 'assets.json',
+  // Avaintyyppikartta: tunnistuskuva ja nimi kullekin avainmallille (Abloy Exec,
+  // iLOQ…). Oma kokoelmansa eikä kalustolajin osa, koska kartta on yrityksen yhteinen
+  // luettelo eikä yksittäisen avaimen ominaisuus — sata avainta viittaa samaan
+  // yhdeksään kuvaan. Palvelimen ylläpitämä kuten muukin kalusto.
+  keyTypes: 'keyTypes.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain

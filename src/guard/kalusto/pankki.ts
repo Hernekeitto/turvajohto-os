@@ -31,20 +31,20 @@ async function kutsu(polku: string, runko?: unknown, metodi: 'POST' | 'PUT' = 'P
   }
 }
 
-// Yksi rivi avainerän taulukkosyötöstä. Kentät vastaavat avaimen omia lisätietoja
-// (lajit.ts: LAJIT.avain.lisakentat) — tunnus ja holvipaikka tulevat palvelimelta.
-export type AvainRivi = {
+// Yksi rivi eräkirjauksen taulukosta. Perustiedot omina kenttinään ja lajikohtaiset
+// lisätiedot omassa oliossaan — sama muoto kuin yksittäisen esineen lomakkeella,
+// jolloin palvelimella on yksi puhdistus (server/kalusto.js: puhdistaLisatiedot)
+// eikä kahta. Tunnus ja holvipaikka tulevat palvelimelta.
+export type EraRivi = {
   nimi: string;
   alalaji: string;
-  avaintyyppi: string;
-  kohdeNimi: string;
   sarjanumero: string;
-  sarjanumerointi: string;
-  luovutussopimus: string;
   kuvaus: string;
+  lisatiedot: Record<string, string | boolean>;
 };
 
-export const luoAvainEra = (rivit: AvainRivi[]) => kutsu('/api/kalusto/era', { rivit });
+export const luoKalustoEra = (laji: Laji, rivit: EraRivi[]) =>
+  kutsu('/api/kalusto/era', { laji, rivit });
 
 export type UusiKalusto = {
   laji: Laji;

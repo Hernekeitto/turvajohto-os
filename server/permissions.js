@@ -134,7 +134,10 @@ const TIKE_FORM_NODES = [
 // lähettämisen.
 // GUARD-puolen solmut jotka oikeuttavat liitteen lähettämiseen: kohteen hallinta (kohteen
 // omat tiedostot, esim. toimeksiantosopimus ja pohjapiirros) sekä vartijan raporttilomakkeet.
-const GUARD_ATTACHMENT_NODES = ['guard_sites', 'guard_report_action', 'guard_report_jv'];
+// `guard_assets` on mukana avaintyyppikartan tunnistuskuvien takia: kartan ylläpito on
+// sama oikeus kuin pankin ylläpito, eikä kuvan lähettäminen saa vaatia erikseen
+// kohde- tai raporttioikeutta. Ilman tätä kartta olisi käytännössä vain pääkäyttäjän.
+const GUARD_ATTACHMENT_NODES = ['guard_sites', 'guard_report_action', 'guard_report_jv', 'guard_assets'];
 
 const REPORT_ATTACHMENT_NODES = [
   'tike_form_open', 'tike_form_firstaid', 'tike_form_threat', 'tike_form_fence', 'tike_form_damage',
@@ -369,6 +372,15 @@ const COLLECTIONS = {
     eventScoped: false,
     // Kalustopankki on vartioimisliikkeen rekisteri eikä tapahtumapuolen asia, joten
     // tuoteportti sulkee sen tunnuksilta joilla ei ole GUARD-pääsyä.
+    tuote: 'guard',
+  },
+  // Avaintyyppikartta. Sama lukuoikeus kuin kalustolla mutta EI rivirajausta: kartassa
+  // ei ole henkilötietoa eikä kohdetietoa, vain valmistajan kuva avaimesta. Vartija
+  // hyötyy siitä eniten — hän on se joka pitää tuntematonta avainta kädessään.
+  keyTypes: {
+    view: ['guard_assets', 'guard_site_assets'],
+    touch: () => [],
+    eventScoped: false,
     tuote: 'guard',
   },
   // Varustepoikkeamat. Sama malli.
@@ -822,9 +834,16 @@ export function canUploadAttachment(role, permissions) {
 // tapahtumapuolen liitelogiikkaan ole tarpeen koskea.
 export function canReadGuardAttachment(
   role, permissions, eventAccess, attachmentId, guardFilesArr = [], guardReportsArr = [],
-  guardSitesArr = []
+  guardSitesArr = [], keyTypesArr = []
 ) {
   if (role === 'admin') return true;
+
+  // Avaintyypin tunnistuskuva. EI kohdesidottu eikä eventAllowed-tarkistusta: kuva on
+  // valmistajan tuotekuva avaimesta, ei kenenkään kohteen tietoa. Lukuoikeus tulee
+  // siitä että saa ylipäätään nähdä kalustoa — sama ehto kuin kokoelmalla itsellään.
+  if ((Array.isArray(keyTypesArr) ? keyTypesArr : []).some((t) => t?.uploadId === attachmentId)) {
+    return hasAnyView(permissions, null, ['guard_assets', 'guard_site_assets']);
+  }
 
   // Kohteen pohjakartta on GUARD-puolen vastine tapahtuman kartalle: se ei kuulu
   // millekään raportille eikä tiedostolistaan vaan kohteen omiin tietoihin

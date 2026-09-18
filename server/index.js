@@ -60,6 +60,12 @@ import {
   readableData,
   authorizeWrite,
   canReadAttachment,
+  // GUARD-liitteen lukutarkistus. Tämä puuttui tuonnista, ja koska sitä kutsutaan
+  // vasta tapahtumapuolen tarkistuksen jälkeen (&&), pääkäyttäjä ei koskaan päätynyt
+  // riville — hänellä canReadAttachment palauttaa aina true. Vika näkyi vain
+  // ei-pääkäyttäjälle ja vain GUARD-liitteessä: pohjakartta, kohteen tiedosto tai
+  // raportin kuva vastasi 500:lla.
+  canReadGuardAttachment,
   canUploadAttachment,
   canEdit,
   canView,
@@ -584,7 +590,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets', 'keyTypes']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -611,6 +617,9 @@ const UPLOAD_VIITTAAJAT = {
   // Kohteen pohjakartta. Ilman tätä riviä roskienkeruu pitäisi karttaa orpona ja
   // poistaisi sen vuorokaudessa — sama ansa kuin tapahtuman kartalla (events).
   guardSites: (arr) => (Array.isArray(arr) ? arr : []).map((k) => k?.mapUploadId).filter(Boolean),
+  // Avaintyyppien tunnistuskuvat. Ilman tätä riviä roskienkeruu pitäisi koko
+  // avainkarttaa orpona ja tyhjentäisi sen vuorokaudessa.
+  keyTypes: (arr) => (Array.isArray(arr) ? arr : []).map((t) => t?.uploadId).filter(Boolean),
 };
 
 // Tuoteportti: kokoelma joka kuuluu vain toiselle puolelle (esim. guardSites) on
@@ -4670,6 +4679,13 @@ app.post('/api/kalusto/era', requireAuth, guardPortti, (req, res) => {
   if (!saaHallitaPankkia(req)) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta kalustopankin ylläpitoon.' });
   }
+  // Laji tulee pyynnöstä: sama taulukkosyöttö palvelee kaikkia lajeja, ja sarakkeet
+  // ratkeavat lajista. Tuntematon laji torjutaan tässä eikä luoKalustossa, jotta
+  // virhe kertoo lajista eikä ensimmäisestä rivistä.
+  const laji = req.body?.laji || 'avain';
+  if (!kalusto.LAJIT[laji]) {
+    return res.status(400).json({ ok: false, error: 'Tuntematon kalustolaji.' });
+  }
   const rivit = Array.isArray(req.body?.rivit) ? req.body.rivit : null;
   if (!rivit || rivit.length === 0) {
     return res.status(400).json({ ok: false, error: 'Erässä ei ole yhtään riviä.' });
@@ -4682,31 +4698,31 @@ app.post('/api/kalusto/era', requireAuth, guardPortti, (req, res) => {
   }
 
   const pankki = readCollection('assets') || [];
-  const numero = kalusto.seuraavaNumero(pankki, 'avain');
-  const holviPaikka = kalusto.seuraavaHolviPaikka(pankki);
+  const numero = kalusto.seuraavaNumero(pankki, laji);
+  // Holvipaikka varataan VAIN avaimille: se on avaimen paikka hyllyssä, eikä takilla
+  // tai puhelimella ole sellaista. Muu laji saisi numeron jota mikään ei vastaa.
+  const onAvain = laji === 'avain';
+  const holviPaikka = onAvain ? kalusto.seuraavaHolviPaikka(pankki) : null;
 
   const uudet = [];
   for (let i = 0; i < rivit.length; i += 1) {
     const rivi = rivit[i] || {};
     const tulos = kalusto.luoKalusto({
       id: crypto.randomUUID(),
-      laji: 'avain',
+      laji,
       alalaji: rivi.alalaji,
       nimi: rivi.nimi,
       kuvaus: rivi.kuvaus,
       sarjanumero: rivi.sarjanumero,
-      lisatiedot: {
-        avaintyyppi: rivi.avaintyyppi,
-        kohdeNimi: rivi.kohdeNimi,
-        sarjanumerointi: rivi.sarjanumerointi,
-        luovutussopimus: rivi.luovutussopimus,
-      },
-      // Erä syntyy aina holviin: avain kirjataan vastaanotetuksi ennen kuin se
+      // Lisätiedot sellaisenaan: luoKalusto puhdistaa ne lajin sallittujen kenttien
+      // mukaan (puhdistaLisatiedot), joten selain ei voi kirjoittaa vieraita kenttiä.
+      lisatiedot: rivi.lisatiedot || {},
+      // Erä syntyy aina holviin: esine kirjataan vastaanotetuksi ennen kuin se
       // jyvitetään mihinkään. Rivinumero virheeseen, jotta käyttäjä löytää sen
       // taulukosta ilman arvailua.
       sijoitus: { laji: 'holvi' },
       numero: numero + i,
-      holviPaikka: holviPaikka + i,
+      holviPaikka: onAvain ? holviPaikka + i : null,
       user: req.username,
     });
     if (!tulos.ok) {
@@ -4881,6 +4897,80 @@ app.post('/api/kalusto/:id/tila', requireAuth, guardPortti, (req, res) => {
   res.json({ ok: true, esine: tulos.esine });
 });
 
+
+// --- Avaintyyppikartta ------------------------------------------------------------
+//
+// Luettelo avainmalleista tunnistuskuvineen. Kuva lähetetään ensin tavallisena liitteenä
+// (POST /api/uploads) ja sen id liitetään tähän — ei omaa tiedostoreittiä, koska
+// olemassa oleva liitepolku hoitaa jo tyyppitarkistuksen, kokorajan ja roskienkeruun.
+//
+// Lukeminen tapahtuu GET /api/data/keyTypes -reitillä oikeuksien mukaan
+// (permissions.js: keyTypes). Täällä on vain kirjoitus, ja se vaatii pankin
+// ylläpito-oikeuden: kartta on yrityksen yhteinen luettelo, ja jokainen sen rivi
+// näkyy kaikille avaimia kirjaaville.
+
+const haeAvaintyyppi = (id) => {
+  const kartta = readCollection('keyTypes') || [];
+  return { kartta, tyyppi: kartta.find((t) => t?.id === id) || null };
+};
+
+app.post('/api/avaintyypit', requireAuth, guardPortti, (req, res) => {
+  if (!saaHallitaPankkia(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta avaintyyppikartan ylläpitoon.' });
+  }
+  // Kuvan on oltava jo levyllä. Ilman tarkistusta karttaan syntyisi rivi joka viittaa
+  // olemattomaan tiedostoon, ja se näkyisi rikkinäisenä kuvana jokaiselle kirjaajalle.
+  if (!getUploadPath(req.body?.uploadId)) {
+    return res.status(400).json({ ok: false, error: 'Tunnistuskuvaa ei löytynyt. Lähetä kuva uudelleen.' });
+  }
+  const kartta = readCollection('keyTypes') || [];
+  const tulos = kalusto.luoAvaintyyppi({
+    id: crypto.randomUUID(),
+    nimi: req.body?.nimi,
+    kuvaus: req.body?.kuvaus,
+    uploadId: req.body.uploadId,
+    kartta,
+    user: req.username,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('keyTypes', [...kartta, tulos.tyyppi]);
+  logAudit({ user: req.username, action: 'keytype_create', collection: 'keyTypes', recordId: tulos.tyyppi.id });
+  res.json({ ok: true, tyyppi: tulos.tyyppi });
+});
+
+app.put('/api/avaintyypit/:id', requireAuth, guardPortti, (req, res) => {
+  if (!saaHallitaPankkia(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta avaintyyppikartan ylläpitoon.' });
+  }
+  const { kartta, tyyppi } = haeAvaintyyppi(req.params.id);
+  if (!tyyppi) return res.status(404).json({ ok: false, error: 'Avaintyyppiä ei löytynyt.' });
+  if (req.body?.uploadId && !getUploadPath(req.body.uploadId)) {
+    return res.status(400).json({ ok: false, error: 'Tunnistuskuvaa ei löytynyt. Lähetä kuva uudelleen.' });
+  }
+
+  const tulos = kalusto.paivitaAvaintyyppi({ tyyppi, muutokset: req.body, kartta });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('keyTypes', kartta.map((t) => (t.id === tyyppi.id ? tulos.tyyppi : t)));
+  logAudit({ user: req.username, action: 'keytype_update', collection: 'keyTypes', recordId: tyyppi.id });
+  res.json({ ok: true, tyyppi: tulos.tyyppi });
+});
+
+// Poisto ei kajoa avaimiin. Avaimen `avaintyyppi` on tekstiä eikä viittaus, joten
+// kartasta poistettu malli ei tyhjennä yhtään kirjausta — kartta on tunnistusapu, ei
+// pakotettu luettelo. Kuvatiedosto jää roskienkeruun hoidettavaksi (UPLOAD_VIITTAAJAT).
+app.delete('/api/avaintyypit/:id', requireAuth, guardPortti, (req, res) => {
+  if (!saaHallitaPankkia(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta avaintyyppikartan ylläpitoon.' });
+  }
+  const { kartta, tyyppi } = haeAvaintyyppi(req.params.id);
+  if (!tyyppi) return res.status(404).json({ ok: false, error: 'Avaintyyppiä ei löytynyt.' });
+
+  writeCollection('keyTypes', kartta.filter((t) => t.id !== tyyppi.id));
+  logAudit({ user: req.username, action: 'keytype_delete', collection: 'keyTypes', recordId: tyyppi.id });
+  res.json({ ok: true });
+});
 
 // --- Analytiikka ja jälkiraportit (erä 9, perusta P8) -----------------------------
 //
@@ -5433,7 +5523,7 @@ app.get('/api/uploads/:id', requireAuth, (req, res) => {
     && canReadGuardAttachment(
       req.role, req.permissions, req.eventAccess, req.params.id,
       readCollection('guardFiles') || [], readCollection('guardReports') || [],
-      readCollection('guardSites') || []
+      readCollection('guardSites') || [], readCollection('keyTypes') || []
     );
   if (!tapahtumaPuoli && !guardPuoli) {
     return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän liitteen lataamiseen.' });

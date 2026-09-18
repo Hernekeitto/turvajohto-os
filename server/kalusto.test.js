@@ -16,7 +16,7 @@ import {
   pyydaKalustoa, peruPyynto, ratkaisePyynto, merkitseKadonneeksi, merkitseHuoltoon,
   palautaKayttoon, poistaKaytosta, avoimetPyynnot, kadonneet, sijoitetut, vuoronKalusto,
   HOLVIPAIKKA_ALKU, seuraavaHolviPaikka, holviPaikkaVarattu, normalisoiSijoitusLaji,
-  normalisoiRivit,
+  normalisoiRivit, luoAvaintyyppi, paivitaAvaintyyppi,
 } from './kalusto.js';
 
 const T0 = Date.parse('2026-09-14T09:00:00Z');
@@ -578,4 +578,52 @@ test('sijoitetut suodattaa paikan mukaan ja jattaa poistetut pois', () => {
   assert.equal(sijoitetut([kohteella, muualla], 'kohde', 'kohde-1').length, 1);
   assert.equal(sijoitetut([romutettu, muualla], 'kohde', 'kohde-1').length, 0);
   assert.equal(sijoitetut([kohteella, muualla], 'holvi', null).length, 0);
+});
+
+// --- Avaintyyppikartta ---------------------------------------------------------------
+//
+// Kartan arvo on siinä että sama avainmalli on siellä kerran. Kaksi riviä samalle
+// mallille tarkoittaa kahta identtiseltä näyttävää kuvaa valittavana, ja kirjaaja
+// valitsee kumman tahansa — jolloin pankkiin syntyy kaksi kirjoitusasua samasta asiasta
+// eikä haku löydä molempia.
+
+test('avaintyyppi tarvitsee nimen ja kuvan', () => {
+  assert.equal(luoAvaintyyppi({ id: 't1', nimi: '  ', uploadId: 'a.png' }).ok, false);
+  assert.equal(luoAvaintyyppi({ id: 't1', nimi: 'Abloy Exec', uploadId: '' }).ok, false);
+  assert.equal(luoAvaintyyppi({ id: 't1', nimi: 'Abloy Exec', uploadId: 'a.png' }).ok, true);
+});
+
+test('sama avaintyyppi ei mene karttaan kahdesti kirjoitusasusta riippumatta', () => {
+  const kartta = [{ id: 't1', nimi: 'Abloy Exec', uploadId: 'a.png' }];
+  for (const nimi of ['Abloy Exec', 'ABLOY EXEC', '  abloy   exec  ']) {
+    const tulos = luoAvaintyyppi({ id: 't2', nimi, uploadId: 'b.png', kartta });
+    assert.equal(tulos.ok, false, `"${nimi}" paasi lapi`);
+    assert.match(tulos.error, /on jo kartassa/);
+  }
+  assert.equal(luoAvaintyyppi({ id: 't2', nimi: 'Abloy Sento', uploadId: 'b.png', kartta }).ok, true);
+});
+
+test('avaintyypin kuvauksen voi muokata ilman etta oma nimi tormaa itseensa', () => {
+  // Ilman "muut"-rajausta päällekkäisyystarkistus osuisi aina omaan riviin, eikä
+  // kuvausta voisi korjata muuttamatta nimeä.
+  const tyyppi = { id: 't1', nimi: 'Abloy Exec', kuvaus: '', uploadId: 'a.png' };
+  const tulos = paivitaAvaintyyppi({ tyyppi, muutokset: { kuvaus: 'Punainen nappi kahvassa' }, kartta: [tyyppi] });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.tyyppi.nimi, 'Abloy Exec');
+  assert.equal(tulos.tyyppi.kuvaus, 'Punainen nappi kahvassa');
+});
+
+test('avaintyypin kuva sailyy jos sita ei vaihdeta', () => {
+  // Nimen korjaus ei saa vaatia kuvan lähettämistä uudelleen.
+  const tyyppi = { id: 't1', nimi: 'Abloy Exek', kuvaus: '', uploadId: 'a.png' };
+  const tulos = paivitaAvaintyyppi({ tyyppi, muutokset: { nimi: 'Abloy Exec' }, kartta: [tyyppi] });
+  assert.equal(tulos.tyyppi.uploadId, 'a.png');
+  assert.equal(tulos.tyyppi.nimi, 'Abloy Exec');
+});
+
+test('avaintyypin nimi ei voi tormata TOISEN rivin nimeen muokattaessa', () => {
+  const a = { id: 't1', nimi: 'Abloy Exec', uploadId: 'a.png' };
+  const b = { id: 't2', nimi: 'Abloy Sento', uploadId: 'b.png' };
+  const tulos = paivitaAvaintyyppi({ tyyppi: b, muutokset: { nimi: 'abloy exec' }, kartta: [a, b] });
+  assert.equal(tulos.ok, false);
 });

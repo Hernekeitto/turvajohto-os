@@ -18,9 +18,13 @@ const AVAIN = 'turvajohto-guard-laite';
 // asennettu sovellus kattaa molemmat ilman erillistä manifestia.
 export const TYOPOYTAPOLKU = '/guard';
 export const MOBIILIPOLKU = '/guard/mobile';
-// Avainerän taulukkosyöttö omana sivunaan (erä 20d). Avataan uuteen selainvälilehteen
-// pankista, koska seitsemän saraketta ei mahdu modaaliin luettavasti.
-export const AVAINERAPOLKU = '/guard/avainera';
+// Kaluston eräkirjaus omana sivunaan. Avataan uuteen selainvälilehteen pankista,
+// koska kahdeksan saraketta ei mahdu modaaliin luettavasti. Laji kulkee
+// kyselyparametrina (?laji=avain), jolloin osoite kertoo mitä kirjataan ja välilehden
+// päivitys säilyttää sen.
+export const ERAPOLKU = '/guard/era';
+
+export const eranPolku = (laji: string) => `${ERAPOLKU}?laji=${laji}`;
 
 export const laitteenPolku = (laite: Laite) => (laite === 'mobiili' ? MOBIILIPOLKU : TYOPOYTAPOLKU);
 
