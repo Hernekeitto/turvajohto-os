@@ -14,7 +14,7 @@ import {
   KeyRound, Archive, Car, Shirt, ShieldAlert, Crosshair, Laptop,
 } from 'lucide-react';
 
-import type { Laji } from './tyypit';
+import type { KalustoTietue, Laji } from './tyypit';
 
 // Lisäkentän kuvaus lomaketta varten. `totuusarvo` erottaa rastin tekstikentästä;
 // `pakollinen` koskee vain luontia ja on tarkistettu MYÖS palvelimella — selainpuolen
@@ -167,3 +167,30 @@ export const lajinNimi = (laji: string) => LAJIT[laji as Laji]?.nimi || laji;
 
 // Esineen koko nimi listalle: "Talvitakki L (TJ-ASU-0117)".
 export const esineenOtsikko = (nimi: string, tunnus: string) => `${nimi} (${tunnus})`;
+
+// Avainhallinnan lajit. Avaimia on kertaluokkaa enemmän kuin muuta kalustoa — holvipaikat
+// alkavat tuhannesta ja niitä kirjataan kymmenittäin kerralla — joten samassa listassa ne
+// hautaavat alleen sen mitä muuta yrityksellä on.
+//
+// AVAINKAAPPI ON TÄSSÄ JOUKOSSA vaikka se on oma esineensä kilpineen: kaappi on avainten
+// paikka, eikä kysymykseen "missä avaimet ovat" voi vastata jos kaapit ovat toisaalla.
+// Muun kaluston seassa kaappi olisi yksi rivi jonka merkitystä ei listalta näe.
+export const AVAINLAJIT: Laji[] = ['avain', 'avainkaappi'];
+
+export const onAvainlaji = (laji: Laji) => AVAINLAJIT.includes(laji);
+
+// Muut lajit samassa järjestyksessä kuin LAJIJARJESTYS. Oma vakio eikä suodatus
+// käyttöpaikassa, jottei kahdessa näkymässä voi olla eri käsitystä siitä mikä on avain.
+export const MUUT_LAJIT: Laji[] = LAJIJARJESTYS.filter((laji) => !onAvainlaji(laji));
+
+// Avainlistan järjestysluku. Avaimet järjestetään HOLVIPAIKAN eikä tunnuksen mukaan:
+// holvipaikka on se numero jolla avain haetaan hyllystä, ja kirjanpidon on oltava samassa
+// järjestyksessä kuin hylly — muuten inventaario on kahden listan vertailua.
+//
+// Kaapit ensin, koska ne ovat paikkoja eivätkä avaimia. Holvipaikaton avain menee loppuun
+// eikä nollan kohdalle alkuun: puuttuva paikka on virhe, ja se on helpompi korjata kun
+// kaikki puutteet ovat listan lopussa yhdessä kasassa kuin oikean näköisten rivien seassa.
+export const avainJarjestys = (esine: Pick<KalustoTietue, 'laji' | 'holviPaikka'>) => {
+  if (esine.laji === 'avainkaappi') return -1;
+  return typeof esine.holviPaikka === 'number' ? esine.holviPaikka : Number.MAX_SAFE_INTEGER;
+};

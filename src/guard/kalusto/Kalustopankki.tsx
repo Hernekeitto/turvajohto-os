@@ -1,21 +1,28 @@
 // Kalustopankki: koko yrityksen kalusto yhtenä listana.
 //
-// Näkymä vastaa kolmeen kysymykseen, ja siksi siinä on kolme välilehteä:
+// Näkymä vastaa neljään kysymykseen, ja siksi siinä on neljä välilehteä:
 //
 //   Kalusto  — mitä meillä on ja missä se on
+//   Avaimet  — avaimet ja avainkaapit, holvipaikkoineen
 //   Pyynnöt  — mitä kentältä on pyydetty ja odottaa päätöstä
 //   Henkilöt — kenellä on mitäkin, ja mistä siitä tulostetaan luovutustosite
 //
-// Kaikki kolme lukevat SAMAA listaa eri tavalla ryhmiteltynä. Se on tarkoituksellista:
+// AVAIMET OMANA VÄLILEHTENÄÄN, koska niitä on kertaluokkaa enemmän kuin muuta kalustoa:
+// holvipaikat alkavat tuhannesta ja avaimia kirjataan kymmenittäin kerralla. Samassa
+// listassa yhdeksän kymmenestä rivistä on avain, eikä siitä näe mitä muuta yrityksellä
+// on. Jako tehdään lajin perusteella (lajit.ts: AVAINLAJIT) eikä uudella kokoelmalla —
+// avain on kalustoa siinä missä muukin, ja sama tietue pysyy yhdessä paikassa.
+//
+// Kaikki neljä lukevat SAMAA listaa eri tavalla ryhmiteltynä. Se on tarkoituksellista:
 // jos "henkilöllä olevat" olisi oma kokoelmansa, se voisi erota pankista — ja juuri sen
 // eron välttäminen on koko pankin syy.
 //
 // Oikeusjako näkyy suoraan käyttöliittymässä: ilman muokkausoikeutta lista on sama mutta
 // napit ovat "Pyydä kohteelle" eikä "Siirrä". Kaksi eri näkymää samasta asiasta olisi
 // kaksi paikkaa jossa oikeus voi mennä väärin.
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  Boxes, ClipboardList, Plus, Printer, Search, Table2, TriangleAlert, Users, X,
+  Boxes, ClipboardList, KeyRound, Plus, Printer, Search, Table2, TriangleAlert, Users, X,
 } from 'lucide-react';
 
 import { haeQrKoodi } from '../../shared/komponentit/QrKoodi';
@@ -26,7 +33,7 @@ import { kilpimerkkiDokumentti, tulostaDokumentti, type TulostettavaKilpimerkki 
 import { KalustoKortti } from './KalustoKortti';
 import { KilpiEsikatselu } from './KilpiEsikatselu';
 import { AVAINERAPOLKU } from '../../shared/laitevalinta';
-import { LAJIJARJESTYS, LAJIT } from './lajit';
+import { AVAINLAJIT, LAJIT, MUUT_LAJIT, avainJarjestys, onAvainlaji } from './lajit';
 import { tulostaLuovutuslomake } from './luovutuslomake';
 import {
   aikaleima, luoKalustoa, osuuHakuun, ratkaisePyynto, sijainti, tarranOsoite,
@@ -56,7 +63,7 @@ type Props = {
   onAvausKasitelty?: () => void;
 };
 
-type Valilehti = 'kalusto' | 'pyynnot' | 'henkilot';
+type Valilehti = 'kalusto' | 'avaimet' | 'pyynnot' | 'henkilot';
 
 const TYHJA_LOMAKE = {
   laji: 'asuste' as Laji,
@@ -95,8 +102,43 @@ export const Kalustopankki = ({
   const avattuEsine = kalusto.find((e) => e.id === avattu) || skannattu || null;
 
   const pyynnot = useMemo(() => kalusto.filter((e) => e.pyynto), [kalusto]);
-  const kadonneet = useMemo(() => kalusto.filter((e) => e.tila === 'kadonnut'), [kalusto]);
-  const kaytossa = useMemo(() => kalusto.filter((e) => e.tila !== 'poistettu'), [kalusto]);
+
+  // Kalusto- ja Avaimet-välilehti ovat sama näkymä eri pohjalistalla. Yksi render-haara
+  // eikä kaksi: kaksi kopiota samasta listasta eroaisi ensimmäisessä korjauksessa, ja
+  // juuri niitä eroja ei listalta huomaa.
+  const avainlehti = valilehti === 'avaimet';
+  const onKalustolehti = valilehti === 'kalusto' || avainlehti;
+
+  const pohja = useMemo(
+    () => kalusto.filter((e) => onAvainlaji(e.laji) === avainlehti),
+    [kalusto, avainlehti]
+  );
+
+  // Välilehtien luvut lasketaan koko pankista eikä pohjalistasta: luvun on kerrottava
+  // mitä toisella välilehdellä on, ei mitä tällä.
+  const avaimia = useMemo(
+    () => kalusto.filter((e) => onAvainlaji(e.laji) && e.tila !== 'poistettu').length,
+    [kalusto]
+  );
+  const muitaEsineita = useMemo(
+    () => kalusto.filter((e) => !onAvainlaji(e.laji) && e.tila !== 'poistettu').length,
+    [kalusto]
+  );
+
+  // Kadonneet TÄMÄN välilehden kalustosta. Koko pankin luku näyttäisi kadonneita joita
+  // listalla ei ole, ja "näytä ne" johtaisi tyhjään listaan.
+  const kadonneet = useMemo(() => pohja.filter((e) => e.tila === 'kadonnut'), [pohja]);
+
+  // Missä avaimet ovat. Vain varsinaiset avaimet, ei kaappeja: kaappi on paikka eikä
+  // avain, ja sen laskeminen mukaan sotkisi täsmäytyksen.
+  const avaintenPaikat = useMemo(() => {
+    const luvut = new Map<SijoitusLaji, number>();
+    for (const e of kalusto) {
+      if (e.laji !== 'avain' || e.tila === 'poistettu') continue;
+      luvut.set(e.sijoitusLaji, (luvut.get(e.sijoitusLaji) || 0) + 1);
+    }
+    return luvut;
+  }, [kalusto]);
 
   // Ajoneuvot ja avainkaapit ovat itse kalustoa JA sijoituspaikkoja. Sama tietue
   // molemmissa rooleissa eikä erillinen paikkarekisteri: piiriauton avainkaappi on esine
@@ -108,13 +150,18 @@ export const Kalustopankki = ({
     [kalusto]
   );
 
-  const nakyvat = useMemo(() => kalusto
+  const nakyvat = useMemo(() => pohja
     .filter((e) => (tilaSuodatin === 'kaikki' ? true : e.tila === tilaSuodatin))
     .filter((e) => (lajiSuodatin === 'kaikki' ? true : e.laji === lajiSuodatin))
     .filter((e) => (sijoitusSuodatin === 'kaikki' ? true : e.sijoitusLaji === sijoitusSuodatin))
     .filter((e) => osuuHakuun(e, haku))
-    .sort((a, b) => a.tunnus.localeCompare(b.tunnus)),
-  [kalusto, tilaSuodatin, lajiSuodatin, sijoitusSuodatin, haku]);
+    // Avainlehdellä järjestys on HOLVIPAIKAN mukaan eikä tunnuksen: holvipaikka on se
+    // numero jolla avainta haetaan hyllystä, ja kirjanpidon on oltava samassa
+    // järjestyksessä kuin hylly. Kaapit ensin, koska ne ovat paikkoja eivätkä avaimia.
+    .sort((a, b) => (avainlehti
+      ? avainJarjestys(a) - avainJarjestys(b) || a.tunnus.localeCompare(b.tunnus)
+      : a.tunnus.localeCompare(b.tunnus))),
+  [pohja, tilaSuodatin, lajiSuodatin, sijoitusSuodatin, haku, avainlehti]);
 
   // Henkilöittäin. Ryhmittely tehdään sijoitusId:n mukaan mutta nimi luetaan tietueesta:
   // rekisteristä poistettu työntekijä ei saa kadottaa sitä tietoa että hänellä on yhä
@@ -131,6 +178,19 @@ export const Kalustopankki = ({
     }
     return [...ryhmat.values()].sort((a, b) => a.nimi.localeCompare(b.nimi));
   }, [kalusto]);
+
+  // Lomake ja lajisuodatin tarjoavat vain sen välilehden lajit jolla ollaan. Muuten
+  // avaimen voisi lisätä Kalusto-välilehdeltä, ja se katoaisi heti toiselle välilehdelle.
+  const lajiValinnat = avainlehti ? AVAINLAJIT : MUUT_LAJIT;
+
+  // Lomakkeen avaus varmistaa että valittu laji kuuluu tälle välilehdelle. Laji voi olla
+  // toisen välilehden jos välilehti vaihtui muuten kuin painikkeesta — skannattu kilpi
+  // vaihtaa sen — ja silloin lomake tarjoaisi lajia jota sen omat painikkeet eivät näytä.
+  // Tarkistus on avauksessa eikä välilehden vaihdossa, jolloin se pätee joka reitillä.
+  const avaaLomake = () => {
+    setLomakeAuki((auki) => !auki);
+    setLomake((l) => (lajiValinnat.includes(l.laji) ? l : { ...TYHJA_LOMAKE, laji: lajiValinnat[0] }));
+  };
 
   const maar = LAJIT[lomake.laji];
 
@@ -203,6 +263,19 @@ export const Kalustopankki = ({
     }
   };
 
+  // Välilehden vaihto nollaa suodattimet ja sulkee lomakkeen. Suodattimet ovat yhteiset,
+  // ja toiselta välilehdeltä jäänyt rajaus näyttäisi tyhjää listaa ilman näkyvää syytä.
+  const vaihdaValilehti = (uusi: Valilehti) => {
+    setValilehti(uusi);
+    setHaku('');
+    setLajiSuodatin('kaikki');
+    setSijoitusSuodatin('kaikki');
+    setTilaSuodatin('kaytossa');
+    setLomakeAuki(false);
+    setLomake(TYHJA_LOMAKE);
+    setValitut(new Set());
+  };
+
   const suljeKortti = () => {
     setAvattu(null);
     if (skannattu) onAvausKasitelty?.();
@@ -212,6 +285,16 @@ export const Kalustopankki = ({
     setKilvet(null);
     setValitut(new Set());
   };
+
+  // Skannattu kilpi vie sille välilehdelle jolle esine kuuluu. Ilman tätä avaimen
+  // skannaaminen avaisi kortin oikein, mutta kortin sulkemisen jälkeen esine ei olisi
+  // siinä listassa jota katsotaan — kentällä se näyttäisi siltä että avain katosi.
+  // Ehto vertaa nykyiseen välilehteen, joten toistuva render ei vaihda mitään.
+  useEffect(() => {
+    if (!skannattu) return;
+    const kuuluu: Valilehti = onAvainlaji(skannattu.laji) ? 'avaimet' : 'kalusto';
+    if (valilehti !== kuuluu) setValilehti(kuuluu);
+  }, [skannattu, valilehti]);
 
   // Takaisin-nappi sulkee päällimmäisen modaalin eikä vaihda näkymää. Molemmat esteet
   // ovat TÄÄLLÄ eivätkä modaaleissa itsessään: hook työntää historiamerkinnän
@@ -229,23 +312,29 @@ export const Kalustopankki = ({
         <h2 className="text-2xl font-bold text-ink-strong mb-1">Kalustopankki</h2>
         <p className="text-sm text-ink-muted leading-relaxed max-w-2xl">
           Yrityksen koko kalusto yhtenä rekisterinä. Jokaisella esineellä on oma tunnus ja
-          kilpimerkki, ja pankista jyvitetään tavaraa kohteille ja vartijoille.
+          kilpimerkki, ja pankista jyvitetään tavaraa kohteille ja vartijoille. Avaimet ja
+          avainkaapit ovat omalla välilehdellään, koska niitä on eniten ja ne haetaan
+          holvipaikan numerolla.
           {!saaHallita && ' Sinulla on lukuoikeus: voit pyytää kalustoa kohteelle, mutta jyvityksen tekee pääkäyttäjä.'}
         </p>
       </div>
 
       <div className="flex flex-wrap gap-2 mb-5 border-b border-line-soft">
         <Valilehtinappi
-          aktiivinen={valilehti === 'kalusto'} onClick={() => setValilehti('kalusto')}
-          ikoni={<Boxes size={15} />} nimi="Kalusto" luku={kaytossa.length}
+          aktiivinen={valilehti === 'kalusto'} onClick={() => vaihdaValilehti('kalusto')}
+          ikoni={<Boxes size={15} />} nimi="Kalusto" luku={muitaEsineita}
         />
         <Valilehtinappi
-          aktiivinen={valilehti === 'pyynnot'} onClick={() => setValilehti('pyynnot')}
+          aktiivinen={avainlehti} onClick={() => vaihdaValilehti('avaimet')}
+          ikoni={<KeyRound size={15} />} nimi="Avaimet" luku={avaimia}
+        />
+        <Valilehtinappi
+          aktiivinen={valilehti === 'pyynnot'} onClick={() => vaihdaValilehti('pyynnot')}
           ikoni={<ClipboardList size={15} />} nimi="Pyynnöt" luku={pyynnot.length}
           korosta={pyynnot.length > 0}
         />
         <Valilehtinappi
-          aktiivinen={valilehti === 'henkilot'} onClick={() => setValilehti('henkilot')}
+          aktiivinen={valilehti === 'henkilot'} onClick={() => vaihdaValilehti('henkilot')}
           ikoni={<Users size={15} />} nimi="Henkilöt" luku={henkiloittain.length}
         />
       </div>
@@ -272,7 +361,7 @@ export const Kalustopankki = ({
         </div>
       )}
 
-      {kadonneet.length > 0 && valilehti === 'kalusto' && (
+      {kadonneet.length > 0 && onKalustolehti && (
         <button
           type="button"
           onClick={() => { setTilaSuodatin('kadonnut'); setLajiSuodatin('kaikki'); setSijoitusSuodatin('kaikki'); }}
@@ -284,16 +373,57 @@ export const Kalustopankki = ({
         </button>
       )}
 
-      {/* ================= KALUSTO ================= */}
-      {valilehti === 'kalusto' && (
+      {/* ============ KALUSTO JA AVAIMET (sama näkymä, eri pohjalista) ============ */}
+      {onKalustolehti && (
         <>
+          {/* Missä avaimet ovat, yhtenä rivinä. Luvut ovat myös suodattimia: "kaapeissa
+              12" on kysymys johon vastataan näyttämällä ne kaksitoista, ei kertomalla
+              lukua. Vain avainlehdellä — muulla kalustolla sijainti ei ole sama
+              täsmäytyskysymys. */}
+          {avainlehti && avaintenPaikat.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-4 text-sm">
+              <span className="text-ink-muted">Avaimet:</span>
+              {/* Kiinteä järjestys eikä aineiston mukainen: nämä ovat painikkeita joita
+                  painetaan toistuvasti, ja paikka joka vaihtuu sen mukaan mitä pankissa
+                  sattuu olemaan on painike joka pitää joka kerta etsiä uudestaan. */}
+              {(Object.keys(SIJOITUKSEN_SELITE) as SijoitusLaji[]).map((laji) => {
+                const luku = avaintenPaikat.get(laji) || 0;
+                if (luku === 0) return null;
+                return (
+                  <button
+                    key={laji}
+                    type="button"
+                    onClick={() => { setSijoitusSuodatin(laji); setTilaSuodatin('kaikki'); }}
+                    className={`px-2.5 py-1 rounded-lg border text-sm transition-colors ${
+                      sijoitusSuodatin === laji
+                        ? 'bg-accent text-white border-accent'
+                        : 'border-line text-ink-body hover:bg-sunken'
+                    }`}
+                  >
+                    {SIJOITUKSEN_SELITE[laji]} <span className="font-bold">{luku}</span>
+                  </button>
+                );
+              })}
+              {sijoitusSuodatin !== 'kaikki' && (
+                <button
+                  type="button"
+                  onClick={() => setSijoitusSuodatin('kaikki')}
+                  className="px-2.5 py-1 rounded-lg text-sm text-ink-muted hover:bg-sunken"
+                >
+                  Kaikki
+                </button>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap gap-2 mb-4">
             <div className="relative flex-1 min-w-[12rem]">
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" />
               <input
                 value={haku}
                 onChange={(e) => setHaku(e.target.value)}
-                placeholder="Tunnus, nimi, sarjanumero tai haltija"
+                placeholder={avainlehti
+                  ? 'Holvipaikka, tunnus, nimi tai kohde'
+                  : 'Tunnus, nimi, sarjanumero tai haltija'}
                 className="w-full pl-9 pr-3 py-2 rounded-lg border border-line bg-surface text-sm text-ink-body"
               />
             </div>
@@ -302,8 +432,8 @@ export const Kalustopankki = ({
               onChange={(e) => setLajiSuodatin(e.target.value as Laji | 'kaikki')}
               className="px-3 py-2 rounded-lg border border-line bg-surface text-sm text-ink-body"
             >
-              <option value="kaikki">Kaikki lajit</option>
-              {LAJIJARJESTYS.map((laji) => (
+              <option value="kaikki">{avainlehti ? 'Avaimet ja kaapit' : 'Kaikki lajit'}</option>
+              {lajiValinnat.map((laji) => (
                 <option key={laji} value={laji}>{LAJIT[laji].monikko}</option>
               ))}
             </select>
@@ -333,14 +463,16 @@ export const Kalustopankki = ({
             {saaHallita && (
               <button
                 type="button"
-                onClick={() => setLomakeAuki((a) => !a)}
+                onClick={avaaLomake}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-accent text-white hover:brightness-95"
               >
                 <Plus size={15} />
-                Lisää kalustoa
+                {avainlehti ? 'Lisää avain tai kaappi' : 'Lisää kalustoa'}
               </button>
             )}
-            {saaHallita && (
+            {/* Avainerä vain avainlehdellä: se kirjaa pelkkiä avaimia, eikä painike kuulu
+                näkymään jossa avaimia ei ole. */}
+            {saaHallita && avainlehti && (
               <button
                 type="button"
                 // Uusi selainvälilehti eikä näkymänvaihto: taulukko tarvitsee koko
@@ -380,7 +512,7 @@ export const Kalustopankki = ({
               <div>
                 <label className="block text-xs font-medium text-ink-muted mb-1.5">Laji</label>
                 <div className="flex flex-wrap gap-2">
-                  {LAJIJARJESTYS.map((laji) => {
+                  {lajiValinnat.map((laji) => {
                     const Ikoni = LAJIT[laji].ikoni;
                     return (
                       <button
@@ -533,9 +665,13 @@ export const Kalustopankki = ({
             <p className="text-sm text-ink-muted">Haetaan kalustoa…</p>
           ) : nakyvat.length === 0 ? (
             <TyhjaTila
-              otsikko={kalusto.length === 0 ? 'Pankki on tyhjä' : 'Ei osumia'}
-              teksti={kalusto.length === 0
-                ? 'Lisää ensimmäinen esine. Jokainen saa oman tunnuksen ja kilpimerkin, jonka voi tulostaa heti.'
+              otsikko={pohja.length === 0
+                ? (avainlehti ? 'Avaimia ei ole vielä kirjattu' : 'Kalustoa ei ole vielä kirjattu')
+                : 'Ei osumia'}
+              teksti={pohja.length === 0
+                ? (avainlehti
+                  ? 'Jokainen avain saa holvista pysyvän paikan numerosta 1000 alkaen. Kymmeniä avaimia kerralla kirjataan avainerälomakkeella.'
+                  : 'Lisää ensimmäinen esine. Jokainen saa oman tunnuksen ja kilpimerkin, jonka voi tulostaa heti.')
                 : 'Kokeile toista hakusanaa tai laajenna suodatusta.'}
             />
           ) : (
