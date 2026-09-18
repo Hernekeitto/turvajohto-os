@@ -41,7 +41,9 @@ import {
   TILAT, TILAN_KIRJAIN, TILAN_NIMI, TILAN_VARI, yksikonTila, type Tila,
 } from './yksikontila';
 import { GuardKartta } from './kartta/GuardKartta';
-import { PANEELIT, avaaIkkunassa, type PaneeliId } from './halke/paneelit';
+import {
+  PANEELIT, avaaIkkunassa, avaaValilehdessa, paneelinOsoite, type PaneeliId,
+} from './halke/paneelit';
 import {
   kentalla, kohteenTilanne, tapahtumavirta, type Kiireys, type Lahteet,
 } from './tilannekuva';
@@ -96,6 +98,10 @@ type Props = {
   // Seinätaulutila: ikkuna on katsottavaksi eikä kosketettavaksi. Suurempi teksti,
   // ei hakukenttiä eikä toimintopainikkeita. Vain paneelinäkymässä.
   taulu: boolean;
+  // Kenen hallintanäkymää varten tämä ikkuna on avattu (?vartija= osoitteessa, 19.9.2026).
+  // null = tavallinen näkymä, jossa vartija valitaan listasta ja tiedot avautuvat
+  // laatikkona sivun päälle.
+  vartijaIkkuna: string | null;
   onTehtavaMuutos: () => void;
   onMuutos: (halytys: Halytys) => void;
   onVirkista: () => void;
@@ -320,7 +326,7 @@ const AANI_AVAIN = 'turvajohto-halke-aani';
 
 export const Halytyskeskus = ({
   kohteet, lahteet, kayttaja, saaKuitata, oikeudet, yhteys, paivitetty, sijaintiseuranta,
-  tehtavat, saaMuokataTehtavia, onTehtavaMuutos, sijainnit, paneeli, taulu,
+  tehtavat, saaMuokataTehtavia, onTehtavaMuutos, sijainnit, paneeli, taulu, vartijaIkkuna,
   onMuutos, onVirkista, onAvaaKohde, onTakaisin,
 }: Props) => {
   const [nyt, setNyt] = useState(Date.now());
@@ -630,6 +636,15 @@ export const Halytyskeskus = ({
     return () => window.clearInterval(id);
   }, [onVirkista]);
 
+  // Esc sulkee vartijalaatikon. Näppäin on se jota kokenut päivystäjä painaa ensin, ja
+  // laatikko joka ei siihen reagoi näyttää jumittuneelta.
+  useEffect(() => {
+    if (!valittuVartija) return;
+    const kuuntele = (e: KeyboardEvent) => { if (e.key === 'Escape') setValittuVartija(null); };
+    window.addEventListener('keydown', kuuntele);
+    return () => window.removeEventListener('keydown', kuuntele);
+  }, [valittuVartija]);
+
   useEffect(() => {
     try {
       setAani(window.localStorage.getItem(AANI_AVAIN) === '1');
@@ -867,6 +882,32 @@ export const Halytyskeskus = ({
 
   const nykyinen = PANEELIT.find((p) => p.id === paneeli) || null;
 
+  // --- Yhden vartijan ikkuna (19.9.2026) ----------------------------------------------
+  //
+  // `?vartija=` osoitteessa tarkoittaa että tämä välilehti on avattu yhtä ihmistä varten.
+  // Silloin näkymä on pelkkä hallintanäkymä: listat ja tilannerivi veisivät tilan siltä
+  // mitä varten välilehti avattiin, ja päivystäjällä on ne joka tapauksessa auki siinä
+  // ikkunassa josta tämä avattiin.
+  //
+  // Aikainen paluu vasta kaikkien koukkujen jälkeen: ehdollinen koukku olisi eri määrä
+  // koukkuja eri renderöinneillä, ja React hajoaisi ensimmäisellä osoitteenvaihdolla.
+  if (vartijaIkkuna) {
+    return (
+      <div>
+        <VartijanPaneeli
+          vartija={vartijaIkkuna}
+          kohteet={kohteet}
+          pohjat={lahteet.pohjat}
+          sijainti={sijainnit.find((s) => s.username === vartijaIkkuna) || null}
+          saaNahdaSijainnit={oikeudet.sijainnit}
+          omaIkkuna
+          onTakaisin={() => {}}
+          onMuutos={() => { haeVuorot(); onVirkista(); }}
+        />
+      </div>
+    );
+  }
+
   return (
     // Seinätaulutila on LUOKKA eikä erillinen komponenttipuu: sama näkymä, isompi
     // teksti ja toiminnot piilotettuna (ks. index.css: .halke-taulu). Erillinen puu
@@ -965,6 +1006,21 @@ export const Halytyskeskus = ({
                   <span className="block text-sm font-medium text-ink">{p.label}</span>
                   <span className="block text-xs text-ink-muted">{p.kuvaus}</span>
                 </span>
+                {/* Välilehti ja työtila ovat sama näkymä eri kuoressa (19.9.2026).
+                    Työtila on mitoitettu ikkuna toiselle näytölle; välilehti menee
+                    selaimen omaan rytmiin eikä vaadi asettelua. Kumpi sopii, riippuu
+                    siitä onko päivystäjällä kaksi näyttöä vai yksi. */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!avaaValilehdessa(paneelinOsoite(p.id, false), `halke-valilehti-${p.id}`)) {
+                      setIkkunaEstetty(true);
+                    }
+                  }}
+                  className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-ink-muted hover:bg-sunken transition-colors"
+                >
+                  Välilehti
+                </button>
                 <button
                   type="button"
                   onClick={() => irrota(p.id, false)}
@@ -1411,27 +1467,7 @@ export const Halytyskeskus = ({
       </Osio>
       </>)}
 
-      {/* --- Vartijan hallintanäkymä (18.9.2026) ---------------------------------
-
-          Korvaa Vartijat-paneelin listat kun yksi vartija on valittu. Listat vastaavat
-          kysymykseen "ketä katson seuraavaksi"; kun vastaus on löytynyt, päivystäjä
-          tarvitsee päinvastaisen näkymän eli kaiken yhdestä ihmisestä.
-
-          KORVAA EIKÄ LISÄÄ ALLE: paneeli voi olla irrotettuna omalle näytölleen, ja
-          silloin sen on näytettävä se mitä varten se on avattu — ei sitä ja listoja. */}
-      {nayta('vartijat') && valittuVartija && (
-        <VartijanPaneeli
-          vartija={valittuVartija}
-          kohteet={kohteet}
-          pohjat={lahteet.pohjat}
-          sijainti={sijainnit.find((s) => s.username === valittuVartija) || null}
-          saaNahdaSijainnit={oikeudet.sijainnit}
-          onTakaisin={() => setValittuVartija(null)}
-          onMuutos={() => { haeVuorot(); onVirkista(); }}
-        />
-      )}
-
-      {nayta('vartijat') && !valittuVartija && (<>
+      {nayta('vartijat') && (<>
       {/* --- Vuorossa nyt --------------------------------------------------------
 
           ERI LISTA KUIN "Kentällä juuri nyt", ja ero on tämän osion koko olemassaolon syy.
@@ -1694,7 +1730,7 @@ export const Halytyskeskus = ({
       </Osio>
       </>)}
 
-      {nayta('vartijat') && !valittuVartija && (<>
+      {nayta('vartijat') && (<>
       {/* --- Vartijoiden sijainnit (erä 23) --------------------------------------
 
           KOLMAS LISTA IHMISISTÄ, ja ero kahteen edelliseen on se mihin kysymykseen se
@@ -2056,6 +2092,40 @@ export const Halytyskeskus = ({
       </Osio>
       </>)}
 
+      {/* --- Vartijan hallintanäkymä laatikkona (19.9.2026) -----------------------
+
+          Sivun PÄÄLLÄ eikä listan tilalla. Ensimmäinen versio korvasi Vartijat-paneelin
+          listat, ja testissä se osoittautui vääräksi: päivystäjä menetti listan juuri
+          sillä hetkellä kun hän vertaili ketä lähettää. Laatikon takaa lista näkyy, ja
+          sulkeminen palauttaa tilanteen sellaisenaan.
+
+          Ei seinätaulussa: seinätaulu on katsottavaksi, ja yhden ihmisen tiedot siinä
+          olisivat henkilötietoa ruudulla jota kukaan ei valvo.
+
+          Taustan klikkaus sulkee, Esc sulkee. Tässä ei ole mitään mitä voisi menettää
+          vahingossa: syykenttä ja tehtävälomake tyhjenevät, mutta kumpikaan ei ole
+          pitkä kirjoitustyö, ja avoin laatikko jota ei saa suljettua on pahempi. */}
+      {valittuVartija && !taulu && (
+        <div
+          className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-4 sm:p-8"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Vartija ${valittuVartija}`}
+          onClick={(e) => { if (e.target === e.currentTarget) setValittuVartija(null); }}
+        >
+          <div className="mx-auto w-full max-w-3xl rounded-2xl border border-line bg-canvas p-5 shadow-xl">
+            <VartijanPaneeli
+              vartija={valittuVartija}
+              kohteet={kohteet}
+              pohjat={lahteet.pohjat}
+              sijainti={sijainnit.find((s) => s.username === valittuVartija) || null}
+              saaNahdaSijainnit={oikeudet.sijainnit}
+              onTakaisin={() => setValittuVartija(null)}
+              onMuutos={() => { haeVuorot(); onVirkista(); }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

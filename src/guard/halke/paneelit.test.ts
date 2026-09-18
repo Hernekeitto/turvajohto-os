@@ -9,7 +9,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { PANEELIT, KARKIPANEELIT, lueOsoite, paneelinOsoite } from './paneelit.ts';
+import { PANEELIT, KARKIPANEELIT, lueOsoite, paneelinOsoite, vartijanOsoite } from './paneelit.ts';
 
 test('jokainen paneeli löytyy omasta osoitteestaan', () => {
   // Rekisteri ja lukija on pidettävä synkassa käsin, joten tämä testi on se joka
@@ -36,9 +36,10 @@ test('seinätaulutila luetaan vain kelpaavalle paneelille', () => {
 
 test('tuntematon paneeli ei ole virhe vaan koostenäkymä', () => {
   // Väärin kirjoitettu osoite ei saa tuottaa tyhjää ruutua valvomoon.
-  assert.deepEqual(lueOsoite('/guard/halke/kartat', ''), { paneeli: null, taulu: false });
-  assert.deepEqual(lueOsoite('/guard/halke', ''), { paneeli: null, taulu: false });
-  assert.deepEqual(lueOsoite('/guard', '?taulu=1'), { paneeli: null, taulu: false });
+  const tyhja = { paneeli: null, taulu: false, vartija: null };
+  assert.deepEqual(lueOsoite('/guard/halke/kartat', ''), tyhja);
+  assert.deepEqual(lueOsoite('/guard/halke', ''), tyhja);
+  assert.deepEqual(lueOsoite('/guard', '?taulu=1'), tyhja);
 });
 
 test('osoite on riippumaton kirjainkoosta ja lopun kenoviivasta', () => {
@@ -82,5 +83,30 @@ test('valmiit paneelit eivät ole kesken', () => {
   for (const id of KARKIPANEELIT) {
     const p = PANEELIT.find((x) => x.id === id);
     assert.equal(p?.kesken, undefined, `kärkipaneeli ${id} ei saa olla kesken`);
+  }
+});
+
+// --- Yhden vartijan ikkuna (19.9.2026) ----------------------------------------------
+
+test('vartija luetaan vain vartijat-paneelista', () => {
+  assert.equal(lueOsoite('/guard/halke/vartijat', '?vartija=Turva051').vartija, 'Turva051');
+  // Muut paneelit eivät tunne parametria: sama osoite eri paneelilla ei saa avata
+  // henkilön tietoja paikassa jossa niitä ei odota.
+  assert.equal(lueOsoite('/guard/halke/kartta', '?vartija=Turva051').vartija, null);
+  assert.equal(lueOsoite('/guard/halke/vartijat', '').vartija, null);
+});
+
+test('seinätaulu ei näytä yhden vartijan tietoja', () => {
+  // Seinätaulu on yleiskuva jota katsotaan kaukaa. Yhden ihmisen tiedot siinä olisivat
+  // henkilötietoa ruudulla jota kukaan ei valvo.
+  assert.equal(lueOsoite('/guard/halke/vartijat', '?taulu=1&vartija=Turva051').vartija, null);
+});
+
+test('vartijanOsoite ja lueOsoite ovat toistensa käänteisoperaatiot', () => {
+  // Myös nimimerkillä jossa on välilyönti ja ääkkösiä: "Piiri 301" ja "Yövartija Ö".
+  for (const nimi of ['Turva051', 'Piiri 301', 'Yövartija Ö', 'a&b=c']) {
+    const osoite = vartijanOsoite(nimi);
+    const [polku, kysely] = osoite.split('?');
+    assert.equal(lueOsoite(polku, `?${kysely}`).vartija, nimi);
   }
 });

@@ -6,10 +6,19 @@
 // ihmisestä yhdessä paikassa — ja se on tähän asti tarkoittanut kolmen eri osion
 // selaamista ja neljännen tiedon puuttumista kokonaan.
 //
-// Näkymä avautuu Vartijat-paneelin sisään eikä modaaliin (käyttäjän päätös 18.9.2026).
-// Perustelu on monen näytön päivystyspöytä: paneelin voi irrottaa omaksi ikkunakseen,
-// jolloin yksi vartija pysyy näkyvissä omalla näytöllään. Modaali peittäisi tilannerivin
-// ja hälytykset juuri silloin kun päivystäjä tekee tätä vartijaa koskevia päätöksiä.
+// --- Miten näkymä avautuu, ja miksi päätös vaihtui ----------------------------------
+//
+// 18.9.2026 tämä avautui Vartijat-paneelin sisään ja KORVASI listat. Testissä se
+// osoittautui vääräksi: päivystäjä menetti listan sillä hetkellä kun hän avasi yhden
+// vartijan, eli juuri kun hän vertaili ketä lähettää. 19.9.2026 näkymä siirtyi
+// laatikoksi sivun päälle (käyttäjän päätös) — lista jää taakse näkyviin, ja laatikon
+// sulkeminen palauttaa tilanteen sellaisenaan.
+//
+// Alkuperäinen huoli modaalista oli monen näytön päivystyspöytä: laatikko peittää
+// tilannerivin, eikä sitä voi jättää omalle näytölleen. Se ratkaistiin toisella tavalla
+// kuin näkymän paikalla — `?vartija=` osoitteessa avaa saman näkymän omaan välilehteen,
+// jolloin se voi jäädä auki ilman että se peittää mitään. Sama komponentti molemmissa:
+// `omaIkkuna` kertoo kummasta on kyse.
 //
 // TÄMÄ TIEDOSTO EI PÄÄTÄ MISTÄÄN. Kooste lasketaan palvelimella (server/kooste.js),
 // kaluston rajaus palvelimella (server/kalusto.js), pakkopäätöksen säännöt
@@ -17,17 +26,20 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ArrowLeft, MapPin, Package, ClipboardList, Square, TriangleAlert, Clock, Send,
+  ArrowLeft, MapPin, Package, ClipboardList, Square, TriangleAlert, Clock, Send, ExternalLink,
 } from 'lucide-react';
 
 import { ikaTekstina } from '../../shared/sijainninLahetys';
 import type { Sijainti } from '../../shared/kanava';
 import type { Pohja } from '../../shared/pohjat';
-import { paataVuoroPakolla } from '../vuorot';
+import { myohassaMinuutteina, paataVuoroPakolla } from '../vuorot';
 import {
-  pakotaTehtava, RAPORTTILAJIN_NIMI, RAPORTTILAJIN_SELITE, type Raporttilaji,
+  pakotaTehtava, RAPORTTILAJIN_NIMI, RAPORTTILAJIN_SELITE, type Raporttilaji, type Siirto,
 } from '../siirrot';
 import type { Kohde } from '../tyypit';
+import { GuardKartta } from '../kartta/GuardKartta';
+import type { Tila } from '../yksikontila';
+import { avaaValilehdessa, vartijanOsoite } from './paneelit';
 
 // --- Palvelimen vastaus -------------------------------------------------------------
 //
@@ -73,11 +85,24 @@ export type VartijanKalusto = {
 
 export type VartijanTiedot = {
   vartija: { username: string; nimi: string };
-  vuoro: { id: string; siteId: string; siteNimi: string; alkoi: string; paattyi: string | null } | null;
+  vuoro: {
+    id: string;
+    siteId: string;
+    siteNimi: string;
+    vuorotyyppiNimi: string | null;
+    alkoi: string;
+    paattyi: string | null;
+    paattyyArvio?: string | null;
+    perehdytysPoikkeus?: { myontaja: string; syy: string } | null;
+    pakkoPaatos?: { paattaja: string; syy: string; ts: string } | null;
+  } | null;
   vuoroKaynnissa: boolean;
   kooste: VartijanKooste | null;
   kalustoTiedossa: boolean;
   kalusto: VartijanKalusto[];
+  /** Päivystäjän antamat tehtävät. Eivät ole vuoron omia rivejä, joten ne eivät tule
+   *  koosteessa — ks. server/index.js:n perustelu. */
+  pakotukset: Siirto[];
 };
 
 const kellonaika = (iso: string | null) => {
@@ -141,15 +166,23 @@ type Props = {
   /** Onko päivystäjällä oikeus nähdä sijainteja lainkaan. Puuttuva oikeus ja tuntematon
    *  sijainti EIVÄT saa näyttää samalta. */
   saaNahdaSijainnit: boolean;
+  /** Onko tämä oma ikkunansa (?vartija=… osoitteessa). Silloin ei ole mitään mihin
+   *  palata eikä mitään avattavaa uuteen välilehteen — ollaan jo siellä. */
+  omaIkkuna?: boolean;
   onTakaisin: () => void;
   /** Kutsutaan kun jokin muuttui palvelimella, jotta hälytyskeskuksen listat päivittyvät. */
   onMuutos: () => void;
 };
 
 export const VartijanPaneeli = ({
-  vartija, kohteet, pohjat, sijainti, saaNahdaSijainnit, onTakaisin, onMuutos,
+  vartija, kohteet, pohjat, sijainti, saaNahdaSijainnit, omaIkkuna = false,
+  onTakaisin, onMuutos,
 }: Props) => {
   const [tiedot, setTiedot] = useState<VartijanTiedot | null>(null);
+  // Kello myöhästymisminuutteja varten. Käy aina, ei vain kun jotain on myöhässä — sama
+  // oppi kuin hälytyskeskuksen omassa kellossa: aikaan perustuva luku pysähtyneestä
+  // kellosta ei ole tieto vaan sattuma. Kymmenen sekuntia riittää minuuttitason luvulle.
+  const [nyt, setNyt] = useState(Date.now());
   const [lataa, setLataa] = useState(true);
   const [virhe, setVirhe] = useState<string | null>(null);
   const [ilmoitus, setIlmoitus] = useState<string | null>(null);
@@ -193,6 +226,11 @@ export const VartijanPaneeli = ({
     const ajastin = window.setInterval(hae, 60_000);
     return () => window.clearInterval(ajastin);
   }, [hae]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNyt(Date.now()), 10_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const paata = async () => {
     if (!tiedot?.vuoro) return;
@@ -257,22 +295,94 @@ export const VartijanPaneeli = ({
     setAnnettavaNimi('');
     setAnnettavaKohdeId('');
     setAnnettavaViesti('');
+    // Oma haku heti eikä vasta minuutin päästä: annettu tehtävä kuuluu tehtävälokiin,
+    // ja jos se ilmestyy sinne vasta seuraavalla kyselyllä, päivystäjä näkee tyhjän
+    // kohdan juuri sen jälkeen kun hän lisäsi siihen rivin — eli näyttää siltä ettei
+    // määräys mennyt läpi. `onMuutos` päivittää hälytyskeskuksen listat, ei tätä.
+    hae();
     onMuutos();
   };
+
+  // Kartan merkit. Yksi yksikkö ja ne kohteet joilla on koordinaatti — vartija yksin
+  // kartalla ei kerro onko hän oikeassa paikassa, ja juuri se on kysymys jota varten
+  // kartta tässä näkymässä on.
+  const karttaYksikko = sijainti?.gps
+    ? [{
+      username: vartija,
+      nimi: tiedot?.vartija.nimi || vartija,
+      tila: 'ei_tietoa' as Tila,
+      gps: sijainti.gps,
+      ikaMs: sijainti.ikaMs,
+      hata: false,
+    }]
+    : [];
+  const karttaKohteet = kohteet
+    .filter((k) => k.gps && Number.isFinite(k.gps.lat) && Number.isFinite(k.gps.lon))
+    .map((k) => ({ id: k.id, nimi: k.name, gps: k.gps as { lat: number; lon: number } }));
+
+  // Myöhästymisminuutit lasketaan tässä eikä palvelimella: kello tikittää selaimessa
+  // (ks. vuorot.ts). Palvelimen laskema luku olisi se joka oli voimassa hakuhetkellä, ja
+  // paneeli voi olla auki tunteja.
+  const myohassa = tiedot?.vuoroKaynnissa
+    ? myohassaMinuutteina(tiedot.vuoro?.paattyyArvio, nyt)
+    : null;
 
   const kooste = tiedot?.kooste || null;
   const rivit: KoosteRivi[] = kooste ? [...kooste.pohjat, ...kooste.tehtavat] : [];
 
+  // Päivystäjän antamat tehtävät samaan lokiin (19.9.2026). Ne eivät ole vuoron rivejä
+  // eivätkä siksi koosteessa — ilman tätä päivystäjä näki oman määräyksensä vain siitä
+  // ilmoituksesta jonka sai antaessaan sen, eikä sen jälkeen mistään.
+  //
+  // Suoritusaikaa ei ole eikä voi olla: pakotettu tehtävä annetaan kesken vuoron, eikä
+  // sillä ole suunniteltua kellonaikaa johon sitä voisi verrata (server/kooste.js:
+  // onPoikkeama palauttaa pakotukselle aina false samasta syystä).
+  const pakotusrivit: (KoosteRivi & { maaraaja: string; raporttilaji?: string | null })[] =
+    (tiedot?.pakotukset || []).map((s) => ({
+      id: s.id,
+      nimi: s.nimi,
+      suoritusaika: null,
+      tila: s.tila === 'valmis' ? 'valmis' : s.tila === 'odottaa' ? 'tekematta' : 'kesken',
+      tehtyKlo: s.tila === 'valmis' ? (s.tehty || s.ratkaistu) : null,
+      poikkeamaMin: null,
+      poikkeama: false,
+      maaraaja: s.antaja,
+      raporttilaji: s.raporttilaji,
+    }));
+
   return (
     <div className="mb-8">
-      <button
-        type="button"
-        onClick={onTakaisin}
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:underline mb-3"
-      >
-        <ArrowLeft size={15} />
-        Takaisin vartijalistaan
-      </button>
+      {!omaIkkuna && (
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <button
+            type="button"
+            onClick={onTakaisin}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:underline"
+          >
+            <ArrowLeft size={15} />
+            Takaisin vartijalistaan
+          </button>
+          {/* Omaan välilehteen (19.9.2026). Päivystäjä seuraa yhtä vartijaa pidempään —
+              keikan ajan, myöhästyneen vuoron selvittämisen ajan — eikä hänen pidä
+              menettää sitä näkymää sulkiessaan laatikon päästäkseen listaan.
+
+              Välilehti eikä ponnahdusikkuna: tämä avataan kesken työn ja suljetaan pian.
+              Ikkunan nimi on vartijakohtainen, joten saman vartijan avaaminen uudelleen
+              nostaa olemassa olevan välilehden eikä avaa toista samasta ihmisestä. */}
+          <button
+            type="button"
+            onClick={() => {
+              if (!avaaValilehdessa(vartijanOsoite(vartija), `halke-vartija-${vartija}`)) {
+                setVirhe('Selain esti välilehden avaamisen. Salli ponnahdusikkunat tältä sivustolta.');
+              }
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-line text-ink-body hover:bg-sunken transition-colors"
+          >
+            <ExternalLink size={13} />
+            Avaa omaan välilehteen
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1">
         <h3 className="text-xl font-bold text-ink-strong">{tiedot?.vartija.nimi || vartija}</h3>
@@ -305,6 +415,56 @@ export const VartijanPaneeli = ({
           Ensimmäisenä, koska se on ainoa toimi tällä sivulla joka muuttaa vartijan
           tilaa ilman että hän tekee mitään. */}
       <Lohko otsikko="Vuoro" ikoni={Clock}>
+        {/* MIHIN KOHTEESEEN JA MIHIN VUOROON HÄN ON KIRJAUTUNUT (19.9.2026).
+            Otsikkorivillä luki vain kohteen nimi, eikä siitä näe kumpaan vuorotyyppiin
+            vartija kirjautui — "Teollisuuskatu 5" voi olla päivä-, ilta- tai yövuoro, ja
+            juuri vuorotyyppi kertoo mihin asti hänen pitäisi olla siellä. */}
+        {tiedot?.vuoro && (
+          <dl className="text-sm mb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+            <dt className="text-ink-muted">Kohde</dt>
+            <dd className="text-ink-strong font-medium">{tiedot.vuoro.siteNimi || '—'}</dd>
+            <dt className="text-ink-muted">Vuoro</dt>
+            <dd className="text-ink-strong font-medium">
+              {tiedot.vuoro.vuorotyyppiNimi || 'Lisävuoro (ei kellonaikoja)'}
+            </dd>
+            <dt className="text-ink-muted">Alkoi</dt>
+            <dd className="text-ink-strong">{kellonaika(tiedot.vuoro.alkoi)}</dd>
+            {tiedot.vuoroKaynnissa && tiedot.vuoro.paattyyArvio && (
+              <>
+                <dt className="text-ink-muted">Päättyy</dt>
+                <dd className={myohassa !== null ? 'font-bold text-warning-ink' : 'text-ink-strong'}>
+                  {kellonaika(tiedot.vuoro.paattyyArvio)}
+                  {myohassa !== null && ` · ${myohassa} min yli`}
+                </dd>
+              </>
+            )}
+            {!tiedot.vuoroKaynnissa && (
+              <>
+                <dt className="text-ink-muted">Päättyi</dt>
+                <dd className="text-ink-strong">{kellonaika(tiedot.vuoro.paattyi)}</dd>
+              </>
+            )}
+            {/* Poikkeusluvalla aloitettu vuoro: perehdytystä ei ollut, ja se on tieto
+                joka kuuluu näkyä silloin kun vartijaa katsotaan — ei vain lokissa. */}
+            {tiedot.vuoro.perehdytysPoikkeus && (
+              <>
+                <dt className="text-warning-ink">Kertalupa</dt>
+                <dd className="text-warning-ink">
+                  {tiedot.vuoro.perehdytysPoikkeus.myontaja}: {tiedot.vuoro.perehdytysPoikkeus.syy}
+                </dd>
+              </>
+            )}
+            {tiedot.vuoro.pakkoPaatos && (
+              <>
+                <dt className="text-warning-ink">Päätetty puolesta</dt>
+                <dd className="text-warning-ink">
+                  {tiedot.vuoro.pakkoPaatos.paattaja}: {tiedot.vuoro.pakkoPaatos.syy}
+                </dd>
+              </>
+            )}
+          </dl>
+        )}
+
         {!tiedot?.vuoroKaynnissa ? (
           <p className="text-sm text-ink-muted">
             Vuoro ei ole käynnissä, joten sitä ei voi päättää.
@@ -371,7 +531,7 @@ export const VartijanPaneeli = ({
             vain kun sovellus on auki.
           </p>
         ) : (
-          <div className="text-sm text-ink-body space-y-1">
+          <div className="text-sm text-ink-body space-y-2">
             <p className="font-medium text-ink-strong">
               {sijainti.gps
                 ? `${sijainti.gps.lat.toFixed(5)}, ${sijainti.gps.lon.toFixed(5)}`
@@ -384,6 +544,17 @@ export const VartijanPaneeli = ({
               Tiedetty {ikaTekstina(sijainti.ikaMs)}
               {sijainti.lahde ? ` · ${sijainti.lahde === 'laite' ? 'sovelluksesta' : 'selaimesta'}` : ''}
             </p>
+            {/* Kartta koordinaattien ALLA eikä tilalla. Koordinaatti on se mikä
+                luetaan puhelimeen ja sanotaan radiossa; kartta vastaa kysymykseen
+                onko hän siellä missä pitäisi. Kumpikaan ei korvaa toista.
+
+                Sama GuardKartta kuin isossa näkymässä: toinen karttakomponentti
+                tarkoittaisi toista kopiota maplibren elinkaaresta ja tyylistä. */}
+            {sijainti.gps && (
+              <div className="rounded-lg overflow-hidden border border-line">
+                <GuardKartta yksikot={karttaYksikko} kohteet={karttaKohteet} />
+              </div>
+            )}
           </div>
         )}
       </Lohko>
@@ -398,15 +569,43 @@ export const VartijanPaneeli = ({
             {kooste.kesken > 0 ? ` · ${kooste.kesken} kesken` : ''}
             {kooste.keskeytetty > 0 ? ` · ${kooste.keskeytetty} keskeytetty` : ''}
             {kooste.poikkeamia > 0 ? ` · ${kooste.poikkeamia} aikapoikkeamaa` : ''}
+            {/* Määrätyt erikseen eikä samaan summaan: luvut tulevat vuoron koosteesta
+                (server/kooste.js), ja pakotukset ovat oma kokoelmansa. Niiden
+                niputtaminen samaan lukuun tarkoittaisi että ruudulla oleva luku ei
+                vastaa sitä mitä kooste laskee — kahden eri lähteen summa näyttää
+                yhdeltä luvulta eikä kumpikaan tarkista toista. */}
+            {pakotusrivit.length > 0 ? ` · ${pakotusrivit.length} määrättyä` : ''}
           </span>
         ) : null}
       >
-        {!kooste ? (
+        {!kooste && pakotusrivit.length === 0 ? (
           <p className="text-sm text-ink-muted">Ei vuoroa jolta lokia näyttää.</p>
-        ) : rivit.length === 0 ? (
+        ) : rivit.length === 0 && pakotusrivit.length === 0 ? (
           <p className="text-sm text-ink-muted">Vuoroon ei kuulu kierroksia eikä tehtäviä.</p>
         ) : (
           <ul className="divide-y divide-line-soft border border-line rounded-lg overflow-hidden">
+            {/* Päivystäjän antamat ensin: ne ovat tuoreimpia ja niistä päivystäjä on
+                kiinnostunut juuri nyt. Merkitty erikseen, koska "kuka tämän määräsi" on
+                eri kysymys kuin "kuuluuko tämä vuoroon". */}
+            {pakotusrivit.map((r) => (
+              <li key={r.id} className="px-3 py-2 flex flex-wrap items-center gap-2 bg-accent-soft/40">
+                <span className={`px-2 py-0.5 rounded-md border text-xs font-medium shrink-0 ${TILAN_TYYLI[r.tila]}`}>
+                  {r.tila === 'kesken' ? 'Kuitattu' : r.tila === 'tekematta' ? 'Kuittaamatta' : TILAN_NIMI[r.tila]}
+                </span>
+                <span className="text-sm text-ink-strong min-w-0 flex-1 break-words">
+                  {r.nimi}
+                  <span className="text-ink-muted font-normal"> · {r.maaraaja} määräsi</span>
+                </span>
+                {r.raporttilaji && (
+                  <span className="text-xs text-ink-muted shrink-0">
+                    {RAPORTTILAJIN_NIMI[r.raporttilaji as Raporttilaji].toLowerCase()}
+                  </span>
+                )}
+                <span className="text-xs text-ink-muted tabular-nums shrink-0">
+                  {r.tehtyKlo ? `tehty ${kellonaika(r.tehtyKlo)}` : 'kesken'}
+                </span>
+              </li>
+            ))}
             {rivit.map((r) => (
               <li key={r.id} className="px-3 py-2 flex flex-wrap items-center gap-2 bg-surface">
                 <span className={`px-2 py-0.5 rounded-md border text-xs font-medium shrink-0 ${TILAN_TYYLI[r.tila]}`}>

@@ -2335,6 +2335,24 @@ app.get('/api/vartija/:username', requireAuth, guardPortti, (req, res) => {
     })
     : [];
 
+  // PAKOTETUT TEHTÄVÄT KUULUVAT TEHTÄVÄLOKIIN (19.9.2026).
+  //
+  // Vuoron kooste lasketaan vuoron omista riveistä (vuorot.pohjat, vuoro.tehtavat).
+  // Päivystäjän itse antama tehtävä ei ole kummassakaan — se on oma tietueensa
+  // guardAssignments-kokoelmassa — joten se katosi näkyvistä heti kun se oli annettu.
+  // Päivystäjä näki oman määräyksensä vain siitä ilmoituksesta jonka sai antaessaan sen.
+  //
+  // Rajattu tähän vuoroon: eilen annettu tehtävä ei kuulu tämän vuoron lokiin, samoin
+  // kuin kooste rajaa kuittaukset vuoron kestoon. Vuorottomalla näytetään silti
+  // kuittaamattomat — määräys joka odottaa kuittausta on auki riippumatta siitä onko
+  // vartija juuri nyt kirjautunut.
+  const alkoiMs = viimeisin ? new Date(viimeisin.alkoi).getTime() : 0;
+  const pakotukset = (readCollection('guardAssignments') || [])
+    .filter((s) => s?.saaja === user.username
+      && (s.tapa === 'pakotus' || s.tila === 'hyvaksytty' || s.tila === 'valmis')
+      && (s.tila === 'odottaa' || new Date(s.luotu).getTime() >= alkoiMs))
+    .sort((a, b) => String(b.luotu).localeCompare(String(a.luotu)));
+
   res.json({
     ok: true,
     vartija: { username: user.username, nimi: user.nickname || user.username },
@@ -2343,6 +2361,7 @@ app.get('/api/vartija/:username', requireAuth, guardPortti, (req, res) => {
     kooste,
     kalustoTiedossa,
     kalusto: omaKalusto,
+    pakotukset,
   });
 });
 

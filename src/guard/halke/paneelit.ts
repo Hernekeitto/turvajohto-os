@@ -105,18 +105,26 @@ const JUURI = '/guard/halke';
 export function lueOsoite(pathname: string, search: string): {
   paneeli: PaneeliId | null;
   taulu: boolean;
+  vartija: string | null;
 } {
   const polku = pathname.replace(/[/]+$/, '').toLowerCase();
-  const taulu = new URLSearchParams(search).get('taulu') === '1';
-  if (!polku.startsWith(JUURI)) return { paneeli: null, taulu: false };
+  const kysely = new URLSearchParams(search);
+  const taulu = kysely.get('taulu') === '1';
+  if (!polku.startsWith(JUURI)) return { paneeli: null, taulu: false, vartija: null };
 
   const hanta = polku.slice(JUURI.length).replace(/^\//, '');
   const osuma = PANEELIT.find((p) => p.id === hanta);
+  // Yhden vartijan ikkuna (19.9.2026). Osoitteessa eikä tilassa samasta syystä kuin
+  // paneeli itse: ikkunan sisältö on jaettava ikkunan mukana, ja päivystäjä
+  // kirjanmerkitsee ruutunsa. EI seinätauluun — seinätaulu on yleiskuva, ja yhden
+  // ihmisen tiedot seinällä olisivat henkilötietoa ruudulla jota kukaan ei katso.
+  const vartija = osuma?.id === 'vartijat' && !taulu ? (kysely.get('vartija') || null) : null;
   // Seinätaulutila vain paneeleille jotka siihen kelpaavat. Koostenäkymää ei voi laittaa
   // seinälle: se on kolme ruutua pitkä eikä siitä erota mitään kaukaa.
   return {
     paneeli: osuma ? osuma.id : null,
     taulu: taulu && !!osuma?.taulukelpoinen,
+    vartija,
   };
 }
 
@@ -140,6 +148,34 @@ export const paneelinOsoite = (id: PaneeliId, taulu: boolean) => {
 export function avaaIkkunassa(id: PaneeliId, taulu: boolean): boolean {
   try {
     const ikkuna = window.open(paneelinOsoite(id, taulu), `halke-${id}`, 'width=1100,height=900');
+    if (!ikkuna) return false;
+    ikkuna.focus();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Osoite jolla yhden vartijan tiedot avataan. */
+export const vartijanOsoite = (username: string) =>
+  `${JUURI}/vartijat?vartija=${encodeURIComponent(username)}`;
+
+/**
+ * Avaa osoitteen omaan VÄLILEHTEEN, ei ponnahdusikkunaan.
+ *
+ * Ero `avaaIkkunassa`-funktioon on tarkoituksellinen ja käyttäjän pyyntö (19.9.2026).
+ * Paneeli-ikkuna on mitoitettu näyttö: se avataan kerran ja jätetään auki toiselle
+ * ruudulle, ja siksi sille annetaan koko. Vartijan tiedot avataan kesken työn ja
+ * suljetaan pian — välilehti menee selaimen omaan rytmiin, eikä sitä tarvitse asetella.
+ *
+ * Kokoparametrien puuttuminen on se mikä tekee siitä välilehden: selaimet avaavat
+ * ponnahdusikkunan vain jos ikkunan mittoja pyydetään.
+ *
+ * Palauttaa false jos selain esti avaamisen. Ks. avaaIkkunassa `noopener`-perustelusta.
+ */
+export function avaaValilehdessa(osoite: string, nimi: string): boolean {
+  try {
+    const ikkuna = window.open(osoite, nimi);
     if (!ikkuna) return false;
     ikkuna.focus();
     return true;

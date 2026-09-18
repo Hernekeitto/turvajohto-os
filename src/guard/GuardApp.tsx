@@ -150,7 +150,7 @@ const tyhjaKohde = (): Kohde => ({
 // paneelia varten, ja osoitteen muuttaminen kesken käytön tarkoittaisi että sama
 // ikkuna vaihtaa merkitystään päivystäjän huomaamatta.
 const HALKE_OSOITE = typeof window === 'undefined'
-  ? { paneeli: null, taulu: false }
+  ? { paneeli: null, taulu: false, vartija: null }
   : lueOsoite(window.location.pathname, window.location.search);
 
 export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
@@ -2174,6 +2174,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           sijainnit={sijainnit}
           paneeli={HALKE_OSOITE.paneeli}
           taulu={HALKE_OSOITE.taulu}
+          vartijaIkkuna={HALKE_OSOITE.vartija}
           yhteys={yhdistetty}
           paivitetty={halytyksetPaivitetty}
           sijaintiseuranta={session?.sijaintiseuranta === true}
