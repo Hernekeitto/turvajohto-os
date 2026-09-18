@@ -53,6 +53,22 @@ const SIIRTOVAIHTOEHDOT: SijoitusLaji[] = [
   'holvi', 'varusvarasto', 'kohde', 'henkilo', 'ajoneuvo', 'avainkaappi',
 ];
 
+// Miksi siirtokohteiden lista on tyhjä ja mitä sille tehdään.
+//
+// Tyhjä valikko ja sen perään virhe "Valitse mihin esine siirretään" on umpikuja: se
+// käskee valita silloin kun valittavaa ei ole, eikä kerro mistä valittavat tulisivat.
+// Henkilön kohdalla se on erityisen harhaanjohtava, koska tunnuksia on — ne vain eivät
+// ole sama asia kuin työntekijätietueet.
+const TYHJAN_SELITE: Partial<Record<SijoitusLaji, string>> = {
+  kohde: 'Yhtään kohdetta ei ole perustettu. Lisää kohde ensin.',
+  henkilo: 'Työntekijäpankki on tyhjä. Kalusto luovutetaan työntekijätietueelle eikä '
+    + 'käyttäjätunnukselle: tunnus on kirjautumista varten eikä kaikilla työntekijöillä '
+    + 'ole sellaista, ja luovutustositteeseen tulee työntekijän nimi ja tunnistenumero. '
+    + 'Lisää henkilöt Työntekijäpankkiin.',
+  ajoneuvo: 'Pankissa ei ole yhtään ajoneuvoa. Lisää ajoneuvo kalustoksi ensin.',
+  avainkaappi: 'Pankissa ei ole yhtään avainkaappia. Kaapit lisätään avainten välilehdeltä.',
+};
+
 // Lajit joihin voi sijoittaa muuta kalustoa. Avainkaappi ei ole pelkkä esine vaan
 // PAIKKA: siihen siirretään avaimia holvista, ja kortin on kerrottava mitä siellä on.
 // Ajoneuvo on sama asia liikkuvana — piiriauton kaappi on auton sisällä.
@@ -447,16 +463,22 @@ export const KalustoKortti = ({
                   ))}
                 </div>
                 {!onSailo(kohdeLaji) && (
-                  <select
-                    value={kohdeId}
-                    onChange={(e) => setKohdeId(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-line bg-surface text-sm text-ink-body"
-                  >
-                    <option value="">Valitse {SIJOITUKSEN_SELITE[kohdeLaji].toLowerCase()}…</option>
-                    {siirtoVaihtoehdot.map((v) => (
-                      <option key={v.id} value={v.id}>{v.nimi}</option>
-                    ))}
-                  </select>
+                  siirtoVaihtoehdot.length === 0 ? (
+                    <p className="text-sm text-ink-muted bg-sunken border border-line-soft rounded-lg px-3 py-2">
+                      {TYHJAN_SELITE[kohdeLaji]}
+                    </p>
+                  ) : (
+                    <select
+                      value={kohdeId}
+                      onChange={(e) => setKohdeId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-line bg-surface text-sm text-ink-body"
+                    >
+                      <option value="">Valitse {SIJOITUKSEN_SELITE[kohdeLaji].toLowerCase()}…</option>
+                      {siirtoVaihtoehdot.map((v) => (
+                        <option key={v.id} value={v.id}>{v.nimi}</option>
+                      ))}
+                    </select>
+                  )
                 )}
                 <input
                   value={siirtoHuomio}
@@ -467,7 +489,9 @@ export const KalustoKortti = ({
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    disabled={tyoskentelee}
+                    // Tyhjällä listalla painike ei voi onnistua, joten se ei myöskään
+                    // näytä painettavalta: selitys vieressä kertoo mitä tehdä sen sijaan.
+                    disabled={tyoskentelee || (!onSailo(kohdeLaji) && siirtoVaihtoehdot.length === 0)}
                     onClick={teeSiirto}
                     className="px-3 py-1.5 rounded-lg text-sm font-medium bg-accent text-white hover:brightness-95 disabled:opacity-50"
                   >
