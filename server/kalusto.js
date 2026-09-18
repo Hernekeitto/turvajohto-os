@@ -103,12 +103,41 @@ const LISATIEDOT = {
   avainkaappi: ['sijaintikuvaus', 'lokeroita'],
   ajoneuvo: ['rekisteri', 'merkki', 'malli', 'katsastusAsti'],
   asuste: ['koko', 'henkilokohtainen'],
-  voimankayttovaline: ['koulutusVaadittu'],
+  voimankayttovaline: ['maarapaiva', 'koulutusVaadittu'],
   ase: ['lupanumero', 'kaliiperi', 'sailytyspaikka'],
   tietotekniikka: ['imei', 'puhelinnumero'],
 };
 
 const TOTUUSARVOT = new Set(['henkilokohtainen', 'koulutusVaadittu']);
+
+// Päivämääräkentät. ISO-muoto (YYYY-MM-DD) on vaatimus eikä toive: se on ainoa muoto
+// jossa kaksi päivää voi verrata toisiinsa ilman jäsennystä, ja juuri vertailu tekee
+// kentästä hyödyllisen — vanhentunut kaasusumutin on turvallisuusasia, ei merkintä.
+// Selain lähettää tämän muodon date-kentästä; tarkistus on tässä siksi, ettei
+// rajapintaan voi kirjoittaa muuta.
+const PAIVAMAARAT = new Set(['maarapaiva']);
+
+const ISO_PAIVA = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+
+// Virheilmoitus tai null. Tyhjä kenttä on kelvollinen: päivämäärä on valinnainen, ja
+// sen puuttuminen on eri asia kuin virheellinen arvo.
+function tarkistaPaivamaarat(lisatiedot) {
+  for (const kentta of PAIVAMAARAT) {
+    const arvo = lisatiedot?.[kentta];
+    if (!arvo) continue;
+    if (!ISO_PAIVA.test(arvo)) {
+      return 'Päivämäärä on annettava muodossa vvvv-kk-pp.';
+    }
+    // Muoto yksin ei riitä: Date rullaa ylivuodon seuraavaan kuukauteen, joten
+    // 2027-02-31 kelpaisi ja tallentuisi päiväksi jota ei ole. Arvo on kelvollinen
+    // vain jos se säilyy sellaisenaan edestakaisessa muunnoksessa.
+    const paiva = new Date(arvo + 'T00:00:00Z');
+    if (Number.isNaN(paiva.getTime()) || paiva.toISOString().slice(0, 10) !== arvo) {
+      return 'Päivämäärää ei ole olemassa. Tarkista kuukausi ja päivä.';
+    }
+  }
+  return null;
+}
 
 const puhdistaLisatiedot = (laji, arvot) => {
   const sallitut = LISATIEDOT[laji] || [];
@@ -248,6 +277,8 @@ export function luoKalusto({
   if (puhdasNimi.length < 2) return { ok: false, error: 'Anna esineelle nimi.' };
 
   const puhtaatLisatiedot = puhdistaLisatiedot(laji, lisatiedot);
+  const paivavirhe = tarkistaPaivamaarat(puhtaatLisatiedot);
+  if (paivavirhe) return { ok: false, error: paivavirhe };
   const puhdasSarja = siivoa(sarjanumero, SARJANUMERON_MAX);
 
   // Sääntö 3: ase ei synny ilman lupatietoja. Tarkistus on luonnissa eikä siirrossa,
@@ -309,6 +340,8 @@ export function paivitaTiedot({ esine, muutokset, user, nyt = Date.now() }) {
   if (puhdasNimi.length < 2) return { ok: false, error: 'Anna esineelle nimi.' };
 
   const puhtaatLisatiedot = puhdistaLisatiedot(esine.laji, muutokset?.lisatiedot);
+  const paivavirhe = tarkistaPaivamaarat(puhtaatLisatiedot);
+  if (paivavirhe) return { ok: false, error: paivavirhe };
   const puhdasSarja = siivoa(muutokset?.sarjanumero, SARJANUMERON_MAX);
   if (esine.laji === 'ase' && (!puhdasSarja || !puhtaatLisatiedot.lupanumero)) {
     return { ok: false, error: 'Aseen sarjanumeroa ja luvan numeroa ei voi tyhjentää.' };

@@ -140,3 +140,50 @@ export function osuuHakuun(esine: KalustoTietue, haku: string) {
 // luetaan kilpimerkistä silmin.
 export const tarranOsoite = (tunnus: string) =>
   `${window.location.origin}${import.meta.env.BASE_URL}guard?kalusto=${encodeURIComponent(tunnus)}`;
+
+// --- Määräpäivät ---------------------------------------------------------------------
+//
+// Päivämääräkentät tallennetaan ISO-muodossa (server/kalusto.js tarkistaa sen), jotta
+// niitä voi verrata. Nämä apurit tekevät vertailusta näkyvän: päivä jota mikään ei
+// tarkista on muistiinpano, ei määräaika.
+
+const ISO_PAIVA = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+
+/** Päivä luettavassa muodossa, tai tyhjä jos arvo ei ole ISO-päivä. */
+export const paivays = (iso: string | null | undefined) => {
+  const arvo = String(iso || '');
+  if (!ISO_PAIVA.test(arvo)) return '';
+  const d = new Date(`${arvo}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('fi-FI');
+};
+
+/**
+ * Montako vuorokautta määräpäivään. Negatiivinen = mennyt, 0 = tänään.
+ * null jos arvoa ei ole tai se ei ole ISO-päivä.
+ *
+ * Vertailu tehdään PÄIVÄN tarkkuudella paikallisessa ajassa: kello ei kuulu
+ * määräpäivään, eikä tarkastuspäivä saa muuttua myöhässä olevaksi puolenyön jälkeen
+ * eri aikavyöhykkeellä kuin missä se kirjattiin.
+ */
+export const paiviaJaljella = (iso: string | null | undefined): number | null => {
+  const arvo = String(iso || '');
+  if (!ISO_PAIVA.test(arvo)) return null;
+  const maara = new Date(`${arvo}T00:00:00`);
+  if (Number.isNaN(maara.getTime())) return null;
+  const nyt = new Date();
+  const tanaan = new Date(nyt.getFullYear(), nyt.getMonth(), nyt.getDate());
+  return Math.round((maara.getTime() - tanaan.getTime()) / 86400000);
+};
+
+// Kuinka monta päivää ennen määräpäivää siitä muistutetaan. Kuukausi, koska tarkastus
+// ja välineen vaihto ovat kumpikin asioita jotka sovitaan eikä tehdä samana päivänä.
+export const MUISTUTUS_PAIVAA = 30;
+
+export type Maaraaikatila = 'mennyt' | 'lahestyy' | 'voimassa' | null;
+
+export const maaraaikatila = (iso: string | null | undefined): Maaraaikatila => {
+  const paivia = paiviaJaljella(iso);
+  if (paivia === null) return null;
+  if (paivia < 0) return 'mennyt';
+  return paivia <= MUISTUTUS_PAIVAA ? 'lahestyy' : 'voimassa';
+};

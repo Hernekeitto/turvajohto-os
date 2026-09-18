@@ -38,6 +38,7 @@ type Sarake = {
   otsikko: string;
   perus: boolean;
   totuusarvo: boolean;
+  paivamaara: boolean;
   vihje?: string;
   leveys: string;
 };
@@ -48,8 +49,8 @@ type Sarake = {
 const sarakkeet = (laji: Laji): Sarake[] => {
   const maar = LAJIT[laji];
   const lista: Sarake[] = [
-    { avain: 'nimi', otsikko: 'Nimi', perus: true, totuusarvo: false, leveys: 'min-w-[13rem]', vihje: laji === 'avain' ? 'Hansa pääovi' : 'Talvitakki L' },
-    { avain: 'alalaji', otsikko: 'Tyyppi', perus: true, totuusarvo: false, leveys: 'min-w-[9rem]', vihje: maar.alalajit[0] },
+    { avain: 'nimi', otsikko: 'Nimi', perus: true, totuusarvo: false, paivamaara: false, leveys: 'min-w-[13rem]', vihje: laji === 'avain' ? 'Hansa pääovi' : 'Talvitakki L' },
+    { avain: 'alalaji', otsikko: 'Tyyppi', perus: true, totuusarvo: false, paivamaara: false, leveys: 'min-w-[9rem]', vihje: maar.alalajit[0] },
   ];
   // Sarjanumerosaraketta ei näytetä lajille jolla sitä ei ole (takki): tyhjä sarake
   // kutsuu täyttämään jotain, ja palvelin hylkäisi sen hiljaa.
@@ -57,7 +58,7 @@ const sarakkeet = (laji: Laji): Sarake[] => {
     lista.push({
       avain: 'sarjanumero',
       otsikko: maar.sarjanumero === 'pakollinen' ? 'Sarjanumero *' : 'Sarjanumero',
-      perus: true, totuusarvo: false, leveys: 'min-w-[9rem]',
+      perus: true, totuusarvo: false, paivamaara: false, leveys: 'min-w-[9rem]',
     });
   }
   for (const kentta of maar.lisakentat) {
@@ -66,6 +67,7 @@ const sarakkeet = (laji: Laji): Sarake[] => {
       otsikko: (kentta.lyhyt || kentta.otsikko) + (kentta.pakollinen ? ' *' : ''),
       perus: false,
       totuusarvo: kentta.totuusarvo === true,
+      paivamaara: kentta.paivamaara === true,
       vihje: kentta.vihje && kentta.vihje.length < 24 ? kentta.vihje : undefined,
       leveys: kentta.totuusarvo ? 'w-24' : 'min-w-[9rem]',
     });
@@ -94,6 +96,29 @@ const aseta = (rivi: EraRivi, sarake: Sarake, arvo: string | boolean): EraRivi =
 // ja tyhjä on ei — muuten koko sarakkeen liittäminen rastittaisi joka rivin.
 const TOSI = new Set(['kyllä', 'kylla', 'x', 'k', 'true', '1', 'on', 'yes']);
 const tulkitseTotuus = (teksti: string) => TOSI.has(teksti.trim().toLowerCase());
+
+// Liitetyn päivämäärän tulkinta. Excelistä tulee suomalainen muoto (1.5.2027 tai
+// 01.05.2027); ISO menee läpi sellaisenaan. null = ei tunnistettu.
+//
+// Ilman tätä koko sarakkeen liittäminen tuottaisi tyhjiä soluja HILJAA: date-kenttä
+// hylkää muun kuin ISO-arvon näyttämättä mitään, ja käyttäjä luulisi liittäneensä
+// päivät kunnes palvelin kirjaa esineet ilman määräpäivää.
+const SUOMALAINEN = /^([0-9]{1,2})[.]([0-9]{1,2})[.]([0-9]{4})$/;
+const ISO = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+
+const tulkitsePaiva = (teksti: string): string | null => {
+  const arvo = String(teksti || '').trim();
+  if (!arvo) return '';
+  if (ISO.test(arvo)) return arvo;
+  const osat = SUOMALAINEN.exec(arvo);
+  if (!osat) return null;
+  const [, pv, kk, vuosi] = osat;
+  const iso = `${vuosi}-${kk.padStart(2, '0')}-${pv.padStart(2, '0')}`;
+  // Olematon päivä (31.2.) ei saa muuttua kelvolliseksi pelkällä muotoilulla:
+  // palvelin torjuisi sen, ja virhe näkyisi vasta tallennuksessa.
+  const d = new Date(`${iso}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso ? iso : null;
+};
 
 // Onko rivillä mitään. Tyhjät rivit pudotetaan lähetyksestä, jotta taulukossa saa olla
 // varalla rivejä ilman että ne päätyvät pankkiin. Rasti yksin ei tee rivistä täytettyä:
@@ -183,6 +208,7 @@ export const KalustoEra = () => {
       .split('\n')
       .map((r) => r.split('\t'));
 
+    let tunnistamattomia = 0;
     setRivit((edelliset) => {
       const tarvitaan = rivi + taulukko.length;
       const uudet = [...edelliset, ...tyhjatRivit(Math.max(0, tarvitaan - edelliset.length))];
@@ -190,16 +216,24 @@ export const KalustoEra = () => {
         solut.forEach((arvo, s) => {
           const sarakeTiedot = sarakelista[sarake + s];
           if (!sarakeTiedot) return; // liitos on taulukkoa leveämpi: ylimenevä osa jätetään
-          uudet[rivi + r] = aseta(
-            uudet[rivi + r],
-            sarakeTiedot,
-            sarakeTiedot.totuusarvo ? tulkitseTotuus(arvo) : arvo.trim()
-          );
+          let uusi: string | boolean;
+          if (sarakeTiedot.totuusarvo) {
+            uusi = tulkitseTotuus(arvo);
+          } else if (sarakeTiedot.paivamaara) {
+            const paiva = tulkitsePaiva(arvo);
+            if (paiva === null) tunnistamattomia += 1;
+            uusi = paiva ?? '';
+          } else {
+            uusi = arvo.trim();
+          }
+          uudet[rivi + r] = aseta(uudet[rivi + r], sarakeTiedot, uusi);
         });
       });
       return uudet;
     });
-    setVirhe(null);
+    setVirhe(tunnistamattomia > 0
+      ? `${tunnistamattomia} päivämäärää ei tunnistettu, ja ${tunnistamattomia === 1 ? 'se jäi tyhjäksi' : 'ne jäivät tyhjiksi'}. Käytä muotoa pp.kk.vvvv.`
+      : null);
     setVirheRivi(null);
   };
 
@@ -391,6 +425,7 @@ export const KalustoEra = () => {
                         />
                       ) : (
                         <input
+                          type={sarake.paivamaara ? 'date' : 'text'}
                           value={String(lue(rivi, sarake))}
                           onChange={(e) => paivita(r, sarake, e.target.value)}
                           onPaste={(e) => liita(e, r, s)}

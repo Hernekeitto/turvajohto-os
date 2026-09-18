@@ -30,6 +30,16 @@ export type Lisakentta = {
   vihje?: string;
   totuusarvo?: boolean;
   pakollinen?: boolean;
+  // Kenttä on päivämäärä (ISO YYYY-MM-DD). Oma lippunsa eikä vihje siitä että kenttään
+  // kirjoitetaan päivä: ISO-muoto on vertailukelpoinen, ja vasta se tekee mahdolliseksi
+  // kertoa esineen kohdalla että päivä on mennyt. Vapaana tekstinä "1.5.2027" on vain
+  // merkkijono jota kukaan ei tarkista.
+  paivamaara?: boolean;
+  // Toinen otsikko osalle alalajeista. Sama kenttä voi tarkoittaa kahta asiaa:
+  // kaasusumuttimella päivä on viimeinen käyttöpäivä, käsiraudoilla ja patukalla
+  // tarkastuspäivä. Kaksi erillistä kenttää jättäisi jokaiselle esineelle toisen
+  // tyhjäksi, ja määräpäivien seuranta kysyisi kahta saraketta yhden sijaan.
+  vaihtoehtoinenOtsikko?: { avainsanat: string[]; otsikko: string; vihje?: string };
 };
 
 export type Lajimaarittely = {
@@ -123,6 +133,19 @@ export const LAJIT: Record<Laji, Lajimaarittely> = {
     sarjanumero: 'valinnainen',
     lisakentat: [
       {
+        avain: 'maarapaiva',
+        // Oletusotsikko on tarkastuspäivä, koska se koskee neljää alalajia viidestä.
+        otsikko: 'Tarkastuspäivä',
+        lyhyt: 'Määräpäivä',
+        paivamaara: true,
+        vihje: 'Kohteen esihenkilö tai palveluesimies tarkastaa välineen ja huoltaa sen tarvittaessa.',
+        vaihtoehtoinenOtsikko: {
+          avainsanat: ['kaasusumutin', 'sumutin', 'oc'],
+          otsikko: 'Viimeinen käyttöpäivä',
+          vihje: 'Sumutteen teho heikkenee säilytyksessä; vanhentunut väline vaihdetaan eikä huolleta.',
+        },
+      },
+      {
         avain: 'koulutusVaadittu',
         otsikko: 'Vaatii voimankäyttökoulutuksen',
         lyhyt: 'Koulutus',
@@ -200,4 +223,37 @@ export const MUUT_LAJIT: Laji[] = LAJIJARJESTYS.filter((laji) => !onAvainlaji(la
 export const avainJarjestys = (esine: Pick<KalustoTietue, 'laji' | 'holviPaikka'>) => {
   if (esine.laji === 'avainkaappi') return -1;
   return typeof esine.holviPaikka === 'number' ? esine.holviPaikka : Number.MAX_SAFE_INTEGER;
+};
+
+// --- Alalajin mukaan vaihtuva otsikko -------------------------------------------------
+//
+// Voimankäyttövälineen määräpäivä tarkoittaa kahta eri asiaa sen mukaan mikä väline on
+// kyseessä. Otsikko ratkaistaan ALALAJISTA, joka on vapaata tekstiä — luettelo tarjoaa
+// tavallisimmat mutta ei rajoita, eikä täsmäys siksi voi olla suora vertailu.
+
+// Osuuko alalaji avainsanoihin.
+//
+// Lyhyt koodi (OC) vaaditaan kokonaisena sanana, pidempi sana kelpaa osumana mihin
+// tahansa kohtaan. Ilman tätä eroa kolmen kirjaimen koodi osuisi sanan sisään —
+// ja väärä otsikko kentässä joka kertoo milloin väline vanhenee on pahempi kuin
+// puuttuva otsikko.
+const osuuAlalajiin = (alalaji: string, avainsanat: string[]) => {
+  const teksti = String(alalaji || '').trim().toLowerCase();
+  if (!teksti) return false;
+  const sanat = teksti.split(/[^a-zåäö0-9]+/).filter(Boolean);
+  return avainsanat.some((sana) => (sana.length <= 3 ? sanat.includes(sana) : teksti.includes(sana)));
+};
+
+/** Kentän otsikko tälle alalajille. */
+export const kentanOtsikko = (kentta: Lisakentta, alalaji: string) => {
+  const poikkeus = kentta.vaihtoehtoinenOtsikko;
+  return poikkeus && osuuAlalajiin(alalaji, poikkeus.avainsanat) ? poikkeus.otsikko : kentta.otsikko;
+};
+
+/** Kentän vihje tälle alalajille. */
+export const kentanVihje = (kentta: Lisakentta, alalaji: string) => {
+  const poikkeus = kentta.vaihtoehtoinenOtsikko;
+  return poikkeus && osuuAlalajiin(alalaji, poikkeus.avainsanat)
+    ? (poikkeus.vihje ?? kentta.vihje)
+    : kentta.vihje;
 };

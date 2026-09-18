@@ -15,10 +15,11 @@ import {
 
 import { QrKoodi } from '../../shared/komponentit/QrKoodi';
 import { AvainkarttaNappi } from './Avainkartta';
-import { LAJIT } from './lajit';
+import { LAJIT, kentanOtsikko, kentanVihje } from './lajit';
 import { sailyttimenTapahtumat, suodataValille } from './sailytin';
 import {
-  aikaleima, paivitaKalusto, peruPyynto, ratkaisePyynto, siirraKalusto, tarranOsoite, vaihdaTila,
+  aikaleima, maaraaikatila, paivays, paiviaJaljella, paivitaKalusto, peruPyynto,
+  ratkaisePyynto, siirraKalusto, tarranOsoite, vaihdaTila,
 } from './pankki';
 import {
   SIJOITUKSEN_SELITE, TAPAHTUMAN_SELITE, TILAN_SELITE, TILAN_VARI,
@@ -322,8 +323,10 @@ export const KalustoKortti = ({
               {(maar?.lisakentat || []).map((kentta) => (
                 <Kentta
                   key={kentta.avain}
-                  otsikko={kentta.otsikko}
-                  vihje={kentta.vihje}
+                  // Otsikko ja vihje alalajin mukaan: voimankäyttövälineen määräpäivä
+                  // on sumuttimella viimeinen käyttöpäivä ja patukalla tarkastuspäivä.
+                  otsikko={kentanOtsikko(kentta, muokkaus.alalaji)}
+                  vihje={kentanVihje(kentta, muokkaus.alalaji)}
                   lisa={kentta.avain === 'avaintyyppi' ? (
                     <AvainkarttaNappi
                       saaHallita={saaHallita}
@@ -347,6 +350,9 @@ export const KalustoKortti = ({
                     </label>
                   ) : (
                     <input
+                      // Päivämääräkentässä selaimen oma valitsin: se tuottaa ISO-muodon
+                      // jota palvelin vaatii, eikä käyttäjän tarvitse tietää muodosta.
+                      type={kentta.paivamaara ? 'date' : 'text'}
                       value={String(muokkaus.lisatiedot[kentta.avain] ?? '')}
                       onChange={(e) => setMuokkaus((m) => ({
                         ...m, lisatiedot: { ...m.lisatiedot, [kentta.avain]: e.target.value },
@@ -391,11 +397,16 @@ export const KalustoKortti = ({
               {(maar?.lisakentat || []).map((kentta) => {
                 const arvo = esine.lisatiedot?.[kentta.avain];
                 if (arvo === undefined || arvo === '' || arvo === false) return null;
+                // Päivämäärä näytetään suomalaisessa muodossa mutta säilytetään
+                // ISO:na. Jos arvo ei ole kelvollinen päivä, näytetään se sellaisenaan
+                // — vanhaa tai rajapinnan kautta kirjattua arvoa ei piiloteta.
+                const paiva = kentta.paivamaara ? paivays(String(arvo)) : '';
                 return (
                   <Tieto
                     key={kentta.avain}
-                    otsikko={kentta.otsikko}
-                    arvo={arvo === true ? 'Kyllä' : String(arvo)}
+                    otsikko={kentanOtsikko(kentta, esine.alalaji)}
+                    arvo={arvo === true ? 'Kyllä' : (paiva || String(arvo))}
+                    merkki={kentta.paivamaara ? <MaaraaikaMerkki iso={String(arvo)} /> : undefined}
                     // Lukunäkymässä kartta on hakuteos ilman valintaa: kysymys on
                     // "onko tämä kädessäni oleva avain tätä mallia", ja vastaus
                     // saadaan kuvasta. Vartija näkee tämän myös ilman muokkausoikeutta.
@@ -843,11 +854,46 @@ const Kentta = ({ otsikko, vihje, lisa, children }: {
   </div>
 );
 
-const Tieto = ({ otsikko, arvo, mono, levea, lisa }: {
-  otsikko: string; arvo: string; mono?: boolean; levea?: boolean; lisa?: ReactNode;
+const Tieto = ({ otsikko, arvo, mono, levea, lisa, merkki }: {
+  otsikko: string; arvo: string; mono?: boolean; levea?: boolean;
+  lisa?: ReactNode; merkki?: ReactNode;
 }) => (
   <div className={levea ? 'sm:col-span-2' : ''}>
     <dt className="text-xs text-ink-muted flex items-center gap-1.5">{otsikko}{lisa}</dt>
-    <dd className={`text-ink-body ${mono ? 'font-mono' : ''}`}>{arvo}</dd>
+    {/* `merkki` on arvon vieressä eikä otsikon: se kertoo tästä arvosta (onko päivä
+        mennyt) eikä siitä mitä kenttä tarkoittaa. */}
+    <dd className={`text-ink-body flex flex-wrap items-center gap-2 ${mono ? 'font-mono' : ''}`}>
+      {arvo}
+      {merkki}
+    </dd>
   </div>
 );
+
+// Määräpäivän tila sanoina. VAIN kun on jotain kerrottavaa: kaukana oleva päivä ei
+// tarvitse merkkiä, ja merkki joka on aina näkyvissä lakkaa erottumasta juuri silloin
+// kun sen pitäisi.
+//
+// Sanamuoto on neutraali molemmille merkityksille: sama kenttä on sumuttimella
+// viimeinen käyttöpäivä ja patukalla tarkastuspäivä, eikä "vanhentunut" sovi
+// jälkimmäiseen sen paremmin kuin "tarkastamatta" edelliseen.
+const MaaraaikaMerkki = ({ iso }: { iso: string }) => {
+  const tila = maaraaikatila(iso);
+  if (tila === null || tila === 'voimassa') return null;
+  const paivia = paiviaJaljella(iso) ?? 0;
+  const mennyt = tila === 'mennyt';
+  const teksti = mennyt
+    ? (paivia === -1 ? 'Mennyt eilen' : `Mennyt ${Math.abs(paivia)} pv sitten`)
+    : (paivia === 0 ? 'Tänään' : `${paivia} pv jäljellä`);
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold border ${
+        mennyt
+          ? 'bg-danger-soft text-danger-ink border-danger/30'
+          : 'bg-warning-soft text-warning-ink border-warning/30'
+      }`}
+    >
+      <TriangleAlert size={12} />
+      {teksti}
+    </span>
+  );
+};

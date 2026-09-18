@@ -627,3 +627,60 @@ test('avaintyypin nimi ei voi tormata TOISEN rivin nimeen muokattaessa', () => {
   const tulos = paivitaAvaintyyppi({ tyyppi: b, muutokset: { nimi: 'abloy exec' }, kartta: [a, b] });
   assert.equal(tulos.ok, false);
 });
+
+// --- Voimankäyttövälineen määräpäivä -------------------------------------------------
+//
+// Sama kenttä tarkoittaa kahta asiaa: kaasusumuttimella viimeistä käyttöpäivää,
+// käsiraudoilla ja patukalla tarkastuspäivää. Palvelimelle se on yksi päivämäärä, ja
+// ainoa sääntö on että se on VERTAILUKELPOINEN. Vapaana tekstinä kenttä olisi
+// muistiinpano jota mikään ei tarkista — ja vanhentunut sumutin on turvallisuusasia.
+
+const vkv = (lisatiedot) => luo({ laji: 'voimankayttovaline', alalaji: 'Kaasusumutin', lisatiedot });
+
+test('maarapaiva tallentuu ISO-muodossa', () => {
+  const tulos = vkv({ maarapaiva: '2027-05-01' });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.esine.lisatiedot.maarapaiva, '2027-05-01');
+});
+
+test('tyhja maarapaiva kelpaa', () => {
+  // Päivämäärä on valinnainen: puuttuminen on eri asia kuin virheellinen arvo.
+  assert.equal(vkv({ maarapaiva: '' }).ok, true);
+  assert.equal(vkv({}).ok, true);
+});
+
+test('suomalainen paivamuoto torjutaan', () => {
+  // "1.5.2027" nayttaa oikealta mutta ei ole vertailukelpoinen, ja merkkijonona se
+  // jarjestyisi vaarin. Torjunta on tassa eika selaimessa, koska rajapintaan voi
+  // kirjoittaa ilman lomaketta.
+  const tulos = vkv({ maarapaiva: '1.5.2027' });
+  assert.equal(tulos.ok, false);
+  assert.match(tulos.error, /vvvv-kk-pp/);
+});
+
+test('olematon paiva torjutaan vaikka muoto olisi oikea', () => {
+  assert.equal(vkv({ maarapaiva: '2027-02-31' }).ok, false);
+  assert.equal(vkv({ maarapaiva: '2027-13-01' }).ok, false);
+});
+
+test('maarapaivaa ei tallenneta lajille jolla sita ei ole', () => {
+  // puhdistaLisatiedot karsii vieraat kentat, joten avaimeen ei voi kirjoittaa
+  // voimankayttovalineen kenttia rajapinnan kautta.
+  const tulos = avainEsine({ lisatiedot: { maarapaiva: '2027-05-01' } });
+  assert.equal(tulos.lisatiedot.maarapaiva, undefined);
+});
+
+test('maarapaivan korjaus tarkistetaan myos muokkauksessa', () => {
+  const esine = vkv({ maarapaiva: '2027-05-01' }).esine;
+  const huono = paivitaTiedot({
+    esine, muutokset: { nimi: esine.nimi, alalaji: esine.alalaji, lisatiedot: { maarapaiva: 'ensi keväänä' } },
+    user: 'paakayttaja', nyt: T0,
+  });
+  assert.equal(huono.ok, false);
+  const hyva = paivitaTiedot({
+    esine, muutokset: { nimi: esine.nimi, alalaji: esine.alalaji, lisatiedot: { maarapaiva: '2028-05-01' } },
+    user: 'paakayttaja', nyt: T0,
+  });
+  assert.equal(hyva.ok, true);
+  assert.equal(hyva.esine.lisatiedot.maarapaiva, '2028-05-01');
+});

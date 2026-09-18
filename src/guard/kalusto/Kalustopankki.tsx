@@ -34,7 +34,9 @@ import { AvainkarttaNappi } from './Avainkartta';
 import { KalustoKortti } from './KalustoKortti';
 import { KilpiEsikatselu } from './KilpiEsikatselu';
 import { eranPolku } from '../../shared/laitevalinta';
-import { AVAINLAJIT, LAJIT, MUUT_LAJIT, avainJarjestys, onAvainlaji } from './lajit';
+import {
+  AVAINLAJIT, LAJIT, MUUT_LAJIT, avainJarjestys, kentanOtsikko, kentanVihje, onAvainlaji,
+} from './lajit';
 import { tulostaLuovutuslomake } from './luovutuslomake';
 import {
   aikaleima, luoKalustoa, osuuHakuun, ratkaisePyynto, sijainti, tarranOsoite,
@@ -588,8 +590,10 @@ export const Kalustopankki = ({
                 {maar.lisakentat.map((kentta) => (
                   <LomakeKentta
                     key={kentta.avain}
-                    otsikko={`${kentta.otsikko}${kentta.pakollinen ? ' (pakollinen)' : ''}`}
-                    vihje={kentta.vihje}
+                    // Otsikko ja vihje alalajin mukaan: voimankäyttövälineen määräpäivä
+                    // on sumuttimella viimeinen käyttöpäivä ja patukalla tarkastuspäivä.
+                    otsikko={`${kentanOtsikko(kentta, lomake.alalaji)}${kentta.pakollinen ? ' (pakollinen)' : ''}`}
+                    vihje={kentanVihje(kentta, lomake.alalaji)}
                     // Avaimen tyyppi on ainoa kenttä jossa oikea vastaus on
                     // tunnistettava esineestä eikä luettavissa paperista.
                     lisa={kentta.avain === 'avaintyyppi' ? (
@@ -615,6 +619,10 @@ export const Kalustopankki = ({
                       </label>
                     ) : (
                       <input
+                        // Päivämääräkentässä selaimen oma valitsin: se tuottaa
+                        // ISO-muodon jota palvelin vaatii, eikä käyttäjän tarvitse
+                        // tietää muodosta mitään.
+                        type={kentta.paivamaara ? 'date' : 'text'}
                         value={String(lomake.lisatiedot[kentta.avain] ?? '')}
                         onChange={(e) => setLomake((l) => ({
                           ...l, lisatiedot: { ...l.lisatiedot, [kentta.avain]: e.target.value },
