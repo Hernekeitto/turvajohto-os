@@ -10,7 +10,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  myohassaMinuutteina, UNOHTUNUT_VARTIJA_MIN, UNOHTUNUT_HALKE_MIN,
+  myohassaMinuutteina, onUnohtunutVuoro, UNOHTUNUT_VARTIJA_MIN, UNOHTUNUT_HALKE_MIN,
+  type KaynnissaVuoro,
 } from './vuorot.ts';
 
 const T = (iso: string) => Date.parse(iso);
@@ -69,4 +70,32 @@ test('rajat osuvat oikein myöhästymisminuutteihin', () => {
   assert.ok((min(10) as number) < UNOHTUNUT_HALKE_MIN);
   // Viisitoista: nousee hälytyskeskukseen.
   assert.ok((min(15) as number) >= UNOHTUNUT_HALKE_MIN);
+});
+
+// --- onUnohtunutVuoro (18.9.2026) -----------------------------------------------------
+//
+// Sama päätös tehdään kolmessa paikassa: tilanneluvussa, kohteen kiireystasossa ja
+// vuorolistan järjestyksessä. Yksi funktio eikä kolme kopiota `>= UNOHTUNUT_HALKE_MIN`
+// -vertailua — kopioista yksi jäisi korjaamatta sinä päivänä kun rajaa muutetaan, ja
+// ruudulla kaksi lukua olisi eri mieltä samasta vuorosta.
+
+const MAARAAIKA = '2026-09-15T15:00:00.000Z';
+const vuoro = (paattyyArvio: string | null | undefined): KaynnissaVuoro => ({
+  id: 'v1', vartija: 'Piiri 301', siteId: 'kohde1',
+  alkoi: '2026-09-15T07:00:00.000Z', vuorotyyppiNimi: 'Päivävuoro', paattyyArvio,
+});
+
+test('onUnohtunutVuoro noudattaa hälytyskeskuksen rajaa', () => {
+  const kello = (m: number) => T(MAARAAIKA) + m * 60_000;
+  assert.equal(onUnohtunutVuoro(vuoro(MAARAAIKA), kello(0)), false);
+  assert.equal(onUnohtunutVuoro(vuoro(MAARAAIKA), kello(14)), false);
+  assert.equal(onUnohtunutVuoro(vuoro(MAARAAIKA), kello(15)), true);
+  assert.equal(onUnohtunutVuoro(vuoro(MAARAAIKA), kello(111)), true);
+});
+
+test('kellonajaton vuoro ei ole koskaan unohtunut', () => {
+  // Lisävuorolla ei ole päättymiskellonaikaa. Myöhästymistä ei saa arvata vuoron
+  // pituudesta: pitkä vuoro on eri asia kuin päättämättä jäänyt vuoro.
+  assert.equal(onUnohtunutVuoro(vuoro(null), T(MAARAAIKA) + 600 * 60_000), false);
+  assert.equal(onUnohtunutVuoro(vuoro(undefined), T(MAARAAIKA) + 600 * 60_000), false);
 });

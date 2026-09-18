@@ -22,7 +22,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Siren, Timer, MapPin, Phone, Check, Users, Route, KeyRound, Megaphone,
   TriangleAlert, Activity, Volume2, VolumeX, Building2, ShieldCheck, MessageSquare,
-  History, Wifi, WifiOff, BellRing, Search, X,
+  History, Wifi, WifiOff, BellRing, Search, X, ShieldAlert,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
@@ -46,7 +46,9 @@ import {
   kentalla, kohteenTilanne, tapahtumavirta, type Kiireys, type Lahteet,
 } from './tilannekuva';
 import type { Kohde } from './tyypit';
-import { myohassaMinuutteina, UNOHTUNUT_HALKE_MIN } from './vuorot';
+import {
+  myohassaMinuutteina, onUnohtunutVuoro, UNOHTUNUT_HALKE_MIN, type KaynnissaVuoro,
+} from './vuorot';
 import { KeskuksenTehtavat } from './KeskuksenTehtavat';
 import { LAJIN_NIMI, type Halytystehtava } from './halytystehtavat';
 
@@ -255,17 +257,12 @@ export const Halytyskeskus = ({
   // Kesken olevat vuorot. ERI LISTA kuin "Kentällä juuri nyt", joka johdetaan
   // kirjauksista: vartija joka ei ole kirjannut mitään ei näy siinä, ja juuri hänestä
   // päivystäjä on huolissaan.
-  const [vuorossa, setVuorossa] = useState<
-    {
-      id: string; vartija: string; siteId: string; alkoi: string;
-      vuorotyyppiNimi: string | null;
-      // Milloin vuoron oli MÄÄRÄ päättyä. null = vuorotyypillä ei ole kellonaikaa, eikä
-      // kellonajaton lisävuoro voi olla myöhässä. Palvelin laskee tämän, koska
-      // päättymiskellonaika on kohteen kenttä eikä tule tämän listan mukana — mutta
-      // myöhästymisminuutit lasketaan täällä tikittävästä kellosta.
-      paattyyArvio?: string | null;
-    }[]
-  >([]);
+  const [vuorossa, setVuorossa] = useState<KaynnissaVuoro[]>([]);
+  // Onko vuorolista kertaakaan saatu. Tyhjä lista tarkoittaa kahta täysin eri asiaa —
+  // "kukaan ei ole vuorossa" ja "en tiedä kuka on vuorossa" — ja tilanneluvun on
+  // sanottava kumpi. Ilman tätä indikaattori näyttäisi nollaa silloinkin kun haku ei ole
+  // koskaan onnistunut, eli juuri silloin kun päivystäjän pitäisi epäillä ruutua.
+  const [vuorotLuettu, setVuorotLuettu] = useState(false);
 
   useEffect(() => {
     let voimassa = true;
@@ -273,7 +270,10 @@ export const Halytyskeskus = ({
       try {
         const v = await fetch('/api/vuoro/kaynnissa', { credentials: 'include' });
         const data = await v.json().catch(() => null);
-        if (voimassa && data?.ok) setVuorossa(data.vuorot || []);
+        if (voimassa && data?.ok) {
+          setVuorossa(data.vuorot || []);
+          setVuorotLuettu(true);
+        }
       } catch {
         // Verkkovirhe: lista jää ennalleen. Tyhjentäminen näyttäisi siltä että
         // kukaan ei ole vuorossa, ja se on väärä tieto eikä puuttuva tieto.
@@ -363,9 +363,16 @@ export const Halytyskeskus = ({
       .sort((a, b) => String(b.pyynto.ts).localeCompare(String(a.pyynto.ts)));
   }, [lahteet.halytykset, minuutti]);
 
+  // Kohdetilanteet. Kello tulee mukaan MINUUTIN TARKKUUDELLA (`minuutti`) eikä
+  // sekuntikellona: unohtunut vuoro on osa kohteen kiireystasoa, joten laskenta tarvitsee
+  // ajan — mutta raja on 15 minuuttia, eikä kohdetauluja kannata laskea uudelleen kerran
+  // sekunnissa sen takia. Sekuntikello on niitä varten jotka näyttävät sekunteja.
   const tilanteet = useMemo(
-    () => kohteet.map((kohde) => ({ kohde, tilanne: kohteenTilanne(kohde.id, lahteet) })),
-    [kohteet, lahteet]
+    () => kohteet.map((kohde) => ({
+      kohde,
+      tilanne: kohteenTilanne(kohde.id, lahteet, vuorossa, minuutti * 60_000),
+    })),
+    [kohteet, lahteet, vuorossa, minuutti]
   );
   const kentallaNyt = useMemo(() => kentalla(lahteet, nyt), [lahteet, nyt]);
 
@@ -469,14 +476,26 @@ export const Halytyskeskus = ({
     [lahteet.tiedotteet, nyt]
   );
 
-  // Sekuntikello. Käy aina kun jotain lasketaan — päivystäjän ruudulla nimenomaan
-  // lasketaan: laukeamisesta kulunut aika ja ajastimien jäljellä oleva aika ovat ne kaksi
-  // lukua joiden takia hälytyskeskus on auki.
+  // Kello. Käy AINA, vain eri tahtiin.
+  //
+  // Tässä oli vika 18.9.2026 asti: kello pysähtyi kokonaan kun ei ollut lauennutta
+  // hälytystä eikä käynnissä olevaa ajastinta. Vuorolista haettiin kyllä minuutin välein,
+  // mutta myöhästymisminuutit laskettiin `nyt`-arvosta joka oli jäätynyt sivun
+  // latautumishetkeen — eli rauhallisena hetkenä avattu ruutu EI OLISI KOSKAAN näyttänyt
+  // varoitusta unohtuneesta vuorosta. Se olisi ilmestynyt vasta uudelleenlatauksella tai
+  // ensimmäisen hälytyksen myötä, ja juuri hälytystilanteessa päivystäjä katsoo muuta.
+  //
+  // Aikaan perustuva varoitus pysähtyneestä kellosta ei ole varoitus vaan sattuma. Siksi
+  // kello ei saa pysähtyä, vaikkei ruudulla juuri nyt olisi sekunteja näkyvissä.
+  //
+  // Kaksi tahtia eikä yksi: sekunti tarvitaan vain sekuntinäyttöihin (laukeamisesta
+  // kulunut aika, ajastimen jäljellä oleva aika), ja hiljaisella ruudulla kymmenen
+  // sekunnin tahti riittää kaikkeen muuhun — minuutti- ja tuntitason luvut eivät muutu
+  // sitä nopeammin, eikä valvomon kone saa renderöidä kerran sekunnissa turhaan.
   const laskettavaa = lauenneet.length > 0 || ajastimet.length > 0;
   useEffect(() => {
     setNyt(Date.now());
-    if (!laskettavaa) return;
-    const id = window.setInterval(() => setNyt(Date.now()), 1000);
+    const id = window.setInterval(() => setNyt(Date.now()), laskettavaa ? 1000 : 10_000);
     return () => window.clearInterval(id);
   }, [laskettavaa]);
 
@@ -617,6 +636,15 @@ export const Halytyskeskus = ({
   const kohteetKriittisia = tilanteet.filter((t) => t.tilanne.kiireys === 'kriittinen').length;
   const kohteetVaroitus = tilanteet.filter((t) => t.tilanne.kiireys === 'varoitus').length;
 
+  // Unohtuneet vuorot (18.9.2026). Nämä olivat ennen vain "Vuorossa nyt" -listan rivinä,
+  // eli näkymättömissä kolmessa paneelissa neljästä — tilannerivi on ainoa osa sivua joka
+  // näkyy joka ikkunassa ja seinätaululla. Poikkeama jota yhteenveto ei näytä on
+  // päivystäjän kannalta poikkeama jota ei ole olemassa.
+  const myohassaVuorot = useMemo(
+    () => vuorossa.filter((v) => onUnohtunutVuoro(v, minuutti * 60_000)),
+    [vuorossa, minuutti]
+  );
+
   // --- Järjestelmän tila, tiiviinä ----------------------------------------------------
   //
   // Nämä olivat sivun pohjalla omana osionaan, kokonaisin virkkein. Väärä paikka: ne
@@ -688,9 +716,13 @@ export const Halytyskeskus = ({
   const tarkistuksetNakyvat = tarkistukset.filter(
     ({ halytys: h, pyynto }) => osuu([h.vartija, pyynto.user, kohdeNimi(h.eventId)], haku('tarkistukset'))
   );
-  const vuorossaNakyvat = vuorossa.filter(
-    (v) => osuu([v.vartija, v.vuorotyyppiNimi, kohdeNimi(v.siteId)], haku('vuorossa'))
-  );
+  // Myöhässä olevat vuorot listan kärkeen. Muut listat ovat aikajärjestyksessä, tämä ei:
+  // täällä ei seurata tapahtumien kulkua vaan etsitään ne rivit jotka vaativat toimia, ja
+  // kahdenkymmenen vuoron listassa yksi keltainen rivi jää keskelle huomaamatta.
+  const vuorossaNakyvat = vuorossa
+    .filter((v) => osuu([v.vartija, v.vuorotyyppiNimi, kohdeNimi(v.siteId)], haku('vuorossa')))
+    .sort((a, b) =>
+      Number(onUnohtunutVuoro(b, minuutti * 60_000)) - Number(onUnohtunutVuoro(a, minuutti * 60_000)));
   const kentallaNakyvat = kentallaNyt.filter(
     (v) => osuu([v.vartija, v.mita, ...(v.kohteet || []).map(kohdeNimi)], haku('kentalla'))
   );
@@ -830,9 +862,21 @@ export const Halytyskeskus = ({
       )}
 
       {/* --- Tilannerivi ---------------------------------------------------------
-          Kuusi lukua siinä järjestyksessä kuin päivystäjä ne tarvitsee: mikä palaa,
-          mikä on käynnissä, kuka on kentällä. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-8">
+          Seitsemän lukua siinä järjestyksessä kuin päivystäjä ne tarvitsee: mikä palaa,
+          mikä on käynnissä, kuka on kentällä.
+
+          TÄMÄ RIVI ON AINOA OSA SIVUA JOKA EI OLE `nayta()`-portin takana. Se näkyy
+          koostenäkymässä, jokaisessa irrotetussa ikkunassa ja seinätaululla — eli se on
+          se yhteenveto jonka varassa päivystäjä on silloin kun hän katsoo yhtä paneelia.
+          Siitä seuraa velvoite: jos jokin tilanne vaatii päivystäjän toimia, sen on
+          näyttävä TÄSSÄ eikä vain siinä osiossa johon se kuuluu. Muuten yhteenveto
+          lupaa hiljaisuutta jota ei ole.
+
+          Lukuja ei myöskään yhdistellä toistensa kanssa. "Avointa poikkeamaa" tarkoittaa
+          kalustoa (varustepoikkeama + kadonnut avain) eikä poikkeamaa yleensä; unohtunut
+          vuoro on siksi oma lukunsa eikä sen sisällä. Kaksi eri asiaa saman luvun takana
+          on luku jonka merkitystä ei voi lukea ruudulta. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-8">
         <Luku
           ikoni={Siren}
           arvo={lauenneet.length}
@@ -844,6 +888,15 @@ export const Halytyskeskus = ({
           arvo={ajastimet.length}
           nimi="Ajastinta käynnissä"
           korosta={ajastimet.some((h) => (jaljella(h, nyt) ?? Infinity) <= KOHTA_MS) ? 'varoitus' : 'rauhallinen'}
+        />
+        {/* Unohtunut vuoro. `—` kun vuorolistaa ei ole kertaakaan saatu: nolla olisi
+            väite jota ei ole katettu, ja tässä nimenomaan nolla on se lukema jonka
+            perusteella päivystäjä jättää asian sikseen. */}
+        <Luku
+          ikoni={ShieldAlert}
+          arvo={vuorotLuettu ? myohassaVuorot.length : '—'}
+          nimi="Vuoroa myöhässä"
+          korosta={myohassaVuorot.length > 0 ? 'varoitus' : 'rauhallinen'}
         />
         <Luku ikoni={Users} arvo={kentallaNyt.length} nimi="Kentällä" />
         <Luku
@@ -1193,6 +1246,11 @@ export const Halytyskeskus = ({
                       <Merkki taso="varoitus">{tilanne.avoimetPoikkeamat - tilanne.kriittisetPoikkeamat} poikkeama</Merkki>
                     )}
                     {tilanne.kadonneetAvaimet > 0 && <Merkki taso="varoitus">{tilanne.kadonneetAvaimet} avain kadonnut</Merkki>}
+                    {tilanne.vuorotMyohassa > 0 && (
+                      <Merkki taso="varoitus">
+                        {tilanne.vuorotMyohassa} vuoro myöhässä
+                      </Merkki>
+                    )}
                     {tilanne.tiedotteetVoimassa > 0 && <Merkki taso="perus">{tilanne.tiedotteetVoimassa} tiedote voimassa</Merkki>}
                     {tilanne.kiireys === 'rauhallinen' && (
                       <span className="inline-flex items-center gap-1 text-xs text-ink-muted">
@@ -1231,7 +1289,15 @@ export const Halytyskeskus = ({
 
           Pakotettu tarkistus on siksi TÄSSÄ eikä siellä. */}
       <div className="grid gap-6 lg:grid-cols-2 mb-8">
-      <Osio pari otsikko="Vuorossa nyt" ikoni={ShieldCheck} maara={vuorossa.length}>
+      <Osio
+        pari
+        otsikko="Vuorossa nyt"
+        ikoni={ShieldCheck}
+        maara={vuorossa.length}
+        huomio={myohassaVuorot.length > 0
+          ? `${myohassaVuorot.length} myöhässä`
+          : null}
+      >
         <p className="text-xs text-ink-subtle mb-3">
           Kesken olevat vuorot. Tarkistuspyyntö kysyy vartijalta "oletko kunnossa" ja
           hälyttää jos kuittausta ei tule kahdessa minuutissa — <b>myös silloin kun puhelin
@@ -1277,8 +1343,11 @@ export const Halytyskeskus = ({
                     </span>
                   </p>
                   <p className="text-xs text-ink-muted mt-0.5">
+                    {/* Ei erillistä "sitten"-sanaa: ikaTekstina päättyy siihen jo itse,
+                        ja rivillä luki "alkoi 10 h sitten sitten". Tuoreella vuorolla
+                        virhe oli isompi — "alkoi juuri nyt sitten". */}
                     {v.vuorotyyppiNimi ? `${v.vuorotyyppiNimi} · ` : ''}
-                    alkoi {ikaTekstina(Math.max(0, nyt - Date.parse(v.alkoi)))} sitten
+                    alkoi {ikaTekstina(Math.max(0, nyt - Date.parse(v.alkoi)))}
                   </p>
                   {unohtunut && (
                     <p className="text-xs font-bold text-warning-ink mt-1">
@@ -1788,24 +1857,36 @@ const Luku = ({
 );
 
 const Osio = ({
-  otsikko, ikoni: Ikoni, maara, kiire = false, pari = false, children,
+  otsikko, ikoni: Ikoni, maara, kiire = false, huomio = null, pari = false, children,
 }: {
   otsikko: string;
   ikoni: LucideIcon;
   maara: number | null;
   kiire?: boolean;
+  // Varoitusmerkki otsikkoon, omalla tekstillään. ERI ASIA KUIN `maara`, ja siksi oma
+  // proppinsa eikä värjätty luku: "Vuorossa nyt (5)" keltaisena antaisi ymmärtää että
+  // viisi vuoroa on myöhässä, kun myöhässä on yksi viidestä. Osion otsikon on kerrottava
+  // kuinka moni rivi vaatii toimia — muuten kokoon painunutta listaa ei osaa avata.
+  //
+  // Taso on varoitus eikä `kiire`: punainen on varattu sille mikä palaa juuri nyt.
+  huomio?: string | null;
   // Osio on vierekkäisparissa: alamarginaali pois, koska väli tulee ruudukon gapista.
   // Ilman tätä parin osiot saisivat ylimääräisen 2 rem:n hännän toistensa alle.
   pari?: boolean;
   children: ReactNode;
 }) => (
   <section className={pari ? 'min-w-0' : 'mb-8'}>
-    <h3 className={`text-base font-bold mb-2 flex items-center gap-2 ${kiire ? 'text-danger-ink' : 'text-ink-strong'}`}>
+    <h3
+      className={`text-base font-bold mb-2 flex flex-wrap items-center gap-2 ${
+        kiire ? 'text-danger-ink' : huomio ? 'text-warning-ink' : 'text-ink-strong'
+      }`}
+    >
       <Ikoni size={17} />
       {otsikko}
       {maara !== null && maara > 0 && (
         <span className={`font-normal ${kiire ? 'text-danger-ink' : 'text-ink-muted'}`}>({maara})</span>
       )}
+      {huomio && <Merkki taso="varoitus">{huomio}</Merkki>}
     </h3>
     {children}
   </section>

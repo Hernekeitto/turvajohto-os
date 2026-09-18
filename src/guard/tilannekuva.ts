@@ -18,6 +18,9 @@ import { onKuitannut, onVoimassa, type Tiedote } from '../shared/tiedotteet.ts';
 import type { Pohja, Suoritus } from '../shared/pohjat';
 import type { Jalkiraportti } from '../shared/jalkiraportit';
 import type { GuardRaportti, Kierros, TehtavaSuoritus } from './tyypit';
+// Ajonaikainen tuonti, siksi .ts-pääte (vrt. pelkät tyyppituonnit yllä): node --test
+// ajaa tämän moduulin sellaisenaan ilman niputtajaa.
+import { onUnohtunutVuoro, type KaynnissaVuoro } from './vuorot.ts';
 
 // Kaikki kokoelmat joista tilannekuva kootaan. Yksi olio eikä kymmenen parametria: lista
 // kasvaa sitä mukaa kuin GUARD-puolelle tulee kirjattavaa, eikä jokaisen kutsupaikan pidä
@@ -67,6 +70,11 @@ export type KohteenTilanne = {
   avoimetPoikkeamat: number;
   kriittisetPoikkeamat: number;
   tiedotteetVoimassa: number;
+  // Kohteen vuorot jotka ovat yli hälytyskeskuksen rajan myöhässä (vuorot.ts:
+  // UNOHTUNUT_HALKE_MIN). Päälle jäänyt vuoro pitää sijaintiseurannan käynnissä ja
+  // näyttää ruudulla siltä että vartija on yhä töissä — kohderivin on kerrottava se
+  // samalla silmäyksellä kuin muutkin avoimet asiat.
+  vuorotMyohassa: number;
   // Viimeisin merkki elämästä kohteesta: kuittaus, kirjaus, kierrospiste. Hiljaisuus on
   // päivystäjälle tieto siinä missä tapahtumakin — kohde jossa ei ole kuulunut mitään
   // koko vuoron aikana on tarkistamisen arvoinen.
@@ -86,7 +94,29 @@ const uusin = (a: string | null, b: string | null | undefined) => {
 const raportinAika = (r: GuardRaportti) =>
   r.luotu || (r.date ? `${r.date}T${r.time || '00:00'}` : null);
 
-export function kohteenTilanne(kohdeId: string, lahteet: Lahteet): KohteenTilanne {
+/**
+ * Kohteen tilanne juuri nyt.
+ *
+ * `vuorot` ON OMA PARAMETRINSA eikä osa Lahteet-oliota, ja se on harkittu. Käynnissä
+ * olevat vuorot tulevat omalta reitiltään (/api/vuoro/kaynnissa), jota vain
+ * hälytyskeskus hakee ja joka on erikseen oikeusrajattu. Lahteissa jokainen muu
+ * kutsupaikka antaisi tyhjän listan tietämättä antavansa — ja tyhjä lista näyttäisi
+ * täsmälleen samalta kuin "yksikään vuoro ei ole myöhässä". Se on juuri se virhe jonka
+ * takia tämä laskenta lisättiin: poikkeama jota yhteenveto ei näytä on poikkeama jota ei
+ * ole olemassa.
+ *
+ * Siksi parametri on myös PAKOLLINEN. Oletusarvo `[]` olisi sama vaiennus toisessa
+ * muodossa.
+ *
+ * `nyt` on parametri samasta syystä kuin `kentalla`-funktiossa: myöhästyminen on
+ * vähennyslasku tikittävästä kellosta, eikä testi voi odottaa oikeaa aikaa.
+ */
+export function kohteenTilanne(
+  kohdeId: string,
+  lahteet: Lahteet,
+  vuorot: KaynnissaVuoro[],
+  nyt: number = Date.now()
+): KohteenTilanne {
   const halytykset = lahteet.halytykset.filter((h) => h.eventId === kohdeId);
   const lauenneet = halytykset.filter((h) => h.tila === 'lauennut');
   const ajastimet = halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa');
@@ -95,6 +125,7 @@ export function kohteenTilanne(kohdeId: string, lahteet: Lahteet): KohteenTilann
   const kadonneet = lahteet.avaimet.filter((a) => a.ownerId === kohdeId && a.tila === 'kadonnut');
   const avoimet = lahteet.poikkeamat.filter((p) => p.ownerId === kohdeId && p.tila === 'avoin');
   const tiedotteet = lahteet.tiedotteet.filter((t) => t.ownerId === kohdeId && onVoimassa(t));
+  const myohassa = vuorot.filter((v) => v.siteId === kohdeId && onUnohtunutVuoro(v, nyt));
 
   let viimeksi: string | null = null;
   for (const h of halytykset) viimeksi = uusin(viimeksi, h.paattyi || h.laukesi || h.alkoi);
@@ -113,10 +144,14 @@ export function kohteenTilanne(kohdeId: string, lahteet: Lahteet): KohteenTilann
   }
 
   const kriittisetPoikkeamat = avoimet.filter((p) => p.vakavuus === 'kriittinen').length;
+  // Unohtunut vuoro on VAROITUS eikä kriittinen. Todennäköisin selitys on että vartija
+  // lähti kotiin päättämättä vuoroa, ja se on selvitettävä mutta ei hätä. Kriittinen taso
+  // on varattu sille mikä palaa juuri nyt — jos unohtunut vuoro värjäisi kohteen
+  // punaiseksi, punainen lakkaisi tarkoittamasta mitään.
   const kiireys: Kiireys =
     lauenneet.length > 0 || kriittisetPoikkeamat > 0
       ? 'kriittinen'
-      : ajastimet.length > 0 || kadonneet.length > 0 || avoimet.length > 0
+      : ajastimet.length > 0 || kadonneet.length > 0 || avoimet.length > 0 || myohassa.length > 0
         ? 'varoitus'
         : 'rauhallinen';
 
@@ -134,6 +169,7 @@ export function kohteenTilanne(kohdeId: string, lahteet: Lahteet): KohteenTilann
     avoimetPoikkeamat: avoimet.length,
     kriittisetPoikkeamat,
     tiedotteetVoimassa: tiedotteet.length,
+    vuorotMyohassa: myohassa.length,
     viimeksi,
     kiireys,
   };

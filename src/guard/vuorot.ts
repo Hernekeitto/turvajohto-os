@@ -272,6 +272,31 @@ export const UNOHTUNUT_VARTIJA_MIN = 10;
 export const UNOHTUNUT_HALKE_MIN = 15;
 
 /**
+ * Käynnissä oleva vuoro sellaisena kuin /api/vuoro/kaynnissa sen palauttaa.
+ *
+ * Oma tyyppinsä eikä `PalvelimenVuoro`: se on VARTIJAN oma vuoro kaikkine tehtävineen,
+ * tämä on päivystäjän lista jossa on vain se mitä riviltä katsotaan. Sama tyyppi
+ * pakottaisi listan palauttamaan tehtävät ja pohjat jokaisesta vuorosta, eikä
+ * päivystäjälle kuulu vartijan tehtävälista.
+ */
+export type KaynnissaVuoro = {
+  id: string;
+  vartija: string;
+  siteId: string;
+  alkoi: string;
+  vuorotyyppiNimi: string | null;
+  // Milloin vuoron oli MÄÄRÄ päättyä. null = vuorotyypillä ei ole kellonaikaa, eikä
+  // kellonajaton lisävuoro voi olla myöhässä. Palvelin laskee tämän, koska
+  // päättymiskellonaika on kohteen kenttä eikä tule tämän listan mukana — mutta
+  // myöhästymisminuutit lasketaan selaimessa tikittävästä kellosta.
+  paattyyArvio?: string | null;
+};
+
+/** Onko vuoro niin myöhässä että se kuuluu hälytyskeskukselle. */
+export const onUnohtunutVuoro = (vuoro: KaynnissaVuoro, nyt: number = Date.now()): boolean =>
+  (myohassaMinuutteina(vuoro.paattyyArvio, nyt) ?? 0) >= UNOHTUNUT_HALKE_MIN;
+
+/**
  * Kuinka monta minuuttia vuoro on yli määräajan, tai null jos ei ole.
  *
  * LASKENTA ON SELAIMESSA JA MÄÄRÄAIKA PALVELIMELTA, ja työnjako on harkittu. Määräajan

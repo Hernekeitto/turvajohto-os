@@ -17,6 +17,7 @@ import {
 import type { Halytys } from '../shared/halytykset.ts';
 import type { Kierros, TehtavaSuoritus } from './tyypit.ts';
 import type { KalustoTietue } from './kalusto/tyypit.ts';
+import type { KaynnissaVuoro } from './vuorot.ts';
 
 const NYT = Date.parse('2026-09-05T12:00:00.000Z');
 const hetki = (minuuttiaSitten: number) => new Date(NYT - minuuttiaSitten * 60_000).toISOString();
@@ -69,10 +70,20 @@ const tehtava = (osat: Partial<TehtavaSuoritus>): TehtavaSuoritus => ({
 
 const lahteilla = (osat: Partial<Lahteet>): Lahteet => ({ ...tyhjatLahteet(), ...osat });
 
+const vuoro = (osat: Partial<KaynnissaVuoro> = {}): KaynnissaVuoro => ({
+  id: 'v1',
+  vartija: 'vartija1',
+  siteId: 'kohde1',
+  alkoi: hetki(480),
+  vuorotyyppiNimi: 'Päivävuoro',
+  paattyyArvio: hetki(0),
+  ...osat,
+});
+
 test('lauennut hälytys tekee kohteesta kriittisen', () => {
   const tilanne = kohteenTilanne('kohde1', lahteilla({
     halytykset: [halytys({ tila: 'lauennut', laukesi: hetki(2) })],
-  }));
+  }), [], NYT);
   assert.equal(tilanne.kiireys, 'kriittinen');
   assert.equal(tilanne.lauenneet, 1);
 });
@@ -81,11 +92,11 @@ test('käynnissä oleva ajastin on varoitus, ei kriittinen — eikä toisen koht
   const lahteet = lahteilla({
     halytykset: [halytys({ id: 'h1' }), halytys({ id: 'h2', eventId: 'kohde2' })],
   });
-  const yksi = kohteenTilanne('kohde1', lahteet);
+  const yksi = kohteenTilanne('kohde1', lahteet, [], NYT);
   assert.equal(yksi.kiireys, 'varoitus');
   assert.equal(yksi.ajastimet, 1);
   assert.equal(yksi.seuraavaEraantyy, NYT + 20 * 60_000);
-  assert.equal(kohteenTilanne('kohde3', lahteet).kiireys, 'rauhallinen');
+  assert.equal(kohteenTilanne('kohde3', lahteet, [], NYT).kiireys, 'rauhallinen');
 });
 
 test('kohteen viimeisin merkintä on uusin kaikista lähteistä, ei viimeksi luetusta', () => {
@@ -97,8 +108,80 @@ test('kohteen viimeisin merkintä on uusin kaikista lähteistä, ei viimeksi lue
       { pisteId: 'a', nimi: 'Portti', kuitattu: hetki(12), tapa: 'qr' },
       { pisteId: 'b', nimi: 'Katos', kuitattu: null, tapa: null },
     ] })],
-  }));
+  }), [], NYT);
   assert.equal(tilanne.viimeksi, hetki(12));
+});
+
+// --- Unohtunut vuoro kohteen tilanteessa (18.9.2026) ---------------------------------
+//
+// Tämä laskenta lisättiin koska päivystäjän ruudulla oli rivi "Vuoro on 111 min yli
+// päättymisajan", eikä yksikään yhteenvetoluku kertonut siitä mitään. Testit vartioivat
+// nimenomaan sitä: kohde jossa on unohtunut vuoro EI SAA näyttää rauhalliselta.
+
+test('unohtunut vuoro tekee kohteesta varoituksen — mutta ei kriittistä', () => {
+  const tilanne = kohteenTilanne('kohde1', lahteilla({}), [
+    vuoro({ paattyyArvio: hetki(111) }),
+  ], NYT);
+  assert.equal(tilanne.vuorotMyohassa, 1);
+  // Vartija on todennäköisesti kunnossa ja unohti päättää vuoron. Kriittinen taso on
+  // varattu sille mikä palaa juuri nyt.
+  assert.equal(tilanne.kiireys, 'varoitus');
+});
+
+test('vuoro joka on juuri ja juuri myöhässä ei vielä kuulu hälytyskeskukselle', () => {
+  // 14 min = vartijan oma huomio on jo näkynyt (10 min), päivystäjän raja (15 min) ei.
+  const alle = kohteenTilanne('kohde1', lahteilla({}), [vuoro({ paattyyArvio: hetki(14) })], NYT);
+  assert.equal(alle.vuorotMyohassa, 0);
+  assert.equal(alle.kiireys, 'rauhallinen');
+
+  const yli = kohteenTilanne('kohde1', lahteilla({}), [vuoro({ paattyyArvio: hetki(15) })], NYT);
+  assert.equal(yli.vuorotMyohassa, 1);
+});
+
+test('toisen kohteen unohtunut vuoro ei värjää tätä kohdetta', () => {
+  const vuorot = [vuoro({ id: 'v2', siteId: 'kohde2', paattyyArvio: hetki(60) })];
+  assert.equal(kohteenTilanne('kohde1', lahteilla({}), vuorot, NYT).vuorotMyohassa, 0);
+  assert.equal(kohteenTilanne('kohde1', lahteilla({}), vuorot, NYT).kiireys, 'rauhallinen');
+  assert.equal(kohteenTilanne('kohde2', lahteilla({}), vuorot, NYT).vuorotMyohassa, 1);
+});
+
+test('kellonajaton vuoro ei voi olla myöhässä', () => {
+  // Lisävuorolla ei ole päättymiskellonaikaa, joten palvelin ei anna määräaikaa. Ilman
+  // määräaikaa myöhästymistä ei ole olemassa — eikä sitä saa arvata vuoron pituudesta.
+  const tilanne = kohteenTilanne('kohde1', lahteilla({}), [
+    vuoro({ paattyyArvio: null }),
+    vuoro({ id: 'v3', paattyyArvio: undefined }),
+  ], NYT);
+  assert.equal(tilanne.vuorotMyohassa, 0);
+  assert.equal(tilanne.kiireys, 'rauhallinen');
+});
+
+test('useampi unohtunut vuoro lasketaan erikseen', () => {
+  const tilanne = kohteenTilanne('kohde1', lahteilla({}), [
+    vuoro({ id: 'v1', paattyyArvio: hetki(20) }),
+    vuoro({ id: 'v2', paattyyArvio: hetki(90) }),
+    vuoro({ id: 'v3', paattyyArvio: hetki(1) }),
+  ], NYT);
+  assert.equal(tilanne.vuorotMyohassa, 2);
+});
+
+test('unohtunut vuoro ei kumoa kriittistä tasoa', () => {
+  const tilanne = kohteenTilanne('kohde1', lahteilla({
+    halytykset: [halytys({ tila: 'lauennut', laukesi: hetki(2) })],
+  }), [vuoro({ paattyyArvio: hetki(60) })], NYT);
+  assert.equal(tilanne.kiireys, 'kriittinen');
+  assert.equal(tilanne.vuorotMyohassa, 1);
+});
+
+test('kello on parametri: sama vuoro ei ole myöhässä ennen määräaikaansa', () => {
+  // Sama tietue, kaksi eri hetkeä. Tämä on se vika jonka takia hälytyskeskuksen kello
+  // laitettiin tikittämään aina: pysähtyneellä kellolla vastaus on ikuisesti "ei".
+  const vuorot = [vuoro({ paattyyArvio: hetki(0) })];
+  assert.equal(kohteenTilanne('kohde1', lahteilla({}), vuorot, NYT).vuorotMyohassa, 0);
+  assert.equal(
+    kohteenTilanne('kohde1', lahteilla({}), vuorot, NYT + 20 * 60_000).vuorotMyohassa,
+    1
+  );
 });
 
 test('kentällä-lista kokoaa saman vartijan yhdeksi riviksi ja kertoo viimeisimmän työn', () => {
