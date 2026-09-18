@@ -155,21 +155,35 @@ const puhdistaLisatiedot = (laji, arvot) => {
 // Numero on juokseva LAJIN SISÄLLÄ ja lasketaan kaikista tietueista poistetut mukaan
 // lukien. Poistetun numeron uudelleenkäyttö antaisi kahdelle eri esineelle saman
 // kilpimerkin, ja vanhempi niistä on jo jonkun taskussa.
+//
+// NUMEROINTI ALKAA 1000:STA, samoin kuin holvipaikka ja henkilön tunnistenumero
+// (shared/tunnisteet.ts). Syy on sama: nelinumeroinen luku erottuu puheessa ja
+// paperilla järjestysnumerosta, eikä kukaan luule sitä riviksi listalla. "Tuo minulle
+// VKV-1005" on yksiselitteinen tavalla jolla "tuo minulle viides" ei ole.
+export const TUNNUKSEN_ALKU = 1000;
+
 export const muotoileTunnus = (laji, numero) =>
   `TJ-${LAJIT[laji]?.koodi || '???'}-${String(numero).padStart(4, '0')}`;
 
-export function seuraavaNumero(kalusto, laji) {
+// Tunnuksen numero-osa, tai null jos tunnus ei ole tämän lajin.
+export function tunnuksenNumero(tunnus, laji) {
   const koodi = LAJIT[laji]?.koodi;
-  if (!koodi) return 1;
+  if (!koodi) return null;
   const etuliite = `TJ-${koodi}-`;
+  const teksti = String(tunnus || '');
+  if (!teksti.startsWith(etuliite)) return null;
+  const numero = parseInt(teksti.slice(etuliite.length), 10);
+  return Number.isFinite(numero) ? numero : null;
+}
+
+export function seuraavaNumero(kalusto, laji) {
+  if (!LAJIT[laji]?.koodi) return TUNNUKSEN_ALKU;
   let suurin = 0;
   for (const esine of Array.isArray(kalusto) ? kalusto : []) {
-    const tunnus = String(esine?.tunnus || '');
-    if (!tunnus.startsWith(etuliite)) continue;
-    const numero = parseInt(tunnus.slice(etuliite.length), 10);
-    if (Number.isFinite(numero) && numero > suurin) suurin = numero;
+    const numero = tunnuksenNumero(esine?.tunnus, laji);
+    if (numero !== null && numero > suurin) suurin = numero;
   }
-  return suurin + 1;
+  return Math.max(suurin + 1, TUNNUKSEN_ALKU);
 }
 
 // --- Holvipaikka -------------------------------------------------------------------
@@ -769,4 +783,46 @@ export function paivitaAvaintyyppi({ tyyppi, muutokset, kartta = [] }) {
       uploadId: muutokset?.uploadId ? String(muutokset.uploadId) : tyyppi.uploadId,
     },
   };
+}
+
+// --- Numeroinnin kertaluontoinen siirto ----------------------------------------------
+//
+// Ennen numeroinnin nostoa kirjatut esineet alkavat ykkösestä (TJ-VKV-0005). Ne siirretään
+// samaan sarjaan lisäämällä tuhat, jolloin keskinäinen järjestys säilyy: 0005 -> 1005.
+//
+// TUNNUS ON PAINETTU KILPEEN. Siirto tekee jo tulostetuista kilvistä vanhentuneita, ja
+// niiden QR osoittaa tunnukseen jota ei enää ole — pankki sanoo sen ääneen ("Kilven
+// tunnusta ei löydy pankista"), mutta kilvet on tulostettava uudelleen. Siksi tämä on
+// kertaluontoinen: se koskee vain numeroita jotka ovat alle tuhannen, ja toisella ajolla
+// se ei tee mitään.
+//
+// Muutos jää HISTORIAAN kuten kaikki muukin. Rekisteri jonka tunnus vaihtuu jäljettömästi
+// ei kelpaa todisteeksi siitä mikä esine oli missäkin — ja juuri se on pankin ainoa syy.
+//
+// Rajaus: tämä ei korjaa muiden esineiden `sijoitusNimi`-tekstejä, joihin säilyttimen
+// tunnus on voitu upottaa ("Piiriauto 1 (TJ-AKP-0001)"). Ne ovat historiatekstiä eikä
+// viittauksia, eikä historiaa kirjoiteta uudelleen jälkikäteen.
+export function migroiTunnukset(kalusto, { user = null, nyt = Date.now() } = {}) {
+  const rivit = Array.isArray(kalusto) ? kalusto : [];
+  const muutetut = [];
+  let muutettuja = 0;
+
+  const tulos = rivit.map((esine) => {
+    const numero = tunnuksenNumero(esine?.tunnus, esine?.laji);
+    if (numero === null || numero >= TUNNUKSEN_ALKU) return esine;
+    const uusi = muotoileTunnus(esine.laji, numero + TUNNUKSEN_ALKU);
+    muutettuja += 1;
+    muutetut.push({ vanha: esine.tunnus, uusi });
+    return {
+      ...esine,
+      tunnus: uusi,
+      historia: lisaaHistoria(esine, merkinta(
+        'tunnusmuutos',
+        { user, teksti: `${esine.tunnus} -> ${uusi}` },
+        nyt
+      )),
+    };
+  });
+
+  return { muutettuja, muutetut, kalusto: muutettuja > 0 ? tulos : rivit };
 }

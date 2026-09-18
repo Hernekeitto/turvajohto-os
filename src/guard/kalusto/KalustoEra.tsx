@@ -22,7 +22,7 @@
 // sarkainerotettuna tekstinä — käyttäjä maalaa solut Excelissä, painaa Ctrl+C ja
 // liittää tähän. Sama lopputulos ilman yhtään tiedostomuotoa.
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Upload, X } from 'lucide-react';
+import { Copy, Plus, Trash2, Upload, X } from 'lucide-react';
 
 import { canEdit } from '../../shared/oikeudet';
 import { AvainkarttaNappi } from './Avainkartta';
@@ -171,6 +171,29 @@ export const KalustoEra = () => {
 
   const poistaRivi = (rivi: number) =>
     setRivit((edelliset) => (edelliset.length === 1 ? tyhjatRivit(1) : edelliset.filter((_, i) => i !== rivi)));
+
+  /**
+   * Rivin monistus. Kymmenen samanlaista S-kokoista takkia eroavat toisistaan vain
+   * tunnuksella, jonka palvelin antaa — kaiken muun kirjoittaminen kymmenesti on
+   * työtä jonka tulos on kymmenen kertaa sama rivi.
+   *
+   * SARJANUMERO JÄTETÄÄN POIS kopioista. Se on ainoa kenttä joka yksilöi esineen, ja
+   * kymmenen riviä samalla sarjanumerolla on rekisterissä pahempi virhe kuin tyhjä
+   * kenttä: tyhjän huomaa, päällekkäisen ei. Sumuttimen numero kirjoitetaan siis yhä
+   * käsin, takissa sellaista ei ole.
+   *
+   * Kopiot tulevat heti lähderivin perään eivätkä taulukon loppuun, jotta ne pysyvät
+   * silmissä yhdessä sen kanssa mistä ne tulivat.
+   */
+  const monista = (rivi: number, kertaa: number) => setRivit((edelliset) => {
+    const lahde = edelliset[rivi];
+    if (!lahde) return edelliset;
+    const kopio = { ...lahde, sarjanumero: '', lisatiedot: { ...lahde.lisatiedot } };
+    const kopiot = Array.from({ length: kertaa }, () => ({
+      ...kopio, lisatiedot: { ...kopio.lisatiedot },
+    }));
+    return [...edelliset.slice(0, rivi + 1), ...kopiot, ...edelliset.slice(rivi + 1)];
+  });
 
   /**
    * Lajin vaihto. PERUSTIEDOT SÄILYVÄT ja lajikohtaiset tyhjenevät: nimi ja tyyppi ovat
@@ -343,7 +366,8 @@ export const KalustoEra = () => {
           <p className="text-sm text-ink-body mt-2 inline-flex items-center gap-2">
             <Upload size={15} className="text-ink-muted" />
             Voit maalata alueen Excelissä ja liittää sen suoraan taulukkoon. Rivejä
-            lisätään automaattisesti.
+            lisätään automaattisesti. Samanlaisia esineitä varten monista täytetty rivi
+            rivin lopun painikkeella — sarjanumero jää kopioissa tyhjäksi.
           </p>
         </div>
 
@@ -404,7 +428,12 @@ export const KalustoEra = () => {
                     </span>
                   </th>
                 ))}
-                <th className="w-10" />
+                <th className="w-28 text-left px-2 py-2">
+                  <span className="inline-flex items-center gap-1">
+                    <Copy size={12} />
+                    Monista
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line-soft">
@@ -441,14 +470,31 @@ export const KalustoEra = () => {
                     </td>
                   ))}
                   <td className="px-1 py-1">
-                    <button
-                      type="button"
-                      onClick={() => poistaRivi(r)}
-                      aria-label={`Tyhjennä rivi ${r + 1}`}
-                      className="p-1.5 rounded text-ink-subtle hover:text-danger-ink hover:bg-danger-soft"
-                    >
-                      <Trash2 size={15} />
-                    </button>
+                    <div className="flex items-center gap-0.5">
+                      {/* Monistus näkyy vain täytetyllä rivillä: tyhjän rivin kopiointi
+                          tuottaisi tyhjiä rivejä, ja painike jota ei voi käyttää
+                          järkevästi on häiriö jokaisella rivillä. */}
+                      {!onTyhja(rivi) && [5, 10].map((kertaa) => (
+                        <button
+                          key={kertaa}
+                          type="button"
+                          onClick={() => monista(r, kertaa)}
+                          aria-label={`Monista rivi ${r + 1} ${kertaa} kertaa`}
+                          title={`Monista tämä rivi ${kertaa} kertaa (sarjanumero jää tyhjäksi)`}
+                          className="px-1.5 py-1 rounded text-xs font-bold text-ink-subtle hover:text-accent hover:bg-sunken"
+                        >
+                          +{kertaa}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => poistaRivi(r)}
+                        aria-label={`Tyhjennä rivi ${r + 1}`}
+                        className="p-1.5 rounded text-ink-subtle hover:text-danger-ink hover:bg-danger-soft"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

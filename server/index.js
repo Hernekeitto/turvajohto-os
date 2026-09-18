@@ -6093,9 +6093,35 @@ function kasitteleKanavaViesti(istunto, viesti) {
   tarkistaVyohykkeet(istunto, edellinen, tietue);
 }
 
+// Kalustotunnusten numeroinnin siirto tuhannen sarjaan (kalusto.js: migroiTunnukset).
+//
+// KÄYNNISTYKSESSÄ eikä skriptinä, koska ajo on tehtävä jokaisessa asennuksessa eikä
+// vain siinä yhdessä johon joku muistaa kirjautua. Ajo on idempotentti: se koskee vain
+// alle tuhannen numeroita, joten toisella kerralla se ei tee mitään eikä kirjoita
+// levylle.
+//
+// Lokirivi on tarkoituksellinen. Tunnus on painettu kilpeen, ja sen vaihtuminen on
+// asia joka pitää näkyä julkaisun lokissa — ei jotain mikä tapahtuu hiljaa.
+function siirraKalustonNumerointi() {
+  const pankki = readCollection('assets') || [];
+  if (pankki.length === 0) return;
+  const tulos = kalusto.migroiTunnukset(pankki, { user: 'jarjestelma' });
+  if (tulos.muutettuja === 0) return;
+  writeCollection('assets', tulos.kalusto);
+  for (const { vanha, uusi } of tulos.muutetut) {
+    logAudit({ user: 'jarjestelma', action: 'asset_renumber', collection: 'assets', detail: `${vanha} -> ${uusi}` });
+  }
+  console.log(
+    `kalusto: ${tulos.muutettuja} tunnusta siirretty tuhannen sarjaan `
+    + '(vanhat kilvet on tulostettava uudelleen)'
+  );
+}
+
 const palvelin = app.listen(PORT, '127.0.0.1', () => {
   console.log(`turvajohto-os-server kuuntelee portissa ${PORT}`);
   liitaKanava(palvelin, { tunnista: tunnistaKanava, onViesti: kasitteleKanavaViesti });
+
+  siirraKalustonNumerointi();
 
   // Webhook-jonon purku. 5 s on kompromissi: tarpeeksi tiheä että toimitustilat
   // näkyvät käyttöliittymässä käytännössä heti, mutta harvempi kuin kuittausten

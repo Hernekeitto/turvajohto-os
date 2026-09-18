@@ -61,15 +61,18 @@ export const KilpiEsikatselu = ({ kilvet, lataa, virhe, onTulosta, onSulje }: Pr
             {kilvet.map((kilpi) => (
               <div key={kilpi.tunnus} className="text-center">
                 <div className="border-2 border-ink-strong rounded-lg p-3 flex flex-col items-center bg-white">
-                  <span className="text-[8px] uppercase tracking-widest text-slate-900 mb-1">
-                    Turvajohto OS
+                  {/* Esikatselu jäljittelee tulostetta: nimi ylhäällä, QR keskellä,
+                      tunnus alla. Kaksi riviä nimelle ja ylivuoto piiloon, kuten
+                      tulosteessakin — muuten esikatselu näyttäisi mahtuvan sellaista
+                      mikä ei kilpeen mahdu. */}
+                  <span className="text-[10px] font-semibold text-slate-900 mb-1 leading-tight line-clamp-2 break-words">
+                    {kilpi.nimi}
                   </span>
                   {kilpi.qrDataUri
                     ? <img src={kilpi.qrDataUri} alt="" className="w-20 h-20" />
                     : <div className="w-20 h-20 bg-slate-100 rounded flex items-center justify-center text-[10px] text-slate-500">ei koodia</div>}
                   <span className="font-mono text-xs font-bold text-slate-900 mt-1">{kilpi.tunnus}</span>
                 </div>
-                <p className="text-[11px] text-ink-muted mt-1 leading-tight">{kilpi.nimi}</p>
               </div>
             ))}
           </div>

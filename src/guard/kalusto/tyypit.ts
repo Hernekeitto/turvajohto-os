@@ -82,6 +82,7 @@ export const TILAN_SELITE: Record<KalustonTila, string> = {
   huollossa: 'Huollossa',
   kadonnut: 'Kadonnut',
   poistettu: 'Poistettu käytöstä',
+  tunnusmuutos: 'Tunnus vaihtui',
 };
 
 export const TILAN_VARI: Record<KalustonTila, string> = {

@@ -297,16 +297,20 @@ const KILPIMERKKI_TYYLIT = `
   .solu { page-break-inside: avoid; }
   .kilpimerkki { border: 0.8mm solid #000; border-radius: 4mm; padding: 3mm 2mm 2mm;
     text-align: center; display: flex; flex-direction: column; align-items: center; }
-  .kilpimerkki .tuote { font-size: 6pt; letter-spacing: .1em; text-transform: uppercase;
-    color: #000; margin-bottom: 1.5mm; }
+  /* Esineen nimi kilven ylareunassa, QR:n ylapuolella. Nimi eika tuotemerkki: kilpea
+     luetaan kadessa olevasta esineesta, ja "mika tama on" on kysymys johon nimi
+     vastaa. Yrityksen nimi ei kerro yhdesta esineesta mitaan.
+
+     Kahteen riviin mahtuva korkeus ja ylivuodon leikkaus: pitka nimi ei saa tyontaa
+     QR-koodia ulos kilvesta, koska koodi on se osa joka on pakko toimia. */
+  .kilpimerkki .nimi { font-size: 7.5pt; font-weight: 600; line-height: 1.2;
+    color: #000; margin-bottom: 1.5mm; max-width: 100%; overflow-wrap: anywhere;
+    max-height: 2.4em; overflow: hidden; }
   .kilpimerkki img { display: block; width: 26mm; height: 26mm; }
   /* Tunnus on monospacella ja isolla: se luetaan silmin ja syötetään käsin silloin kun
      koodi on naarmuuntunut. Sen on kestettävä kulumista paremmin kuin QR:n. */
   .kilpimerkki .tunnus { font-family: ui-monospace, "Courier New", monospace;
     font-size: 10pt; font-weight: 700; letter-spacing: .04em; margin-top: 1.5mm; }
-  /* Esineen nimi jää kilven ULKOPUOLELLE leikkuujätteeseen: kilpi on pieni, ja nimi
-     muuttuu ("Talvitakki L" -> "Talvitakki L, Virtanen") vaikka tunnus ei muutu. */
-  .nimi { font-size: 7.5pt; color: #444; text-align: center; margin-top: 1.5mm; line-height: 1.25; }
   .otsikko { grid-column: 1 / -1; border-bottom: 2px solid #000; padding-bottom: 3mm; margin-bottom: 2mm; }
   .otsikko h1 { font-size: 14pt; margin: 0; }
   .otsikko p { font-size: 9pt; color: #444; margin: 1mm 0 0; }
@@ -333,16 +337,15 @@ export const kilpimerkkiDokumentti = ({ kilvet }: { kilvet: TulostettavaKilpimer
   <div class="otsikko">
     <h1>Kalustokilvet</h1>
     <p>${kilvet.length} ${kilvet.length === 1 ? 'kilpi' : 'kilpeä'} · leikkaa reunaviivaa pitkin</p>
-    <p>Tarkista tunnus ennen kiinnitystä. Esineen nimi jää leikkuujätteeseen — kilvessä on
-    vain tunnus, koska nimi muuttuu ja tunnus ei.</p>
+    <p>Tarkista tunnus ennen kiinnitystä. Kilvessä on esineen nimi ja tunnus: nimi kertoo
+    mikä esine on kädessä, tunnus yksilöi sen silloinkin kun nimi muuttuu.</p>
   </div>
   ${kilvet.map((k) => `<div class="solu">
     <div class="kilpimerkki">
-      <div class="tuote">Turvajohto OS</div>
+      <div class="nimi">${htmlTeksti(k.nimi)}</div>
       ${k.qrDataUri ? `<img src="${htmlTeksti(k.qrDataUri)}" alt="">` : ''}
       <div class="tunnus">${htmlTeksti(k.tunnus)}</div>
     </div>
-    <div class="nimi">${htmlTeksti(k.nimi)}</div>
   </div>`).join('')}
 </div></body></html>`;
 

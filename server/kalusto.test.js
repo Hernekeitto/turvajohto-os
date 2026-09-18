@@ -17,6 +17,7 @@ import {
   palautaKayttoon, poistaKaytosta, avoimetPyynnot, kadonneet, sijoitetut, vuoronKalusto,
   HOLVIPAIKKA_ALKU, seuraavaHolviPaikka, holviPaikkaVarattu, normalisoiSijoitusLaji,
   normalisoiRivit, luoAvaintyyppi, paivitaAvaintyyppi,
+  TUNNUKSEN_ALKU, tunnuksenNumero, migroiTunnukset,
 } from './kalusto.js';
 
 const T0 = Date.parse('2026-09-14T09:00:00Z');
@@ -53,20 +54,44 @@ test('tunniste on lajikohtainen ja juokseva', () => {
 
 test('numerointi jatkuu lajin sisalla eika sekoitu muihin lajeihin', () => {
   const pankki = [
-    { tunnus: 'TJ-ASU-0001' }, { tunnus: 'TJ-ASU-0007' }, { tunnus: 'TJ-AVA-0042' },
+    { tunnus: 'TJ-ASU-1001', laji: 'asuste' },
+    { tunnus: 'TJ-ASU-1007', laji: 'asuste' },
+    { tunnus: 'TJ-AVA-1042', laji: 'avain' },
   ];
-  assert.equal(seuraavaNumero(pankki, 'asuste'), 8);
-  assert.equal(seuraavaNumero(pankki, 'avain'), 43);
-  assert.equal(seuraavaNumero(pankki, 'ase'), 1);
+  assert.equal(seuraavaNumero(pankki, 'asuste'), 1008);
+  assert.equal(seuraavaNumero(pankki, 'avain'), 1043);
+  // Laji jolle ei ole kirjattu mitaan alkaa sarjan alusta eika ykkosesta.
+  assert.equal(seuraavaNumero(pankki, 'ase'), TUNNUKSEN_ALKU);
+  assert.equal(seuraavaNumero([], 'asuste'), TUNNUKSEN_ALKU);
+});
+
+test('vanha alle tuhannen numero ei pudota sarjaa takaisin alkuun', () => {
+  // Siirtymavaiheessa pankissa voi olla seka vanhoja etta uusia numeroita. Seuraava
+  // on suurin + 1, mutta ei koskaan alle sarjan alun — muuten uusi esine saisi
+  // numeron joka on jo painettu johonkin kilpeen.
+  assert.equal(seuraavaNumero([{ tunnus: 'TJ-ASU-0007', laji: 'asuste' }], 'asuste'), TUNNUKSEN_ALKU);
+  assert.equal(
+    seuraavaNumero([{ tunnus: 'TJ-ASU-0007' }, { tunnus: 'TJ-ASU-1003' }], 'asuste'),
+    1004
+  );
+});
+
+test('tunnuksenNumero lukee vain oman lajin tunnuksia', () => {
+  assert.equal(tunnuksenNumero('TJ-ASU-1005', 'asuste'), 1005);
+  assert.equal(tunnuksenNumero('TJ-ASU-1005', 'avain'), null);
+  assert.equal(tunnuksenNumero('roskaa', 'asuste'), null);
+  assert.equal(tunnuksenNumero('', 'asuste'), null);
 });
 
 test('poistetun tunniste EI vapaudu uudelleenkayttoon', () => {
   // Poistettu esine on yhä rivinä pankissa, ja numerointi lukee sen. Jos numero
   // vapautuisi, kaksi eri esinettä kantaisi samaa kilpimerkkiä — ja vanhempi niistä on
   // jo jonkun taskussa.
-  const poistettu = poistaKaytosta({ esine: esine(), user: 'paakayttaja', syy: 'Repesi', nyt: T0 }).esine;
+  const kaytossa = luo({ numero: 1005 }).esine;
+  const poistettu = poistaKaytosta({ esine: kaytossa, user: 'paakayttaja', syy: 'Repesi', nyt: T0 }).esine;
   assert.equal(poistettu.tila, 'poistettu');
-  assert.equal(seuraavaNumero([poistettu], 'asuste'), 2);
+  assert.equal(poistettu.tunnus, 'TJ-ASU-1005');
+  assert.equal(seuraavaNumero([poistettu], 'asuste'), 1006);
 });
 
 // --- Luonti -----------------------------------------------------------------------
@@ -683,4 +708,57 @@ test('maarapaivan korjaus tarkistetaan myos muokkauksessa', () => {
   });
   assert.equal(hyva.ok, true);
   assert.equal(hyva.esine.lisatiedot.maarapaiva, '2028-05-01');
+});
+
+// --- Numeroinnin siirto --------------------------------------------------------------
+//
+// Kertaluontoinen ajo joka nostaa vanhat numerot samaan sarjaan uusien kanssa. Kaksi
+// asiaa on pakko pitää: järjestys ei saa sekoittua, eikä ajo saa tehdä mitään toisella
+// kerralla. Jälkimmäinen siksi, että ajo tapahtuu palvelimen käynnistyksessä — ja
+// palvelin käynnistyy uudelleen joka julkaisussa.
+
+test('vanhat tunnukset siirtyvat tuhannen sarjaan jarjestys sailyttaen', () => {
+  const pankki = [
+    { tunnus: 'TJ-VKV-0005', laji: 'voimankayttovaline', historia: [] },
+    { tunnus: 'TJ-AVA-0001', laji: 'avain', historia: [] },
+    { tunnus: 'TJ-AVA-0004', laji: 'avain', historia: [] },
+  ];
+  const tulos = migroiTunnukset(pankki, { user: 'jarjestelma', nyt: T0 });
+  assert.equal(tulos.muutettuja, 3);
+  assert.deepEqual(
+    tulos.kalusto.map((e) => e.tunnus),
+    ['TJ-VKV-1005', 'TJ-AVA-1001', 'TJ-AVA-1004']
+  );
+});
+
+test('toinen ajo ei tee mitaan', () => {
+  // Palvelin käynnistyy uudelleen joka julkaisussa. Jos ajo lisäisi joka kerta tuhat,
+  // tunnukset karkaisivat ja jokainen tulostettu kilpi vanhenisi julkaisun välein.
+  const pankki = [{ tunnus: 'TJ-VKV-0005', laji: 'voimankayttovaline', historia: [] }];
+  const eka = migroiTunnukset(pankki, { nyt: T0 });
+  const toka = migroiTunnukset(eka.kalusto, { nyt: T0 });
+  assert.equal(toka.muutettuja, 0);
+  assert.equal(toka.kalusto[0].tunnus, 'TJ-VKV-1005');
+  // Sama tietue takaisin, ei kopiota: turha kirjoitus levylle on turha kirjoitus.
+  assert.equal(toka.kalusto, eka.kalusto);
+});
+
+test('siirto jattaa historiarivin', () => {
+  // Tunnus on rekisterin yksilöivä tieto. Jos se vaihtuu jäljettömästi, vanhaa kilpeä
+  // kantavaa esinettä ei voi enää yhdistää tietueeseensa.
+  const pankki = [{ tunnus: 'TJ-VKV-0005', laji: 'voimankayttovaline', historia: [] }];
+  const { kalusto } = migroiTunnukset(pankki, { user: 'jarjestelma', nyt: T0 });
+  const rivi = kalusto[0].historia.at(-1);
+  assert.equal(rivi.tapahtuma, 'tunnusmuutos');
+  assert.equal(rivi.teksti, 'TJ-VKV-0005 -> TJ-VKV-1005');
+  assert.equal(rivi.user, 'jarjestelma');
+});
+
+test('siirto ei koske tuntemattomaan tai rikkinaiseen tunnukseen', () => {
+  const pankki = [
+    { tunnus: 'TJ-XXX-0001', laji: 'eiOle', historia: [] },
+    { tunnus: 'roskaa', laji: 'asuste', historia: [] },
+  ];
+  const tulos = migroiTunnukset(pankki, { nyt: T0 });
+  assert.equal(tulos.muutettuja, 0);
 });
