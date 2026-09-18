@@ -3174,8 +3174,20 @@ const puhdasAika = (arvo) => (/^\d{1,2}:\d{2}$/.test(String(arvo ?? '').trim())
   ? String(arvo).trim()
   : undefined);
 
+// Suunniteltu kesto minuutteina. Null on sallittu arvo (kentän tyhjennys), undefined ei
+// tarkoita mitään syötettä. Ilman ylärajaa vahinkonollien lisääminen ("450" tarkoitettu
+// "45") näyttäisi vartijalle yhtä mielettömältä luvulta kuin vika jota tämä kenttä korjaa.
+const puhdasKesto = (arvo) => {
+  if (arvo === null) return null;
+  const n = Number(arvo);
+  return Number.isFinite(n) && n > 0 && n <= 1440 ? Math.round(n) : null;
+};
+
 app.post('/api/pohjat', requireAuth, (req, res) => {
-  const { kind, ownerId, nimi, kuvaus, pisteet, kohdat, sijaintiPakotus, sietorajaM, suoritusaika } = req.body || {};
+  const {
+    kind, ownerId, nimi, kuvaus, pisteet, kohdat, sijaintiPakotus, sietorajaM, suoritusaika,
+    suunniteltuKestoMin,
+  } = req.body || {};
   if (!onTunnettuLaji(kind)) {
     return res.status(400).json({ ok: false, error: 'Tuntematon pohjalaji.' });
   }
@@ -3231,6 +3243,7 @@ app.post('/api/pohjat', requireAuth, (req, res) => {
     // kierros on suunniteltu ajettavaksi ja järjestää työlistan. Poikkeamasta jää keltainen
     // merkintä vuoron koosteeseen (server/kooste.js), ei estettä.
     pohja.suoritusaika = puhdasAika(suoritusaika);
+    pohja.suunniteltuKestoMin = puhdasKesto(suunniteltuKestoMin);
   } else {
     const kohtaTulos = tarkistaKohdat(kohdat, kind);
     if (!kohtaTulos.ok) return res.status(400).json({ ok: false, error: kohtaTulos.error });
@@ -3281,6 +3294,9 @@ app.put('/api/pohjat/:id', requireAuth, (req, res) => {
     paivitetty.suoritusaika = req.body?.suoritusaika === undefined
       ? vanha.suoritusaika
       : puhdasAika(req.body.suoritusaika);
+    paivitetty.suunniteltuKestoMin = req.body?.suunniteltuKestoMin === undefined
+      ? vanha.suunniteltuKestoMin
+      : puhdasKesto(req.body.suunniteltuKestoMin);
   } else {
     const kohtaTulos = tarkistaKohdat(req.body?.kohdat ?? vanha.kohdat, vanha.kind);
     if (!kohtaTulos.ok) return res.status(400).json({ ok: false, error: kohtaTulos.error });

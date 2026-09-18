@@ -10,7 +10,7 @@ type KenttaProps = {
   onChange: (arvo: string) => void;
   placeholder?: string;
   monirivinen?: boolean;
-  tyyppi?: 'text' | 'date' | 'time' | 'tel';
+  tyyppi?: 'text' | 'date' | 'time' | 'tel' | 'number';
   vinkki?: string;
 };
 

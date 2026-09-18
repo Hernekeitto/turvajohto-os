@@ -63,6 +63,7 @@ type Luonnos = {
   sijaintiPakotus: boolean;
   sietorajaM: string;
   suoritusaika: string;
+  suunniteltuKestoMin: string;
 };
 
 const tyhjaLuonnos = (): Luonnos => ({
@@ -73,6 +74,7 @@ const tyhjaLuonnos = (): Luonnos => ({
   sijaintiPakotus: false,
   sietorajaM: '100',
   suoritusaika: '',
+  suunniteltuKestoMin: '',
 });
 
 const luonnosPohjasta = (pohja: Kierrospohja): Luonnos => ({
@@ -84,6 +86,7 @@ const luonnosPohjasta = (pohja: Kierrospohja): Luonnos => ({
   sijaintiPakotus: pohja.sijaintiPakotus === true,
   sietorajaM: String(pohja.sietorajaM ?? 100),
   suoritusaika: pohja.suoritusaika || '',
+  suunniteltuKestoMin: pohja.suunniteltuKestoMin ? String(pohja.suunniteltuKestoMin) : '',
 });
 
 export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTakaisin }: Props) => {
@@ -174,6 +177,9 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
         sijaintiPakotus: luonnos.sijaintiPakotus,
         sietorajaM: Number(luonnos.sietorajaM) || 100,
         suoritusaika: luonnos.suoritusaika,
+        suunniteltuKestoMin: luonnos.suunniteltuKestoMin.trim() === ''
+          ? null
+          : Number(luonnos.suunniteltuKestoMin),
       };
       const res = await fetch(luonnos.id ? `/api/pohjat/${encodeURIComponent(luonnos.id)}` : '/api/pohjat', {
         method: luonnos.id ? 'PUT' : 'POST',
@@ -311,6 +317,19 @@ export const Kierrospohjat = ({ kohde, pohjat, saaMuokata, onTallennettu, onTaka
               onChange={(v) => setLuonnos({ ...luonnos, suoritusaika: v })}
               tyyppi="time"
               vinkki="Milloin kierros on suunniteltu ajettavaksi. Ei estä ajamista muuna aikana — poikkeamasta jää merkintä vuoron koosteeseen."
+            />
+            {/* Kesto EI ole sama asia kuin suoritusaika yllä: tuo kertoo milloin, tämä
+                kuinka kauan. Näkyy vartijalle kierroksen kortilla kesken olevan
+                kierroksen lukuna, jotta luvulla on aina sama, ennalta tiedetty merkitys —
+                ilman tätä kortti näytti kuluneet minuutit kierroksen alusta, joka
+                unohtuneella kierroksella kasvaa mielettömän suureksi. */}
+            <Kentta
+              label="Suunniteltu kesto minuutteina (valinnainen)"
+              arvo={luonnos.suunniteltuKestoMin}
+              onChange={(v) => setLuonnos({ ...luonnos, suunniteltuKestoMin: v })}
+              tyyppi="number"
+              placeholder="Esimerkiksi: 45"
+              vinkki="Kuinka kauan tämän kierroksen tekemiseen on suunniteltu menevän. Näytetään vartijalle esimerkkiaikana — ei rajoita eikä mittaa mitään."
             />
             <Kentta
               label="Kuvaus (valinnainen)"

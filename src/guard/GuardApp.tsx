@@ -2291,6 +2291,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           saaKiertaa={saaKiertaa}
           onPaivita={paivitaKierros}
           onTakaisin={() => setKierrosKohde(null)}
+          // Siirto koskee vain omaa käynnissä olevaa vuoroa TÄSSÄ kohteessa — ei
+          // esimiehen selailemaa toista kohdetta, jossa "siirrä toiselle vartijalle"
+          // ei tarkoittaisi mitään (kenen vuorosta?).
+          vuoroKaynnissa={!!palvelimenVuoro && vuoroKohde?.id === kierrosKohde.id}
+          vuoronPohjaIdt={vuoroKohde?.id === kierrosKohde.id
+            ? (palvelimenVuoro?.pohjat || []).map((x) => x.id)
+            : []}
+          onSiirra={avaaSiirto}
         />
       ) : pohjaKohde ? (
         <Kierrospohjat
@@ -2372,7 +2380,6 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             siirrot={siirrot}
             siirtoVastataan={siirtoVastataan}
             onVastaaSiirtoon={vastaaSiirtoPyyntoon}
-            onSiirra={avaaSiirto}
             kohde={vuoroKohde}
             pohjat={pohjat}
             kierrokset={kierrokset}

@@ -4,10 +4,13 @@
 // kysymykseen — mitä minun pitää nyt tehdä — eikä siinä ole navigaatiota muuhun:
 // kaikki muu on sivuvalikossa.
 //
-// KORTIN OIKEASSA REUNASSA OLEVA LUKU. Kesken olevalla kierroksella se on kuluneet
-// minuutit, aloittamattomalla tarkistuspisteiden määrä. Molemmissa on lyhyt selite
-// numeron alla, koska pelkkä numero kortilla on arvoitus — ja arvoitus kentällä on
-// pahempi kuin puuttuva tieto.
+// KORTIN OIKEASSA REUNASSA OLEVA LUKU. Aloittamattomalla kierroksella se on
+// tarkistuspisteiden määrä. Kesken olevalla se on kierrospohjaan merkitty suunniteltu
+// kesto (Kierrospohjat-hallinnasta), koska sillä on kiinteä ja ennalta tiedetty
+// merkitys — ilman merkittyä kestoa näytetään kuluneet minuutit kierroksen alusta, mikä
+// unohtuneella kierroksella kasvaa mielettömän suureksi eikä kerro vartijalle mitään
+// käyttökelpoista. Molemmissa on lyhyt selite numeron alla, koska pelkkä numero
+// kortilla on arvoitus — ja arvoitus kentällä on pahempi kuin puuttuva tieto.
 import { useState } from 'react';
 import {
   AlertTriangle, ArrowRightLeft, Check, ClipboardCheck, Route, Search, Siren, Timer, X,
@@ -37,7 +40,6 @@ type Props = {
   siirrot: OmatSiirrot;
   siirtoVastataan: boolean;
   onVastaaSiirtoon: (id: string, hyvaksy: boolean) => void;
-  onSiirra: (laji: 'tehtava' | 'kierros', id: string, nimi: string) => void;
   pohjat: Kierrospohja[];
   kierrokset: KierrosTietue[];
   halytykset: Halytys[];
@@ -80,7 +82,7 @@ export const MobiiliEtusivu = ({
   pohjat, kierrokset, halytykset, suoritukset, sallitut,
   halytystehtavat, kayttaja, onHalytystehtava,
   siirrot, siirtoVastataan,
-  onKierros, onTehtavat, onHalytykset, onLisaaVuoroon, onVastaaSiirtoon, onSiirra,
+  onKierros, onTehtavat, onHalytykset, onLisaaVuoroon, onVastaaSiirtoon,
 }: Props) => {
   const [hakemistoAuki, setHakemistoAuki] = useState(false);
   const vuoroon = new Set(vuoronPohjaIdt);
@@ -114,6 +116,11 @@ export const MobiiliEtusivu = ({
     .sort((a, b) => (Number(tehtyTanaan.has(a.id)) - Number(tehtyTanaan.has(b.id)))
       || (Number(vuoroon.has(b.id)) - Number(vuoroon.has(a.id)))
       || aikaJarjestys(a.suoritusaika).localeCompare(aikaJarjestys(b.suoritusaika)));
+  // Etusivun korttilista näyttää vain vuorolle Vuorot-välilehdellä määritetyt kierrokset
+  // (käyttäjän päätös 18.9.2026) — ei koko kohteen kierrospohjia. `omatPohjat` pysyy
+  // kohteen täytenä listana, koska hakemisto (alempana) tarjoaa juuri ne jotka TÄSTÄ
+  // listasta puuttuvat.
+  const vuoronPohjat = omatPohjat.filter((p) => vuoroon.has(p.id));
   const avoimet = halytykset.filter(
     (h) => h.eventId === kohde.id && (h.tila === 'lauennut' || h.tila === 'kaynnissa')
   );
@@ -141,7 +148,7 @@ export const MobiiliEtusivu = ({
 
   const tyhja =
     halytystehtavat.length === 0 &&
-    (!sallitut.kierrokset || omatPohjat.length === 0) &&
+    (!sallitut.kierrokset || vuoronPohjat.length === 0) &&
     (!sallitut.tehtavat || tehtavat.length === 0) &&
     avoimet.length === 0;
 
@@ -229,17 +236,19 @@ export const MobiiliEtusivu = ({
         </div>
       ))}
 
-      {sallitut.kierrokset && omatPohjat.map((pohja) => {
-        const kuuluuVuoroon = vuoroon.has(pohja.id);
+      {sallitut.kierrokset && vuoronPohjat.map((pohja) => {
         const kesken = omatKierrokset.find((k) => k.templateId === pohja.id && k.tila === 'kesken') || null;
         const viimeisin = omatKierrokset
           .filter((k) => k.templateId === pohja.id && k.tila !== 'kesken')
           .sort((a, b) => String(b.paattyi).localeCompare(String(a.paattyi)))[0];
         const pisteita = kesken ? kesken.pisteet.length : pohja.pisteet.length;
         const kuitattu = kesken ? kesken.pisteet.filter((p) => p.kuitattu).length : 0;
+        // Siirrä toiselle vartijalle -painike on kierroksen sisäisessä näkymässä
+        // (Kierros.tsx), ei täällä (käyttäjän päätös 18.9.2026): kortti on vuoron
+        // työlista, ei siirtojen paikka.
         return (
-          <div key={pohja.id}>
           <button
+            key={pohja.id}
             type="button"
             onClick={onKierros}
             className={`w-full text-left rounded-xl border p-4 flex items-start gap-3 transition-colors ${
@@ -253,13 +262,6 @@ export const MobiiliEtusivu = ({
                 <Route size={18} className="text-accent shrink-0" />
                 <span className="min-w-0 break-words">{pohja.nimi}</span>
               </span>
-              {kuuluuVuoroon && (
-                /* Merkintä eikä pelkkä järjestys: lista järjestyy myös sattumalta, eikä
-                   vartija voi tietää kumpi se oli. */
-                <span className="inline-block mt-1.5 text-sm font-medium text-accent">
-                  Kuuluu vuoroon
-                </span>
-              )}
               <span className="block text-base text-ink-body mt-2">
                 {kesken
                   ? `Aloitettu klo ${kello(kesken.alkoi)}`
@@ -279,27 +281,15 @@ export const MobiiliEtusivu = ({
               </span>
             </span>
             <Luku
-              arvo={kesken ? minuutteja(kesken.alkoi) : pisteita}
-              selite={kesken ? 'min' : 'pistettä'}
+              arvo={kesken
+                ? (pohja.suunniteltuKestoMin ?? minuutteja(kesken.alkoi))
+                : pisteita}
+              selite={kesken
+                ? (pohja.suunniteltuKestoMin ? 'suunn. min' : 'min')
+                : 'pistettä'}
               korostus={!!kesken}
             />
           </button>
-
-          {/* Siirto vain vuoron omista kierroksista ja vain kun vuoro on käynnissä:
-              siirtää voi vain omasta vuorostaan, ja palvelin valvoo saman säännön.
-              Kesken olevaa kierrosta ei siirretä — se on jo aloitettu, ja puolikkaan
-              kierroksen luovuttaminen jättäisi kuittaukset kahden vartijan nimiin. */}
-          {vuoroKaynnissa && kuuluuVuoroon && !kesken && (
-            <button
-              type="button"
-              onClick={() => onSiirra('kierros', pohja.id, pohja.nimi)}
-              className="mt-1 ml-1 inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-accent"
-            >
-              <ArrowRightLeft size={14} />
-              Siirrä toiselle vartijalle
-            </button>
-          )}
-          </div>
         );
       })}
 

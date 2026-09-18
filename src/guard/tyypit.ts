@@ -306,6 +306,12 @@ export type Kierrospohja = {
   // Poikkeamasta jää keltainen merkintä vuoron koosteeseen, ja siinäkin on liukuma
   // (server/kooste.js). Merkintä on tieto jälkikäteen, ei este etukäteen.
   suoritusaika?: string;
+  // Suunniteltu kesto minuutteina (käyttäjän päätös 18.9.2026). ERI ASIA kuin
+  // suoritusaika: tämä ei kerro MILLOIN vaan KUINKA KAUAN. Näkyy vartijalle kierroksen
+  // kortilla kesken olevan kierroksen lukuna — ilman tätä sama paikka näytti kuluneet
+  // minuutit kierroksen alusta, mikä unohtuneella kierroksella kasvaa mielivaltaisen
+  // suureksi eikä kerro vartijalle mitään käyttökelpoista.
+  suunniteltuKestoMin?: number | null;
   luotu?: string;
   luoja?: string;
   muokattu?: string;

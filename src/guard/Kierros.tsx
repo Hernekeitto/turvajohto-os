@@ -10,7 +10,9 @@
 // tallennuspainikkeet muualla sovelluksessa: painikkeen katoaminen ei kerro käyttäjälle
 // mitään, virheteksti kertoo.
 import { useEffect, useState } from 'react';
-import { Play, Check, MapPin, CircleAlert, Flag, Ban, QrCode, ScanBarcode } from 'lucide-react';
+import {
+  Play, Check, MapPin, CircleAlert, Flag, Ban, QrCode, ScanBarcode, ArrowRightLeft,
+} from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { kuunteleJonoa, lisaaJonoon } from '../shared/jono';
@@ -25,20 +27,19 @@ type Props = {
   // päivittää listansa niillä.
   onPaivita: (kierros: KierrosTietue) => void;
   onTakaisin: () => void;
+  // Siirto (erä 18, siirretty tähän näkymään käyttäjän päätöksellä 18.9.2026). Kolme
+  // valinnaista propsia, koska tämä näkymä avataan myös esimiehen selatessa TOISTA
+  // kohdetta, jossa "siirrä toiselle vartijalle" ei tarkoittaisi mitään — silloin
+  // vuoroKaynnissa on false eikä painiketta näytetä.
+  vuoroKaynnissa?: boolean;
+  vuoronPohjaIdt?: string[];
+  onSiirra?: (laji: 'tehtava' | 'kierros', id: string, nimi: string) => void;
 };
 
 const kello = (iso?: string | null) => {
   if (!iso) return '';
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
-};
-
-const paiva = (iso?: string | null) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('fi-FI', {
-    day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
 };
 
 // Sijainti kuittaukseen. Palautetaan aina — myös null — jottei kuittaus jää tekemättä
@@ -54,7 +55,10 @@ const haeSijainti = (): Promise<{ lat: number; lon: number } | null> =>
     );
   });
 
-export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTakaisin }: Props) => {
+export const Kierros = ({
+  kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTakaisin,
+  vuoroKaynnissa = false, vuoronPohjaIdt = [], onSiirra,
+}: Props) => {
   const [virhe, setVirhe] = useState<string | null>(null);
   const [tyoskentelee, setTyoskentelee] = useState(false);
   const [keskeytys, setKeskeytys] = useState(false);
@@ -72,10 +76,6 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
   const omatPohjat = pohjat.filter((p) => p.ownerId === kohde.id && p.kind === 'patrol' && !p.arkistoitu);
   const omatKierrokset = kierrokset.filter((k) => k.siteId === kohde.id);
   const kesken = omatKierrokset.find((k) => k.tila === 'kesken') || null;
-  const paattyneet = omatKierrokset
-    .filter((k) => k.tila !== 'kesken')
-    .sort((a, b) => String(b.paattyi).localeCompare(String(a.paattyi)))
-    .slice(0, 10);
 
   // Kaikki kierroksen toiminnot kulkevat lähtevän jonon kautta. Verkon toimiessa jono
   // lähettää heti ja palauttaa palvelimen vastauksen, joten käyttökokemus on sama kuin
@@ -424,6 +424,22 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
                       {pohja.pisteet.length} tarkistuspistettä
                       {pohja.sijaintiPakotus ? ' · sijainti vaaditaan' : ''}
                     </p>
+                    {/* Siirto vain vuoron omista kierroksista ja vain kun vuoro on
+                        käynnissä: siirtää voi vain omasta vuorostaan, ja palvelin valvoo
+                        saman säännön. Kierrosta jota parhaillaan kuljetaan (kesken) ei
+                        tarjota tässä listassa lainkaan, joten sitä ei voi siirtää kesken
+                        — se on jo aloitettu, ja puolikkaan kierroksen luovuttaminen
+                        jättäisi kuittaukset kahden vartijan nimiin. */}
+                    {vuoroKaynnissa && onSiirra && vuoronPohjaIdt.includes(pohja.id) && (
+                      <button
+                        type="button"
+                        onClick={() => onSiirra('kierros', pohja.id, pohja.nimi)}
+                        className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-medium text-ink-muted hover:text-accent"
+                      >
+                        <ArrowRightLeft size={13} />
+                        Siirrä toiselle vartijalle
+                      </button>
+                    )}
                   </div>
                   {saaKiertaa && (
                     <button
@@ -440,41 +456,6 @@ export const Kierros = ({ kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTa
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {/* --- Aiemmat kierrokset --- */}
-      {paattyneet.length > 0 && (
-        <div>
-          <h3 className="text-sm font-medium text-ink-muted mb-2">Aiemmat kierrokset</h3>
-          <ul className="space-y-2">
-            {paattyneet.map((kierros) => {
-              const kuitatut = kierros.pisteet.filter((p) => p.kuitattu).length;
-              const valmis = kierros.tila === 'valmis';
-              return (
-                <li key={kierros.id} className="bg-surface border border-line rounded-lg px-4 py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-ink-strong">{kierros.templateNimi}</p>
-                      <p className="text-xs text-ink-muted mt-0.5">
-                        {paiva(kierros.alkoi)}–{kello(kierros.paattyi)} · {kierros.vartija}
-                        {' · '}{kuitatut}/{kierros.pisteet.length} pistettä
-                      </p>
-                    </div>
-                    <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-bold border shrink-0 ${valmis ? 'bg-success-soft text-success-ink border-success/30' : 'bg-neutral-soft text-neutral-ink border-line'}`}>
-                      {valmis ? 'Valmis' : 'Keskeytetty'}
-                    </span>
-                  </div>
-                  {kierros.keskeytysSyy && (
-                    <p className="text-xs text-ink-muted mt-2">Syy: {kierros.keskeytysSyy}</p>
-                  )}
-                  {kierros.huomiot && (
-                    <p className="text-xs text-ink-muted mt-1">Huomiot: {kierros.huomiot}</p>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
         </div>
       )}
     </div>
