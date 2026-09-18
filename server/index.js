@@ -4621,7 +4621,7 @@ app.post('/api/kalusto', requireAuth, guardPortti, (req, res) => {
 
   // Sijoituskohde on tarkistettava olemassa olevaksi: rekisteri joka osoittaa kohteeseen
   // jota ei ole, ei kerro missä esine on.
-  const sijoitus = req.body?.sijoitus || { laji: 'varasto' };
+  const sijoitus = req.body?.sijoitus || { laji: kalusto.oletusSailo(laji) };
   if (sijoitus.laji === 'kohde') {
     const omistaja = omistajanTiedot(sijoitus.id);
     if (!omistaja?.onKohde) return res.status(404).json({ ok: false, error: 'Kohdetta ei löytynyt.' });
@@ -4717,10 +4717,11 @@ app.post('/api/kalusto/era', requireAuth, guardPortti, (req, res) => {
       // Lisätiedot sellaisenaan: luoKalusto puhdistaa ne lajin sallittujen kenttien
       // mukaan (puhdistaLisatiedot), joten selain ei voi kirjoittaa vieraita kenttiä.
       lisatiedot: rivi.lisatiedot || {},
-      // Erä syntyy aina holviin: esine kirjataan vastaanotetuksi ennen kuin se
-      // jyvitetään mihinkään. Rivinumero virheeseen, jotta käyttäjä löytää sen
-      // taulukosta ilman arvailua.
-      sijoitus: { laji: 'holvi' },
+      // Erä syntyy aina lajinsa omaan säilöön — avaimet holviin, muu kalusto
+      // varusvarastoon: esine kirjataan vastaanotetuksi ennen kuin se jyvitetään
+      // mihinkään. Rivinumero virheeseen, jotta käyttäjä löytää sen taulukosta
+      // ilman arvailua.
+      sijoitus: { laji: kalusto.oletusSailo(laji) },
       numero: numero + i,
       holviPaikka: onAvain ? holviPaikka + i : null,
       user: req.username,

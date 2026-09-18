@@ -51,14 +51,32 @@ export const LAJIT = {
   tietotekniikka: { koodi: 'ATK' },
 };
 
-// Missä esine voi olla. 'holvi' on oletus ja ainoa jolla ei ole kohdetta johon se
-// viittaa — kaikki muut osoittavat johonkin joka on olemassa (kohde, työntekijä, toinen
-// kalustotietue).
+// Missä esine voi olla. Kaksi ensimmäistä ovat SÄILÖJÄ: vartioimisliikkeen omia tiloja
+// joilla ei ole omaa tietuetta johon sijoitus viittaisi — kaikki muut osoittavat
+// johonkin joka on olemassa (kohde, työntekijä, toinen kalustotietue).
 //
 // NIMI ON 'holvi' EIKÄ 'varasto' (päätös 14.9.2026). Vartioimisliikkeen avainsäilytys on
 // holvi, ja termi on sama sekä kirjanpidossa että puheessa. Nimeäminen todellisuuden
 // mukaan on halvempaa nyt kuin sitten kun tietueita on tuhansia.
-export const SIJOITUSLAJIT = ['holvi', 'kohde', 'henkilo', 'ajoneuvo', 'avainkaappi'];
+//
+// VARUSVARASTO ON OMA SÄILÖNSÄ EIKÄ HOLVIN OSA (18.9.2026). Ne ovat eri tila ja eri
+// lukko: holvissa ovat avaimet, varusvarastossa takit, patukat ja puhelimet. Yksi säilö
+// kahdella merkityksellä ei kertoisi kummasta ovesta tavara haetaan, ja juuri se on
+// kysymys johon kalustorekisterin on vastattava.
+export const SIJOITUSLAJIT = ['holvi', 'varusvarasto', 'kohde', 'henkilo', 'ajoneuvo', 'avainkaappi'];
+
+// Säilöt: yrityksen omat tilat. Sijoitus niihin on täydellinen ilman id:tä, koska
+// paikka ei ole tietue johon viitataan.
+export const SAILOT = ['holvi', 'varusvarasto'];
+export const onSailo = (laji) => SAILOT.includes(laji);
+
+// Säilön nimi on VAKIO eikä kutsujan antama: "Holvi" on paikka jonka nimeä ei
+// neuvotella tietueittain, ja vapaa nimi tekisi yhdestä paikasta monta.
+export const SAILON_NIMI = { holvi: 'Holvi', varusvarasto: 'Varusvarasto' };
+
+// Mihin säilöön laji kuuluu. VAIN OLETUS — esine voidaan siirtää säilöstä toiseen, ja
+// sama sääntö on selainpuolella (src/guard/kalusto/lajit.ts: oletusSailo).
+export const oletusSailo = (laji) => (laji === 'avain' || laji === 'avainkaappi' ? 'holvi' : 'varusvarasto');
 
 // Ennen nimenmuutosta kirjatut rivit sanovat 'varasto'. Luku sietää sen, jotta vanha data
 // ei jää näkymättömiin eikä tarvita erillistä migraatioajoa: nimi on esitystapa, ja
@@ -228,19 +246,21 @@ export const holviPaikkaVarattu = (kalusto, paikka, omaId = null) =>
 // tuntee vain muodot `kentta` ja `taulukko[].kentta`. Polku `sijoitus.nimi` menisi
 // listalle läpi mutta ei salaisi mitään, eikä siitä kerrottaisi mitenkään — ja
 // sijoituksen nimi on vartijan nimi silloin kun esine on vartijalla.
-const sijoitusKentat = (sijoitus) => {
+// Oletus on kutsujan valittavissa, koska se riippuu lajista: tuntematon sijoitus vie
+// avaimen holviin ja takin varusvarastoon (ks. oletusSailo).
+const sijoitusKentat = (sijoitus, oletus = 'holvi') => {
   const pyydetty = normalisoiSijoitusLaji(sijoitus?.laji);
-  const laji = SIJOITUSLAJIT.includes(pyydetty) ? pyydetty : 'holvi';
+  const laji = SIJOITUSLAJIT.includes(pyydetty) ? pyydetty : oletus;
   return {
     sijoitusLaji: laji,
-    sijoitusId: laji === 'holvi' ? null : siivoa(sijoitus?.id, NIMEN_MAX) || null,
-    sijoitusNimi: siivoa(sijoitus?.nimi, NIMEN_MAX) || (laji === 'holvi' ? 'Holvi' : ''),
+    sijoitusId: onSailo(laji) ? null : siivoa(sijoitus?.id, NIMEN_MAX) || null,
+    sijoitusNimi: onSailo(laji) ? SAILON_NIMI[laji] : siivoa(sijoitus?.nimi, NIMEN_MAX),
   };
 };
 
 const tarkistaSijoitus = (esine, sijoitus) => {
   const kentat = sijoitusKentat(sijoitus);
-  if (kentat.sijoitusLaji !== 'holvi' && !kentat.sijoitusId) {
+  if (!onSailo(kentat.sijoitusLaji) && !kentat.sijoitusId) {
     return { ok: false, error: 'Valitse mihin esine sijoitetaan.' };
   }
   if (!kentat.sijoitusNimi) {
@@ -251,7 +271,7 @@ const tarkistaSijoitus = (esine, sijoitus) => {
   if (esine?.lisatiedot?.henkilokohtainen === true && kentat.sijoitusLaji !== 'henkilo') {
     return {
       ok: false,
-      error: 'Esine on merkitty henkilökohtaiseksi. Se luovutetaan nimetylle henkilölle, ei kohteelle eikä holviin.',
+      error: 'Esine on merkitty henkilökohtaiseksi. Se luovutetaan nimetylle henkilölle, ei kohteelle eikä varastoon.',
     };
   }
   return { ok: true, kentat };
@@ -306,10 +326,10 @@ export function luoKalusto({
     }
   }
 
-  const alku = { ...sijoitusKentat(sijoitus) };
-  // Henkilökohtaiseksi merkitty esine voi syntyä holviin: se luovutetaan vasta kun
+  const alku = { ...sijoitusKentat(sijoitus, oletusSailo(laji)) };
+  // Henkilökohtaiseksi merkitty esine voi syntyä säilöön: se luovutetaan vasta kun
   // tiedetään kenelle. Rajoitus koskee siirtoa, ei syntymää.
-  if (alku.sijoitusLaji !== 'holvi' && !alku.sijoitusId) {
+  if (!onSailo(alku.sijoitusLaji) && !alku.sijoitusId) {
     return { ok: false, error: 'Valitse mihin esine sijoitetaan.' };
   }
 

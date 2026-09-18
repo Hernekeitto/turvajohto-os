@@ -22,7 +22,7 @@ import {
   ratkaisePyynto, siirraKalusto, tarranOsoite, vaihdaTila,
 } from './pankki';
 import {
-  SIJOITUKSEN_SELITE, TAPAHTUMAN_SELITE, TILAN_SELITE, TILAN_VARI,
+  SIJOITUKSEN_SELITE, TAPAHTUMAN_SELITE, TILAN_SELITE, TILAN_VARI, onSailo,
   type KalustoTietue, type SijoitusLaji,
 } from './tyypit';
 
@@ -46,7 +46,12 @@ type Props = {
   onTulostaKilpi: (esine: KalustoTietue) => void;
 };
 
-const SIIRTOVAIHTOEHDOT: SijoitusLaji[] = ['holvi', 'kohde', 'henkilo', 'ajoneuvo', 'avainkaappi'];
+// Molemmat säilöt tarjolla kaikille lajeille eikä vain lajin oma: takki kuuluu
+// varusvarastoon, mutta siirtoa ei estetä sillä perusteella missä tavaran KUULUISI olla
+// — rekisterin tehtävä on kertoa missä se on.
+const SIIRTOVAIHTOEHDOT: SijoitusLaji[] = [
+  'holvi', 'varusvarasto', 'kohde', 'henkilo', 'ajoneuvo', 'avainkaappi',
+];
 
 // Lajit joihin voi sijoittaa muuta kalustoa. Avainkaappi ei ole pelkkä esine vaan
 // PAIKKA: siihen siirretään avaimia holvista, ja kortin on kerrottava mitä siellä on.
@@ -122,12 +127,12 @@ export const KalustoKortti = ({
       : kantajat.filter((k) => k.laji === kohdeLaji && k.id !== esine.id);
 
   const teeSiirto = () => {
-    if (kohdeLaji !== 'holvi' && !kohdeId) {
+    if (!onSailo(kohdeLaji) && !kohdeId) {
       setVirhe('Valitse mihin esine siirretään.');
       return;
     }
     kutsu(
-      () => siirraKalusto(esine.id, { laji: kohdeLaji, id: kohdeLaji === 'holvi' ? null : kohdeId }, siirtoHuomio),
+      () => siirraKalusto(esine.id, { laji: kohdeLaji, id: onSailo(kohdeLaji) ? null : kohdeId }, siirtoHuomio),
       () => { setSiirtoAuki(false); setKohdeId(''); setSiirtoHuomio(''); }
     );
   };
@@ -229,7 +234,7 @@ export const KalustoKortti = ({
             </span>
             <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border bg-sunken text-ink-body border-line">
               {SIJOITUKSEN_SELITE[esine.sijoitusLaji]}
-              {esine.sijoitusLaji !== 'holvi' && esine.sijoitusNimi ? `: ${esine.sijoitusNimi}` : ''}
+              {!onSailo(esine.sijoitusLaji) && esine.sijoitusNimi ? `: ${esine.sijoitusNimi}` : ''}
             </span>
             {maar && (
               <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border bg-sunken text-ink-body border-line">
@@ -441,7 +446,7 @@ export const KalustoKortti = ({
                     </button>
                   ))}
                 </div>
-                {kohdeLaji !== 'holvi' && (
+                {!onSailo(kohdeLaji) && (
                   <select
                     value={kohdeId}
                     onChange={(e) => setKohdeId(e.target.value)}
@@ -768,7 +773,9 @@ export const KalustoKortti = ({
                             <span className="font-mono text-xs text-ink-muted shrink-0">{rivi.tunnus}</span>
                             <span className="text-sm text-ink-body truncate flex-1">{rivi.nimi}</span>
                             <span className="text-xs text-ink-muted shrink-0 max-w-[8rem] truncate">
-                              {rivi.sijoitusLaji === 'holvi' ? 'Holvi' : rivi.sijoitusNimi}
+                              {onSailo(rivi.sijoitusLaji)
+                                ? SIJOITUKSEN_SELITE[rivi.sijoitusLaji]
+                                : rivi.sijoitusNimi}
                             </span>
                           </label>
                         </li>

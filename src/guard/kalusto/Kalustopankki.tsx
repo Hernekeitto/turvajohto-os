@@ -35,7 +35,8 @@ import { KalustoKortti } from './KalustoKortti';
 import { KilpiEsikatselu } from './KilpiEsikatselu';
 import { eranPolku } from '../../shared/laitevalinta';
 import {
-  AVAINLAJIT, LAJIT, MUUT_LAJIT, avainJarjestys, kentanOtsikko, kentanVihje, onAvainlaji,
+  AVAINLAJIT, LAJIT, MUUT_LAJIT, avainJarjestys, kentanOtsikko, kentanVihje, oletusSailo,
+  onAvainlaji,
 } from './lajit';
 import { tulostaLuovutuslomake } from './luovutuslomake';
 import {
@@ -43,7 +44,7 @@ import {
   type UusiKalusto,
 } from './pankki';
 import {
-  SIJOITUKSEN_SELITE, TILAN_SELITE, TILAN_VARI,
+  SIJOITUKSEN_SELITE, SAILOT, TILAN_SELITE, TILAN_VARI, onSailo,
   type KalustonTila, type KalustoTietue, type Laji, type SijoitusLaji,
 } from './tyypit';
 
@@ -75,7 +76,7 @@ const TYHJA_LOMAKE = {
   kuvaus: '',
   sarjanumero: '',
   lisatiedot: {} as Record<string, string | boolean>,
-  sijoitusLaji: 'holvi' as SijoitusLaji,
+  sijoitusLaji: 'varusvarasto' as SijoitusLaji,
   sijoitusId: '',
   kappaletta: 1,
 };
@@ -196,7 +197,9 @@ export const Kalustopankki = ({
   // Tarkistus on avauksessa eikä välilehden vaihdossa, jolloin se pätee joka reitillä.
   const avaaLomake = () => {
     setLomakeAuki((auki) => !auki);
-    setLomake((l) => (lajiValinnat.includes(l.laji) ? l : { ...TYHJA_LOMAKE, laji: lajiValinnat[0] }));
+    setLomake((l) => (lajiValinnat.includes(l.laji)
+      ? l
+      : { ...TYHJA_LOMAKE, laji: lajiValinnat[0], sijoitusLaji: oletusSailo(lajiValinnat[0]) }));
   };
 
   const maar = LAJIT[lomake.laji];
@@ -240,7 +243,7 @@ export const Kalustopankki = ({
         lisatiedot: lomake.lisatiedot,
         sijoitus: {
           laji: lomake.sijoitusLaji,
-          id: lomake.sijoitusLaji === 'holvi' ? null : lomake.sijoitusId,
+          id: onSailo(lomake.sijoitusLaji) ? null : lomake.sijoitusId,
         },
         kappaletta: lomake.kappaletta,
       };
@@ -526,7 +529,10 @@ export const Kalustopankki = ({
                       <button
                         key={laji}
                         type="button"
-                        onClick={() => setLomake((l) => ({ ...l, laji, alalaji: '', lisatiedot: {} }))}
+                        onClick={() => setLomake((l) => ({
+                          ...l, laji, alalaji: '', lisatiedot: {},
+                          sijoitusLaji: onSailo(l.sijoitusLaji) ? oletusSailo(laji) : l.sijoitusLaji,
+                        }))}
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
                           lomake.laji === laji
                             ? 'bg-accent text-white border-accent'
@@ -643,7 +649,9 @@ export const Kalustopankki = ({
                     }))}
                     className="w-full px-3 py-2 rounded-lg border border-line bg-surface text-sm text-ink-body"
                   >
-                    <option value="holvi">Holvi</option>
+                    {SAILOT.map((sailo) => (
+                      <option key={sailo} value={sailo}>{SIJOITUKSEN_SELITE[sailo]}</option>
+                    ))}
                     <option value="kohde">Kohde</option>
                   </select>
                 </LomakeKentta>

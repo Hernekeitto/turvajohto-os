@@ -27,8 +27,9 @@ import { Copy, Plus, Trash2, Upload, X } from 'lucide-react';
 import { canEdit } from '../../shared/oikeudet';
 import { AvainkarttaNappi } from './Avainkartta';
 import { haeAvaintyypit, type Avaintyyppi } from './avaintyypit';
-import { LAJIJARJESTYS, LAJIT } from './lajit';
+import { LAJIJARJESTYS, LAJIT, oletusSailo } from './lajit';
 import { luoKalustoEra, type EraRivi } from './pankki';
+import { SAILON_ILLATIIVI } from './tyypit';
 import type { KalustoTietue, Laji } from './tyypit';
 
 // Yksi sarake taulukossa. `perus` erottaa esineen omat kentät lajikohtaisista
@@ -145,6 +146,10 @@ export const KalustoEra = () => {
   const maar = LAJIT[laji];
   const sarakelista = useMemo(() => sarakkeet(laji), [laji]);
   const onAvain = laji === 'avain';
+  // Mihin erä kirjautuu. Sama sääntö kuin palvelimella (server/kalusto.js: oletusSailo),
+  // ja se kerrotaan ääninä eikä oleteta: kirjaaja menee hakemaan tavaran sieltä minne
+  // tämä sivu sanoo sen kirjanneensa.
+  const sailoon = SAILON_ILLATIIVI[oletusSailo(laji)];
 
   // Avainkartta taulukkoa varten. Sivu on oma välilehtensä ilman GuardAppia, joten
   // oikeudet ja kartta haetaan tässä — sama istuntoreitti jota sovelluskin käyttää.
@@ -301,12 +306,12 @@ export const KalustoEra = () => {
       <div className="min-h-screen bg-canvas p-6 md:p-10">
         <div className="max-w-4xl mx-auto">
           <h1 className="text-2xl font-bold text-ink-strong mb-1">
-            {valmiit.length} {valmiit.length === 1 ? 'esine' : 'esinettä'} kirjattu holviin
+            {valmiit.length} {valmiit.length === 1 ? 'esine' : 'esinettä'} kirjattu {sailoon}
           </h1>
           <p className="text-sm text-ink-muted mb-6">
             {onAvain
               ? 'Jokaiselle varattiin holvipaikka. Tulosta kilvet kalustopankista — voit sulkea tämän välilehden.'
-              : 'Kaikki kirjattiin holviin. Tulosta kilvet kalustopankista ja jyvitä sieltä — voit sulkea tämän välilehden.'}
+              : `Kaikki kirjattiin ${sailoon}. Tulosta kilvet kalustopankista ja jyvitä sieltä — voit sulkea tämän välilehden.`}
           </p>
 
           <div className="bg-surface border border-line rounded-xl overflow-hidden mb-6">
@@ -360,7 +365,7 @@ export const KalustoEra = () => {
           <h1 className="text-2xl font-bold text-ink-strong mb-1">Eräkirjaus</h1>
           <p className="text-sm text-ink-muted max-w-3xl leading-relaxed">
             Yksi rivi per esine. Jokainen saa oman tunnuksensa{onAvain ? ' ja varatun holvipaikan (1000→)' : ''} tallennettaessa,
-            ja kaikki kirjataan holviin — jyvitys kohteille ja henkilöille tehdään pankista
+            ja kaikki kirjataan {sailoon} — jyvitys kohteille ja henkilöille tehdään pankista
             jälkikäteen.
           </p>
           <p className="text-sm text-ink-body mt-2 inline-flex items-center gap-2">
@@ -525,7 +530,7 @@ export const KalustoEra = () => {
           >
             {tallentaa
               ? 'Tallennetaan…'
-              : `Kirjaa ${taytettyja} ${taytettyja === 1 ? 'esine' : 'esinettä'} holviin`}
+              : `Kirjaa ${taytettyja} ${taytettyja === 1 ? 'esine' : 'esinettä'} ${sailoon}`}
           </button>
           <span className="text-xs text-ink-muted">
             Tyhjät rivit jätetään huomiotta. Erä tallennetaan kokonaan tai ei lainkaan.

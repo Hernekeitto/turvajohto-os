@@ -4,6 +4,10 @@
 // lähettää ja lukee. Sama rakenne kuin shared/kalusto.ts:ssä, koska virheen näyttäminen
 // ilman yhteyttä on sama ongelma molemmissa.
 
+// Pääte on mukana, koska tämä on ARVOJA eikä pelkkiä tyyppejä: node --test
+// (maaraaika.test.ts lataa tämän moduulin) ei etsi päätteetöntä polkua, ja tyyppien
+// tuonti selviää ilman vain siksi että se häviää käännöksessä kokonaan.
+import { SIJOITUKSEN_SELITE, onSailo } from './tyypit.ts';
 import type { KalustoTietue, Laji, SijoitusLaji } from './tyypit';
 
 type Vastaus = {
@@ -109,9 +113,10 @@ export const aikaleima = (iso: string | null | undefined) => {
   });
 };
 
-// Missä esine on, yhtenä lauseena. Varastolla ei ole omaa nimeä joka kannattaisi toistaa.
+// Missä esine on, yhtenä lauseena. Säilön nimi luetaan selitetaulukosta eikä tietueesta:
+// paikan nimi on sama kaikille siellä oleville, ja vanhoilta riveiltä se voi puuttua.
 export const sijainti = (esine: KalustoTietue) =>
-  esine.sijoitusLaji === 'holvi' ? 'Holvi' : esine.sijoitusNimi || '—';
+  (onSailo(esine.sijoitusLaji) ? SIJOITUKSEN_SELITE[esine.sijoitusLaji] : esine.sijoitusNimi) || '—';
 
 // Avaimen holvipaikka luettavassa muodossa. Tyhjä muille lajeille, koska niillä ei ole
 // varattua koukkua — ks. server/kalusto.js.

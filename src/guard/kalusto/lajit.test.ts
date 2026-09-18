@@ -9,7 +9,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { AVAINLAJIT, LAJIJARJESTYS, MUUT_LAJIT, avainJarjestys, onAvainlaji } from './lajit.ts';
+import {
+  AVAINLAJIT, LAJIJARJESTYS, MUUT_LAJIT, avainJarjestys, oletusSailo, onAvainlaji,
+} from './lajit.ts';
 import type { Laji } from './tyypit.ts';
 
 test('jokainen laji kuuluu tasan yhdelle valilehdelle', () => {
@@ -64,4 +66,13 @@ test('holvipaikaton avain menee loppuun eika alkuun', () => {
   assert.deepEqual(jarjestetty.map((e) => e.laji + ':' + e.holviPaikka), [
     'avainkaappi:null', 'avain:1000', 'avain:null',
   ]);
+});
+
+test('sailo seuraa lajia: avaimet holviin, muu kalusto varusvarastoon', () => {
+  // Sama sääntö on palvelimella, ja se päättää. Tämä testi on siksi, ettei lomake
+  // tarjoa eri paikkaa kuin minne esine päätyy — ristiriita näkyisi vasta
+  // tallennuksen jälkeen, ja silloin kirjaaja on jo lukenut väärän paikan.
+  for (const laji of LAJIJARJESTYS) {
+    assert.equal(oletusSailo(laji), onAvainlaji(laji) ? 'holvi' : 'varusvarasto');
+  }
 });

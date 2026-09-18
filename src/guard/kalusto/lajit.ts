@@ -14,7 +14,7 @@ import {
   KeyRound, Archive, Car, Shirt, ShieldAlert, Crosshair, Laptop,
 } from 'lucide-react';
 
-import type { KalustoTietue, Laji } from './tyypit';
+import type { KalustoTietue, Laji, SijoitusLaji } from './tyypit';
 
 // Lisäkentän kuvaus lomaketta varten. `totuusarvo` erottaa rastin tekstikentästä;
 // `pakollinen` koskee vain luontia ja on tarkistettu MYÖS palvelimella — selainpuolen
@@ -119,7 +119,7 @@ export const LAJIT: Record<Laji, Lajimaarittely> = {
         otsikko: 'Henkilökohtainen',
         lyhyt: 'Henk.koht.',
         totuusarvo: true,
-        vihje: 'Luovutetaan vain nimetylle henkilölle, ei kohteelle eikä holviin. Tunnukset ovat aina henkilökohtaisia.',
+        vihje: 'Luovutetaan vain nimetylle henkilölle, ei kohteelle eikä varastoon. Tunnukset ovat aina henkilökohtaisia.',
       },
     ],
   },
@@ -208,6 +208,14 @@ export const esineenOtsikko = (nimi: string, tunnus: string) => `${nimi} (${tunn
 export const AVAINLAJIT: Laji[] = ['avain', 'avainkaappi'];
 
 export const onAvainlaji = (laji: Laji) => AVAINLAJIT.includes(laji);
+
+// Mihin säilöön laji kuuluu oletuksena. Avaimet ja kaapit holviin, muu kalusto
+// varusvarastoon — ne ovat eri tila ja eri lukko, eikä rekisteri saa jättää
+// arvattavaksi kummasta ovesta tavara haetaan.
+//
+// Sama sääntö on palvelimella (server/kalusto.js: oletusSailo), joka on se joka
+// päättää. Tämä on lomakkeen oletusvalinta eikä rajoitus: säilöstä toiseen voi siirtää.
+export const oletusSailo = (laji: Laji): SijoitusLaji => (onAvainlaji(laji) ? 'holvi' : 'varusvarasto');
 
 // Muut lajit samassa järjestyksessä kuin LAJIJARJESTYS. Oma vakio eikä suodatus
 // käyttöpaikassa, jottei kahdessa näkymässä voi olla eri käsitystä siitä mikä on avain.

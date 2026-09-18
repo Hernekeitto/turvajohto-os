@@ -14,7 +14,10 @@ export type Laji =
 
 // 'holvi' oli aiemmin 'varasto'. Palvelin lukee vanhan nimen holviksi
 // (server/kalusto.js: normalisoiSijoitusLaji), joten selain näkee vain uuden.
-export type SijoitusLaji = 'holvi' | 'kohde' | 'henkilo' | 'ajoneuvo' | 'avainkaappi';
+//
+// 'varusvarasto' ON ERI PAIKKA eikä holvin uusi nimi: avaimet ovat holvissa, muu
+// kalusto varusvarastossa.
+export type SijoitusLaji = 'holvi' | 'varusvarasto' | 'kohde' | 'henkilo' | 'ajoneuvo' | 'avainkaappi';
 
 export type KalustonTila = 'kaytossa' | 'huollossa' | 'kadonnut' | 'poistettu';
 
@@ -82,7 +85,6 @@ export const TILAN_SELITE: Record<KalustonTila, string> = {
   huollossa: 'Huollossa',
   kadonnut: 'Kadonnut',
   poistettu: 'Poistettu käytöstä',
-  tunnusmuutos: 'Tunnus vaihtui',
 };
 
 export const TILAN_VARI: Record<KalustonTila, string> = {
@@ -92,12 +94,29 @@ export const TILAN_VARI: Record<KalustonTila, string> = {
   poistettu: 'bg-sunken text-ink-muted border-line-soft',
 };
 
+// Järjestys on suodatinpainikkeiden järjestys: säilöt ensin, koska niistä tavara
+// lähtee ja niihin se palaa.
 export const SIJOITUKSEN_SELITE: Record<SijoitusLaji, string> = {
   holvi: 'Holvi',
+  varusvarasto: 'Varusvarasto',
   kohde: 'Kohde',
   henkilo: 'Henkilö',
   ajoneuvo: 'Ajoneuvo',
   avainkaappi: 'Avainkaappi',
+};
+
+// Säilöt: yrityksen omat tilat, joihin sijoitus on täydellinen ilman kohdetta — paikka
+// ei ole tietue johon viitataan (server/kalusto.js: SAILOT).
+export const SAILOT: SijoitusLaji[] = ['holvi', 'varusvarasto'];
+
+export const onSailo = (laji: SijoitusLaji) => SAILOT.includes(laji);
+
+// "kirjattiin holviin", "kirjattiin varusvarastoon". Taivutus on taulukossa eikä
+// päätteenä perässä: suomen sijapääte ei ole sama joka sanalle, ja liimattu pääte
+// tuottaisi ennemmin tai myöhemmin sanan jota ei ole.
+export const SAILON_ILLATIIVI: Record<string, string> = {
+  holvi: 'holviin',
+  varusvarasto: 'varusvarastoon',
 };
 
 // Historiarivin tapahtuma ihmiskielellä. Tuntematon tapahtuma näytetään sellaisenaan
@@ -116,4 +135,7 @@ export const TAPAHTUMAN_SELITE: Record<string, string> = {
   huoltoon: 'Huoltoon',
   huollosta: 'Palautui huollosta',
   poistettu: 'Poistettu käytöstä',
+  // Tunnuksen siirto 1000-sarjaan. TAPAHTUMA eikä tila: esine ei muutu miksikään,
+  // vaan sen tunniste kirjoitetaan uudelleen (server/kalusto.js: migroiTunnukset).
+  tunnusmuutos: 'Tunnus vaihtui',
 };

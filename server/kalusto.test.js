@@ -18,6 +18,7 @@ import {
   HOLVIPAIKKA_ALKU, seuraavaHolviPaikka, holviPaikkaVarattu, normalisoiSijoitusLaji,
   normalisoiRivit, luoAvaintyyppi, paivitaAvaintyyppi,
   TUNNUKSEN_ALKU, tunnuksenNumero, migroiTunnukset,
+  SAILOT, onSailo, oletusSailo,
 } from './kalusto.js';
 
 const T0 = Date.parse('2026-09-14T09:00:00Z');
@@ -436,6 +437,72 @@ test('luovutusketju karsitaan: ei historiaa, pyyntoa eika luojaa', () => {
   assert.equal(nakyva.nimi, 'Talvitakki L');
   assert.equal(nakyva.sijoitusNimi, 'Kohde 1');
   assert.equal(nakyva.tila, 'kaytossa');
+});
+
+// --- Säilöt ------------------------------------------------------------------------
+//
+// Holvi ja varusvarasto ovat eri tila ja eri lukko. Rekisterin ainoa tehtävä on kertoa
+// kummasta ovesta tavara haetaan, joten oletuksen menemisellä väärin ei ole mitään
+// näkyvää oiretta — esine vain on kirjanpidossa väärässä huoneessa.
+
+test('laji valitsee sailon: avaimet holviin, muu kalusto varusvarastoon', () => {
+  assert.deepEqual(SAILOT, ['holvi', 'varusvarasto']);
+  assert.equal(onSailo('holvi'), true);
+  assert.equal(onSailo('kohde'), false);
+  assert.equal(oletusSailo('asuste'), 'varusvarasto');
+  assert.equal(oletusSailo('avain'), 'holvi');
+  assert.equal(oletusSailo('avainkaappi'), 'holvi');
+
+  // Sijoitusta EI anneta: juuri silloin oletus ratkaisee, ja eräkirjaus kulkee tätä
+  // polkua kymmenillä riveillä kerrallaan.
+  assert.equal(luo({ sijoitus: undefined }).esine.sijoitusLaji, 'varusvarasto');
+  assert.equal(luo({ sijoitus: undefined, laji: 'tietotekniikka' }).esine.sijoitusLaji, 'varusvarasto');
+  assert.equal(avain({ sijoitus: undefined }).esine.sijoitusLaji, 'holvi');
+  assert.equal(
+    luo({ sijoitus: undefined, laji: 'avainkaappi', nimi: 'Piiriauto 1' }).esine.sijoitusLaji,
+    'holvi'
+  );
+});
+
+test('sailon nimi on vakio eika kutsujan annettavissa', () => {
+  const esine = luo({ sijoitus: { laji: 'varusvarasto', nimi: 'Jonkun oma nurkka', id: 'x' } }).esine;
+  // Paikan nimi on sama kaikille siellä oleville. Vapaa nimi tekisi yhdestä huoneesta
+  // monta, eikä listalta enää näkisi mikä on sama paikka.
+  assert.equal(esine.sijoitusNimi, 'Varusvarasto');
+  // Säilöllä ei ole tietuetta johon viitata: id pudotetaan, ettei rekisteriin jää
+  // osoitinta johonkin jota ei ole.
+  assert.equal(esine.sijoitusId, null);
+});
+
+test('siirto holvista varusvarastoon on siirto eika sama paikka', () => {
+  const holvissa = luo({ sijoitus: { laji: 'holvi' } }).esine;
+  const tulos = siirra({ esine: holvissa, sijoitus: { laji: 'varusvarasto' }, user: 'a', nyt: T0 });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.esine.sijoitusLaji, 'varusvarasto');
+  assert.equal(tulos.esine.sijoitusNimi, 'Varusvarasto');
+  assert.equal(tulos.esine.sijoitusId, null);
+
+  // Historiarivi kantaa UUDEN sijoituksen: ilman sitä ei jälkikäteen näe mihin esine
+  // meni, ja juuri se on ainoa syy kirjata siirto.
+  const viimeinen = tulos.esine.historia.at(-1);
+  assert.equal(viimeinen.tapahtuma, 'siirto');
+  assert.equal(viimeinen.sijoitusLaji, 'varusvarasto');
+
+  // Sama siirto uudelleen ei kelpaa — säilöt erottuvat toisistaan eivätkä sulaudu.
+  const uudelleen = siirra({
+    esine: tulos.esine, sijoitus: { laji: 'varusvarasto' }, user: 'a', nyt: T0,
+  });
+  assert.equal(uudelleen.ok, false);
+  assert.match(uudelleen.error, /jo täällä/i);
+});
+
+test('henkilokohtaista ei jateta varusvarastoonkaan', () => {
+  // Sääntö 4 koskee molempia säilöjä. Tunnus on henkilökohtainen juuri siksi, että se
+  // yksilöi kantajansa — varastossa se ei yksilöi ketään.
+  const tunnus = luo({ lisatiedot: { henkilokohtainen: true }, sijoitus: { laji: 'henkilo', id: 'emp-1', nimi: 'Virtanen' } }).esine;
+  const tulos = siirra({ esine: tunnus, sijoitus: { laji: 'varusvarasto' }, user: 'a', nyt: T0 });
+  assert.equal(tulos.ok, false);
+  assert.match(tulos.error, /henkilökohtaise/i);
 });
 
 // --- Holvipaikka -------------------------------------------------------------------
