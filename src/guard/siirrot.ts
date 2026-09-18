@@ -9,11 +9,11 @@
 // työlista syntyy yhdistämällä vuoron omat tehtävät, hyväksytyt siirrot ja hälytykset.
 // Lista on VARTIJAN, vuoro vain kylvää sen (päätös 10.9.2026).
 
-export type SiirronTila = 'odottaa' | 'hyvaksytty' | 'hylatty' | 'peruttu' | 'kuitattu';
+export type SiirronTila = 'odottaa' | 'hyvaksytty' | 'hylatty' | 'peruttu' | 'kuitattu' | 'valmis';
 
 export type Siirto = {
   id: string;
-  laji: 'tehtava' | 'kierros';
+  laji: 'tehtava' | 'kierros' | 'oma';
   kohdeId: string;
   nimi: string;
   siteId: string;
@@ -25,6 +25,11 @@ export type Siirto = {
   tapa: 'siirto' | 'pakotus';
   tila: SiirronTila;
   viesti: string;
+  // Mitä vartijan on kirjoitettava ennen kuin tehtävän voi merkitä tehdyksi. null =
+  // ei vaatimusta (tavallinen siirto).
+  raporttilaji?: Raporttilaji | null;
+  raportti?: { laji: Raporttilaji; raporttiId: string | null; teksti: string } | null;
+  tehty?: string | null;
   luotu: string;
   ratkaistu: string | null;
 };
@@ -145,16 +150,71 @@ export async function haeKaikkiTehtavat(): Promise<{ kohteet: JaettavaKohde[]; v
 /**
  * Tehtävän määrääminen vartijalle. Saaja ei voi kieltäytyä — hän kuittaa nähdyksi.
  * Vuoroa ei vaadita: määräys ei ole pyyntö.
+ *
+ * Olio eikä paikkaparametrit (18.9.2026): kenttiä on nyt seitsemän, ja niistä kolme on
+ * valinnaisia eri yhdistelmissä. Viiden peräkkäisen merkkijonon kutsu on paikka jossa
+ * kaksi niistä vaihtaa päittäin huomaamatta.
  */
-export const pakotaTehtava = (
-  saaja: string,
-  siteId: string,
-  laji: 'tehtava' | 'kierros',
-  kohdeId: string,
-  viesti = '',
-) => posti('/api/pakota', { saaja, siteId, laji, kohdeId, viesti });
+export const pakotaTehtava = (runko: PakotuksenRunko) => posti('/api/pakota', runko);
 
 export const kuittaaPakotus = (id: string) =>
   posti(`/api/siirto/${encodeURIComponent(id)}/kuittaa`, {});
 
 
+
+// --- Raporttivaatimus ja valmiiksi merkintä (18.9.2026) ------------------------------
+
+/** Mitä vartijan on kirjoitettava ennen kuin tehtävän voi merkitä tehdyksi. */
+export type Raporttilaji = 'tapahtumailmoitus' | 'selvitys' | 'kommentti';
+
+export const RAPORTTILAJIN_NIMI: Record<Raporttilaji, string> = {
+  tapahtumailmoitus: 'Tapahtumailmoitus',
+  selvitys: 'Lyhyt selvitys',
+  kommentti: 'Kommentti',
+};
+
+export const RAPORTTILAJIN_SELITE: Record<Raporttilaji, string> = {
+  tapahtumailmoitus: 'Vartija kirjoittaa virallisen tapahtumailmoituksen ja liittää sen tehtävään.',
+  selvitys: 'Vartija kirjoittaa lyhyesti mitä teki. Pakollinen.',
+  kommentti: 'Vartija voi kirjoittaa huomion. Saa jäädä tyhjäksi.',
+};
+
+export type PakotuksenRunko = {
+  saaja: string;
+  /** 'oma' = päivystäjän itse kirjoittama tehtävä, jota ei ole kohteen luettelossa. */
+  laji: 'tehtava' | 'kierros' | 'oma';
+  siteId: string;
+  /** Luettelotunnus. 'oma'-lajilla palvelin luo tunnuksen, joten tätä ei anneta. */
+  kohdeId?: string;
+  /** Vain 'oma'-lajilla. Muilla nimi luetaan kohteen luettelosta — selaimen nimeä ei uskota. */
+  nimi?: string;
+  viesti?: string;
+  raporttilaji?: Raporttilaji | null;
+};
+
+/**
+ * Vartija merkitsee pakotetun tehtävän tehdyksi.
+ *
+ * Kuittaus (kuittaaPakotus) ja tämä ovat eri asioita: ensimmäinen kertoo että määräys on
+ * nähty, tämä että työ on tehty. Palvelin vaatii kuittauksen ensin.
+ */
+export async function merkitseSiirtoValmiiksi(
+  siirtoId: string,
+  { raporttiId = null, teksti = '' }: { raporttiId?: string | null; teksti?: string }
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const vastaus = await fetch(`/api/siirto/${encodeURIComponent(siirtoId)}/valmis`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ raporttiId, teksti }),
+    });
+    const data = await vastaus.json().catch(() => null);
+    if (!vastaus.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'Merkintä ei onnistunut.' };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Merkintä ei onnistunut: ei yhteyttä palvelimeen.' };
+  }
+}

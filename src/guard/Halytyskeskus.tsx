@@ -51,6 +51,7 @@ import {
   type KaynnissaVuoro,
 } from './vuorot';
 import { tuoreus } from './tuoreus';
+import { VartijanPaneeli } from './halke/VartijanPaneeli';
 import { KeskuksenTehtavat } from './KeskuksenTehtavat';
 import { LAJIN_NIMI, type Halytystehtava } from './halytystehtavat';
 
@@ -335,6 +336,10 @@ export const Halytyskeskus = ({
   // lomakkeen sisällä, koska rivi renderöityy uudelleen minuutin välein (myöhästymisluku)
   // — kentän sisältö katoaisi kesken kirjoittamisen.
   const [paatettava, setPaatettava] = useState<string | null>(null);
+  // Kenen hallintanäkymä on auki. null = listanäkymä. Halytyskeskuksen tilassa eikä
+  // paneelin osoitteessa: valinta on työvaihe eikä paikka johon palataan kirjanmerkillä,
+  // ja seinätaulun on aina näytettävä listaa.
+  const [valittuVartija, setValittuVartija] = useState<string | null>(null);
   const [paatosSyy, setPaatosSyy] = useState('');
   const [paattamassa, setPaattamassa] = useState(false);
   // Kesken olevat vuorot. ERI LISTA kuin "Kentällä juuri nyt", joka johdetaan
@@ -1406,7 +1411,27 @@ export const Halytyskeskus = ({
       </Osio>
       </>)}
 
-      {nayta('vartijat') && (<>
+      {/* --- Vartijan hallintanäkymä (18.9.2026) ---------------------------------
+
+          Korvaa Vartijat-paneelin listat kun yksi vartija on valittu. Listat vastaavat
+          kysymykseen "ketä katson seuraavaksi"; kun vastaus on löytynyt, päivystäjä
+          tarvitsee päinvastaisen näkymän eli kaiken yhdestä ihmisestä.
+
+          KORVAA EIKÄ LISÄÄ ALLE: paneeli voi olla irrotettuna omalle näytölleen, ja
+          silloin sen on näytettävä se mitä varten se on avattu — ei sitä ja listoja. */}
+      {nayta('vartijat') && valittuVartija && (
+        <VartijanPaneeli
+          vartija={valittuVartija}
+          kohteet={kohteet}
+          pohjat={lahteet.pohjat}
+          sijainti={sijainnit.find((s) => s.username === valittuVartija) || null}
+          saaNahdaSijainnit={oikeudet.sijainnit}
+          onTakaisin={() => setValittuVartija(null)}
+          onMuutos={() => { haeVuorot(); onVirkista(); }}
+        />
+      )}
+
+      {nayta('vartijat') && !valittuVartija && (<>
       {/* --- Vuorossa nyt --------------------------------------------------------
 
           ERI LISTA KUIN "Kentällä juuri nyt", ja ero on tämän osion koko olemassaolon syy.
@@ -1464,7 +1489,20 @@ export const Halytyskeskus = ({
                 <ShieldCheck size={16} className={unohtunut ? 'text-warning-ink shrink-0' : 'text-ink-subtle shrink-0'} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-ink-strong">
-                    {v.vartija}
+                    {/* Nimi on linkki hallintanäkymään. Painikkeena eikä erillisenä
+                        "Avaa"-nappina: rivillä on jo kaksi nappia, ja nimi on se mitä
+                        päivystäjä katsoo kun hän päättää keneen keskittyy.
+                        Seinätaulussa ei avata mitään — se on katsottavaksi. */}
+                    {taulu ? v.vartija : (
+                      <button
+                        type="button"
+                        onClick={() => setValittuVartija(v.vartija)}
+                        className="font-medium text-ink-strong hover:text-accent hover:underline"
+                        title="Avaa vartijan hallintanäkymä"
+                      >
+                        {v.vartija}
+                      </button>
+                    )}
                     <span className="text-ink-muted font-normal">
                       {' · '}{kohdeNimi(v.siteId)}
                     </span>
@@ -1656,7 +1694,7 @@ export const Halytyskeskus = ({
       </Osio>
       </>)}
 
-      {nayta('vartijat') && (<>
+      {nayta('vartijat') && !valittuVartija && (<>
       {/* --- Vartijoiden sijainnit (erä 23) --------------------------------------
 
           KOLMAS LISTA IHMISISTÄ, ja ero kahteen edelliseen on se mihin kysymykseen se

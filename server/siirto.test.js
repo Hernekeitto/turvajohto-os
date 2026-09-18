@@ -11,7 +11,8 @@ import assert from 'node:assert/strict';
 
 import {
   VIESTIN_MAX,
-  joSiirrossa, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto, omatSiirrot, peruSiirto,
+  joSiirrossa, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto, merkitseValmiiksi, omatSiirrot,
+  peruSiirto,
   siirtojenAvaamatKohteet, vastaaSiirtoon,
 } from './siirto.js';
 
@@ -247,4 +248,75 @@ test('hylatty tai peruttu ei ole kenenkaan tyota', () => {
     assert.equal(omatSiirrot([s], 'piirivartija').hyvaksytyt.length, 0, tila);
     assert.equal(siirtojenAvaamatKohteet([s], 'piirivartija').size, 0, tila);
   }
+});
+
+// --- Pakotettu tehtävä ja sen raporttivaatimus (18.9.2026) ---------------------------
+//
+// Päivystäjä määrää tehtävän ja valitsee mitä siitä on kirjoitettava. Nämä testit
+// vartioivat kahta asiaa: raporttivaatimusta ei voi ohittaa, eikä kuittausta voi
+// hypätä yli — "olen nähnyt määräyksen" ja "olen tehnyt sen" ovat eri merkintöjä.
+
+const maarays = (raporttilaji, tila = 'kuitattu') => ({
+  id: 'p1', laji: 'oma', kohdeId: 'uuid-1', nimi: 'Vie vartijakutsupainike',
+  siteId: 'k1', siteNimi: 'Teollisuuskatu 5', antaja: 'halke', saaja: 'Turva051',
+  vuoroId: 'v1', tapa: 'pakotus', tila, viesti: '', raporttilaji, raportti: null,
+  luotu: '2026-09-18T10:00:00.000Z', ratkaistu: null,
+});
+
+test('oma tehtävä vaatii nimen eikä sitä voi siirtää', () => {
+  const yhteiset = { antaja: 'halke', saaja: 'v1', laji: 'oma', kohdeId: 'uuid-1', siteId: 'k1', id: 'x' };
+  assert.equal(luoSiirto({ ...yhteiset, nimi: 'ab', tapa: 'pakotus' }).ok, false);
+  assert.equal(luoSiirto({ ...yhteiset, nimi: 'Vie painike', tapa: 'siirto' }).ok, false);
+  assert.equal(luoSiirto({ ...yhteiset, nimi: 'Vie painike', tapa: 'pakotus' }).ok, true);
+});
+
+test('tuntematon raporttilaji torjutaan', () => {
+  const tulos = luoSiirto({
+    antaja: 'halke', saaja: 'v1', laji: 'oma', kohdeId: 'uuid-1', siteId: 'k1',
+    nimi: 'Vie painike', tapa: 'pakotus', raporttilaji: 'essee', id: 'x',
+  });
+  assert.equal(tulos.ok, false);
+});
+
+test('kuittaamatonta tehtävää ei voi merkitä tehdyksi', () => {
+  // Kuittaus on se merkintä jonka takia pakotus on olemassa. Sen ohittaminen tekisi
+  // määräyksestä toiveen.
+  const tulos = merkitseValmiiksi({ siirto: maarays('kommentti', 'odottaa'), kayttaja: 'Turva051' });
+  assert.equal(tulos.ok, false);
+  assert.match(tulos.error, /kuitattava/i);
+});
+
+test('tapahtumailmoitus vaaditaan liitettäväksi', () => {
+  const ilman = merkitseValmiiksi({ siirto: maarays('tapahtumailmoitus'), kayttaja: 'Turva051' });
+  assert.equal(ilman.ok, false);
+  const kera = merkitseValmiiksi({
+    siirto: maarays('tapahtumailmoitus'), kayttaja: 'Turva051', raporttiId: 'r1',
+  });
+  assert.equal(kera.ok, true);
+  assert.equal(kera.siirto.raportti.raporttiId, 'r1');
+});
+
+test('selvitys vaatii tekstiä, kommentti ei', () => {
+  assert.equal(merkitseValmiiksi({ siirto: maarays('selvitys'), kayttaja: 'Turva051', teksti: 'ok' }).ok, false);
+  const selvitys = merkitseValmiiksi({
+    siirto: maarays('selvitys'), kayttaja: 'Turva051', teksti: 'Painike vietiin ja asennettiin.',
+  });
+  assert.equal(selvitys.ok, true);
+  assert.equal(selvitys.siirto.raportti.teksti, 'Painike vietiin ja asennettiin.');
+  // Kommentti saa jäädä tyhjäksi: pakotettu kenttä tuottaa keksittyä tekstiä.
+  assert.equal(merkitseValmiiksi({ siirto: maarays('kommentti'), kayttaja: 'Turva051' }).ok, true);
+});
+
+test('toisen tehtävää ei voi merkitä tehdyksi eikä tehtyä uudelleen', () => {
+  assert.equal(merkitseValmiiksi({ siirto: maarays('kommentti'), kayttaja: 'joku_muu' }).ok, false);
+  const tehty = merkitseValmiiksi({ siirto: maarays('kommentti'), kayttaja: 'Turva051' }).siirto;
+  const toisto = merkitseValmiiksi({ siirto: tehty, kayttaja: 'Turva051' });
+  assert.equal(toisto.duplikaatti, true);
+});
+
+test('tehty pakotus pysyy vartijan listalla', () => {
+  // Katoaminen listalta samalla sekunnilla kun se merkitään tehdyksi jättäisi vartijan
+  // arvaamaan menikö merkinta lapi.
+  const tehty = { ...maarays('kommentti'), tila: 'valmis' };
+  assert.equal(omatSiirrot([tehty], 'Turva051').hyvaksytyt.length, 1);
 });

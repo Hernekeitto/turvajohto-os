@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 
 import { TYYPPI_LABEL, type Halytys } from '../../shared/halytykset';
-import type { OmatSiirrot } from '../siirrot';
+import type { OmatSiirrot, Siirto } from '../siirrot';
 import type { Kierros as KierrosTietue, Kierrospohja, Kohde, TehtavaSuoritus } from '../tyypit';
 import type { Halytystehtava } from '../halytystehtavat';
 import { TehtavaRivi } from './HalytysTehtava';
@@ -40,6 +40,9 @@ type Props = {
   siirrot: OmatSiirrot;
   siirtoVastataan: boolean;
   onVastaaSiirtoon: (id: string, hyvaksy: boolean) => void;
+  // Pakotetun tehtävän merkitseminen tehdyksi. Avaa lomakkeen, jossa vaadittu raportti
+  // kirjoitetaan — vaatimus tulee tehtävästä, ei vartijan valinnasta.
+  onTeeSiirto: (siirto: Siirto) => void;
   pohjat: Kierrospohja[];
   kierrokset: KierrosTietue[];
   halytykset: Halytys[];
@@ -81,7 +84,7 @@ export const MobiiliEtusivu = ({
   kohde, vuoronPohjaIdt, vuoronTehtavaIdt, vuoroKaynnissa, lisataan, lisaysVirhe,
   pohjat, kierrokset, halytykset, suoritukset, sallitut,
   halytystehtavat, kayttaja, onHalytystehtava,
-  siirrot, siirtoVastataan,
+  siirrot, siirtoVastataan, onTeeSiirto,
   onKierros, onTehtavat, onHalytykset, onLisaaVuoroon, onVastaaSiirtoon,
 }: Props) => {
   const [hakemistoAuki, setHakemistoAuki] = useState(false);
@@ -225,14 +228,59 @@ export const MobiiliEtusivu = ({
           kierros voi olla toisessa kohteessa. Siksi kohteen nimi on kortilla — ilman sitä
           vartija ei tietäisi minne mennä. */}
       {siirrot.hyvaksytyt.map((siirto) => (
-        <div key={siirto.id} className="rounded-xl border border-line bg-surface p-4">
+        <div
+          key={siirto.id}
+          className={`rounded-xl border p-4 ${
+            siirto.tila === 'valmis' ? 'border-success/30 bg-success-soft' : 'border-line bg-surface'
+          }`}
+        >
           <span className="flex items-center gap-2 text-lg font-bold text-ink-strong">
             <ArrowRightLeft size={18} className="text-accent shrink-0" />
             <span className="min-w-0 break-words">{siirto.nimi}</span>
           </span>
           <span className="block text-base text-ink-body mt-2">
-            {siirto.siteNimi} · siirretty sinulle ({siirto.antaja})
+            {siirto.siteNimi}
+            {siirto.tapa === 'pakotus'
+              ? ` · hälytyskeskuksen antama (${siirto.antaja})`
+              : ` · siirretty sinulle (${siirto.antaja})`}
           </span>
+          {siirto.viesti && (
+            <span className="block text-base text-ink-body mt-1">{siirto.viesti}</span>
+          )}
+
+          {/* PAKOTETTU TEHTÄVÄ MERKITÄÄN TEHDYKSI TÄSSÄ (18.9.2026).
+              Aiemmin hyväksytty siirto oli pelkkä tiedotekortti: työ näkyi, mutta sitä ei
+              voinut kuitata tehdyksi mistään. Päivystäjä ei siis nähnyt tehtiinkö se.
+
+              Raporttivaatimus tulee tehtävästä eikä vartijalta: päivystäjä valitsi sen
+              tehtävää antaessaan. Vartija ei voi vaihtaa sitä kevyempään. */}
+          {siirto.tila === 'valmis' ? (
+            <span className="block text-base font-bold text-success-ink mt-2">
+              Merkitty tehdyksi{siirto.raportti?.teksti ? `: ${siirto.raportti.teksti}` : '.'}
+            </span>
+          ) : siirto.raporttilaji !== undefined && siirto.raporttilaji !== null ? (
+            <button
+              type="button"
+              onClick={() => onTeeSiirto(siirto)}
+              className="mt-3 w-full flex items-center justify-center gap-2 bg-accent text-white text-base font-bold rounded-xl px-4 py-3"
+            >
+              <Check size={18} />
+              {siirto.raporttilaji === 'tapahtumailmoitus'
+                ? 'Tehty — liitä tapahtumailmoitus'
+                : siirto.raporttilaji === 'selvitys'
+                  ? 'Tehty — kirjoita selvitys'
+                  : 'Merkitse tehdyksi'}
+            </button>
+          ) : siirto.tapa === 'pakotus' ? (
+            <button
+              type="button"
+              onClick={() => onTeeSiirto(siirto)}
+              className="mt-3 w-full flex items-center justify-center gap-2 border border-line-strong text-ink-body text-base font-bold rounded-xl px-4 py-3"
+            >
+              <Check size={18} />
+              Merkitse tehdyksi
+            </button>
+          ) : null}
         </div>
       ))}
 

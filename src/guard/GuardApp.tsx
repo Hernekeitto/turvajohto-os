@@ -36,6 +36,7 @@ import { Vuorovalinta } from './mobiili/Vuorovalinta';
 import { SiirtoValinta } from './mobiili/SiirtoValinta';
 import { VuoronKooste as VuoronKoosteNakyma } from './mobiili/VuoronKooste';
 import { PakotettuTehtava } from './mobiili/PakotettuTehtava';
+import { SiirronRaportti } from './mobiili/SiirronRaportti';
 import { Tehtavanjako } from './Tehtavanjako';
 import { Skanneri } from './mobiili/Skanneri';
 import { Tilatieto } from './mobiili/Tilatieto';
@@ -59,9 +60,9 @@ import {
   type PalvelimenVuoro, type VuoronKooste, type Vuorokohde, type VuoroVaihtoehto,
 } from './vuorot';
 import {
-  TYHJAT_SIIRROT, haeOmatSiirrot, haeVastaanottajat, kuittaaPakotus, siirraTehtava,
-  vastaaSiirtoon,
-  type OmatSiirrot, type Vastaanottaja,
+  TYHJAT_SIIRROT, haeOmatSiirrot, haeVastaanottajat, kuittaaPakotus,
+  merkitseSiirtoValmiiksi, siirraTehtava, vastaaSiirtoon,
+  type OmatSiirrot, type Siirto, type Vastaanottaja,
 } from './siirrot';
 import { kaynnistaSovelluksessa, onAlustaJollaSovellus, paataSovelluksessa } from './mobiili/sovellusvuoro';
 import { useKanava, type Sijainti } from '../shared/kanava';
@@ -1628,6 +1629,28 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     paivitaKohteet();
   };
 
+  // Pakotetun tehtävän merkitseminen tehdyksi (18.9.2026).
+  //
+  // Eri asia kuin kuittaus yllä: kuittaus kertoo että määräys on nähty, tämä että työ on
+  // tehty ja vaadittu raportti kirjoitettu. Palvelin vaatii kuittauksen ensin.
+  const [tehtavaValmiiksi, setTehtavaValmiiksi] = useState<Siirto | null>(null);
+  const [valmiiksiTallentaa, setValmiiksiTallentaa] = useState(false);
+  const [valmiiksiVirhe, setValmiiksiVirhe] = useState<string | null>(null);
+
+  const merkitseTehdyksi = async (arvot: { raporttiId: string | null; teksti: string }) => {
+    if (!tehtavaValmiiksi) return;
+    setValmiiksiTallentaa(true);
+    setValmiiksiVirhe(null);
+    const tulos = await merkitseSiirtoValmiiksi(tehtavaValmiiksi.id, arvot);
+    setValmiiksiTallentaa(false);
+    if (!tulos.ok) {
+      setValmiiksiVirhe(tulos.error || 'Merkintä ei onnistunut.');
+      return;
+    }
+    setTehtavaValmiiksi(null);
+    await paivitaSiirrot();
+  };
+
   // Kohdelistan uudelleenhaku. Hyväksytty siirto voi avata kohteen jota vartija ei
   // aiemmin nähnyt (server/index.js: siirtojenAvaamatKohteet), eikä käynnistyksessä
   // haettu lista kerro siitä mitään.
@@ -2017,6 +2040,21 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         />
       )}
 
+      {/* Valmiiksi merkintä on PakotettuTehtava-modaalin jälkeen matalammalla z-tasolla:
+          kuittaamaton määräys on aina päällimmäisenä, koska sen on pysäytettävä ruutu. */}
+      {tehtavaValmiiksi && (
+        <SiirronRaportti
+          siirto={tehtavaValmiiksi}
+          omatRaportit={raportit.filter(
+            (r) => r.author === session?.username && r.siteId === tehtavaValmiiksi.siteId
+          )}
+          tallentaa={valmiiksiTallentaa}
+          virhe={valmiiksiVirhe}
+          onSulje={() => { setTehtavaValmiiksi(null); setValmiiksiVirhe(null); }}
+          onValmis={merkitseTehdyksi}
+        />
+      )}
+
       {koosteAuki && (
         <VuoronKoosteNakyma
           kooste={kooste}
@@ -2388,6 +2426,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             lisataan={vuoroonLisataan}
             lisaysVirhe={lisaysVirhe}
             onLisaaVuoroon={lisaaOmaanVuoroon}
+            onTeeSiirto={setTehtavaValmiiksi}
             siirrot={siirrot}
             siirtoVastataan={siirtoVastataan}
             onVastaaSiirtoon={vastaaSiirtoPyyntoon}

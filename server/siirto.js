@@ -23,10 +23,35 @@
 
 export const VIESTIN_MAX = 500;
 
+// --- Pakotuksen lajit ja raporttivaatimus (18.9.2026) -------------------------------
+//
+// `oma` on hälytyskeskuksen itse kirjoittama tehtävä ("vie kohteeseen X uusi
+// vartijakutsupainike"). Se EI ole kohteen luettelossa eikä voi olla: juuri ne työt
+// jotka eivät mahdu valmiiseen luetteloon ovat niitä joita päivystäjä joutuu antamaan
+// kesken vuoron. Siksi sillä on nimi mutta ei luettelotunnusta.
+export const LAJIT = ['tehtava', 'kierros', 'oma'];
+
+// Mitä vartijan on kirjoitettava ennen kuin tehtävän voi merkitä tehdyksi.
+//
+// PÄIVYSTÄJÄ VALITSEE TÄMÄN TEHTÄVÄÄ ANTAESSAAN eikä vartija jälkikäteen. Ero on se mitä
+// tehtävästä jää: "vaihda lamppu" ei tarvitse tapahtumailmoitusta, mutta "käy katsomassa
+// miksi ovi oli auki" tarvitsee, eikä vartija voi tietää kumpaa päivystäjä odottaa.
+//
+//   tapahtumailmoitus — virallinen raportti (guardReports). Myöhemmin Tapari.
+//   selvitys          — lyhyt vapaa teksti, pakollinen.
+//   kommentti         — vapaa teksti, saa jäädä tyhjäksi.
+export const RAPORTTILAJIT = ['tapahtumailmoitus', 'selvitys', 'kommentti'];
+
+export const SELVITYKSEN_MIN = 10;
+export const RAPORTIN_MAX = 2000;
+
 // Mitä tiloja siirrolla voi olla. `kuitattu` on erää 19 varten (pakotus, jota ei
 // hyväksytä vaan kuitataan) — se on tässä jotta tilamalli on yhdessä paikassa eikä
 // puolittain kahdessa.
-export const TILAT = ['odottaa', 'hyvaksytty', 'hylatty', 'peruttu', 'kuitattu'];
+// `valmis` on pakotusta varten (18.9.2026): pakotettu tehtävä kuitataan nähdyksi ja
+// tehdään sen jälkeen. Kaksi eri asiaa, kaksi eri tilaa — kuittaus kertoo että määräys on
+// nähty, `valmis` että työ on tehty ja raportti kirjoitettu.
+export const TILAT = ['odottaa', 'hyvaksytty', 'hylatty', 'peruttu', 'kuitattu', 'valmis'];
 
 /**
  * Uusi siirto.
@@ -37,7 +62,7 @@ export const TILAT = ['odottaa', 'hyvaksytty', 'hylatty', 'peruttu', 'kuitattu']
  */
 export function luoSiirto({
   antaja, saaja, laji, kohdeId, nimi, siteId, siteNimi = '',
-  saajanVuoro = null, viesti = '', tapa = 'siirto', id, nyt = Date.now(),
+  saajanVuoro = null, viesti = '', tapa = 'siirto', raporttilaji = null, id, nyt = Date.now(),
 }) {
   if (!antaja || !saaja) return { ok: false, error: 'Antaja ja saaja vaaditaan.' };
   if (antaja === saaja) {
@@ -45,10 +70,24 @@ export function luoSiirto({
     // ja se on aina näppäilyvirhe.
     return { ok: false, error: 'Tehtävää ei voi siirtää itselleen.' };
   }
-  if (laji !== 'tehtava' && laji !== 'kierros') {
+  if (!LAJIT.includes(laji)) {
     return { ok: false, error: 'Tuntematon laji.' };
   }
+  // Oma tehtävä ei ole siirto vaan määräys: siirtää voi vain sitä mitä itsellä on, ja
+  // itse kirjoitettu työ ei ole kenenkään vuorossa ennen kuin se annetaan.
+  if (laji === 'oma' && tapa !== 'pakotus') {
+    return { ok: false, error: 'Oma tehtävä voidaan vain pakottaa, ei siirtää.' };
+  }
+  const puhdasNimi = String(nimi || '').trim().slice(0, 200);
+  if (laji === 'oma' && puhdasNimi.length < 3) {
+    return { ok: false, error: 'Omalle tehtävälle on kirjoitettava nimi.' };
+  }
+  // `oma` saa tunnuksensa kutsujalta (uuid): sillä ei ole luettelotunnusta, mutta
+  // tunnuksettomuus rikkoisi päällekkäisyystarkistuksen ja kuittauksen kohdistuksen.
   if (!kohdeId || !siteId) return { ok: false, error: 'Tehtävä ja kohde vaaditaan.' };
+  if (raporttilaji !== null && !RAPORTTILAJIT.includes(raporttilaji)) {
+    return { ok: false, error: 'Tuntematon raporttilaji.' };
+  }
   if (tapa === 'siirto' && !saajanVuoro) {
     return { ok: false, error: 'Vartija ei ole vuorossa. Siirtää voi vain vuorossa olevalle.' };
   }
@@ -59,9 +98,12 @@ export function luoSiirto({
       id,
       laji,
       kohdeId,
+      // Mitä vartijan on kirjoitettava. null = ei vaatimusta (tavallinen siirto).
+      raporttilaji,
+      raportti: null,
       // Nimet kopioidaan samasta syystä kuin vuorossa: kohteen tai tehtävän nimen muutos
       // ei saa muuttaa mennyttä siirtoa.
-      nimi: String(nimi || '').slice(0, 200),
+      nimi: puhdasNimi,
       siteId,
       siteNimi: String(siteNimi || '').slice(0, 200),
       antaja,
@@ -132,7 +174,11 @@ export function peruSiirto({ siirto, kayttaja, nyt = Date.now() }) {
 //
 // Kuitatun puuttuminen tästä joukosta oli vika: pakotettu tehtävä katosi työlistalta
 // heti kun se kuitattiin, vaikka kuittausmodaali lupasi päinvastaista.
-const OMAKSI_TULLEET = new Set(['hyvaksytty', 'kuitattu']);
+// `valmis` on mukana (18.9.2026): tehty tehtävä on yhä tämän vartijan, ja sen on näyttävä
+// hänen listallaan tehtynä. Katoaminen listalta samalla sekunnilla kun se merkitään
+// tehdyksi jättäisi vartijan arvaamaan menikö merkintä läpi — sama vika kuin erässä 19,
+// jossa kuitattu pakotus katosi vaikka kuittausmodaali lupasi päinvastaista.
+const OMAKSI_TULLEET = new Set(['hyvaksytty', 'kuitattu', 'valmis']);
 
 /**
  * Vartijan siirrot molempiin suuntiin.
@@ -211,4 +257,56 @@ export function kuittaamattomatPakotukset(siirrot, username) {
   return (siirrot || []).filter(
     (s) => s?.saaja === username && s.tapa === 'pakotus' && s.tila === 'odottaa'
   );
+}
+
+/**
+ * Vartija merkitsee pakotetun tehtävän tehdyksi ja kirjoittaa vaaditun raportin.
+ *
+ * KUITTAUS EI OLE SUORITUS. Pakotus kuitataan nähdyksi heti (kuittaaPakotus) ja tehdään
+ * sen jälkeen. Jos nämä olisivat sama tila, "olen nähnyt määräyksen" ja "olen tehnyt sen"
+ * kirjautuisivat samaksi merkinnäksi — ja juuri se ero on koko pakotuksen syy.
+ *
+ * Raporttivaatimus tulee tehtävästä eikä vartijalta: päivystäjä valitsi sen tehtävää
+ * antaessaan (ks. RAPORTTILAJIT). Vartija ei voi vaihtaa sitä kevyempään.
+ *
+ * @param raporttiId Kirjoitetun tapahtumailmoituksen tunnus. Kutsuja on tarkistanut että
+ *   raportti on olemassa ja tämän vartijan kirjoittama — tämä tiedosto ei lue levyä.
+ */
+export function merkitseValmiiksi({
+  siirto, kayttaja, raporttiId = null, teksti = '', nyt = Date.now(),
+}) {
+  if (!siirto) return { ok: false, error: 'Tehtävää ei löytynyt.' };
+  if (siirto.saaja !== kayttaja) return { ok: false, error: 'Tehtävä on toiselle vartijalle.' };
+  if (siirto.tila === 'valmis') {
+    // Jonon uudelleenyritys: jo tehty on toistona haluttu lopputulos.
+    return { ok: true, siirto, duplikaatti: true };
+  }
+  // Kuittaamaton pakotus on määräys jota ei ole vielä nähty. Sen merkitseminen tehdyksi
+  // ohittaisi kuittauksen kokonaan, eli poistaisi sen merkinnän jonka takia pakotus on
+  // olemassa.
+  if (siirto.tila !== 'kuitattu' && siirto.tila !== 'hyvaksytty') {
+    return { ok: false, error: 'Tehtävä on kuitattava ennen kuin sen voi merkitä tehdyksi.' };
+  }
+
+  const puhdasTeksti = String(teksti || '').trim().slice(0, RAPORTIN_MAX);
+  const laji = siirto.raporttilaji;
+
+  if (laji === 'tapahtumailmoitus' && !raporttiId) {
+    return { ok: false, error: 'Tehtävä vaatii tapahtumailmoituksen. Kirjoita se ensin ja liitä se tähän.' };
+  }
+  if (laji === 'selvitys' && puhdasTeksti.length < SELVITYKSEN_MIN) {
+    return { ok: false, error: 'Tehtävä vaatii lyhyen selvityksen. Kirjoita mitä teit.' };
+  }
+
+  return {
+    ok: true,
+    siirto: {
+      ...siirto,
+      tila: 'valmis',
+      tehty: new Date(nyt).toISOString(),
+      raportti: laji
+        ? { laji, raporttiId: laji === 'tapahtumailmoitus' ? raporttiId : null, teksti: puhdasTeksti }
+        : null,
+    },
+  };
 }

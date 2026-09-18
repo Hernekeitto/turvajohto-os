@@ -62,7 +62,9 @@ export const Tehtavanjako = ({ onTakaisin }: Props) => {
     if (!valittu || !saaja) return;
     setVirhe(null);
     setLahettaa(true);
-    const tulos = await pakotaTehtava(saaja, valittu.kohde.siteId, valittu.laji, valittu.rivi.id, viesti);
+    const tulos = await pakotaTehtava({
+      saaja, siteId: valittu.kohde.siteId, laji: valittu.laji, kohdeId: valittu.rivi.id, viesti,
+    });
     setLahettaa(false);
     if (!tulos.ok) {
       setVirhe(tulos.virhe);

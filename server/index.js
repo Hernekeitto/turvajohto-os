@@ -33,8 +33,9 @@ import {
   paataVuoro, vuorovaihtoehdot, vuoronPaattymisaika,
 } from './vuorot.js';
 import {
-  joSiirrossa, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto, omatSiirrot, peruSiirto,
-  siirtojenAvaamatKohteet, vastaaSiirtoon,
+  joSiirrossa, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto,
+  merkitseValmiiksi as merkitseSiirtoValmiiksi,
+  omatSiirrot, peruSiirto, siirtojenAvaamatKohteet, vastaaSiirtoon,
 } from './siirto.js';
 import {
   AVOIMET_TILAT,
@@ -2288,6 +2289,63 @@ app.get('/api/vuoro/:id/kooste', requireAuth, guardPortti, (req, res) => {
   });
 });
 
+// --- Hälytyskeskuksen vartijanäkymä (18.9.2026) -------------------------------------
+//
+// YKSI REITTI EIKÄ VIISI. Paneeli vastaa yhteen kysymykseen — "mikä tämän vartijan
+// tilanne on juuri nyt" — ja sen osat (vuoro, tehtäväloki, kalusto) luetaan samalla
+// oikeudella samasta hetkestä. Viisi erillistä hakua antaisi viisi eri hetkeä: vuoro
+// voisi olla päättynyt siinä välissä kun kalusto haetaan, ja paneeli näyttäisi kahta
+// eri totuutta rinnakkain.
+//
+// `guard_dispatch` eikä kohdekohtainen oikeus: tämä on henkilön näkymä eikä kohteen.
+// Päivystäjä joka saa nähdä kuka on vuorossa saa nähdä myös mitä hän tekee — se on sama
+// tieto järjestettynä uudelleen. Vartija itse ei pääse tänne lainkaan, koska hänellä on
+// omat näkymänsä eikä toisen vartijan kalusto kuulu hänelle.
+app.get('/api/vartija/:username', requireAuth, guardPortti, (req, res) => {
+  if (!saaMyontaaKertaluvan(req)) {
+    return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus näkee vartijan hallintanäkymän.' });
+  }
+  const user = findUser(req.params.username);
+  if (!user) return res.status(404).json({ ok: false, error: 'Vartijaa ei löytynyt.' });
+
+  const vuorot = readCollection('guardShifts') || [];
+  const kaynnissa = keskenOlevaVuoro(vuorot, user.username) || null;
+  // Päättynyt vuoro varalla: paneeli avataan vuorolistasta, mutta se voi jäädä auki
+  // toiselle näytölle senkin jälkeen kun vuoro päättyy. Tyhjä näkymä siinä kohtaa
+  // hukkaisi juuri sen koosteen jota päivystäjä oli katsomassa.
+  const viimeisin = kaynnissa || (vuorot
+    .filter((v) => v?.vartija === user.username && v?.tila === 'paattynyt')
+    .sort((a, b) => String(b.paattyi).localeCompare(String(a.paattyi)))[0] || null);
+
+  const kooste = viimeisin
+    ? vuoronKooste({
+      vuoro: viimeisin,
+      kierrokset: readCollection('patrolRuns') || [],
+      suoritukset: readCollection('guardTaskRuns') || [],
+    })
+    : null;
+
+  // Kalusto sijoitetaan HENKILÖLLE työntekijätunnuksella eikä käyttäjätunnuksella, joten
+  // ilman työntekijätietuetta lista ei voi olla oikein — ja tyhjä lista näyttäisi siltä
+  // että vartijalla ei ole mitään. `kalustoTiedossa: false` kertoo eron.
+  const kalustoTiedossa = Boolean(user.employeeId);
+  const omaKalusto = kalustoTiedossa
+    ? kalusto.vuoronKalusto(kalusto.normalisoiRivit(readCollection('assets') || []), {
+      employeeId: user.employeeId,
+    })
+    : [];
+
+  res.json({
+    ok: true,
+    vartija: { username: user.username, nimi: user.nickname || user.username },
+    vuoro: viimeisin,
+    vuoroKaynnissa: Boolean(kaynnissa),
+    kooste,
+    kalustoTiedossa,
+    kalusto: omaKalusto,
+  });
+});
+
 // Vuoron päättäminen.
 app.post('/api/vuoro/:id/paata', requireAuth, guardPortti, (req, res) => {
   const vuorot = readCollection('guardShifts') || [];
@@ -2618,19 +2676,34 @@ app.post('/api/pakota', requireAuth, guardPortti, (req, res) => {
   if (!saaMyontaaKertaluvan(req)) {
     return res.status(403).json({ ok: false, error: 'Vaatii pääkäyttäjän tai hälytyskeskuksen oikeudet.' });
   }
-  const { saaja, siteId, laji, kohdeId, viesti } = req.body || {};
+  const { saaja, siteId, laji, kohdeId, viesti, nimi, raporttilaji } = req.body || {};
 
   const kohde = (readCollection('guardSites') || []).find((k) => k?.id === siteId);
   if (!kohde) return res.status(404).json({ ok: false, error: 'Kohdetta ei löytynyt.' });
   if (!findUser(saaja)) return res.status(404).json({ ok: false, error: 'Vartijaa ei löytynyt.' });
 
-  const osuma = laji === 'kierros'
-    ? (readCollection('templates') || []).find((po) => po?.id === kohdeId && po.ownerId === siteId)
-    : (kohde.tehtavat || []).find((t) => t?.id === kohdeId);
-  if (!osuma) return res.status(404).json({ ok: false, error: 'Tehtävää ei löytynyt kohteesta.' });
+  // OMA TEHTÄVÄ EI OLE LUETTELOSSA (18.9.2026). Juuri ne työt jotka eivät mahdu valmiiseen
+  // luetteloon — "vie kohteeseen uusi vartijakutsupainike" — ovat niitä joita päivystäjä
+  // joutuu antamaan kesken vuoron. Sillä on siis nimi mutta ei luettelotunnusta, ja
+  // tunnus luodaan tässä: tunnukseton rivi rikkoisi päällekkäisyystarkistuksen ja
+  // kuittauksen kohdistuksen.
+  //
+  // Luettelosta annetun tehtävän nimi luetaan kohteesta eikä uskota selaimen antamaa:
+  // nimi menee tietueeseen pysyvästi, ja väärä nimi oikealla tunnuksella olisi
+  // työmääräys joka väittää olevansa jotain muuta kuin on.
+  const oma = laji === 'oma';
+  let osuma = null;
+  if (!oma) {
+    osuma = laji === 'kierros'
+      ? (readCollection('templates') || []).find((po) => po?.id === kohdeId && po.ownerId === siteId)
+      : (kohde.tehtavat || []).find((t) => t?.id === kohdeId);
+    if (!osuma) return res.status(404).json({ ok: false, error: 'Tehtävää ei löytynyt kohteesta.' });
+  }
+  const lopullinenKohdeId = oma ? crypto.randomUUID() : kohdeId;
 
   const siirrot = readCollection('guardAssignments') || [];
-  if (joSiirrossa(siirrot, { saaja, kohdeId, laji })) {
+  // Oma tehtävä ei voi olla päällekkäinen: jokainen on uusi ja saa oman tunnuksensa.
+  if (!oma && joSiirrossa(siirrot, { saaja, kohdeId, laji })) {
     return res.status(409).json({ ok: false, error: 'Tämä tehtävä odottaa jo kyseisen vartijan vastausta.' });
   }
 
@@ -2638,13 +2711,14 @@ app.post('/api/pakota', requireAuth, guardPortti, (req, res) => {
     antaja: req.username,
     saaja,
     laji,
-    kohdeId,
-    nimi: osuma.nimi,
+    kohdeId: lopullinenKohdeId,
+    nimi: oma ? nimi : osuma.nimi,
     siteId,
     siteNimi: kohde.name || '',
     saajanVuoro: keskenOlevaVuoro(readCollection('guardShifts') || [], saaja),
     viesti,
     tapa: 'pakotus',
+    raporttilaji: raporttilaji || null,
     id: crypto.randomUUID(),
   });
   if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
@@ -2653,6 +2727,7 @@ app.post('/api/pakota', requireAuth, guardPortti, (req, res) => {
   logAudit({
     user: req.username, action: 'tehtava_pakotettu', collection: 'guardAssignments',
     recordId: tulos.siirto.id, eventId: siteId, saaja, laji,
+    ...(raporttilaji ? { raporttilaji } : {}),
   });
   kerroSiirrosta(tulos.siirto, 'create');
   res.json({ ok: true, siirto: tulos.siirto });
@@ -2662,6 +2737,39 @@ app.post('/api/pakota', requireAuth, guardPortti, (req, res) => {
 //
 // Kuittaus EI ole hyväksyntä: sitä ei voi hylätä. Se on merkintä siitä että määräys on
 // nähty — määräys jonka vastaanotosta ei ole merkintää ei ole määräys vaan toive.
+// Vartija merkitsee pakotetun tehtävän tehdyksi ja liittää vaaditun raportin.
+app.post('/api/siirto/:id/valmis', requireAuth, guardPortti, (req, res) => {
+  const siirrot = readCollection('guardAssignments') || [];
+  const siirto = siirrot.find((x) => x?.id === req.params.id);
+  if (!siirto) return res.status(404).json({ ok: false, error: 'Tehtävää ei löytynyt.' });
+
+  // Tapahtumailmoitus tarkistetaan TÄÄLLÄ eikä siirto.js:ssä, joka ei lue levyä. Raportin
+  // on oltava olemassa ja vartijan itsensä kirjoittama: muuten tehtävän voisi kuitata
+  // liittämällä siihen kenen tahansa raportin.
+  const raporttiId = typeof req.body?.raporttiId === 'string' ? req.body.raporttiId : null;
+  if (raporttiId) {
+    const raportti = (readCollection('guardReports') || []).find((r) => r?.id === raporttiId);
+    if (!raportti || raportti.author !== req.username) {
+      return res.status(404).json({ ok: false, error: 'Tapahtumailmoitusta ei löytynyt omista raporteistasi.' });
+    }
+  }
+
+  const tulos = merkitseSiirtoValmiiksi({
+    siirto, kayttaja: req.username, raporttiId, teksti: req.body?.teksti,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  if (tulos.duplikaatti) return res.json({ ok: true, siirto: tulos.siirto, duplikaatti: true });
+
+  writeCollection('guardAssignments', siirrot.map((x) => (x.id === siirto.id ? tulos.siirto : x)));
+  logAudit({
+    user: req.username, action: 'tehtava_tehty', collection: 'guardAssignments',
+    recordId: siirto.id, eventId: siirto.siteId, maaraaja: siirto.antaja,
+    ...(siirto.raporttilaji ? { raporttilaji: siirto.raporttilaji } : {}),
+  });
+  kerroSiirrosta(tulos.siirto, 'update');
+  res.json({ ok: true, siirto: tulos.siirto });
+});
+
 app.post('/api/siirto/:id/kuittaa', requireAuth, guardPortti, (req, res) => {
   const siirrot = readCollection('guardAssignments') || [];
   const siirto = siirrot.find((x) => x?.id === req.params.id);
