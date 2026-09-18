@@ -100,7 +100,7 @@ fs.writeFileSync(path.join(DATA, 'devices.json'), JSON.stringify([laite], null, 
 const palvelin = spawn(process.execPath, ['server/index.js'], {
   env: {
     ...process.env, DATA_DIR: DATA, PORT: String(PORT),
-    JWT_SECRET: 'e2e-jwt-salaisuus-vain-testiin',
+    JWT_SECRET: 'e2e-jwt-testisalaisuus-vain-e2e-skripteihin-ei-koskaan-tuotantoon-1234',
     TOTP_ENCRYPTION_KEY: crypto.randomBytes(32).toString('hex'),
     DATA_ENCRYPTION_KEY: crypto.randomBytes(32).toString('hex'),
   },

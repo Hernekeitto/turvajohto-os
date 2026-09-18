@@ -149,8 +149,15 @@ const COOKIE_NAME = 'tj_session';
 // jokainen kirjautunut pyyntö (requireAuth) pidentää evästettä uudelleen tunnilla
 // eteenpäin, joten aktiivikäyttö ei katkea mutta tunnin joutokäynti kirjaa ulos.
 
-if (!JWT_SECRET) {
-  console.error('JWT_SECRET puuttuu ympäristömuuttujista. Palvelinta ei käynnistetä.');
+// Vähintään 64 merkkiä — sama pituusvaatimus kuin DATA_ENCRYPTION_KEY:llä ja
+// TOTP_ENCRYPTION_KEY:llä (fieldcrypto.js, totp.js). Toisin kuin ne, tätä ei pureta
+// tavuiksi (jwt.sign/verify käyttää merkkijonoa sellaisenaan HMAC-avaimena), joten
+// muotoa ei rajoiteta heksaan — vain pituutta, koska se on se mikä ratkaisee
+// murtamisen työmäärän. Ilman tätä lyhyt tai arvattava JWT_SECRET tekisi KENEN
+// TAHANSA käyttäjän (myös adminin) istuntoevästeen väärennettävissä offline-
+// murrolla, mikä ohittaisi sekä salasanan että TOTP:n kokonaan.
+if (!JWT_SECRET || JWT_SECRET.length < 64) {
+  console.error('JWT_SECRET puuttuu tai on liian lyhyt (vähintään 64 merkkiä) ympäristömuuttujista. Palvelinta ei käynnistetä.');
   process.exit(1);
 }
 
