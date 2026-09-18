@@ -62,6 +62,17 @@ let tyonnot = 0;
 // näkymän käyttäjän selän takana.
 let peruutetaanParhaillaan = false;
 
+// Montako history.back()-kutsua esteen siivous on tehnyt ilman että niiden popstate on
+// vielä saapunut. Selaimen popstate on ASYNKRONINEN, joten siivouksen peruutus näkyy
+// käsittelijässä vasta seuraavalla kierroksella — eikä sitä saa siellä tulkita
+// käyttäjän takaisin-painallukseksi.
+//
+// Ilman tätä laskuria SISÄKKÄISET modaalit sulkeutuivat kahdelta: kun päällimmäinen
+// suljettiin omalla napillaan, sen siivouksen peruutus saapui käsittelijään jossa
+// päällimmäisenä oli jo ALLA OLEVA este — ja se suljettiin siinä samalla. Kortin
+// päältä avattu apunäkymä vei siis mennessään kortinkin.
+let omiaPeruutuksia = 0;
+
 function tyonna(tila: HistoriaTila) {
   tyonnot += 1;
   window.history.pushState(tila, '');
@@ -107,6 +118,14 @@ export function useHistorianavigointi(nakyma: string, siirry: (nakyma: string) =
       // saa mennä negatiiviseksi silloin kun peruutus osuu merkintään jota sovellus ei
       // itse työntänyt.
       tyonnot = Math.max(0, tyonnot - 1);
+
+      // Sovelluksen oma siivousperuutus, ei käyttäjän painallus. Merkintä on kulutettu
+      // — se oli koko tarkoitus — mutta mitään ei suljeta eikä näkymää vaihdeta.
+      if (omiaPeruutuksia > 0) {
+        omiaPeruutuksia -= 1;
+        if (tila?.tjNakyma) merkinnanNakyma.current = tila.tjNakyma;
+        return;
+      }
 
       // Päällimmäinen este ensin: avoin modaali sulkeutuu eikä näkymä vaihdu. Tämä on
       // se mitä käyttäjä odottaa — takaisin sulkee päällimmäisen asian, ei kahta.
@@ -172,7 +191,10 @@ export function useTakaisinEste(aktiivinen: boolean, sulje: () => void) {
       // Vain jos merkintä on yhä päällimmäinen. Jos sen päälle on työnnetty
       // näkymämerkintä (modaalin toiminto vaihtoi näkymän), peruutus vaihtaisi
       // näkymän takaisin — silloin merkintä jätetään historiaan.
-      if (!peruutetaanParhaillaan && tyonnot === este.jarjestys) window.history.back();
+      if (!peruutetaanParhaillaan && tyonnot === este.jarjestys) {
+        omiaPeruutuksia += 1;
+        window.history.back();
+      }
     };
   }, [aktiivinen]);
 }
