@@ -641,11 +641,21 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     });
   };
 
+  // Milloin palvelin viimeksi vastasi hälytyshakuun. Hälytyskeskus näyttää tämän iän
+  // tilamerkissä: soketin tila kertoo vain onko putki auki, ikä kertoo tuleeko siitä
+  // mitään. EI aseteta epäonnistuneesta hausta — silloin nimenomaan ei saatu tietoa, ja
+  // iän nollaaminen väittäisi päinvastaista.
+  const [halytyksetPaivitetty, setHalytyksetPaivitetty] = useState<number | null>(null);
+
   // Hälytykset luetaan samalta kokoelmareitiltä kuin muutkin, mutta niitä EI koskaan
   // kirjoiteta takaisin: kokoelma on palvelimen ylläpitämä.
   const paivitaHalytykset = useCallback(() => {
     if (!saaNahdaHalytykset) return;
-    haeHalytykset().then((lista) => { if (lista) setHalytykset(lista); });
+    haeHalytykset().then((lista) => {
+      if (!lista) return;
+      setHalytykset(lista);
+      setHalytyksetPaivitetty(Date.now());
+    });
   }, [saaNahdaHalytykset]);
 
   useEffect(() => { paivitaHalytykset(); }, [paivitaHalytykset]);
@@ -2127,6 +2137,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           paneeli={HALKE_OSOITE.paneeli}
           taulu={HALKE_OSOITE.taulu}
           yhteys={yhdistetty}
+          paivitetty={halytyksetPaivitetty}
           sijaintiseuranta={session?.sijaintiseuranta === true}
           tehtavat={keskuksenTehtavat}
           saaMuokataTehtavia={saaMuokataTehtavia}

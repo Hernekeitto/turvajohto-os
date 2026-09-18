@@ -49,6 +49,7 @@ import type { Kohde } from './tyypit';
 import {
   myohassaMinuutteina, onUnohtunutVuoro, UNOHTUNUT_HALKE_MIN, type KaynnissaVuoro,
 } from './vuorot';
+import { tuoreus } from './tuoreus';
 import { KeskuksenTehtavat } from './KeskuksenTehtavat';
 import { LAJIN_NIMI, type Halytystehtava } from './halytystehtavat';
 
@@ -75,6 +76,10 @@ type Props = {
   // Kanavayhteyden tila. Päivystäjän on nähtävä tämä jatkuvasti: katkennut kanava
   // tarkoittaa että ruutu näyttää menneisyyttä, ja juuri sitä ei saa tapahtua huomaamatta.
   yhteys: boolean;
+  // Milloin palvelin viimeksi vastasi hälytyshakuun, tai null jos ei kertaakaan. Tästä
+  // lasketaan tilamerkin ikä (ks. tuoreus.ts): soketin tila ei kerro tuleeko putkesta
+  // mitään, eikä liikkumaton vihreä teksti erota toimivaa ruutua jäätyneestä.
+  paivitetty: number | null;
   sijaintiseuranta: boolean;
   // Hälytystehtävät (erä 22): hälytyskeskuksen kentälle antamat keikat. Haetaan
   // GuardAppissa kuten muukin data, jotta kanavan päivitys osuu yhteen paikkaan.
@@ -241,7 +246,7 @@ const VIRRAN_TYYLI: Record<Kiireys, string> = {
 const AANI_AVAIN = 'turvajohto-halke-aani';
 
 export const Halytyskeskus = ({
-  kohteet, lahteet, kayttaja, saaKuitata, oikeudet, yhteys, sijaintiseuranta,
+  kohteet, lahteet, kayttaja, saaKuitata, oikeudet, yhteys, paivitetty, sijaintiseuranta,
   tehtavat, saaMuokataTehtavia, onTehtavaMuutos, sijainnit, paneeli, taulu,
   onMuutos, onVirkista, onAvaaKohde, onTakaisin,
 }: Props) => {
@@ -258,11 +263,16 @@ export const Halytyskeskus = ({
   // kirjauksista: vartija joka ei ole kirjannut mitään ei näy siinä, ja juuri hänestä
   // päivystäjä on huolissaan.
   const [vuorossa, setVuorossa] = useState<KaynnissaVuoro[]>([]);
-  // Onko vuorolista kertaakaan saatu. Tyhjä lista tarkoittaa kahta täysin eri asiaa —
-  // "kukaan ei ole vuorossa" ja "en tiedä kuka on vuorossa" — ja tilanneluvun on
-  // sanottava kumpi. Ilman tätä indikaattori näyttäisi nollaa silloinkin kun haku ei ole
-  // koskaan onnistunut, eli juuri silloin kun päivystäjän pitäisi epäillä ruutua.
-  const [vuorotLuettu, setVuorotLuettu] = useState(false);
+  // Milloin vuorolista viimeksi saatiin. Kaksi käyttöä samalle luvulle:
+  //
+  //   1. Onko sitä kertaakaan saatu. Tyhjä lista tarkoittaa kahta täysin eri asiaa —
+  //      "kukaan ei ole vuorossa" ja "en tiedä kuka on vuorossa" — ja tilanneluvun on
+  //      sanottava kumpi. Ilman tätä indikaattori näyttäisi nollaa silloinkin kun haku ei
+  //      ole koskaan onnistunut, eli juuri silloin kun päivystäjän pitäisi epäillä ruutua.
+  //   2. Tilamerkin ikä. Tämä on toinen kahdesta reitistä joilla palvelin voi osoittaa
+  //      vastaavansa (ks. tuoreusTila alempana).
+  const [vuorotPaivitetty, setVuorotPaivitetty] = useState<number | null>(null);
+  const vuorotLuettu = vuorotPaivitetty !== null;
 
   useEffect(() => {
     let voimassa = true;
@@ -272,7 +282,7 @@ export const Halytyskeskus = ({
         const data = await v.json().catch(() => null);
         if (voimassa && data?.ok) {
           setVuorossa(data.vuorot || []);
-          setVuorotLuettu(true);
+          setVuorotPaivitetty(Date.now());
         }
       } catch {
         // Verkkovirhe: lista jää ennalleen. Tyhjentäminen näyttäisi siltä että
@@ -645,6 +655,33 @@ export const Halytyskeskus = ({
     [vuorossa, minuutti]
   );
 
+  // --- Milloin ruutu viimeksi sai tietoa ----------------------------------------------
+  //
+  // Kaksi lähdettä, uudempi voittaa: hälytyshaku (GuardApp, kanavan ja varakyselyn
+  // laukaisema) ja vuorolistan oma minuuttikysely. Kumpi tahansa onnistunut vastaus
+  // todistaa saman asian — palvelin vastaa tälle ikkunalle juuri nyt — ja kaksi lähdettä
+  // kattaa senkin tapauksen jossa käyttäjällä on oikeus hälytyskeskukseen (guard_dispatch)
+  // muttei hälytyksiin (guard_alarms): silloin hälytyshakua ei tehdä lainkaan, ja yhden
+  // lähteen varassa merkki jäisi ikuiseen varoitukseen ilman mitään vikaa.
+  //
+  // Ikkunan avaushetki on varalähtö: jos kumpikaan haku ei ole koskaan onnistunut, ikä
+  // lasketaan siitä kun tämä ikkuna avattiin. Refissä eikä tilassa, koska se ei muutu
+  // eikä saa käynnistää renderöintiä.
+  //
+  // TIETOINEN KOMPROMISSI: ikä näytetään samalla kellolla kuin kaikki muukin, eli
+  // hiljaisella ruudulla se päivittyy 10 s välein (ja hälytystilanteessa 1 s välein,
+  // koska kello nopeutuu silloin itsestään). Luku voi siis olla enintään 10 s todellista
+  // pienempi, ja varoitusraja ylittyä yhtä paljon myöhässä. Vaihtoehto olisi oma
+  // sekuntikello tälle merkille, mutta silloin koko näkymä — kartta mukaan lukien —
+  // renderöityisi kerran sekunnissa myös silloin kun ruudulla ei tapahdu mitään. Yksi
+  // kello myös takaa ettei ruudulla ole kahta eri mieltä olevaa aikaa.
+  const avattu = useRef(Date.now());
+  const tuoreusTila = tuoreus(
+    Math.max(paivitetty ?? 0, vuorotPaivitetty ?? 0) || null,
+    avattu.current,
+    nyt
+  );
+
   // --- Järjestelmän tila, tiiviinä ----------------------------------------------------
   //
   // Nämä olivat sivun pohjalla omana osionaan, kokonaisin virkkein. Väärä paikka: ne
@@ -655,14 +692,29 @@ export const Halytyskeskus = ({
   // ongelmatilassa koko selite näkyy merkkien alla sellaisenaan. Muuten "Tekstiviestit
   // pois" näyttäisi ruudulla yhtä rauhalliselta kuin "Tekstiviestit käytössä", ja ero
   // niiden välillä on se lähteekö hälytyksestä viesti kenellekään.
-  const tilamerkit: { avain: string; tila: Merkkitila; teksti: string; selite: string }[] = [
+  const tilamerkit: {
+    avain: string; tila: Merkkitila; teksti: string; selite: string; luku?: string;
+  }[] = [
     {
       avain: 'yhteys',
-      tila: yhteys ? 'ok' : 'varoitus',
-      teksti: yhteys ? 'Yhteys auki' : 'YHTEYS POIKKI',
-      selite: yhteys
-        ? 'Hälytykset ja kirjaukset päivittyvät ruudulle itsestään.'
-        : 'Ruudulla voi olla vanhaa tietoa. Yhteyttä yritetään uudelleen automaattisesti.',
+      // Vanha tieto on varoitus VAIKKA soketti olisi auki. Juuri se on tämän merkin
+      // tarkoitus: hiljaisesti katkennut yhteys näyttää auki olevalta siihen asti kunnes
+      // selain huomaa katkoksen, ja sillä välin vihreä teksti vakuuttaa päivystäjälle
+      // että ruutu on ajan tasalla.
+      tila: yhteys && !tuoreusTila.vanha ? 'ok' : 'varoitus',
+      teksti: !yhteys
+        ? 'YHTEYS POIKKI'
+        : tuoreusTila.vanha
+          ? 'PÄIVITYS VIIPYY'
+          : 'Yhteys auki',
+      // Ikä näkyy myös katkotilassa: "poikki" ei kerro kuinka vanhaa ruudulla näkyvä
+      // tieto on, ja päivystäjän seuraava kysymys on juuri se.
+      luku: tuoreusTila.teksti,
+      selite: !yhteys
+        ? 'Ruudulla voi olla vanhaa tietoa. Yhteyttä yritetään uudelleen automaattisesti.'
+        : tuoreusTila.vanha
+          ? 'Yhteys näyttää olevan auki, mutta palvelimelta ei ole kuulunut mitään pitkään aikaan. Ruudulla voi olla vanhaa tietoa. Päivitä ikkuna jos luku jatkaa kasvamistaan.'
+          : 'Hälytykset ja kirjaukset päivittyvät ruudulle itsestään. Luku kertoo milloin palvelimelta viimeksi saatiin vastaus.',
     },
   ];
   if (smsTila) {
@@ -768,7 +820,12 @@ export const Halytyskeskus = ({
                 }`}
               >
                 {t.avain === 'yhteys'
-                  ? (yhteys ? <Wifi size={13} /> : <WifiOff size={13} />)
+                  ? (yhteys
+                    // Pulssi VAIN kun päivitys on juuri saapunut (ks. tuoreus.ts). Ehdoitta
+                    // sykkivä ikoni sykkisi myös jäätyneellä ruudulla, eli näyttäisi
+                    // elonmerkiltä juuri silloin kun elonmerkkiä ei ole.
+                    ? <Wifi size={13} className={tuoreusTila.tuore ? 'animate-pulse' : undefined} />
+                    : <WifiOff size={13} />)
                   : (
                     <span
                       className={`w-2 h-2 rounded-full shrink-0 ${MERKKIPISTE[t.tila]}`}
@@ -776,6 +833,9 @@ export const Halytyskeskus = ({
                     />
                   )}
                 {t.teksti}
+                {/* Ikä omana lukunaan: tasalevyiset numerot, jottei merkin leveys hyppää
+                    sekunnin välein, ja himmeämpänä koska se on tarkenne eikä otsikko. */}
+                {t.luku && <span className="tabular-nums opacity-70">· {t.luku}</span>}
               </span>
             ))}
             <button
