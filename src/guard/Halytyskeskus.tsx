@@ -226,6 +226,77 @@ const MERKKIPISTE: Record<Merkkitila, string> = {
   neutraali: 'bg-ink-subtle',
 };
 
+// Yhteysmerkki: onko ruudulla ajantasaista tietoa.
+//
+// OMA KOMPONENTTINSA OMALLA SEKUNTIKELLOLLAAN, eikä osa `tilamerkit`-listaa. Syy on
+// yksinomaan kellossa. Ikäluvun on liikuttava sekunnin välein, koska liikkumaton luku ei
+// erota toimivaa ruutua jäätyneestä — ja juuri se ero on koko merkin ainoa tarkoitus.
+// Näkymän omasta kellosta otettuna luku hyppäisi hiljaisella ruudulla kymmenen sekunnin
+// välein (9 s → 19 s → 29 s), eli merkkiä katsova päivystäjä näkisi sen pysähtyneenä
+// koko sen ajan kun hän sitä katsoo. Se on täsmälleen se väärä viesti jota tämä merkki
+// on tekemässä mahdottomaksi.
+//
+// Vain tämä merkki renderöityy sekunnin välein. Koko näkymän ajaminen samaan tahtiin
+// renderöisi myös kartan kerran sekunnissa silloin kun ruudulla ei tapahdu mitään.
+//
+// ERILLINEN KELLO EI SAA TARKOITTAA ERILLISTÄ TOTUUTTA. Tämä komponentti laskee myös
+// varoitustilan ja antaa selitteen ylös `onHuomio`-kutsulla, jottei sama päätös ole
+// kahdessa paikassa kahdella eri kellolla — muuten merkki voisi olla keltainen samalla
+// kun sen selite puuttuu selitelistasta, tai toisin päin.
+const YhteysMerkki = ({ yhteys, paivitetty, onHuomio }: {
+  yhteys: boolean;
+  paivitetty: number | null;
+  onHuomio: (selite: string | null) => void;
+}) => {
+  const [nyt, setNyt] = useState(Date.now());
+  // Ikkunan avaushetki. Jos päivitystä ei ole KOSKAAN tullut, ikä lasketaan tästä:
+  // "avattu kaksi minuuttia sitten eikä mitään ole kuulunut" on tieto eikä tyhjä kenttä.
+  const avattu = useRef(Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNyt(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const t = tuoreus(paivitetty, avattu.current, nyt);
+  // Vanha tieto on varoitus VAIKKA soketti olisi auki. Juuri se on tämän merkin tarkoitus:
+  // hiljaisesti katkennut yhteys näyttää auki olevalta siihen asti kunnes selain huomaa
+  // katkoksen, ja sillä välin vihreä teksti vakuuttaa päivystäjälle että ruutu on ajan
+  // tasalla.
+  const tila: Merkkitila = yhteys && !t.vanha ? 'ok' : 'varoitus';
+  const selite = !yhteys
+    ? 'Ruudulla voi olla vanhaa tietoa. Yhteyttä yritetään uudelleen automaattisesti.'
+    : t.vanha
+      ? 'Yhteys näyttää olevan auki, mutta palvelimelta ei ole kuulunut mitään pitkään aikaan. Ruudulla voi olla vanhaa tietoa. Päivitä ikkuna jos luku jatkaa kasvamistaan.'
+      : 'Hälytykset ja kirjaukset päivittyvät ruudulle itsestään. Luku kertoo milloin palvelimelta viimeksi saatiin vastaus.';
+
+  useEffect(() => {
+    onHuomio(tila === 'varoitus' ? selite : null);
+  }, [tila, selite, onHuomio]);
+
+  return (
+    <span
+      title={selite}
+      className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${
+        MERKKITYYLI[tila]
+      }`}
+    >
+      {yhteys
+        // Pulssi VAIN kun päivitys on juuri saapunut (ks. tuoreus.ts). Ehdoitta sykkivä
+        // ikoni sykkisi myös jäätyneellä ruudulla, eli näyttäisi elonmerkiltä juuri
+        // silloin kun elonmerkkiä ei ole.
+        ? <Wifi size={13} className={t.tuore ? 'animate-pulse' : undefined} />
+        : <WifiOff size={13} />}
+      {!yhteys ? 'YHTEYS POIKKI' : t.vanha ? 'PÄIVITYS VIIPYY' : 'Yhteys auki'}
+      {/* Ikä omana lukunaan: tasalevyiset numerot, jottei merkin leveys hyppää sekunnin
+          välein, ja himmeämpänä koska se on tarkenne eikä otsikko. Näkyy myös
+          katkotilassa — "poikki" ei kerro kuinka vanhaa ruudulla näkyvä tieto on, ja
+          päivystäjän seuraava kysymys on juuri se. */}
+      <span className="tabular-nums opacity-70">· {t.teksti}</span>
+    </span>
+  );
+};
+
 const KIIREYS_TYYLI: Record<Kiireys, { reuna: string; merkki: string }> = {
   kriittinen: { reuna: 'border-danger/50 bg-danger-soft', merkki: 'bg-danger' },
   varoitus: { reuna: 'border-warning/40 bg-warning-soft', merkki: 'bg-warning' },
@@ -664,23 +735,10 @@ export const Halytyskeskus = ({
   // muttei hälytyksiin (guard_alarms): silloin hälytyshakua ei tehdä lainkaan, ja yhden
   // lähteen varassa merkki jäisi ikuiseen varoitukseen ilman mitään vikaa.
   //
-  // Ikkunan avaushetki on varalähtö: jos kumpikaan haku ei ole koskaan onnistunut, ikä
-  // lasketaan siitä kun tämä ikkuna avattiin. Refissä eikä tilassa, koska se ei muutu
-  // eikä saa käynnistää renderöintiä.
-  //
-  // TIETOINEN KOMPROMISSI: ikä näytetään samalla kellolla kuin kaikki muukin, eli
-  // hiljaisella ruudulla se päivittyy 10 s välein (ja hälytystilanteessa 1 s välein,
-  // koska kello nopeutuu silloin itsestään). Luku voi siis olla enintään 10 s todellista
-  // pienempi, ja varoitusraja ylittyä yhtä paljon myöhässä. Vaihtoehto olisi oma
-  // sekuntikello tälle merkille, mutta silloin koko näkymä — kartta mukaan lukien —
-  // renderöityisi kerran sekunnissa myös silloin kun ruudulla ei tapahdu mitään. Yksi
-  // kello myös takaa ettei ruudulla ole kahta eri mieltä olevaa aikaa.
-  const avattu = useRef(Date.now());
-  const tuoreusTila = tuoreus(
-    Math.max(paivitetty ?? 0, vuorotPaivitetty ?? 0) || null,
-    avattu.current,
-    nyt
-  );
+  // Ikä näytetään YhteysMerkki-komponentissa, jolla on oma sekuntikellonsa — ks. sen oma
+  // perustelu. Tänne jää vain lähteiden yhdistäminen ja merkin ylös antama selite.
+  const tuorein = Math.max(paivitetty ?? 0, vuorotPaivitetty ?? 0) || null;
+  const [yhteysHuomio, setYhteysHuomio] = useState<string | null>(null);
 
   // --- Järjestelmän tila, tiiviinä ----------------------------------------------------
   //
@@ -692,31 +750,9 @@ export const Halytyskeskus = ({
   // ongelmatilassa koko selite näkyy merkkien alla sellaisenaan. Muuten "Tekstiviestit
   // pois" näyttäisi ruudulla yhtä rauhalliselta kuin "Tekstiviestit käytössä", ja ero
   // niiden välillä on se lähteekö hälytyksestä viesti kenellekään.
-  const tilamerkit: {
-    avain: string; tila: Merkkitila; teksti: string; selite: string; luku?: string;
-  }[] = [
-    {
-      avain: 'yhteys',
-      // Vanha tieto on varoitus VAIKKA soketti olisi auki. Juuri se on tämän merkin
-      // tarkoitus: hiljaisesti katkennut yhteys näyttää auki olevalta siihen asti kunnes
-      // selain huomaa katkoksen, ja sillä välin vihreä teksti vakuuttaa päivystäjälle
-      // että ruutu on ajan tasalla.
-      tila: yhteys && !tuoreusTila.vanha ? 'ok' : 'varoitus',
-      teksti: !yhteys
-        ? 'YHTEYS POIKKI'
-        : tuoreusTila.vanha
-          ? 'PÄIVITYS VIIPYY'
-          : 'Yhteys auki',
-      // Ikä näkyy myös katkotilassa: "poikki" ei kerro kuinka vanhaa ruudulla näkyvä
-      // tieto on, ja päivystäjän seuraava kysymys on juuri se.
-      luku: tuoreusTila.teksti,
-      selite: !yhteys
-        ? 'Ruudulla voi olla vanhaa tietoa. Yhteyttä yritetään uudelleen automaattisesti.'
-        : tuoreusTila.vanha
-          ? 'Yhteys näyttää olevan auki, mutta palvelimelta ei ole kuulunut mitään pitkään aikaan. Ruudulla voi olla vanhaa tietoa. Päivitä ikkuna jos luku jatkaa kasvamistaan.'
-          : 'Hälytykset ja kirjaukset päivittyvät ruudulle itsestään. Luku kertoo milloin palvelimelta viimeksi saatiin vastaus.',
-    },
-  ];
+  // Yhteysmerkki ei ole tässä listassa vaan omana komponenttinaan (YhteysMerkki): se
+  // renderöityy sekunnin välein, muut vain kun jokin muuttuu.
+  const tilamerkit: { avain: string; tila: Merkkitila; teksti: string; selite: string }[] = [];
   if (smsTila) {
     const saldoVahissa = smsTila.saldo !== null && smsTila.varoitusraja !== null
       && smsTila.saldo <= smsTila.varoitusraja;
@@ -752,7 +788,12 @@ export const Halytyskeskus = ({
       ? '"Kuka on lähinnä?" toimii niiden osalta joiden laite on lähettänyt sijainnin.'
       : 'Hälytykseen liitetty kertaluonteinen sijainti näkyy silti, jos vartijan laite sai sen.',
   });
-  const tilahuomiot = tilamerkit.filter((t) => t.tila === 'varoitus');
+  // Yhteysmerkin selite tulee merkiltä itseltään, koska se myös päättää oman tilansa.
+  // Ensimmäisenä listassa: jos ruutu ei ole ajan tasalla, se on tärkein tieto muista.
+  const tilahuomiot = [
+    ...(yhteysHuomio ? [{ avain: 'yhteys', selite: yhteysHuomio }] : []),
+    ...tilamerkit.filter((t) => t.tila === 'varoitus'),
+  ];
 
   // --- Suodatetut listat --------------------------------------------------------------
   //
@@ -811,6 +852,7 @@ export const Halytyskeskus = ({
             merkki, koska se on ainoa näistä jonka päivystäjä voi itse muuttaa. */}
         <div className="rounded-xl border border-line bg-surface p-2.5 shrink-0 max-w-full">
           <div className="flex flex-wrap items-center gap-1.5">
+            <YhteysMerkki yhteys={yhteys} paivitetty={tuorein} onHuomio={setYhteysHuomio} />
             {tilamerkit.map((t) => (
               <span
                 key={t.avain}
@@ -819,23 +861,11 @@ export const Halytyskeskus = ({
                   MERKKITYYLI[t.tila]
                 }`}
               >
-                {t.avain === 'yhteys'
-                  ? (yhteys
-                    // Pulssi VAIN kun päivitys on juuri saapunut (ks. tuoreus.ts). Ehdoitta
-                    // sykkivä ikoni sykkisi myös jäätyneellä ruudulla, eli näyttäisi
-                    // elonmerkiltä juuri silloin kun elonmerkkiä ei ole.
-                    ? <Wifi size={13} className={tuoreusTila.tuore ? 'animate-pulse' : undefined} />
-                    : <WifiOff size={13} />)
-                  : (
-                    <span
-                      className={`w-2 h-2 rounded-full shrink-0 ${MERKKIPISTE[t.tila]}`}
-                      aria-hidden="true"
-                    />
-                  )}
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${MERKKIPISTE[t.tila]}`}
+                  aria-hidden="true"
+                />
                 {t.teksti}
-                {/* Ikä omana lukunaan: tasalevyiset numerot, jottei merkin leveys hyppää
-                    sekunnin välein, ja himmeämpänä koska se on tarkenne eikä otsikko. */}
-                {t.luku && <span className="tabular-nums opacity-70">· {t.luku}</span>}
               </span>
             ))}
             <button
