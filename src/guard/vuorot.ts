@@ -319,3 +319,42 @@ export function myohassaMinuutteina(
   const min = Math.floor((nyt - maaraaika) / 60_000);
   return min > 0 ? min : null;
 }
+
+/** Mitä pakkopäätös sulki. */
+export type PakkoPaatoksenTulos = {
+  ok: boolean;
+  error?: string;
+  /** Samalla keskeytetyt kierrokset. Tyhjä lista on eri asia kuin puuttuva tieto. */
+  kierrokset: { id: string; nimi: string }[];
+};
+
+/**
+ * Päättää toisen vartijan vuoron hälytyskeskuksesta.
+ *
+ * MIKSI TÄMÄ ON OLEMASSA: vuoro ei pääty itsestään. Jos vartijan puhelin rikkoutuu tai
+ * akku loppuu, vuoro jää päälle — se pitää sijaintiseurannan käynnissä, näyttää
+ * hälytyskeskukselle siltä että vartija on yhä töissä, ja kasvattaa myöhästymisminuutteja
+ * ikuisesti. Ainoa vaihtoehto ilman tätä olisi ollut pääkäyttäjän käsin tekemä korjaus
+ * tietokantaan, eikä se jätä jälkeensä sitä tietoa kuka päätti ja miksi.
+ *
+ * Syy on pakollinen (palvelin vaatii sen): päättymisaika menee työaikatietoon ja vuoron
+ * koosteeseen, joten tieto siitä ettei vuoro päättynyt vartijan omasta toimesta kuuluu
+ * samaan tietueeseen.
+ */
+export async function paataVuoroPakolla(vuoroId: string, syy: string): Promise<PakkoPaatoksenTulos> {
+  try {
+    const vastaus = await fetch(`/api/vuoro/${encodeURIComponent(vuoroId)}/paata`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ syy }),
+    });
+    const data = await vastaus.json().catch(() => null);
+    if (!vastaus.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'Vuoron päättäminen ei onnistunut.', kierrokset: [] };
+    }
+    return { ok: true, kierrokset: data.kierrokset || [] };
+  } catch {
+    return { ok: false, error: 'Vuoron päättäminen ei onnistunut: ei yhteyttä palvelimeen.', kierrokset: [] };
+  }
+}

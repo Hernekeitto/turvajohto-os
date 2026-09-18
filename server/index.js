@@ -2299,11 +2299,59 @@ app.post('/api/vuoro/:id/paata', requireAuth, guardPortti, (req, res) => {
     return res.status(403).json({ ok: false, error: 'Vuoro on toisen vartijan.' });
   }
 
-  const tulos = paataVuoro({ vuoro, toisto: req.body?.toisto === true });
+  const tulos = paataVuoro({
+    vuoro,
+    toisto: req.body?.toisto === true,
+    paattaja: req.username,
+    syy: req.body?.syy,
+  });
   if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
   if (tulos.duplikaatti) return res.json({ ok: true, vuoro: tulos.vuoro, duplikaatti: true });
 
   writeCollection('guardShifts', vuorot.map((v) => (v.id === vuoro.id ? tulos.vuoro : v)));
+
+  // PÄÄTTYVÄ VUORO SULKEE MYÖS KESKEN JÄÄNEET KIERROKSET (18.9.2026).
+  //
+  // Kierros jonka vartija on jättänyt kesken ei pääty itsestään: se jää "kesken"-tilaan
+  // ikuisesti, näkyy hälytyskeskuksen luvussa "Kierrosta kesken" ja odottaa vartijaa joka
+  // ei ole enää vuorossa. Jos vuoro päätettiin juuri siksi ettei vartijaan saada
+  // yhteyttä, kierros on juuri se mitä hän ei voi tulla päättämään.
+  //
+  // KESKEYTETTY EIKÄ VALMIS. Kuittaamattomia pisteitä ei ole käyty, eikä päivystäjä voi
+  // tietää kävikö vartija niillä. Valmiiksi merkitseminen olisi väärä tieto siitä että
+  // kohde on kierretty — ja juuri se tieto jonka varassa seuraava kierros suunnitellaan.
+  //
+  // Vain pakkopäätöksellä. Vartija joka päättää vuoronsa itse näkee kesken olevan
+  // kierroksensa omassa näkymässään ja päättää sen itse syyn kera; automaattinen
+  // keskeytys veisi häneltä sen tiedon jonka vain hän voi kirjoittaa.
+  const suljetutKierrokset = [];
+  if (tulos.vuoro.pakkoPaatos) {
+    const kierrokset = readCollection('patrolRuns') || [];
+    const kesken = kierrokset.filter(
+      (k) => k?.vartija === vuoro.vartija && k?.tila === 'kesken'
+    );
+    if (kesken.length > 0) {
+      const paatetyt = new Map();
+      for (const kierros of kesken) {
+        const kTulos = paataKierros({
+          kierros,
+          tila: 'keskeytetty',
+          syy: `Hälytyskeskus päätti vuoron: ${tulos.vuoro.pakkoPaatos.syy}`,
+        });
+        if (kTulos.ok) paatetyt.set(kierros.id, kTulos.kierros);
+      }
+      writeCollection('patrolRuns', kierrokset.map((k) => paatetyt.get(k?.id) || k));
+      for (const kierros of paatetyt.values()) {
+        logAudit({
+          user: req.username, action: 'patrol_abort', collection: 'patrolRuns',
+          recordId: kierros.id, eventId: kierros.siteId, kohdeKayttaja: vuoro.vartija,
+          syy: kierros.keskeytysSyy,
+        });
+        kerroKierroksesta(kierros, 'update');
+        suljetutKierrokset.push({ id: kierros.id, nimi: kierros.templateNimi || "Kierros" });
+      }
+    }
+  }
 
   // VUORON PÄÄTTYMINEN UNOHTAA SIJAINNIN.
   //
@@ -2325,9 +2373,12 @@ app.post('/api/vuoro/:id/paata', requireAuth, guardPortti, (req, res) => {
     user: req.username, action: 'vuoro_paattyi', collection: 'guardShifts',
     recordId: vuoro.id, eventId: vuoro.siteId,
     ...(vuoro.vartija !== req.username ? { kohdeKayttaja: vuoro.vartija } : {}),
+    ...(tulos.vuoro.pakkoPaatos ? { syy: tulos.vuoro.pakkoPaatos.syy } : {}),
   });
   kerroVuorosta(tulos.vuoro, 'update');
-  res.json({ ok: true, vuoro: tulos.vuoro });
+  // Suljetut kierrokset vastaukseen: päivystäjän on nähtävä mitä hänen painalluksensa
+  // teki. "Vuoro päätetty" jättäisi kertomatta että samalla keskeytyi kaksi kierrosta.
+  res.json({ ok: true, vuoro: tulos.vuoro, kierrokset: suljetutKierrokset });
 });
 
 // Tehtävän tai kierroksen lisäys omaan vuoroon kohteen hakemistosta.

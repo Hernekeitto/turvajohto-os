@@ -480,3 +480,45 @@ test('rajat ovat 10 ja 15 minuuttia', () => {
   // Vartija ennen hälytyskeskusta: ensimmäinen on muistutus, toinen on tehtävä.
   assert.ok(UNOHTUNUT_VARTIJA_MIN < UNOHTUNUT_HALKE_MIN);
 });
+
+// --- Pakkopäätös (18.9.2026) ---------------------------------------------------------
+//
+// Päivystäjä päättää vuoron silloin kun vartijaan ei saada yhteyttä: puhelin rikki, akku
+// loppui, laite jäi autoon. Nämä testit vartioivat sitä että pakkopäätös EI näytä
+// tavalliselta päättymiseltä — vuoron päättymisaika menee työaikatietoon ja koosteeseen,
+// ja tieto siitä kuka sen päätti ja miksi kuuluu samaan tietueeseen.
+
+const vuorossa = () => aloita().vuoro;
+
+test('vartija päättää oman vuoronsa ilman syytä ja ilman pakkomerkintää', () => {
+  const tulos = paataVuoro({ vuoro: vuorossa(), nyt: klo(15), paattaja: 'vartija1' });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.vuoro.pakkoPaatos, undefined);
+});
+
+test('toisen vuoron päättäminen vaatii syyn', () => {
+  const ilman = paataVuoro({ vuoro: vuorossa(), nyt: klo(15), paattaja: 'halke' });
+  assert.equal(ilman.ok, false);
+  assert.match(ilman.error, /syyn/i);
+  // Pelkät välilyönnit eivät ole syy.
+  assert.equal(paataVuoro({ vuoro: vuorossa(), nyt: klo(15), paattaja: 'halke', syy: '   ' }).ok, false);
+});
+
+test('pakkopäätös tallentaa päättäjän ja syyn vuoroon', () => {
+  const tulos = paataVuoro({
+    vuoro: vuorossa(), nyt: klo(15), paattaja: 'halke', syy: 'Puhelin rikki, ei saada yhteyttä.',
+  });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.vuoro.tila, 'paattynyt');
+  assert.equal(tulos.vuoro.pakkoPaatos.paattaja, 'halke');
+  assert.equal(tulos.vuoro.pakkoPaatos.syy, 'Puhelin rikki, ei saada yhteyttä.');
+  assert.equal(tulos.vuoro.pakkoPaatos.ts, klo(15).toISOString());
+});
+
+test('paattaja ilman tunnusta ei tee päätöksestä pakkopäätöstä', () => {
+  // Vanhat kutsupaikat eivät anna paattajaa lainkaan. Ne eivät saa alkaa vaatia syytä
+  // eivätkä merkitä vuoroa pakolla päätetyksi.
+  const tulos = paataVuoro({ vuoro: vuorossa(), nyt: klo(15) });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.vuoro.pakkoPaatos, undefined);
+});

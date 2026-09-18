@@ -22,7 +22,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Siren, Timer, MapPin, Phone, Check, Users, Route, KeyRound, Megaphone,
   TriangleAlert, Activity, Volume2, VolumeX, Building2, ShieldCheck, MessageSquare,
-  History, Wifi, WifiOff, BellRing, Search, X, ShieldAlert,
+  History, Wifi, WifiOff, BellRing, Search, X, ShieldAlert, Square,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
@@ -47,7 +47,8 @@ import {
 } from './tilannekuva';
 import type { Kohde } from './tyypit';
 import {
-  myohassaMinuutteina, onUnohtunutVuoro, UNOHTUNUT_HALKE_MIN, type KaynnissaVuoro,
+  myohassaMinuutteina, onUnohtunutVuoro, paataVuoroPakolla, UNOHTUNUT_HALKE_MIN,
+  type KaynnissaVuoro,
 } from './vuorot';
 import { tuoreus } from './tuoreus';
 import { KeskuksenTehtavat } from './KeskuksenTehtavat';
@@ -330,6 +331,12 @@ export const Halytyskeskus = ({
   // Kenen tarkistusta ollaan pyytämässä. Yksi kerrallaan riittää: nappi on rivikohtainen
   // ja pyyntö kestää vain yhden verkkokutsun verran.
   const [tarkistettava, setTarkistettava] = useState<string | null>(null);
+  // Minkä vuoron pakkopäätöstä ollaan kirjoittamassa, ja mikä syy. Syy on tilassa eikä
+  // lomakkeen sisällä, koska rivi renderöityy uudelleen minuutin välein (myöhästymisluku)
+  // — kentän sisältö katoaisi kesken kirjoittamisen.
+  const [paatettava, setPaatettava] = useState<string | null>(null);
+  const [paatosSyy, setPaatosSyy] = useState('');
+  const [paattamassa, setPaattamassa] = useState(false);
   // Kesken olevat vuorot. ERI LISTA kuin "Kentällä juuri nyt", joka johdetaan
   // kirjauksista: vartija joka ei ole kirjannut mitään ei näy siinä, ja juuri hänestä
   // päivystäjä on huolissaan.
@@ -345,25 +352,29 @@ export const Halytyskeskus = ({
   const [vuorotPaivitetty, setVuorotPaivitetty] = useState<number | null>(null);
   const vuorotLuettu = vuorotPaivitetty !== null;
 
-  useEffect(() => {
-    let voimassa = true;
-    const hae = async () => {
-      try {
-        const v = await fetch('/api/vuoro/kaynnissa', { credentials: 'include' });
-        const data = await v.json().catch(() => null);
-        if (voimassa && data?.ok) {
-          setVuorossa(data.vuorot || []);
-          setVuorotPaivitetty(Date.now());
-        }
-      } catch {
-        // Verkkovirhe: lista jää ennalleen. Tyhjentäminen näyttäisi siltä että
-        // kukaan ei ole vuorossa, ja se on väärä tieto eikä puuttuva tieto.
+  // Oma callbackinsa eikä pelkkä efektin sisäinen funktio: vuoron pakkopäätös tarvitsee
+  // saman haun heti eikä minuutin päästä. Ilman tätä päätetty vuoro jäisi listalle
+  // odottamaan seuraavaa kyselyä, eli päivystäjä näkisi juuri päättämänsä vuoron yhä
+  // käynnissä olevana.
+  const haeVuorot = useCallback(async () => {
+    try {
+      const v = await fetch('/api/vuoro/kaynnissa', { credentials: 'include' });
+      const data = await v.json().catch(() => null);
+      if (data?.ok) {
+        setVuorossa(data.vuorot || []);
+        setVuorotPaivitetty(Date.now());
       }
-    };
-    hae();
-    const ajastin = window.setInterval(hae, 60_000);
-    return () => { voimassa = false; window.clearInterval(ajastin); };
+    } catch {
+      // Verkkovirhe: lista jää ennalleen. Tyhjentäminen näyttäisi siltä että
+      // kukaan ei ole vuorossa, ja se on väärä tieto eikä puuttuva tieto.
+    }
   }, []);
+
+  useEffect(() => {
+    haeVuorot();
+    const ajastin = window.setInterval(haeVuorot, 60_000);
+    return () => window.clearInterval(ajastin);
+  }, [haeVuorot]);
 
   // Pakotettu tarkistus: "vastaa nyt".
   //
@@ -400,6 +411,32 @@ export const Halytyskeskus = ({
       setTarkistettava(null);
     }
   };
+  // Vuoron pakkopäätös. Ks. paataVuoroPakolla (vuorot.ts) siitä miksi tämä on olemassa.
+  //
+  // Onnistuminen kerrotaan `virhe`-palkissa siinä missä epäonnistuminenkin: se on sivun
+  // ainoa ilmoituspaikka, ja hiljainen onnistuminen jättäisi päivystäjän arvaamaan
+  // menikö painallus läpi. Samalla kerrotaan mitä muuta tapahtui — pakkopäätös keskeyttää
+  // myös kesken jääneet kierrokset, eikä sitä saa tehdä kertomatta.
+  const paataVuoro = async (vuoro: KaynnissaVuoro) => {
+    setPaattamassa(true);
+    setVirhe(null);
+    const tulos = await paataVuoroPakolla(vuoro.id, paatosSyy);
+    setPaattamassa(false);
+    if (!tulos.ok) {
+      setVirhe(tulos.error || 'Vuoron päättäminen ei onnistunut.');
+      return;
+    }
+    const kierrokset = tulos.kierrokset.length > 0
+      ? ` Samalla keskeytyi ${tulos.kierrokset.length === 1 ? 'kierros' : `${tulos.kierrokset.length} kierrosta`}: `
+        + `${tulos.kierrokset.map((k) => k.nimi).join(', ')}.`
+      : '';
+    setVirhe(`${vuoro.vartija}: vuoro päätetty.${kierrokset}`);
+    setPaatettava(null);
+    setPaatosSyy('');
+    haeVuorot();
+    onVirkista();
+  };
+
   const [smsTila, setSmsTila] = useState<{ konfiguroitu: boolean; dryRun: boolean; saldo: number | null; varoitusraja: number | null; virhe: string | null } | null>(null);
 
   const nimet = useMemo(() => new Map(kohteet.map((k) => [k.id, k.name])), [kohteet]);
@@ -1445,6 +1482,52 @@ export const Halytyskeskus = ({
                       poistunut.
                     </p>
                   )}
+
+                  {/* Pakkopäätöksen syy. Kenttä avautuu riville eikä modaaliin: rivillä
+                      näkyy se tieto jonka perusteella päätös tehdään (kuka, missä, kuinka
+                      paljon myöhässä), eikä sitä pidä peittää juuri päätöshetkellä.
+
+                      Syy on pakollinen. Palvelin vaatii sen joka tapauksessa, mutta
+                      painike on disabloitu siihen asti — virheilmoitus vasta lähetyksen
+                      jälkeen opettaisi että kenttä on muodollisuus. */}
+                  {paatettava === v.id && (
+                    <div className="mt-2 border-t border-warning/30 pt-2">
+                      <label className="block text-xs font-bold text-ink-strong mb-1" htmlFor={`syy-${v.id}`}>
+                        Miksi vuoro päätetään?
+                      </label>
+                      <input
+                        id={`syy-${v.id}`}
+                        type="text"
+                        autoFocus
+                        value={paatosSyy}
+                        onChange={(e) => setPaatosSyy(e.target.value)}
+                        placeholder="Esim. puhelin rikki, ei saada yhteyttä"
+                        className="w-full rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-sm text-ink-strong"
+                      />
+                      <p className="text-xs text-ink-muted mt-1">
+                        Syy tallentuu vuoroon ja näkyy sen koosteessa. Kesken olevat
+                        kierrokset keskeytyvät samalla.
+                      </p>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => paataVuoro(v)}
+                          disabled={paatosSyy.trim().length < 3 || paattamassa}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-danger text-white hover:brightness-110 disabled:opacity-50 transition"
+                        >
+                          <Square size={13} />
+                          {paattamassa ? 'Päätetään…' : 'Päätä vuoro'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setPaatettava(null); setPaatosSyy(''); }}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium border border-line text-ink-body hover:bg-sunken transition-colors"
+                        >
+                          Peruuta
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -1456,6 +1539,22 @@ export const Halytyskeskus = ({
                   <BellRing size={13} />
                   {tarkistettava === v.vartija ? 'Pyydetään…' : 'Pyydä tarkistus'}
                 </button>
+                {/* Pakkopäätös on JOKAISELLA rivillä eikä vain myöhässä olevilla: puhelin
+                    rikkoutuu kesken vuoron yhtä hyvin kuin sen lopussa, eikä päivystäjän
+                    pidä joutua odottamaan myöhästymisrajan täyttymistä päästäkseen
+                    korjaamaan tilanteen. Vaimeana painikkeena: tämä on poikkeustoimi,
+                    ei rivin ensisijainen toiminto. */}
+                {paatettava !== v.id && (
+                  <button
+                    type="button"
+                    onClick={() => { setPaatettava(v.id); setPaatosSyy(''); }}
+                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-line text-ink-muted hover:text-danger-ink hover:border-danger/40 hover:bg-danger-soft transition-colors"
+                    title="Päätä vuoro vartijan puolesta (esim. puhelin rikki)"
+                  >
+                    <Square size={13} />
+                    Päätä vuoro
+                  </button>
+                )}
               </li>
               );
             })}

@@ -24,6 +24,12 @@
 // estää työn aloittamista kellon takia ilman että joustoa on runsaasti.
 export const JOUSTO_MIN = 120;
 
+// Pakkopäätöksen syyn mitat. Samat kuin kierroksen keskeytyssyyllä (kierros.js): kyse on
+// samasta asiasta eli siitä miksi jokin jäi kesken, eikä kahta eri vaatimusta samalle
+// kysymykselle kannata olla.
+export const SYYN_MIN_PITUUS = 3;
+export const SYYN_MAX_PITUUS = 500;
+
 const VRK_MIN = 24 * 60;
 
 /**
@@ -258,7 +264,7 @@ export function aloitaVuoro({
  * käytännössä että vuoroa ei päätetä ollenkaan, ja auki jäänyt vuoro on huonompi tieto
  * kuin päättynyt vuoro jolla on tekemättömiä rivejä. Ne jäävät tietueeseen näkyviin.
  */
-export function paataVuoro({ vuoro, nyt = new Date(), toisto = false }) {
+export function paataVuoro({ vuoro, nyt = new Date(), toisto = false, paattaja = null, syy = '' }) {
   if (!vuoro) return { ok: false, error: 'Vuoroa ei löytynyt.' };
   // Jonon uudelleenyritys: jo päättynyt vuoro on toistona haluttu lopputulos.
   if (vuoro.tila === 'paattynyt') {
@@ -266,9 +272,34 @@ export function paataVuoro({ vuoro, nyt = new Date(), toisto = false }) {
       ? { ok: true, vuoro, duplikaatti: true }
       : { ok: false, error: 'Vuoro on jo päättynyt.' };
   }
+
+  // PAKKOPÄÄTÖS ON OMA ASIANSA EIKÄ HILJAINEN VERSIO TAVALLISESTA (18.9.2026).
+  //
+  // Päivystäjä päättää vuoron silloin kun vartijaan ei saada yhteyttä: puhelin on
+  // rikki, akku loppui, laite jäi autoon. Vuoro ei siis pääty siihen mitä vartija teki
+  // vaan siihen mitä päivystäjä päätti — ja koska päättymisaika menee sellaisenaan
+  // työaikatietoon ja vuoron koosteeseen, tieto siitä on tallennettava itse tietueeseen.
+  // Pelkkä auditlokirivi ei riitä: koostetta katsova ei lue lokia.
+  //
+  // Syy on pakollinen. Ilman syytä merkintä olisi tieto siitä että sääntö ohitettiin, ja
+  // se on vähemmän kuin ei mitään — se näyttää valvonnalta ilman sisältöä. Sama
+  // perustelu kuin perehdytyksen kertaluvalla.
+  const pakko = paattaja !== null && paattaja !== vuoro.vartija;
+  const puhdasSyy = String(syy ?? '').trim();
+  if (pakko && puhdasSyy.length < SYYN_MIN_PITUUS) {
+    return { ok: false, error: 'Toisen vuoron päättäminen vaatii syyn. Kirjoita lyhyesti miksi vuoro päätetään.' };
+  }
+
   return {
     ok: true,
-    vuoro: { ...vuoro, tila: 'paattynyt', paattyi: new Date(nyt).toISOString() },
+    vuoro: {
+      ...vuoro,
+      tila: 'paattynyt',
+      paattyi: new Date(nyt).toISOString(),
+      ...(pakko
+        ? { pakkoPaatos: { paattaja, syy: puhdasSyy.slice(0, SYYN_MAX_PITUUS), ts: new Date(nyt).toISOString() } }
+        : {}),
+    },
   };
 }
 
