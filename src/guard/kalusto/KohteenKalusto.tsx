@@ -10,13 +10,19 @@
 // patukan kolmeen kohteeseen samana iltana. Pyyntö on siksi tämän näkymän tärkein
 // toiminto, ja se on lukuoikeuden takana (server/index.js).
 //
+// AVAIMET OMANA OSIONAAN, samoin kuin pankissa (Kalustopankki.tsx). Kohteella on
+// tyypillisesti muutama varuste ja kymmenkunta avainta, ja sekalistassa varusteet
+// katoavat avainten sekaan. Jako on sama sääntö samasta lähteestä (lajit.ts:
+// AVAINLAJIT) — kaksi eri käsitystä siitä mikä on avain olisi kaksi paikkaa jossa
+// jako voi mennä eri tavalla väärin.
+//
 // Muokkausoikeudella sama lomake siirtää suoraan. Pyyntö itselle olisi jonoon jäävä rivi
 // jonka pääkäyttäjä hyväksyisi seuraavassa klikkauksessa — ja historiassa se näyttäisi
 // siltä kuin päätöksen olisi tehnyt joku muu.
 import { useMemo, useState } from 'react';
 import { Boxes, Plus, Search, X } from 'lucide-react';
 
-import { LAJIT } from './lajit';
+import { LAJIT, avainJarjestys, onAvainlaji } from './lajit';
 import { aikaleima, osuuHakuun, pyydaKalustoa, siirraKalusto, sijainti } from './pankki';
 import { TILAN_SELITE, TILAN_VARI, type KalustoTietue } from './tyypit';
 
@@ -57,9 +63,22 @@ export const KohteenKalusto = ({
   const [tyoskentelee, setTyoskentelee] = useState(false);
 
   const omat = useMemo(() => kalusto
-    .filter((e) => e.sijoitusLaji === 'kohde' && e.sijoitusId === kohde.id && e.tila !== 'poistettu')
-    .sort((a, b) => a.tunnus.localeCompare(b.tunnus)),
+    .filter((e) => e.sijoitusLaji === 'kohde' && e.sijoitusId === kohde.id && e.tila !== 'poistettu'),
   [kalusto, kohde.id]);
+
+  // Kohteen avaimet HOLVIPAIKAN mukaan eikä tunnuksen: holvipaikka on se numero jolla
+  // avain tunnistetaan lätkästä, ja kohteella avaimia luetaan yksi kerrallaan kädessä.
+  // Kaapit ensin, koska ne ovat avainten paikkoja (lajit.ts: avainJarjestys).
+  const kohteenAvaimet = useMemo(
+    () => omat.filter((e) => onAvainlaji(e.laji))
+      .sort((a, b) => avainJarjestys(a) - avainJarjestys(b) || a.tunnus.localeCompare(b.tunnus)),
+    [omat]
+  );
+
+  const kohteenMuut = useMemo(
+    () => omat.filter((e) => !onAvainlaji(e.laji)).sort((a, b) => a.tunnus.localeCompare(b.tunnus)),
+    [omat]
+  );
 
   // Kirjautuneelle itselleen luovutetut varusteet. ERILLINEN LISTA eikä osa kohteen
   // kalustoa, koska ne eivät ole kohteen tavaraa: takki ja tunnus seuraavat ihmistä
@@ -185,7 +204,28 @@ export const KohteenKalusto = ({
           </p>
         </div>
       ) : (
-        <Kalustolista esineet={omat} onAvaa={onAvaa} />
+        <div className="space-y-4">
+          {/* Molemmat osiot otsikoidaan myös silloin kun toinen on tyhjä: otsikko kertoo
+              mitä listassa on, eikä sitä pidä joutua päättelemään riveistä. Tyhjää
+              osiota ei näytetä lainkaan — "Avaimet (0)" väittäisi kohteesta jotain mitä
+              vartijan ei pidä päätellä tästä näkymästä. */}
+          {kohteenAvaimet.length > 0 && (
+            <div>
+              <h4 className="text-sm font-bold text-ink-strong mb-2">
+                Avaimet ja kaapit <span className="text-ink-muted font-medium">({kohteenAvaimet.length})</span>
+              </h4>
+              <Kalustolista esineet={kohteenAvaimet} onAvaa={onAvaa} />
+            </div>
+          )}
+          {kohteenMuut.length > 0 && (
+            <div>
+              <h4 className="text-sm font-bold text-ink-strong mb-2">
+                Muu kalusto <span className="text-ink-muted font-medium">({kohteenMuut.length})</span>
+              </h4>
+              <Kalustolista esineet={kohteenMuut} onAvaa={onAvaa} />
+            </div>
+          )}
+        </div>
       )}
 
       {/* --- Sinulle luovutetut varusteet ---
@@ -275,7 +315,7 @@ export const KohteenKalusto = ({
                 <input
                   value={haku}
                   onChange={(e) => setHaku(e.target.value)}
-                  placeholder="Hae tunnuksella, nimellä tai tyypillä"
+                  placeholder="Hae holvipaikalla, tunnuksella, nimellä tai tyypillä"
                   className="w-full pl-9 pr-3 py-2 rounded-lg border border-line bg-surface text-sm text-ink-body"
                 />
               </div>
@@ -294,7 +334,10 @@ export const KohteenKalusto = ({
                       >
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-medium text-ink-strong truncate">{esine.nimi}</span>
-                          <span className="block text-xs text-ink-muted font-mono">{esine.tunnus}</span>
+                          <span className="block text-xs text-ink-muted font-mono">
+                            {esine.tunnus}
+                            {typeof esine.holviPaikka === 'number' && ` · holvi ${esine.holviPaikka}`}
+                          </span>
                         </span>
                         <span className="text-xs text-ink-muted shrink-0 max-w-[8rem] truncate">
                           {sijainti(esine)}
@@ -342,6 +385,9 @@ const Kalustolista = ({ esineet, onAvaa }: {
               <span className="block font-medium text-ink-strong truncate">{esine.nimi}</span>
               <span className="block text-xs text-ink-muted font-mono">
                 {esine.tunnus}
+                {/* Holvipaikka heti tunnuksen perään: se on avainlätkään merkitty numero,
+                    ja kohteella avain tunnistetaan juuri siitä eikä TJ-tunnuksesta. */}
+                {typeof esine.holviPaikka === 'number' && ` · holvi ${esine.holviPaikka}`}
                 {esine.alalaji ? ` · ${esine.alalaji}` : ''}
               </span>
             </span>
