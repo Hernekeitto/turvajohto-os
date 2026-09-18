@@ -184,7 +184,7 @@ test('kohdesijoitus ilman kohdetta estyy', () => {
   }).ok, false);
 });
 
-test('SAANTO 4: henkilokohtainen esine menee vain henkilolle', () => {
+test('SAANTO 4: henkilokohtainen esine menee vain henkilolle tai varastoon', () => {
   const tunnus = siirra({
     esine: esine({ alalaji: 'tunnus', nimi: 'Vartijan tunnus #1041' }),
     sijoitus: { laji: 'henkilo', id: 'emp-1', nimi: 'Virtanen' }, user: 'a', nyt: T0,
@@ -195,11 +195,27 @@ test('SAANTO 4: henkilokohtainen esine menee vain henkilolle', () => {
   }).esine;
   assert.equal(henkilokohtainen.lisatiedot.henkilokohtainen, true);
 
-  const varastoon = siirra({
-    esine: henkilokohtainen, sijoitus: { laji: 'holvi' }, user: 'a', nyt: T0,
-  });
-  assert.equal(varastoon.ok, false);
-  assert.match(varastoon.error, /henkilökohtaise/i);
+  // Kohteelle, autoon tai kaappiin ei: siellä tunnus on kenen tahansa otettavissa.
+  for (const sijoitus of [
+    { laji: 'kohde', id: 'kohde-1', nimi: 'Kauppakeskus' },
+    { laji: 'ajoneuvo', id: 'ajo-1', nimi: 'Piiriauto 1' },
+    { laji: 'avainkaappi', id: 'akp-1', nimi: 'Piiriauto 1 kaappi' },
+  ]) {
+    const tulos = siirra({ esine: henkilokohtainen, sijoitus, user: 'a', nyt: T0 });
+    assert.equal(tulos.ok, false, `${sijoitus.laji} ei saa kelvata`);
+    assert.match(tulos.error, /henkilökohtaise/i);
+  }
+
+  // VARASTOON KYLLÄ. Tämä on se mitä tapahtuu kun kantaja lopettaa: ilman paluuta
+  // rekisteri väittäisi lähteneen työntekijän pitävän yhä tunnusta.
+  for (const laji of ['holvi', 'varusvarasto']) {
+    const palautus = siirra({ esine: henkilokohtainen, sijoitus: { laji }, user: 'a', nyt: T0 });
+    assert.equal(palautus.ok, true, `palautus säilöön ${laji}`);
+    assert.equal(palautus.esine.sijoitusLaji, laji);
+    // Merkintä ei katoa palautuksessa: takki on yhä henkilökohtainen kun se annetaan
+    // seuraavalle.
+    assert.equal(palautus.esine.lisatiedot.henkilokohtainen, true);
+  }
 
   const toiselle = siirra({
     esine: henkilokohtainen, sijoitus: { laji: 'henkilo', id: 'emp-2', nimi: 'Korhonen' },
@@ -208,12 +224,27 @@ test('SAANTO 4: henkilokohtainen esine menee vain henkilolle', () => {
   assert.equal(toiselle.ok, true);
 });
 
-test('henkilokohtaiseksi ei voi merkita varastossa olevaa esinetta', () => {
-  const tulos = paivitaTiedot({
+test('henkilokohtaiseksi merkitseminen noudattaa samaa rajaa kuin siirto', () => {
+  // Varastossa oleva saa olla henkilökohtainen: se on luovuttamatta. Jos tämä olisi
+  // kielletty, sama tila olisi saavutettavissa siirtämällä muttei muokkaamalla.
+  const varastossa = paivitaTiedot({
     esine: esine(), muutokset: { nimi: 'Takki', lisatiedot: { henkilokohtainen: true } },
     user: 'a', nyt: T0,
   });
+  assert.equal(varastossa.ok, true);
+  assert.equal(varastossa.esine.lisatiedot.henkilokohtainen, true);
+
+  // Kohteelle jyvitettyä ei: siellä se on jo kenen tahansa käytettävissä.
+  const kohteella = siirra({
+    esine: esine(), sijoitus: { laji: 'kohde', id: 'kohde-1', nimi: 'Kauppakeskus' },
+    user: 'a', nyt: T0,
+  }).esine;
+  const tulos = paivitaTiedot({
+    esine: kohteella, muutokset: { nimi: 'Takki', lisatiedot: { henkilokohtainen: true } },
+    user: 'a', nyt: T0,
+  });
   assert.equal(tulos.ok, false);
+  assert.match(tulos.error, /varastossa tai luovutettu/i);
 });
 
 // --- Pyyntö ja ratkaisu -----------------------------------------------------------
@@ -494,15 +525,6 @@ test('siirto holvista varusvarastoon on siirto eika sama paikka', () => {
   });
   assert.equal(uudelleen.ok, false);
   assert.match(uudelleen.error, /jo täällä/i);
-});
-
-test('henkilokohtaista ei jateta varusvarastoonkaan', () => {
-  // Sääntö 4 koskee molempia säilöjä. Tunnus on henkilökohtainen juuri siksi, että se
-  // yksilöi kantajansa — varastossa se ei yksilöi ketään.
-  const tunnus = luo({ lisatiedot: { henkilokohtainen: true }, sijoitus: { laji: 'henkilo', id: 'emp-1', nimi: 'Virtanen' } }).esine;
-  const tulos = siirra({ esine: tunnus, sijoitus: { laji: 'varusvarasto' }, user: 'a', nyt: T0 });
-  assert.equal(tulos.ok, false);
-  assert.match(tulos.error, /henkilökohtaise/i);
 });
 
 // --- Holvipaikka -------------------------------------------------------------------

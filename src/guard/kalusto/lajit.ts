@@ -119,7 +119,7 @@ export const LAJIT: Record<Laji, Lajimaarittely> = {
         otsikko: 'Henkilökohtainen',
         lyhyt: 'Henk.koht.',
         totuusarvo: true,
-        vihje: 'Luovutetaan vain nimetylle henkilölle, ei kohteelle eikä varastoon. Tunnukset ovat aina henkilökohtaisia.',
+        vihje: 'Luovutetaan vain nimetylle henkilölle ja palautetaan varastoon — ei kohteelle eikä ajoneuvoon. Tunnukset ovat aina henkilökohtaisia.',
       },
     ],
   },

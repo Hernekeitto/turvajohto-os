@@ -23,8 +23,11 @@
 //     tietue ilman lupanumeroa ja sarjanumeroa näyttäisi kirjanpidolta olematta sitä.
 //     Tämä on syy siihen miksi ase on oma lajinsa eikä voimankäyttöväline.
 //
-//  4. HENKILÖKOHTAINEN ESINE MENEE VAIN HENKILÖLLE. Vartijan tunnus holvissa on tunnus
-//     jota kuka tahansa voi käyttää.
+//  4. HENKILÖKOHTAINEN ESINE MENEE VAIN HENKILÖLLE TAI VARASTOON. Vartijan tunnus
+//     kohteen naulakossa on tunnus jota kuka tahansa voi käyttää, ja sama koskee
+//     ajoneuvoa ja avainkaappia. Varasto on eri asia: siellä esine on luovuttamatta, ja
+//     juuri sinne se palautuu kun kantaja lopettaa. Ilman paluuta rekisteri väittäisi
+//     lopettaneen työntekijän pitävän yhä takkia.
 //
 //  6. AVAIMELLA ON HOLVIPAIKKA, JA SE ON VARATTU. Jokaiselle avaimelle varataan holvista
 //     numeroitu paikka (1000→), ja se pysyy avaimen omana myös silloin kun avain on
@@ -266,12 +269,19 @@ const tarkistaSijoitus = (esine, sijoitus) => {
   if (!kentat.sijoitusNimi) {
     return { ok: false, error: 'Sijoituksen nimi puuttuu.' };
   }
-  // Sääntö 4: henkilökohtainen esine menee vain henkilölle. Koskee myös tunnuksia, jotka
-  // ovat asusteita ja joiden koko idea on että ne yksilöivät kantajansa.
-  if (esine?.lisatiedot?.henkilokohtainen === true && kentat.sijoitusLaji !== 'henkilo') {
+  // Sääntö 4: henkilökohtainen esine menee vain henkilölle tai varastoon. Koskee myös
+  // tunnuksia, jotka ovat asusteita ja joiden koko idea on että ne yksilöivät kantajansa.
+  //
+  // SÄILÖ ON SALLITTU, kohde ja ajoneuvo eivät. Ero ei ole paikassa vaan siinä onko
+  // esine luovutettu: varastossa se on kaapissa luovuttamatta, kohteen naulakossa se on
+  // kenen tahansa otettavissa. Ilman paluuta varastoon rekisteri väittäisi lopettaneen
+  // työntekijän pitävän yhä takkia, eikä väitettä voisi korjata muuten kuin antamalla
+  // takki jollekulle toiselle.
+  if (esine?.lisatiedot?.henkilokohtainen === true
+    && kentat.sijoitusLaji !== 'henkilo' && !onSailo(kentat.sijoitusLaji)) {
     return {
       ok: false,
-      error: 'Esine on merkitty henkilökohtaiseksi. Se luovutetaan nimetylle henkilölle, ei kohteelle eikä varastoon.',
+      error: 'Esine on merkitty henkilökohtaiseksi. Se luovutetaan nimetylle henkilölle tai palautetaan varastoon — kohteelle, ajoneuvoon tai avainkaappiin sitä ei sijoiteta.',
     };
   }
   return { ok: true, kentat };
@@ -380,12 +390,16 @@ export function paivitaTiedot({ esine, muutokset, user, nyt = Date.now() }) {
   if (esine.laji === 'ase' && (!puhdasSarja || !puhtaatLisatiedot.lupanumero)) {
     return { ok: false, error: 'Aseen sarjanumeroa ja luvan numeroa ei voi tyhjentää.' };
   }
-  // Henkilökohtaiseksi merkitseminen kesken kaiken: esine ei saa jäädä sääntöä rikkovaan
-  // tilaan, eli holvissa oleva tavara ei muutu henkilökohtaiseksi vahingossa.
-  if (puhtaatLisatiedot.henkilokohtainen === true && esine.sijoitusLaji !== 'henkilo') {
+  // Henkilökohtaiseksi merkitseminen kesken kaiken: esine ei saa jäädä tilaan jota
+  // siirtosääntö ei sallisi. Raja on sama kuin siirrossa — varastossa oleva SAA olla
+  // henkilökohtainen, koska se on luovuttamatta, mutta kohteelle tai autoon jyvitetty
+  // ei. Jos rajat eroaisivat, sama tila olisi saavutettavissa siirtämällä muttei
+  // muokkaamalla, ja käyttäjä saisi eri vastauksen sen mukaan kummalta puolelta tulee.
+  if (puhtaatLisatiedot.henkilokohtainen === true
+    && esine.sijoitusLaji !== 'henkilo' && !onSailo(esine.sijoitusLaji)) {
     return {
       ok: false,
-      error: 'Henkilökohtaiseksi voi merkitä vain esineen joka on luovutettu henkilölle. Luovuta se ensin.',
+      error: 'Henkilökohtaiseksi voi merkitä vain esineen joka on varastossa tai luovutettu henkilölle. Palauta se ensin.',
     };
   }
 
