@@ -17,6 +17,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { ArrowLeft, Bell, BellRing, Camera, ChevronRight, LogOut, Menu, Monitor, MoreVertical, Send, TriangleAlert, Volume2, VolumeX, X } from 'lucide-react';
 
+import { PttPalkki } from './PttPalkki.tsx';
+import { usePttPalkkia } from './kayttoPttPalkkia.ts';
+
 export type MobiiliIlmoitus = {
   id: string;
   otsikko: string;
@@ -104,6 +107,13 @@ export const MobiiliKehys = ({
   const [tyopoytatila, setTyopoytatila] = useState(false);
   const [vihjePiilotettu, setVihjePiilotettu] = useState(false);
   const kriittisia = ilmoitukset.some((i) => i.taso === 'kriittinen');
+
+  // PTT-kanavapalkki (erä 26, vaihe 5). Kehyksen oma tila eikä GuardAppilta periytyvä
+  // props — kehys on ainoa paikka joka piirtyy JOKAISEN mobiilinäkymän ympärille, ja
+  // palkin pitää suunnitelman mukaan olla käytettävissä koko sovelluksen yli eikä vain
+  // yhdellä välilehdellä (ks. kayttoPttPalkkia.ts:n tiedostokommentti erillisestä
+  // WebSocket-yhteydestä).
+  const ptt = usePttPalkkia();
 
   const vaihda = (mika: 'valikko' | 'pika' | 'ilmoitukset') =>
     setAuki((edellinen) => (edellinen === mika ? null : mika));
@@ -430,6 +440,18 @@ export const MobiiliKehys = ({
         <main className="flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           {children}
         </main>
+
+        <PttPalkki
+          kanavat={ptt.kanavat}
+          aktiivinenId={ptt.aktiivinenId}
+          onValitseAktiivinen={ptt.setAktiivinenId}
+          tilat={ptt.tilat}
+          mykistetyt={ptt.mykistetyt}
+          onMykista={ptt.asetaMykistys}
+          hylkays={ptt.hylkays}
+          onPttDown={ptt.pyydaPuheenvuoro}
+          onPttUp={ptt.vapautaPuheenvuoro}
+        />
       </div>
     </div>
   );
