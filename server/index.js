@@ -32,6 +32,7 @@ import {
   JOUSTO_MIN, aloitaVuoro, keskenOlevaVuoro, kohteetPerehdytyksenMukaan, lisaaVuoroon,
   paataVuoro, vuorovaihtoehdot, vuoronPaattymisaika,
 } from './vuorot.js';
+import { omatKiinteatKanavat } from './kanavat.js';
 import {
   joSiirrossa, kiinnitaVuoroon, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto,
   merkitseValmiiksi as merkitseSiirtoValmiiksi,
@@ -2199,6 +2200,20 @@ app.get('/api/vuoro/oma', requireAuth, guardPortti, (req, res) => {
     mandown: vuoro ? mandownAsetukset(kohde) : null,
     kuittaus: vuoro ? kuittausAsetukset(kohde) : null,
   });
+});
+
+// ====================== PTT-KANAVAT (erä 26, vaihe 1) ======================
+//
+// Vain kiinteät kanavat (kohde + mahdollinen piiri) toistaiseksi. Vapaat ryhmät,
+// henkilökohtaiset viestit, hätäkanava ja floor control tulevat myöhemmässä erässä
+// (ks. server/kanavat.js:n tiedostokommentti).
+
+app.get('/api/kanavat/omat', requireAuth, guardPortti, (req, res) => {
+  if (req.role !== 'admin' && !canView(req.permissions, null, 'guard_ptt')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia PTT-kanaviin.' });
+  }
+  const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
+  res.json({ ok: true, kanavat: omatKiinteatKanavat(vuoro) });
 });
 
 // Vuoron aloitus.

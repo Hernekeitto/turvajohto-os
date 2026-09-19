@@ -70,6 +70,12 @@ const GLOBAL_NODES = new Set([
   // Globaali samasta syystä kuin guard_locations; rivirajaus tulee eventAccessista
   // (server/sijaintihistoria.js: suodataPisteet).
   'guard_location_history',
+  // PTT (erä 26). Globaali samasta syystä kuin guard_site_assets: tämä solmu ei itse
+  // päätä mitä kanavia näkyy — se on pelkkä "onko ominaisuus tällä tunnuksella
+  // ollenkaan" -portti. Kiinteän kanavan (kohde/piiri) todellinen jäsenyys tulee
+  // kesken olevasta vuorosta (server/kanavat.js), ei tästä solmusta. Kohdekohtainen
+  // oikeus olisi harhaanjohtava samasta syystä kuin guard_site_assetsilla.
+  'guard_ptt',
   'global_reports',
   'global_archived_events',
   'global_employee_bank',

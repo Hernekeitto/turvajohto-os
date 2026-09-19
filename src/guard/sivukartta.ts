@@ -87,6 +87,11 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // Katsominen vaatii lisäksi SYYN, joka kirjataan auditlokiin (käyttäjän päätös
   // 16.9.2026). Oikeus avaa näkymän; syy kertoo mihin sitä käytettiin.
   { id: 'guard_location_history', label: 'Sijaintihistoria (jälkiselvitys, katselu vaatii kirjatun syyn)' },
+  // PTT (erä 26). Näkyvyysportti pelkälle ominaisuudelle — kiinteän kanavan (kohde/piiri)
+  // todellinen jäsenyys tulee kesken olevasta vuorosta eikä tästä solmusta, samalla
+  // periaatteella kuin guard_site_assets. Palvelimella solmu on GLOBAL_NODES-listassa
+  // (server/permissions.js).
+  { id: 'guard_ptt', label: 'PTT (näkyvyysportti — kanavajäsenyys tulee vuorosta)' },
   // Pohjamoottorin lajit (erä 8). Omat solmunsa EVENT-puolen vastaavista samasta syystä
   // kuin muutkin GUARD-solmut: oikeudet tallennetaan yhteiseen olioon, joten sama nimi
   // molemmilla puolilla jakaisi vahingossa saman oikeuden.

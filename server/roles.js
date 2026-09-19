@@ -74,7 +74,10 @@ const KATSELU_NAKYVA = [
 // VAIN sen kohteen jossa hän on juuri nyt vuorossa, ja ilman luovutusketjua (rajaus
 // tehdään index.js:ssä, sääntö kalusto.js:ssä). Se on eri oikeus kuin pankin selaaminen
 // — siksi oma solmunsa eikä guard_assets kapeampana.
-const VARTIJA_KATSELU = ['guard_sites', 'guard_site_info', 'guard_reporting', 'guard_site_assets'];
+// `guard_ptt` on tässä samasta syystä kuin guard_site_assets: se on vain näkyvyysportti,
+// eikä sen antaminen oletuksena avaa mitään kohdetta joka ei muutenkin olisi vartijan
+// omassa vuorossa (server/kanavat.js).
+const VARTIJA_KATSELU = ['guard_sites', 'guard_site_info', 'guard_reporting', 'guard_site_assets', 'guard_ptt'];
 // Työvuoron tekeminen: tehtävien kuittaus ja omien raporttien kirjaaminen. Tapahtumailmoitus
 // on mukana, koska sen kirjaa se joka toimenpiteen teki — jos kirjaus kuuluu jossain
 // organisaatiossa vain esimiehelle, oikeus otetaan pois Sovellusasetuksista.
