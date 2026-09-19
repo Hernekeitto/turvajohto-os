@@ -12,6 +12,7 @@ import {
   kohdeKanavaId, piiriKanavaId, omatKiinteatKanavat, kuuluuKiinteaanKanavaan,
   vuorossaOlevatMuut, onOsallistuja, loydaDm, luoDmKanava, dmPurkautunut,
   hataKanavaId, luoHataKanava, onHalyttaja, hataKanavaPurkautunut,
+  pakotaLinjaAuki, vapautaLinjanPakotus,
 } from './kanavat.js';
 
 const kohdevuoro = (yli = {}) => ({
@@ -158,4 +159,31 @@ test('hataKanavaPurkautunut on tosi kun hälytys on kuitattu, peruttu tai kadonn
 
 test('hataKanavaPurkautunut ei koske muun tyyppisiä kanavia', () => {
   assert.equal(hataKanavaPurkautunut({ tyyppi: 'dm' }, null), false);
+});
+
+// --- Linjan pakotus (vaihe 1e) ----------------------------------------------------
+
+test('pakotaLinjaAuki asettaa haltePidaHengissa-kentän', () => {
+  const kanava = luoHataKanava({ halytysId: 'h1', vartija: 'vartija1', halytysTyyppi: 'panic' });
+  const paivitetty = pakotaLinjaAuki(kanava, 'paivystaja1', 0);
+  assert.deepEqual(paivitetty.haltePidaHengissa, { kayttaja: 'paivystaja1', alkaen: new Date(0).toISOString() });
+  // Alkuperäinen tietue ei muutu — kutsuja päättää mitä levylle kirjoitetaan.
+  assert.equal(kanava.haltePidaHengissa, null);
+});
+
+test('pakotaLinjaAuki ei koske muun tyyppistä kanavaa', () => {
+  const kanava = { tyyppi: 'dm', osallistujat: ['vartija1', 'vartija2'] };
+  assert.equal(pakotaLinjaAuki(kanava, 'paivystaja1'), kanava);
+});
+
+test('vapautaLinjanPakotus tyhjentää kentän', () => {
+  const kanava = pakotaLinjaAuki(
+    luoHataKanava({ halytysId: 'h1', vartija: 'vartija1', halytysTyyppi: 'panic' }), 'paivystaja1',
+  );
+  assert.equal(vapautaLinjanPakotus(kanava).haltePidaHengissa, null);
+});
+
+test('vapautaLinjanPakotus ei koske muun tyyppistä kanavaa', () => {
+  const kanava = { tyyppi: 'vapaa', haltePidaHengissa: { kayttaja: 'x' } };
+  assert.equal(vapautaLinjanPakotus(kanava), kanava);
 });

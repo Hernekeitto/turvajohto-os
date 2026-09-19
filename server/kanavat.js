@@ -208,3 +208,25 @@ export function hataKanavaPurkautunut(kanava, halytys) {
   if (!halytys) return true;
   return !HALYTYS_AVOIMET.includes(halytys.tila);
 }
+
+// --- Linjan pakotus (erä 26, vaihe 1e) ----------------------------------------------
+//
+// HÄLKE:n oikeus pakottaa hätäkanavan linja auki (esim. kun vartija ei itse käynnistä
+// lähetystä). Tämä on TALLENNETTU kanavan kenttä eikä hetkellinen puheenvuoro-tila
+// (server/puheenvuoro.js) — pakotuksen on kestettävä myös pakottajan oman yhteyden yli,
+// toisin kuin tavallinen puheenvuoro joka on aina sidottu pyytäjän istuntoon. Pakotus ei
+// itsessään myönnä ketään puheenvuoron haltijaksi: se on kutsujan (server/index.js)
+// asiakkaalle lähettämä käsky avata linja, minkä jälkeen asiakas pyytää puheenvuoron
+// tavallista `pyyda_puheenvuoro`-reittiä pitkin. Ei siis oikaisua tavallisen floor
+// controlin "ei jonoa" -säännön ohi: jos kanava on jo varattu kun asiakas pyytää, pyyntö
+// silti hylätään normaalisti.
+export function pakotaLinjaAuki(kanava, kayttaja, nyt = Date.now()) {
+  if (kanava?.tyyppi !== 'hata') return kanava;
+  return { ...kanava, haltePidaHengissa: { kayttaja, alkaen: new Date(nyt).toISOString() } };
+}
+
+/** Pakotuksen vapautus. Oikeustarkistus (kuka saa vapauttaa) on kutsujan asia. */
+export function vapautaLinjanPakotus(kanava) {
+  if (kanava?.tyyppi !== 'hata') return kanava;
+  return { ...kanava, haltePidaHengissa: null };
+}

@@ -45,7 +45,13 @@ export type KanavaViesti =
   | { tyyppi: 'puheenvuoro_myonnetty'; kanavaId: string; kayttaja: string }
   | { tyyppi: 'puheenvuoro_hylatty'; kanavaId: string; syy: string; kayttaja: string | null }
   | { tyyppi: 'puheenvuoro_vapautui'; kanavaId: string }
-  | { tyyppi: 'puheenvuoro_tila'; tilat: PuheenvuoroTila[] };
+  | { tyyppi: 'puheenvuoro_tila'; tilat: PuheenvuoroTila[] }
+  // Linjan pakotus (erä 26, vaihe 1e). HÄLKE pakotti hätäkanavan linjan auki tai vapautti
+  // pakotuksen — menee vain hälyttäjän omalle laitteelle (server/index.js: suodatin).
+  // Käsky EI myönnä puheenvuoroa: asiakas pyytää sen itse tämän jälkeen tavallisella
+  // `pyyda_puheenvuoro`-lähetyksellä.
+  | { tyyppi: 'linja_pakotettu_auki'; kanavaId: string; pakottaja: string }
+  | { tyyppi: 'linjan_pakotus_vapautettu'; kanavaId: string };
 
 type Kasittelijat = {
   onMuutos?: (kokoelma: string, muutokset: Muutos[]) => void;
@@ -54,6 +60,8 @@ type Kasittelijat = {
   onPuheenvuoroHylatty?: (kanavaId: string, syy: string, kayttaja: string | null) => void;
   onPuheenvuoroVapautui?: (kanavaId: string) => void;
   onPuheenvuoroTila?: (tilat: PuheenvuoroTila[]) => void;
+  onLinjaPakotettuAuki?: (kanavaId: string, pakottaja: string) => void;
+  onLinjanPakotusVapautettu?: (kanavaId: string) => void;
 };
 
 // Uudelleenyhdistys kasvavalla viiveellä. Kiinteä lyhyt viive tarkoittaisi sitä, että
@@ -119,6 +127,10 @@ export function useKanava(kasittelijat: Kasittelijat) {
           kasittelija.current.onPuheenvuoroVapautui?.(viesti.kanavaId);
         } else if (viesti?.tyyppi === 'puheenvuoro_tila') {
           kasittelija.current.onPuheenvuoroTila?.(viesti.tilat || []);
+        } else if (viesti?.tyyppi === 'linja_pakotettu_auki') {
+          kasittelija.current.onLinjaPakotettuAuki?.(viesti.kanavaId, viesti.pakottaja);
+        } else if (viesti?.tyyppi === 'linjan_pakotus_vapautettu') {
+          kasittelija.current.onLinjanPakotusVapautettu?.(viesti.kanavaId);
         }
       };
 

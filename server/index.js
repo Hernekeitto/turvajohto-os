@@ -34,7 +34,8 @@ import {
 } from './vuorot.js';
 import {
   kuuluuKiinteaanKanavaan, omatKiinteatKanavat, onOsallistuja, loydaDm, luoDmKanava,
-  vuorossaOlevatMuut, hataKanavaId, luoHataKanava, hataKanavaPurkautunut,
+  vuorossaOlevatMuut, hataKanavaId, luoHataKanava, hataKanavaPurkautunut, onHalyttaja,
+  pakotaLinjaAuki, vapautaLinjanPakotus,
 } from './kanavat.js';
 import {
   nykyinenHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
@@ -2246,6 +2247,8 @@ app.get('/api/kanavat/omat', requireAuth, guardPortti, (req, res) => {
         }
         return k.nimi || '';
       })(),
+      // Vain hätäkanavalla: kertoo onko HÄLKE pakottanut linjan auki (vaihe 1e).
+      ...(k.tyyppi === 'hata' ? { haltePidaHengissa: k.haltePidaHengissa || null } : {}),
     }));
   res.json({ ok: true, kanavat: [...omatKiinteatKanavat(vuoro), ...tallennetut] });
 });
@@ -2305,6 +2308,77 @@ app.post('/api/kanavat/dm', requireAuth, guardPortti, (req, res) => {
     istunto?.username !== req.username && onOsallistuja(tulos.kanava, istunto?.username)
   ));
   res.json({ ok: true, kanava: { id: tulos.kanava.id, tyyppi: 'dm', nimi: vastaanottaja } });
+});
+
+// Linjan pakotus (vaihe 1e): sama `guard_dispatch` MUOKKAUS -valtuus kuin laitesidonnan
+// nollauksella ja kertaluvan myöntämisellä (ks. saaHallitaLaitteita/saaMyontaaKertaluvan)
+// — tämä on päivystäjän poikkeuksellinen oikeus, ei kaikkien guard_ptt NÄKY -oikeudella
+// varustettujen jo muutenkin saama pääsy hätäkanavalle.
+const saaPakottaaLinjan = (req) =>
+  req.role === 'admin' || canEdit(req.permissions, null, 'guard_dispatch');
+
+// Palauttaa haetun hätäkanavan tai lähettää virhevastauksen ja palauttaa nullin.
+function haeHataKanava(req, res) {
+  const kanavat = readCollection('guardKanavat') || [];
+  const kanava = kanavat.find((k) => k.id === req.params.id);
+  if (!kanava || kanava.tyyppi !== 'hata') {
+    res.status(404).json({ ok: false, error: 'Hätäkanavaa ei löytynyt.' });
+    return null;
+  }
+  return { kanavat, kanava };
+}
+
+app.post('/api/kanavat/:id/pakota-linja-auki', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  if (!saaPakottaaLinjan(req)) {
+    return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus voi pakottaa linjan auki.' });
+  }
+  const loytyi = haeHataKanava(req, res);
+  if (!loytyi) return;
+  const { kanavat, kanava } = loytyi;
+
+  const paivitetty = pakotaLinjaAuki(kanava, req.username);
+  writeCollection('guardKanavat', kanavat.map((k) => (k.id === kanava.id ? paivitetty : k)));
+  logAudit({
+    user: req.username, action: 'ptt_linja_pakotettu', collection: 'guardKanavat', recordId: kanava.id,
+  });
+  kerroKanavastaMuutos('update', paivitetty, (istunto) => (
+    istunto?.username === paivitetty.vartija || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch')
+  ));
+  // Suora käsky hälyttäjän omalle laitteelle: se avaa linjan heti sen sijaan että
+  // odottaisi tavallista muutosilmoitusta ja päättelisi tilan siitä itse. Käsky EI myönnä
+  // puheenvuoroa suoraan — asiakas pyytää sen tavallista `pyyda_puheenvuoro`-reittiä
+  // pitkin, joka nyt (tämän erän myötä) tunnistaa hätäkanavan jäsenyyden.
+  lahetaViesti(
+    { tyyppi: 'linja_pakotettu_auki', kanavaId: kanava.id, pakottaja: req.username },
+    { suodatin: (istunto) => istunto?.username === paivitetty.vartija },
+  );
+  res.json({ ok: true, kanava: paivitetty });
+});
+
+app.post('/api/kanavat/:id/vapauta-linjan-pakotus', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  if (!saaPakottaaLinjan(req)) {
+    return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus voi vapauttaa pakotuksen.' });
+  }
+  const loytyi = haeHataKanava(req, res);
+  if (!loytyi) return;
+  const { kanavat, kanava } = loytyi;
+  if (!kanava.haltePidaHengissa) return res.json({ ok: true, kanava });
+
+  const paivitetty = vapautaLinjanPakotus(kanava);
+  writeCollection('guardKanavat', kanavat.map((k) => (k.id === kanava.id ? paivitetty : k)));
+  logAudit({
+    user: req.username, action: 'ptt_linjan_pakotus_vapautettu', collection: 'guardKanavat', recordId: kanava.id,
+  });
+  kerroKanavastaMuutos('update', paivitetty, (istunto) => (
+    istunto?.username === paivitetty.vartija || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch')
+  ));
+  lahetaViesti(
+    { tyyppi: 'linjan_pakotus_vapautettu', kanavaId: kanava.id },
+    { suodatin: (istunto) => istunto?.username === paivitetty.vartija },
+  );
+  res.json({ ok: true, kanava: paivitetty });
 });
 
 // Vuoron aloitus.
@@ -6519,11 +6593,10 @@ function kasitteleKanavaViesti(istunto, viesti) {
   if (viesti.tyyppi === 'vapauta_puheenvuoro') return kasittelePuheenvuoroVapautus(istunto, viesti);
 }
 
-// --- PTT floor control (erä 26, vaihe 1b) -------------------------------------------
+// --- PTT floor control (erä 26, vaihe 1b; hätäkanava mukaan vaihe 1e) ----------------
 //
-// VAIN KIINTEÄT KANAVAT TOISTAISEKSI. Vapaat ryhmät, DM ja hätäkanava vaativat
-// guardKanavat-kokoelman (ei vielä olemassa) ja tulevat omana eränään — ks.
-// server/kanavat.js:n tiedostokommentti.
+// KIINTEÄT KANAVAT JA HÄTÄKANAVA. Vapaat ryhmät ja DM vaativat vielä oman jäsenyys-
+// tarkistuksensa tähän — ks. server/kanavat.js:n tiedostokommentti.
 //
 // SAMA TARKISTUS JOKA KERTA, EI VAIN YHTEYDEN AVATESSA. `istunto.kuunneltavatKanavat`
 // on käyttäjän oma ilmoitus siitä mitä se haluaa kuunnella, mutta oikeus ja vuoro
@@ -6531,11 +6604,24 @@ function kasitteleKanavaViesti(istunto, viesti) {
 // (ks. tunnistaKanava: "oikeudet luetaan roleId:stä vasta tässä"). Ilman uudelleen-
 // tarkistusta vuoron päättyminen kesken auki olevan yhteyden ei koskaan sulkisi kuuloa
 // kanavalta johon käyttäjä ei enää kuulu.
+
+// Hätäkanavan jäsenyys floor controlia varten: hälyttäjä itse tai päivystäjä
+// (guard_dispatch NÄKY) juuri nyt — sama sääntö kuin GET /api/kanavat/omat, koottuna
+// tänne koska floor control tarvitsee sen neljässä eri kohdassa.
+function kuuluuHataKanavaan(istunto, kanavaId) {
+  const kanava = (readCollection('guardKanavat') || []).find((k) => k.id === kanavaId);
+  if (!kanava) return false;
+  return onHalyttaja(kanava, istunto?.username)
+    || istunto?.role === 'admin'
+    || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch');
+}
+
 function saaKuullaKanavaa(istunto, kanavaId) {
   if (!istunto?.kuunneltavatKanavat?.has(kanavaId)) return false;
   if (istunto.role === 'admin') return true;
   if (!(istunto.tuotteet || []).includes('guard')) return false;
   if (!canView(rolePermissions(istunto.roleId), null, 'guard_ptt')) return false;
+  if (kanavaId.startsWith('hata:')) return kuuluuHataKanavaan(istunto, kanavaId);
   const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], istunto.username);
   return kuuluuKiinteaanKanavaan(vuoro, kanavaId);
 }
@@ -6554,7 +6640,9 @@ function kasitteleKuunneltavatKanavat(istunto, viesti) {
     : [];
   const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], istunto.username);
   istunto.kuunneltavatKanavat = new Set(
-    istunto.role === 'admin' ? pyydetyt : pyydetyt.filter((id) => kuuluuKiinteaanKanavaan(vuoro, id))
+    istunto.role === 'admin' ? pyydetyt : pyydetyt.filter((id) => (
+      id.startsWith('hata:') ? kuuluuHataKanavaan(istunto, id) : kuuluuKiinteaanKanavaan(vuoro, id)
+    ))
   );
 
   // Kerrotaan heti kenellä näistä on puheenvuoro juuri nyt — ilman tätä äsken avattu tai
@@ -6573,8 +6661,12 @@ function kasittelePuheenvuoroPyynto(istunto, viesti) {
   const kanavaId = typeof viesti.kanavaId === 'string' ? viesti.kanavaId : '';
   if (!kanavaId) return;
   if (istunto.role !== 'admin' && !canView(rolePermissions(istunto.roleId), null, 'guard_ptt')) return;
-  const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], istunto.username);
-  if (istunto.role !== 'admin' && !kuuluuKiinteaanKanavaan(vuoro, kanavaId)) return;
+  if (istunto.role !== 'admin') {
+    const jasen = kanavaId.startsWith('hata:')
+      ? kuuluuHataKanavaan(istunto, kanavaId)
+      : kuuluuKiinteaanKanavaan(keskenOlevaVuoro(readCollection('guardShifts') || [], istunto.username), kanavaId);
+    if (!jasen) return;
+  }
 
   const tulos = pyydaPuheenvuoro({ kanavaId, istunto, kayttaja: istunto.username });
   if (tulos.ok) {
