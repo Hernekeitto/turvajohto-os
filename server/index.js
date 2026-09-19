@@ -34,7 +34,7 @@ import {
 } from './vuorot.js';
 import {
   kuuluuKiinteaanKanavaan, omatKiinteatKanavat, onOsallistuja, loydaDm, luoDmKanava,
-  vuorossaOlevatMuut,
+  vuorossaOlevatMuut, hataKanavaId, luoHataKanava, hataKanavaPurkautunut,
 } from './kanavat.js';
 import {
   nykyinenHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
@@ -2224,14 +2224,28 @@ const pttPortti = (req, res) => {
 app.get('/api/kanavat/omat', requireAuth, guardPortti, (req, res) => {
   if (!pttPortti(req, res)) return;
   const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
+  // HÄLKE-jäsenyys hätäkanavalle ei tule osallistujalistasta vaan guard_dispatch-
+  // oikeudesta juuri nyt (ks. kanavat.js: hätäkanavan tiedostokommentti) — lasketaan
+  // kerran eikä jokaiselle kanavalle erikseen.
+  const onPaivystaja = req.role === 'admin' || canView(req.permissions, null, 'guard_dispatch');
   const tallennetut = (readCollection('guardKanavat') || [])
-    .filter((k) => onOsallistuja(k, req.username))
+    .filter((k) => (
+      k.tyyppi === 'hata' ? (k.vartija === req.username || onPaivystaja) : onOsallistuja(k, req.username)
+    ))
     .map((k) => ({
       id: k.id,
       tyyppi: k.tyyppi,
-      // DM: nimeksi TOINEN osapuoli, ei oma tunnus — käyttöliittymän on näytettävä
-      // kenen kanssa keskustellaan, ei "minä ja joku".
-      nimi: k.tyyppi === 'dm' ? ((k.osallistujat || []).find((o) => o !== req.username) || '') : (k.nimi || ''),
+      nimi: (() => {
+        if (k.tyyppi === 'dm') {
+          // Nimeksi TOINEN osapuoli, ei oma tunnus — käyttöliittymän on näytettävä
+          // kenen kanssa keskustellaan, ei "minä ja joku".
+          return (k.osallistujat || []).find((o) => o !== req.username) || '';
+        }
+        if (k.tyyppi === 'hata') {
+          return `${HALYTYSTYYPIT[k.halytysTyyppi]?.label || 'Hätäkanava'} — ${k.vartija}`;
+        }
+        return k.nimi || '';
+      })(),
     }));
   res.json({ ok: true, kanavat: [...omatKiinteatKanavat(vuoro), ...tallennetut] });
 });
@@ -2284,6 +2298,12 @@ app.post('/api/kanavat/dm', requireAuth, guardPortti, (req, res) => {
   logAudit({
     user: req.username, action: 'ptt_dm_luotu', collection: 'guardKanavat', recordId: tulos.kanava.id,
   });
+  // Vastaanottajalle ilmoitetaan heti — muuten hän huomaisi uuden DM:n vasta seuraavalla
+  // manuaalisella päivityksellä. Lähettäjä tietää jo mitä teki (sama periaate kuin
+  // kanava.js:n `lahettaja`-ohituksella), joten hänelle ei tarvitse kertoa erikseen.
+  kerroKanavastaMuutos('create', tulos.kanava, (istunto) => (
+    istunto?.username !== req.username && onOsallistuja(tulos.kanava, istunto?.username)
+  ));
   res.json({ ok: true, kanava: { id: tulos.kanava.id, tyyppi: 'dm', nimi: vastaanottaja } });
 });
 
@@ -4081,6 +4101,20 @@ function kerroHalytyksesta(halytys, action) {
   });
 }
 
+// guardKanavan muutoksesta ilmoittaminen (erä 26). Käytetään geneeristä 'muutos'-
+// viestimuotoa (sama kuin muillakin kokoelmilla) mutta `lahetaViesti`:n kautta eikä
+// `lahetaKanavalle`:n, koska jälkimmäisen `saaNahda(istunto, eventId)` ei sovi tähän:
+// guardKanavat ei ole eventScoped, ja näkyvyys riippuu YKSITTÄISESTÄ tietueesta
+// (osallistujuus tai hälyttäjyys) eikä pelkästä eventId:stä. Asiakas ei huomaa eroa —
+// sanoma on ulospäin identtinen, `src/shared/kanava.ts`:n onMuutos käsittelee sen
+// samalla tavalla kuin minkä tahansa muun kokoelman muutoksen.
+function kerroKanavastaMuutos(action, kanava, naytKeneleKin) {
+  lahetaViesti(
+    { tyyppi: 'muutos', kokoelma: 'guardKanavat', muutokset: [{ action, id: kanava.id, eventId: null }] },
+    { suodatin: (istunto) => istunto?.role === 'admin' || naytKeneleKin(istunto) },
+  );
+}
+
 // Hälytyksen lähetystietue lähetyshistoriaan. Sama muoto kuin pikatoimintojen lähetyksillä,
 // jotta BulkSMS:n webhook osaa liittää toimituskuittaukset oikeaan riviin (smswebhook.js) —
 // hätäviestin kohdalla juuri toimitustieto on se mikä ratkaisee: lähtikö apu liikkeelle.
@@ -4483,6 +4517,27 @@ app.post('/api/halytys', requireAuth, halytysLimiter, (req, res) => {
     recordId: tulos.halytys.id, eventId, alarmType: tyyppi,
   });
   kerroHalytyksesta(tulos.halytys, 'create');
+
+  // Hätäkanava (erä 26, vaihe 1d): VAIN GUARD-puolen hälytyksille — alerts on molempien
+  // puolien yhteinen kokoelma (eventId on tapahtuman TAI kohteen id), eikä PTT ole
+  // EVENT-puolen ominaisuus. Tarkistetaan siis onko eventId nimenomaan guardSites-kohde,
+  // ei oleteta req.tuotteet-listasta joka kertoo käyttäjän oikeudesta eikä hälytyksen
+  // puolesta.
+  if ((readCollection('guardSites') || []).some((k) => k?.id === eventId)) {
+    const kanavat = readCollection('guardKanavat') || [];
+    const hataKanava = luoHataKanava({ halytysId: tulos.halytys.id, vartija: req.username, halytysTyyppi: tyyppi });
+    writeCollection('guardKanavat', [...kanavat, hataKanava]);
+    logAudit({
+      user: 'jarjestelma', action: 'ptt_hatakanava_luotu', collection: 'guardKanavat',
+      recordId: hataKanava.id, eventId,
+    });
+    // Hälyttäjälle itselleen EI tarvitse ilmoittaa erikseen (hän tietää jo, hän juuri
+    // laukaisi hälytyksen) — vain HÄLKE:lle, joka ei vielä tiedä kanavasta.
+    kerroKanavastaMuutos('create', hataKanava, (istunto) => (
+      istunto?.role === 'admin' || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch')
+    ));
+  }
+
   // Eskalointi tehdään hälytyskierroksella eikä tässä: vastaus ei saa odottaa ulkoista
   // HTTP-kutsua BulkSMS:ään. Hätäpainikkeen viive on nolla, joten viesti lähtee
   // seuraavalla kierroksella eli enintään kymmenen sekunnin kuluttua.
@@ -4547,6 +4602,25 @@ app.post('/api/halytys/:id/kuittaa', requireAuth, (req, res) => {
     recordId: halytys.id, eventId: halytys.eventId, alarmType: halytys.tyyppi,
   });
   kerroHalytyksesta(tulos.halytys, 'update');
+
+  // Hätäkanavan purku (erä 26, vaihe 1d): elinkaari on sidottu HÄLYTYKSEN ratkaisuun,
+  // ei vuoron loppumiseen (ks. server/kanavat.js: hataKanavaPurkautunut). Poistetaan
+  // suoraan tässä eikä erillisellä ajastimella, koska kuittaus on ainoa tapa jolla
+  // panic/mandown-hälytys voi ylipäätään siirtyä pois avoimesta tilasta.
+  const kanavatNyt = readCollection('guardKanavat') || [];
+  const hataId = hataKanavaId(halytys.id);
+  const hataKanava = kanavatNyt.find((k) => k.id === hataId);
+  if (hataKanava && hataKanavaPurkautunut(hataKanava, tulos.halytys)) {
+    writeCollection('guardKanavat', kanavatNyt.filter((k) => k.id !== hataId));
+    logAudit({
+      user: req.username, action: 'ptt_hatakanava_paattyi', collection: 'guardKanavat', recordId: hataId,
+    });
+    kerroKanavastaMuutos('delete', hataKanava, (istunto) => (
+      istunto?.role === 'admin'
+      || istunto?.username === hataKanava.vartija
+      || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch')
+    ));
+  }
   res.json({ ok: true, halytys: tulos.halytys });
 });
 

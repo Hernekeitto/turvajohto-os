@@ -12,9 +12,11 @@
 // jäsenyyslista olisi väärässä heti seuraavalla vuoronvaihdolla.
 //
 // Vapaat ryhmät, henkilökohtaiset viestit (DM) ja hätäkanavat ovat ERI ASIA — niillä ON
-// eksplisiittinen osallistujalista, koska niitä ei voi laskea vuorosta. Ne tallennetaan
-// `guardKanavat`-kokoelmaan (server/index.js, server/permissions.js). DM tulee tässä
-// erässä; vapaat ryhmät ja hätäkanava tulevat omina erikseen.
+// eksplisiittinen osallistujalista tai vastaava, koska niitä ei voi laskea vuorosta. Ne
+// tallennetaan `guardKanavat`-kokoelmaan (server/index.js, server/permissions.js). DM ja
+// hätäkanava ovat mukana; vapaan ryhmän luonti tulee omana erikseen.
+
+import { AVOIMET as HALYTYS_AVOIMET } from './halytys.js';
 
 /** Kohteen kiinteän kanavan tunnus. Sama kohde antaa saman tunnuksen aina. */
 export const kohdeKanavaId = (siteId) => `kohde:${siteId}`;
@@ -140,4 +142,69 @@ export function luoDmKanava({ id, kayttaja1, kayttaja2, nyt = Date.now() }) {
 export function dmPurkautunut(kanava, vuorossaOlevat) {
   if (kanava?.tyyppi !== 'dm') return false;
   return !(kanava.osallistujat || []).some((kayttaja) => vuorossaOlevat.has(kayttaja));
+}
+
+// --- Hätäkanava (erä 26, vaihe 1d) --------------------------------------------------
+//
+// Syntyy automaattisesti kun vartija laukaisee man down- tai hätäpainikehälytyksen
+// (server/halytys.js: tyyppi 'mandown' tai 'panic' — "tarvitsen apua" tässä hankkeessa
+// käytetyllä nimellä). ERI ASIA kuin DM ja vapaa ryhmä: HÄLKE-puolen jäsenyys EI ole
+// tallennettu osallistujalista vaan `guard_dispatch`-oikeus JUURI NYT (kuka tahansa
+// päivystäjä voi vastata, ei vain se joka sattui olemaan kirjautuneena kun hälytys
+// laukesi) — sama periaate kuin guardDispatch-kohdennuksessa muuallakin. Kanavan
+// tietueessa on siksi vain HÄLYTTÄJÄ, ei osallistujalistaa; HÄLKE-jäsenyyden tarkistaa
+// kutsuja (server/index.js) `canView(..., 'guard_dispatch')`-oikeudella, koska
+// oikeustieto ei kuulu tänne samasta syystä kuin tuoteoikeudetkaan eivät kuulu DM:ään.
+//
+// ELINKAARI ON SIDOTTU HÄLYTYKSEN RATKAISUUN, EI VUORON LOPPUMISEEN: vartija voi olla
+// yhä kesken vuoron kun hälytys jo ratkeaa, ja hälytys voi jäädä auki senkin jälkeen kun
+// vartijan vuoro (teoriassa) päättyisi. Käytetään siis alerts-tilaa, ei guardShifts-tilaa.
+
+/** Hätäkanavan tunnus on aina sidottu hälytyksen id:hen — yksi hälytys, yksi kanava. */
+export const hataKanavaId = (halytysId) => `hata:${halytysId}`;
+
+/**
+ * Uusi hätäkanava-tietue annetulle hälytykselle. `halytysTyyppi` (mandown/panic)
+ * kopioidaan hälytyksestä samasta syystä kuin vuoro kopioi kohteen nimen: se on sen
+ * hetken tieto, ja sitä tarvitaan myöhemmin päättämään käytös (kuuma mikrofoni vai
+ * manuaalinen PTT) ilman erillistä hakua hälytyskokoelmasta joka kerta.
+ */
+export function luoHataKanava({ halytysId, vartija, halytysTyyppi, nyt = Date.now() }) {
+  return {
+    id: hataKanavaId(halytysId),
+    tyyppi: 'hata',
+    liittyvaHalytysId: halytysId,
+    halytysTyyppi,
+    vartija,
+    luotu: new Date(nyt).toISOString(),
+    luoja: 'jarjestelma',
+    // HÄLKE:n oikeus pitää linja pakotettuna auki senkin jälkeen kun vuoro/tilanne
+    // muuttuisi — asetetaan ja puretaan omalla reitillään (vaihe 1e, ei vielä tässä).
+    haltePidaHengissa: null,
+  };
+}
+
+/**
+ * Onko tämä käyttäjä hätäkanavan hälyttäjä. HÄLKE-puolen jäsenyys ratkaistaan MUUALLA
+ * (guard_dispatch-oikeudella) — tämä vastaa vain kysymykseen "onko tämä se vartija
+ * jonka hälytys tämän kanavan avasi".
+ */
+export function onHalyttaja(kanava, username) {
+  return kanava?.tyyppi === 'hata' && kanava.vartija === username;
+}
+
+/**
+ * Onko hätäkanava valmis poistettavaksi: sen taustalla oleva hälytys ei ole enää avoin
+ * (kuitattu tai peruttu), tai hälytystä ei löydy ollenkaan. `halytys` on kutsujan jo
+ * hakema YKSITTÄINEN tietue (tai null/undefined) — ei koko listaa, samalla
+ * periaatteella kuin muuallakin tässä tiedostossa.
+ *
+ * `haltePidaHengissa` EI vaikuta tähän: se on HÄLKE:n oikeus pitää LINJA auki, ei
+ * oikeus pitää RATKAISTU hälytys keinotekoisesti avoimena. Kanava purkautuu heti
+ * hälytyksen ratkaisusta riippumatta lipun tilasta.
+ */
+export function hataKanavaPurkautunut(kanava, halytys) {
+  if (kanava?.tyyppi !== 'hata') return false;
+  if (!halytys) return true;
+  return !HALYTYS_AVOIMET.includes(halytys.tila);
 }

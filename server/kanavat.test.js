@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import {
   kohdeKanavaId, piiriKanavaId, omatKiinteatKanavat, kuuluuKiinteaanKanavaan,
   vuorossaOlevatMuut, onOsallistuja, loydaDm, luoDmKanava, dmPurkautunut,
+  hataKanavaId, luoHataKanava, onHalyttaja, hataKanavaPurkautunut,
 } from './kanavat.js';
 
 const kohdevuoro = (yli = {}) => ({
@@ -121,4 +122,40 @@ test('dmPurkautunut on epätosi jos toinenkin osapuoli on yhä vuorossa', () => 
 test('dmPurkautunut ei koske muun tyyppisiä kanavia', () => {
   const kanava = { tyyppi: 'vapaa', osallistujat: ['vartija1', 'vartija2'] };
   assert.equal(dmPurkautunut(kanava, new Set()), false);
+});
+
+// --- Hätäkanava (vaihe 1d) -------------------------------------------------------
+
+test('luoHataKanava tuottaa hälyttäjän ja hälytystyypin sisältävän tietueen', () => {
+  const kanava = luoHataKanava({ halytysId: 'h1', vartija: 'vartija1', halytysTyyppi: 'mandown', nyt: 0 });
+  assert.equal(kanava.id, hataKanavaId('h1'));
+  assert.equal(kanava.tyyppi, 'hata');
+  assert.equal(kanava.liittyvaHalytysId, 'h1');
+  assert.equal(kanava.halytysTyyppi, 'mandown');
+  assert.equal(kanava.vartija, 'vartija1');
+  assert.equal(kanava.haltePidaHengissa, null);
+});
+
+test('onHalyttaja tunnistaa hälyttäjän mutta ei muita eikä muun tyyppisiä kanavia', () => {
+  const kanava = luoHataKanava({ halytysId: 'h1', vartija: 'vartija1', halytysTyyppi: 'panic' });
+  assert.equal(onHalyttaja(kanava, 'vartija1'), true);
+  assert.equal(onHalyttaja(kanava, 'vartija2'), false);
+  assert.equal(onHalyttaja({ ...kanava, tyyppi: 'dm' }, 'vartija1'), false);
+});
+
+test('hataKanavaPurkautunut on epätosi kun hälytys on yhä avoin', () => {
+  const kanava = luoHataKanava({ halytysId: 'h1', vartija: 'vartija1', halytysTyyppi: 'panic' });
+  assert.equal(hataKanavaPurkautunut(kanava, { tila: 'lauennut' }), false);
+  assert.equal(hataKanavaPurkautunut(kanava, { tila: 'kaynnissa' }), false);
+});
+
+test('hataKanavaPurkautunut on tosi kun hälytys on kuitattu, peruttu tai kadonnut', () => {
+  const kanava = luoHataKanava({ halytysId: 'h1', vartija: 'vartija1', halytysTyyppi: 'panic' });
+  assert.equal(hataKanavaPurkautunut(kanava, { tila: 'kuitattu' }), true);
+  assert.equal(hataKanavaPurkautunut(kanava, { tila: 'peruttu' }), true);
+  assert.equal(hataKanavaPurkautunut(kanava, null), true);
+});
+
+test('hataKanavaPurkautunut ei koske muun tyyppisiä kanavia', () => {
+  assert.equal(hataKanavaPurkautunut({ tyyppi: 'dm' }, null), false);
 });
