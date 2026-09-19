@@ -1,21 +1,24 @@
 // PTT-kanavien tekstiviestien lähetys ja vastaanotto kryptoperustan päälle
-// (erä 26, vaihe 3, viipaleet 3a—3b).
+// (erä 26, vaihe 3, viipaleet 3a—3c).
 //
 // Käyttää src/shared/olm.ts:ää salaukseen/purkuun — tämä tiedosto ei tee mitään
-// kryptografiaa itse, vain yhdistää sen server/viestit.js:n reitteihin.
+// kryptografiaa itse, vain yhdistää sen server/viestit.js:n ja server/kuittaukset.js:n
+// reitteihin.
 //
 // JÄSENLISTA HAETAAN PALVELIMELTA (GET /api/kanavat/:id/jasenet, viipale 3b) — toimii
-// nyt kaikille neljälle kanavatyypille (kiinteä, hätä, DM, vapaa), koska palvelin
-// laskee kiinteän kanavan jäsenet vuoroista ja hätäkanavan jäsenet guard_dispatch-
-// oikeudesta juuri nyt, samalla säännöllä kuin muukin PTT-oikeustarkistus.
+// kaikille neljälle kanavatyypille (kiinteä, hätä, DM, vapaa), koska palvelin laskee
+// kiinteän kanavan jäsenet vuoroista ja hätäkanavan jäsenet guard_dispatch-oikeudesta
+// juuri nyt, samalla säännöllä kuin muukin PTT-oikeustarkistus.
 //
-// LUOTETTAVA TOIMITUS (uudelleenyritys kunnes palvelin kuittaa) ja TOIMITUS-/
-// LUKUKUITTAUKSET (vaihe 3, kohdat 4-5) EIVÄT OLE MUKANA — oma viipaleensa (3c).
+// LUOTETTAVA TOIMITUS (paikallinen uudelleenyritysjono) on omassa tiedostossaan
+// (src/shared/viestijono.ts, viipale 3c) — tämä tiedosto tarjoaa vain yksittäisen
+// lähetysyrityksen, jono päättää milloin sitä yritetään uudelleen.
 
 import { paivitaKayttajanLaitteet, varmistaIstunnot, jaaHuoneenAvain, salaaViesti, puraViesti } from './olm.ts';
 import type { OlmMachine } from '@matrix-org/matrix-sdk-crypto-wasm';
 
-export type Viesti = { id: string; lahettaja: string; luotu: string; sisalto: unknown | null };
+export type Kuittaus = { kayttaja: string; tyyppi: 'toimitus' | 'luku'; aika: string };
+export type Viesti = { id: string; lahettaja: string; luotu: string; sisalto: unknown | null; kuittaukset: Kuittaus[] };
 
 /** Kanavan kaikki nykyiset jäsenet, oma käyttäjä mukaan lukien (server/index.js: jasenetKanavalla). */
 export async function haeKanavanJasenet(kanavaId: string): Promise<string[]> {
@@ -36,7 +39,7 @@ export async function haeKanavanJasenet(kanavaId: string): Promise<string[]> {
  */
 export async function lahetaTekstiviesti(
   machine: OlmMachine, omaKayttaja: string, kanavaId: string, teksti: string,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const jasenet = (await haeKanavanJasenet(kanavaId)).filter((k) => k !== omaKayttaja);
   for (const kayttaja of jasenet) {
     await paivitaKayttajanLaitteet(machine, kayttaja);
@@ -55,7 +58,7 @@ export async function lahetaTekstiviesti(
   }).then((r) => r.json()).catch(() => null);
 
   if (!vastaus?.ok) return { ok: false, error: vastaus?.error || 'Viestin lähetys epäonnistui.' };
-  return { ok: true };
+  return { ok: true, id: vastaus.id };
 }
 
 /**
@@ -67,12 +70,34 @@ export async function haeJaPuraViestit(machine: OlmMachine, kanavaId: string): P
   const vastaus = await fetch(`/api/viestit?kanavaId=${encodeURIComponent(kanavaId)}`, {
     credentials: 'include',
   }).then((r) => r.json()).catch(() => ({ viestit: [] }));
-  const rivit: Array<{ id: string; lahettaja: string; luotu: string; tapahtuma: unknown }> = vastaus?.viestit || [];
+  const rivit: Array<{ id: string; lahettaja: string; luotu: string; tapahtuma: unknown; kuittaukset: Kuittaus[] }> =
+    vastaus?.viestit || [];
 
   const tulokset: Viesti[] = [];
   for (const rivi of rivit) {
     const sisalto = await puraViesti(machine, kanavaId, JSON.stringify(rivi.tapahtuma));
-    tulokset.push({ id: rivi.id, lahettaja: rivi.lahettaja, luotu: rivi.luotu, sisalto });
+    tulokset.push({
+      id: rivi.id, lahettaja: rivi.lahettaja, luotu: rivi.luotu, sisalto, kuittaukset: rivi.kuittaukset || [],
+    });
   }
   return tulokset;
+}
+
+/**
+ * Kuittaa viestin toimitetuksi tai (vain hätäkanavalla) luetuksi — epäsymmetrinen
+ * käytäntö on palvelimen puolella (server/kuittaukset.js), tämä ei valikoi itse.
+ * Oman viestin kuittausyritys palauttaa palvelimen 400-virheen sellaisenaan.
+ */
+export async function kuittaaViesti(
+  viestiId: string, tyyppi: 'toimitus' | 'luku',
+): Promise<{ ok: boolean; error?: string }> {
+  const vastaus = await fetch(`/api/viestit/${encodeURIComponent(viestiId)}/kuittaa`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tyyppi }),
+  }).then((r) => r.json()).catch(() => null);
+
+  if (!vastaus?.ok) return { ok: false, error: vastaus?.error || 'Kuittaus epäonnistui.' };
+  return { ok: true };
 }

@@ -40,6 +40,7 @@ import {
 import { paivitaAvainpaketti, vaadiKertakayttoavain, julkinenKuvaus } from './kryptoavaimet.js';
 import { luoLaiteviesti, laitteenViestit, poistaLaitteenViestit } from './laiteviestit.js';
 import { luoViesti, kanavanViestit } from './viestit.js';
+import { luoKuittaus, onKuitattu, viestinKuittaukset, sallitutKuittaustyypit } from './kuittaukset.js';
 import {
   nykyinenHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
 } from './puheenvuoro.js';
@@ -2664,10 +2665,58 @@ app.get('/api/viestit', requireAuth, guardPortti, (req, res) => {
   }
 
   const viestit = kanavanViestit(readCollection('guardViestit') || [], kanavaId).slice(-200);
+  const kuittaukset = readCollection('guardKuittaukset') || [];
   res.json({
     ok: true,
-    viestit: viestit.map((v) => ({ id: v.id, lahettaja: v.lahettaja, luotu: v.luotu, tapahtuma: v.tapahtuma })),
+    viestit: viestit.map((v) => ({
+      id: v.id,
+      lahettaja: v.lahettaja,
+      luotu: v.luotu,
+      tapahtuma: v.tapahtuma,
+      kuittaukset: viestinKuittaukset(kuittaukset, v.id).map((k) => ({ kayttaja: k.kayttaja, tyyppi: k.tyyppi, aika: k.aika })),
+    })),
   });
+});
+
+// Toimitus-/lukukuittaus (vaihe 3, viipale 3c). Epäsymmetrinen: lukukuittaus on
+// sallittu vain hätäkanavalla (ks. server/kuittaukset.js:n tiedostokommentti). Oman
+// viestin kuittaaminen ei ole mielekäs — lähettäjä tietää jo lähettäneensä sen.
+app.post('/api/viestit/:id/kuittaa', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const viestit = readCollection('guardViestit') || [];
+  const viesti = viestit.find((v) => v.id === req.params.id);
+  if (!viesti) return res.status(404).json({ ok: false, error: 'Viestiä ei löytynyt.' });
+  if (!saaKasitellaKanavaa(req, viesti.kanavaId)) {
+    return res.status(403).json({ ok: false, error: 'Et kuulu tähän kanavaan.' });
+  }
+  if (viesti.lahettaja === req.username) {
+    return res.status(400).json({ ok: false, error: 'Omaa viestiä ei kuitata.' });
+  }
+
+  const tyyppi = typeof req.body?.tyyppi === 'string' ? req.body.tyyppi : '';
+  const kanava = (readCollection('guardKanavat') || []).find((k) => k.id === viesti.kanavaId);
+  if (!sallitutKuittaustyypit(kanava?.tyyppi).includes(tyyppi)) {
+    return res.status(400).json({ ok: false, error: `Kuittaustyyppi "${tyyppi}" ei ole sallittu tällä kanavalla.` });
+  }
+
+  const kuittaukset = readCollection('guardKuittaukset') || [];
+  if (onKuitattu(kuittaukset, viesti.id, req.username, tyyppi)) {
+    return res.json({ ok: true, jo_kuitattu: true });
+  }
+
+  const kuittaus = luoKuittaus({
+    id: crypto.randomUUID(), viestiId: viesti.id, kanavaId: viesti.kanavaId, kayttaja: req.username, tyyppi,
+  });
+  writeCollection('guardKuittaukset', [...kuittaukset, kuittaus]);
+  logAudit({
+    user: req.username, action: tyyppi === 'luku' ? 'ptt_viesti_luettu' : 'ptt_viesti_toimitettu',
+    collection: 'guardKuittaukset', recordId: kuittaus.id,
+  });
+  lahetaViesti(
+    { tyyppi: 'viesti_kuitattu', kanavaId: viesti.kanavaId, viestiId: viesti.id, kayttaja: req.username, kuittaustyyppi: tyyppi },
+    { suodatin: (istunto) => istunto?.username !== req.username && saaKuullaKanavaa(istunto, viesti.kanavaId) },
+  );
+  res.json({ ok: true });
 });
 
 // Kaikki käyttäjät joilla on guard_dispatch-oikeus JUURI NYT, plus admin — sama

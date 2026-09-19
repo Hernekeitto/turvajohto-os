@@ -164,6 +164,9 @@ const COLLECTIONS = {
   // PTT-kanavien tekstiviestit (erä 26, vaihe 3): salattuja tapahtumaolioita, ei
   // sisältöä (server/viestit.js). Palvelin ei koskaan pura eikä lue niitä.
   guardViestit: 'guardViestit.json',
+  // Viestien toimitus-/lukukuittaukset (erä 26, vaihe 3, viipale 3c) —
+  // server/kuittaukset.js. Lisäystä eikä muokkausta: viesti ei koskaan muutu.
+  guardKuittaukset: 'guardKuittaukset.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain

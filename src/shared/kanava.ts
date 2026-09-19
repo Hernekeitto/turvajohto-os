@@ -59,7 +59,11 @@ export type KanavaViesti =
   // Uusi tekstiviesti kanavalla (erä 26, vaihe 3). Oma tyyppi eikä geneerinen 'muutos',
   // koska asiakkaan on tiedettävä MIKÄ kanava sai viestin — sisältö haetaan erikseen
   // (src/shared/viestit.ts), tämä on vain heräte.
-  | { tyyppi: 'uusi_viesti'; kanavaId: string; viestiId: string };
+  | { tyyppi: 'uusi_viesti'; kanavaId: string; viestiId: string }
+  // Viesti kuitattu (erä 26, vaihe 3, viipale 3c) — toimitus tai (vain hätäkanavalla)
+  // luku. `kuittaustyyppi` on 'toimitus' | 'luku', ei tiukemmin tyypitetty koska
+  // palvelin on jo tarkistanut sen sallituksi (server/kuittaukset.js).
+  | { tyyppi: 'viesti_kuitattu'; kanavaId: string; viestiId: string; kayttaja: string; kuittaustyyppi: string };
 
 type Kasittelijat = {
   onMuutos?: (kokoelma: string, muutokset: Muutos[]) => void;
@@ -72,6 +76,7 @@ type Kasittelijat = {
   onLinjanPakotusVapautettu?: (kanavaId: string) => void;
   onLaiteviestiSaapui?: () => void;
   onUusiViesti?: (kanavaId: string, viestiId: string) => void;
+  onViestiKuitattu?: (kanavaId: string, viestiId: string, kayttaja: string, kuittaustyyppi: string) => void;
 };
 
 // Uudelleenyhdistys kasvavalla viiveellä. Kiinteä lyhyt viive tarkoittaisi sitä, että
@@ -145,6 +150,8 @@ export function useKanava(kasittelijat: Kasittelijat) {
           kasittelija.current.onLaiteviestiSaapui?.();
         } else if (viesti?.tyyppi === 'uusi_viesti') {
           kasittelija.current.onUusiViesti?.(viesti.kanavaId, viesti.viestiId);
+        } else if (viesti?.tyyppi === 'viesti_kuitattu') {
+          kasittelija.current.onViestiKuitattu?.(viesti.kanavaId, viesti.viestiId, viesti.kayttaja, viesti.kuittaustyyppi);
         }
       };
 
