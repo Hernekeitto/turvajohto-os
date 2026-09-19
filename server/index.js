@@ -6593,9 +6593,9 @@ function kasitteleKanavaViesti(istunto, viesti) {
   if (viesti.tyyppi === 'vapauta_puheenvuoro') return kasittelePuheenvuoroVapautus(istunto, viesti);
 }
 
-// --- PTT floor control (erä 26, vaihe 1b; hätäkanava mukaan vaihe 1e) ----------------
+// --- PTT floor control (erä 26, vaihe 1b; hätäkanava ja DM mukaan vaihe 1e/1f) -------
 //
-// KIINTEÄT KANAVAT JA HÄTÄKANAVA. Vapaat ryhmät ja DM vaativat vielä oman jäsenyys-
+// KIINTEÄT KANAVAT, HÄTÄKANAVA JA DM. Vapaa ryhmä vaatii vielä oman jäsenyys-
 // tarkistuksensa tähän — ks. server/kanavat.js:n tiedostokommentti.
 //
 // SAMA TARKISTUS JOKA KERTA, EI VAIN YHTEYDEN AVATESSA. `istunto.kuunneltavatKanavat`
@@ -6603,17 +6603,26 @@ function kasitteleKanavaViesti(istunto, viesti) {
 // tarkistetaan aina uudelleen lähetyshetkellä — sama periaate kuin sijaintikanavalla
 // (ks. tunnistaKanava: "oikeudet luetaan roleId:stä vasta tässä"). Ilman uudelleen-
 // tarkistusta vuoron päättyminen kesken auki olevan yhteyden ei koskaan sulkisi kuuloa
-// kanavalta johon käyttäjä ei enää kuulu.
-
-// Hätäkanavan jäsenyys floor controlia varten: hälyttäjä itse tai päivystäjä
-// (guard_dispatch NÄKY) juuri nyt — sama sääntö kuin GET /api/kanavat/omat, koottuna
-// tänne koska floor control tarvitsee sen neljässä eri kohdassa.
-function kuuluuHataKanavaan(istunto, kanavaId) {
+// kanavalta johon käyttäjä ei enää kuulu — DM:llä tämä on erityisen tärkeää, koska
+// vuoro voi päättyä kesken auki olevan yhteyden ja kanava purkautuu (kanavat.js:
+// dmPurkautunut) sen mukana.
+//
+// Kiinteä kanava tarkistetaan ensin ilman levyluentaa (halvempi, ja kattaa suurimman
+// osan kutsuista). Vasta jos se ei täsmää, kanava haetaan guardKanavat-kokoelmasta ja
+// jäsenyys ratkeaa sen `tyyppi`-kentän mukaan — sama kaksijakoinen malli kuin
+// GET /api/kanavat/omat:ssa.
+function kuuluuKanavaanNyt(istunto, kanavaId, vuoro) {
+  if (kuuluuKiinteaanKanavaan(vuoro, kanavaId)) return true;
   const kanava = (readCollection('guardKanavat') || []).find((k) => k.id === kanavaId);
   if (!kanava) return false;
-  return onHalyttaja(kanava, istunto?.username)
-    || istunto?.role === 'admin'
-    || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch');
+  if (kanava.tyyppi === 'hata') {
+    // Hälyttäjä itse tai päivystäjä (guard_dispatch NÄKY) juuri nyt.
+    return onHalyttaja(kanava, istunto?.username)
+      || istunto?.role === 'admin'
+      || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch');
+  }
+  if (kanava.tyyppi === 'dm') return onOsallistuja(kanava, istunto?.username);
+  return false;
 }
 
 function saaKuullaKanavaa(istunto, kanavaId) {
@@ -6621,9 +6630,8 @@ function saaKuullaKanavaa(istunto, kanavaId) {
   if (istunto.role === 'admin') return true;
   if (!(istunto.tuotteet || []).includes('guard')) return false;
   if (!canView(rolePermissions(istunto.roleId), null, 'guard_ptt')) return false;
-  if (kanavaId.startsWith('hata:')) return kuuluuHataKanavaan(istunto, kanavaId);
   const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], istunto.username);
-  return kuuluuKiinteaanKanavaan(vuoro, kanavaId);
+  return kuuluuKanavaanNyt(istunto, kanavaId, vuoro);
 }
 
 // Vartija ilmoittaa mitä kanavia se juuri nyt kuuntelee (skannaus). Tallennetaan
@@ -6640,9 +6648,7 @@ function kasitteleKuunneltavatKanavat(istunto, viesti) {
     : [];
   const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], istunto.username);
   istunto.kuunneltavatKanavat = new Set(
-    istunto.role === 'admin' ? pyydetyt : pyydetyt.filter((id) => (
-      id.startsWith('hata:') ? kuuluuHataKanavaan(istunto, id) : kuuluuKiinteaanKanavaan(vuoro, id)
-    ))
+    istunto.role === 'admin' ? pyydetyt : pyydetyt.filter((id) => kuuluuKanavaanNyt(istunto, id, vuoro))
   );
 
   // Kerrotaan heti kenellä näistä on puheenvuoro juuri nyt — ilman tätä äsken avattu tai
@@ -6662,10 +6668,8 @@ function kasittelePuheenvuoroPyynto(istunto, viesti) {
   if (!kanavaId) return;
   if (istunto.role !== 'admin' && !canView(rolePermissions(istunto.roleId), null, 'guard_ptt')) return;
   if (istunto.role !== 'admin') {
-    const jasen = kanavaId.startsWith('hata:')
-      ? kuuluuHataKanavaan(istunto, kanavaId)
-      : kuuluuKiinteaanKanavaan(keskenOlevaVuoro(readCollection('guardShifts') || [], istunto.username), kanavaId);
-    if (!jasen) return;
+    const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], istunto.username);
+    if (!kuuluuKanavaanNyt(istunto, kanavaId, vuoro)) return;
   }
 
   const tulos = pyydaPuheenvuoro({ kanavaId, istunto, kayttaja: istunto.username });
