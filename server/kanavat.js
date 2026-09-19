@@ -64,6 +64,23 @@ export function kuuluuKiinteaanKanavaan(vuoro, kanavaId) {
   return omatKiinteatKanavat(vuoro).some((k) => k.id === kanavaId);
 }
 
+/**
+ * Kaikki vartijat jotka kuuluvat annettuun kiinteään kanavaan JUURI NYT (erä 26,
+ * vaihe 3, viipale 3b) — tarvitaan huoneavaimen jakoon: lähettäjän on tiedettävä
+ * KENELLE avain jaetaan, ei vain ETTÄ hän itse kuuluu kanavalle.
+ *
+ * Käy läpi kaikki vuorot ja käyttää samaa sääntöä (kuuluuKiinteaanKanavaan) kuin
+ * yksittäisen vartijan oma jäsenyystarkistus — ei erillistä, mahdollisesti eriävää
+ * sääntöä kahdessa paikassa.
+ */
+export function jasenetKiinteallaKanavalla(vuorot, kanavaId) {
+  const uniikit = new Set();
+  for (const vuoro of vuorot || []) {
+    if (vuoro?.vartija && kuuluuKiinteaanKanavaan(vuoro, kanavaId)) uniikit.add(vuoro.vartija);
+  }
+  return [...uniikit];
+}
+
 // --- Tallennetut kanavat: DM (erä 26, vaihe 1c) -------------------------------------
 //
 // DM ON VUORON SISÄINEN TYÖKALU (käyttäjän päätös 19.9.2026): sekä pyytäjällä että

@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
   kohdeKanavaId, piiriKanavaId, omatKiinteatKanavat, kuuluuKiinteaanKanavaan,
+  jasenetKiinteallaKanavalla,
   vuorossaOlevatMuut, onOsallistuja, loydaDm, luoDmKanava, dmPurkautunut,
   hataKanavaId, luoHataKanava, onHalyttaja, hataKanavaPurkautunut,
   pakotaLinjaAuki, vapautaLinjanPakotus, luoVapaaKanava,
@@ -59,6 +60,29 @@ test('kuuluuKiinteaanKanavaan tunnistaa oman kohdekanavan', () => {
 
 test('kuuluuKiinteaanKanavaan ilman vuoroa ei tunnista mitään', () => {
   assert.equal(kuuluuKiinteaanKanavaan(null, kohdeKanavaId('kohde-1')), false);
+});
+
+test('jasenetKiinteallaKanavalla kokoaa kaikki vuorossa olevat ilman kaksoiskappaleita', () => {
+  const vuorot = [
+    kohdevuoro({ vartija: 'vartija1' }),
+    kohdevuoro({ vartija: 'vartija2' }),
+    kohdevuoro({ vartija: 'vartija2' }),
+    kohdevuoro({ vartija: 'vartija3', tila: 'paattynyt' }),
+    kohdevuoro({ vartija: 'vartija4', siteId: 'toinen-kohde' }),
+  ];
+  assert.deepEqual(jasenetKiinteallaKanavalla(vuorot, kohdeKanavaId('kohde-1')).sort(), ['vartija1', 'vartija2']);
+});
+
+test('jasenetKiinteallaKanavalla ei sekoita tavallista kohdevuoroa piirikanavaan', () => {
+  const vuorot = [
+    kohdevuoro({ vartija: 'vartija1' }),
+    kohdevuoro({ vartija: 'vartija2', piiri: true, vuorotyyppiId: 'v-piiri-301' }),
+  ];
+  assert.deepEqual(jasenetKiinteallaKanavalla(vuorot, piiriKanavaId('v-piiri-301')), ['vartija2']);
+});
+
+test('jasenetKiinteallaKanavalla palauttaa tyhjän listan tuntemattomalle kanavalle', () => {
+  assert.deepEqual(jasenetKiinteallaKanavalla([kohdevuoro({ vartija: 'vartija1' })], kohdeKanavaId('ei-ole')), []);
 });
 
 // --- DM (vaihe 1c) -------------------------------------------------------------------

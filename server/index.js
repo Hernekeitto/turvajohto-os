@@ -35,7 +35,7 @@ import {
 import {
   kuuluuKiinteaanKanavaan, omatKiinteatKanavat, onOsallistuja, loydaDm, luoDmKanava,
   vuorossaOlevatMuut, hataKanavaId, luoHataKanava, hataKanavaPurkautunut, onHalyttaja,
-  pakotaLinjaAuki, vapautaLinjanPakotus, luoVapaaKanava,
+  pakotaLinjaAuki, vapautaLinjanPakotus, luoVapaaKanava, jasenetKiinteallaKanavalla,
 } from './kanavat.js';
 import { paivitaAvainpaketti, vaadiKertakayttoavain, julkinenKuvaus } from './kryptoavaimet.js';
 import { luoLaiteviesti, laitteenViestit, poistaLaitteenViestit } from './laiteviestit.js';
@@ -2668,6 +2668,40 @@ app.get('/api/viestit', requireAuth, guardPortti, (req, res) => {
     ok: true,
     viestit: viestit.map((v) => ({ id: v.id, lahettaja: v.lahettaja, luotu: v.luotu, tapahtuma: v.tapahtuma })),
   });
+});
+
+// Kaikki käyttäjät joilla on guard_dispatch-oikeus JUURI NYT, plus admin — sama
+// onPaivystaja-periaate kuin GET /api/kanavat/omat:ssa, koottuna funktioksi koska
+// tätä tarvitaan nyt myös jäsenlistan koontiin. Lasketaan OIKEUKSISTA eikä
+// erillisestä listasta, samasta syystä kuin tiedotteenVastaanottajat().
+function kaikkiPaivystajat() {
+  return listUsers()
+    .filter((u) => u.role === 'admin' || canView(rolePermissions(u.roleId), null, 'guard_dispatch'))
+    .map((u) => u.username);
+}
+
+// Kanavan KAIKKI nykyiset jäsenet (erä 26, vaihe 3, viipale 3b) — huoneavaimen jako
+// tarvitsee tämän, toisin kuin pelkkä "kuulunko itse" (saaKasitellaKanavaa). Sisältää
+// kutsujan itsensä, samaan tapaan kuin guardKanavan oma osallistujat-kenttä.
+//
+// HÄTÄKANAVAN PÄIVYSTÄJÄLISTA EI OLE STAATTINEN: kuka tahansa guard_dispatch-
+// oikeudella varustettu (myös admin, sama poikkeus kuin muualla hätäkanavalla) saa
+// huoneavaimen, vaikka ei olisi vielä koskaan avannut kanavaa — sama "kuka tahansa
+// päivystäjä voi vastata" -periaate kuin vaiheessa 1d.
+function jasenetKanavalla(kanavaId) {
+  const kanava = (readCollection('guardKanavat') || []).find((k) => k.id === kanavaId);
+  if (kanava?.tyyppi === 'hata') return [...new Set([kanava.vartija, ...kaikkiPaivystajat()])];
+  if (kanava?.tyyppi === 'dm' || kanava?.tyyppi === 'vapaa') return kanava.osallistujat || [];
+  return jasenetKiinteallaKanavalla(readCollection('guardShifts') || [], kanavaId);
+}
+
+app.get('/api/kanavat/:id/jasenet', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const kanavaId = req.params.id;
+  if (!saaKasitellaKanavaa(req, kanavaId)) {
+    return res.status(403).json({ ok: false, error: 'Et kuulu tähän kanavaan.' });
+  }
+  res.json({ ok: true, jasenet: jasenetKanavalla(kanavaId) });
 });
 
 // Vuoron aloitus.
