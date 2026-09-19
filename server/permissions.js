@@ -576,6 +576,15 @@ const COLLECTIONS = {
     eventScoped: false,
     tuote: 'guard',
   },
+  // Salattujen mediliitteiden metatieto (erä 26, vaihe 3, viipale 3d). Sama tyhjä
+  // view/touch ja sama perustelu kuin guardViestit — liitteen lukuoikeus ratkaistaan
+  // omalla reitillään (GET /api/liitteet/:id, server/index.js).
+  guardLiitteet: {
+    view: [],
+    touch: () => [],
+    eventScoped: false,
+    tuote: 'guard',
+  },
   checkins: {
     view: ['overview', 'tike_form_in', 'tike_form_out', 'tike_form_jvaction', 'planning_employees', 'global_archived_events'],
     // Ei tietuekohtaista erottelua mahdollista (ei typeId-kenttää) — samat kolme solmua

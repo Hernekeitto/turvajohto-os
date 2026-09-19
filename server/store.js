@@ -167,6 +167,10 @@ const COLLECTIONS = {
   // Viestien toimitus-/lukukuittaukset (erä 26, vaihe 3, viipale 3c) —
   // server/kuittaukset.js. Lisäystä eikä muokkausta: viesti ei koskaan muutu.
   guardKuittaukset: 'guardKuittaukset.json',
+  // Salattujen mediliitteiden metatieto (erä 26, vaihe 3, viipale 3d) — kanavan tunnus
+  // TALLENNETAAN VAIN KÄYTTÖOIKEUDEN RATKAISEMISEKSI (server/index.js), koska liitteen
+  // sisältö itse on opaakkia eikä palvelin voi päätellä siitä mihin kanavaan se kuuluu.
+  guardLiitteet: 'guardLiitteet.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain

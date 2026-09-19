@@ -41,6 +41,7 @@ import { paivitaAvainpaketti, vaadiKertakayttoavain, julkinenKuvaus } from './kr
 import { luoLaiteviesti, laitteenViestit, poistaLaitteenViestit } from './laiteviestit.js';
 import { luoViesti, kanavanViestit } from './viestit.js';
 import { luoKuittaus, onKuitattu, viestinKuittaukset, sallitutKuittaustyypit } from './kuittaukset.js';
+import { tallennaSalattuLiite, haeSalatunLiitteenPolku } from './salatutliitteet.js';
 import {
   nykyinenHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
 } from './puheenvuoro.js';
@@ -2717,6 +2718,56 @@ app.post('/api/viestit/:id/kuittaa', requireAuth, guardPortti, (req, res) => {
     { suodatin: (istunto) => istunto?.username !== req.username && saaKuullaKanavaa(istunto, viesti.kanavaId) },
   );
   res.json({ ok: true });
+});
+
+// ====================== PTT: SALATUT MEDIALIITTEET (vaihe 3, viipale 3d) ===========
+//
+// Sisältö on AINA jo asiakkaan salaama (src/shared/salatutliitteet.ts) — nämä reitit
+// EIVÄT validoi tiedostotyyppiä (ei voi, data on opaakkia) ja tarkistavat vain koon
+// (sama multer-asetus kuin /api/uploads:ssa, 15 Mt/tiedosto). Tiedostoavain kulkee
+// viestin omassa Megolm-salauksessa liiteosoittimena — palvelin ei näe eikä tarvitse
+// sitä. `tyyppi`-kenttä (kuva/video/tiedosto) on VAIN audit-lokia varten (Obsidian:
+// "vaihe 3 -suunnitelma", kohta 6) — ei käytetä oikeustarkistuksessa.
+const LIITTEEN_TYYPIT = ['kuva', 'video', 'tiedosto'];
+
+app.post('/api/liitteet', requireAuth, guardPortti, uploadLimiter, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Liite on liian suuri (max 15 Mt).' : 'Liitteen lähetys epäonnistui.';
+      return res.status(400).json({ ok: false, error: msg });
+    }
+    if (!req.file) return res.status(400).json({ ok: false, error: 'Liitettä ei löytynyt.' });
+    const kanavaId = typeof req.body?.kanavaId === 'string' ? req.body.kanavaId : '';
+    if (!kanavaId) return res.status(400).json({ ok: false, error: 'kanavaId vaaditaan.' });
+    if (!saaKasitellaKanavaa(req, kanavaId)) {
+      return res.status(403).json({ ok: false, error: 'Et kuulu tähän kanavaan.' });
+    }
+    const tyyppi = LIITTEEN_TYYPIT.includes(req.body?.tyyppi) ? req.body.tyyppi : 'tiedosto';
+
+    const id = tallennaSalattuLiite(req.file.buffer);
+    const liitteet = readCollection('guardLiitteet') || [];
+    writeCollection('guardLiitteet', [...liitteet, {
+      id, kanavaId, lahettaja: req.username, koko: req.file.size, luotu: new Date().toISOString(),
+    }]);
+    logAudit({
+      user: req.username, action: 'ptt_liite_ladattu', collection: 'guardLiitteet', recordId: id,
+      koko: req.file.size, tyyppi,
+    });
+    res.json({ ok: true, id });
+  });
+});
+
+app.get('/api/liitteet/:id', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const tietue = (readCollection('guardLiitteet') || []).find((l) => l.id === req.params.id);
+  if (!tietue) return res.status(404).json({ ok: false, error: 'Liitettä ei löytynyt.' });
+  if (!saaKasitellaKanavaa(req, tietue.kanavaId)) {
+    return res.status(403).json({ ok: false, error: 'Et kuulu tähän kanavaan.' });
+  }
+  const polku = haeSalatunLiitteenPolku(tietue.id);
+  if (!polku) return res.status(404).json({ ok: false, error: 'Liitettä ei löytynyt levyltä.' });
+  res.sendFile(polku);
 });
 
 // Kaikki käyttäjät joilla on guard_dispatch-oikeus JUURI NYT, plus admin — sama

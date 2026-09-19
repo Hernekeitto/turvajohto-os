@@ -1,9 +1,10 @@
-// PTT-kanavien tekstiviestien lähetys ja vastaanotto kryptoperustan päälle
-// (erä 26, vaihe 3, viipaleet 3a—3c).
+// PTT-kanavien teksti- ja mediaviestien lähetys ja vastaanotto kryptoperustan päälle
+// (erä 26, vaihe 3, viipaleet 3a—3d).
 //
-// Käyttää src/shared/olm.ts:ää salaukseen/purkuun — tämä tiedosto ei tee mitään
-// kryptografiaa itse, vain yhdistää sen server/viestit.js:n ja server/kuittaukset.js:n
-// reitteihin.
+// Käyttää src/shared/olm.ts:ää salaukseen/purkuun ja src/shared/salatutliitteet.ts:ää
+// median salaukseen — tämä tiedosto ei tee mitään kryptografiaa itse, vain yhdistää
+// ne server/viestit.js:n ja server/kuittaukset.js:n reitteihin. Liite kulkee viestin
+// SISÄLTÖNÄ (liiteosoittimena) — sama lähetys-/vastaanottoputki kuin tekstillä.
 //
 // JÄSENLISTA HAETAAN PALVELIMELTA (GET /api/kanavat/:id/jasenet, viipale 3b) — toimii
 // kaikille neljälle kanavatyypille (kiinteä, hätä, DM, vapaa), koska palvelin laskee
@@ -15,10 +16,12 @@
 // lähetysyrityksen, jono päättää milloin sitä yritetään uudelleen.
 
 import { paivitaKayttajanLaitteet, varmistaIstunnot, jaaHuoneenAvain, salaaViesti, puraViesti } from './olm.ts';
+import { lataaJaSalaaLiite, type Liiteosoitin } from './salatutliitteet.ts';
 import type { OlmMachine } from '@matrix-org/matrix-sdk-crypto-wasm';
 
 export type Kuittaus = { kayttaja: string; tyyppi: 'toimitus' | 'luku'; aika: string };
 export type Viesti = { id: string; lahettaja: string; luotu: string; sisalto: unknown | null; kuittaukset: Kuittaus[] };
+export type LahetysTulos = { ok: true; id: string } | { ok: false; error: string };
 
 /** Kanavan kaikki nykyiset jäsenet, oma käyttäjä mukaan lukien (server/index.js: jasenetKanavalla). */
 export async function haeKanavanJasenet(kanavaId: string): Promise<string[]> {
@@ -30,16 +33,18 @@ export async function haeKanavanJasenet(kanavaId: string): Promise<string[]> {
 
 /**
  * Varmistaa että huoneavain on jaettu kanavan nykyisille jäsenille ja lähettää salatun
- * tekstiviestin.
+ * viestin. Sisäinen — käytetään sekä teksti- että liiteviesteille, koska molemmat
+ * tarvitsevat saman jäsenten päivitys + avaimen jako -kierron ennen itse sisällön
+ * salausta ja lähetystä.
  *
  * Jokainen lähetys hakee jäsenlistan tuoreena, päivittää jäsenten laitetiedot ja jakaa
  * huoneavaimen uudelleen — ei välimuistia. Tämä on oikeellisuutta ennen suorituskykyä:
  * jäsenyys on dynaaminen (vaihe 2, kohta 5), ja välimuistin oikea vanhenemisaika
  * vaatisi oman suunnittelunsa.
  */
-export async function lahetaTekstiviesti(
-  machine: OlmMachine, omaKayttaja: string, kanavaId: string, teksti: string,
-): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+async function lahetaSisalto(
+  machine: OlmMachine, omaKayttaja: string, kanavaId: string, tapahtumaTyyppi: string, sisalto: unknown,
+): Promise<LahetysTulos> {
   const jasenet = (await haeKanavanJasenet(kanavaId)).filter((k) => k !== omaKayttaja);
   for (const kayttaja of jasenet) {
     await paivitaKayttajanLaitteet(machine, kayttaja);
@@ -47,9 +52,7 @@ export async function lahetaTekstiviesti(
   await varmistaIstunnot(machine, jasenet);
   await jaaHuoneenAvain(machine, kanavaId, jasenet);
 
-  const tapahtuma = await salaaViesti(machine, omaKayttaja, kanavaId, 'm.room.message', {
-    msgtype: 'm.text', body: teksti,
-  });
+  const tapahtuma = await salaaViesti(machine, omaKayttaja, kanavaId, tapahtumaTyyppi, sisalto);
   const vastaus = await fetch('/api/viestit', {
     method: 'POST',
     credentials: 'include',
@@ -59,6 +62,29 @@ export async function lahetaTekstiviesti(
 
   if (!vastaus?.ok) return { ok: false, error: vastaus?.error || 'Viestin lähetys epäonnistui.' };
   return { ok: true, id: vastaus.id };
+}
+
+export async function lahetaTekstiviesti(
+  machine: OlmMachine, omaKayttaja: string, kanavaId: string, teksti: string,
+): Promise<LahetysTulos> {
+  return lahetaSisalto(machine, omaKayttaja, kanavaId, 'm.room.message', { msgtype: 'm.text', body: teksti });
+}
+
+/**
+ * Salaa ja lataa liitteen (src/shared/salatutliitteet.ts), sitten lähettää viestin
+ * jonka sisältö on liiteosoitin — EI itse tiedoston tavuja, ne ovat jo palvelimella
+ * omana opaakkina blobinaan. Kaksi erillistä epäonnistumiskohtaa (lataus, lähetys):
+ * kutsuja näkee kummankin virheen sellaisenaan.
+ *
+ * EI VIELÄ UUDELLEENYRITYSJONOSSA (src/shared/viestijono.ts) — jono käsittelee tällä
+ * viipaleella vain tekstiä, koska Tiedosto/Blob ei serialisoidu suoraan
+ * localStorageen. Tarkoituksellinen rajaus, ei unohdus.
+ */
+export async function lahetaLiiteviesti(
+  machine: OlmMachine, omaKayttaja: string, kanavaId: string, tiedosto: File, msgtype: Liiteosoitin['msgtype'],
+): Promise<LahetysTulos> {
+  const osoitin = await lataaJaSalaaLiite(kanavaId, tiedosto, msgtype);
+  return lahetaSisalto(machine, omaKayttaja, kanavaId, 'm.room.message', osoitin);
 }
 
 /**
