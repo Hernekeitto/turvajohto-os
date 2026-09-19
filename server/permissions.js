@@ -522,6 +522,20 @@ const COLLECTIONS = {
     eventScoped: false,
     tuote: 'guard',
   },
+  // PTT-kanavat (erä 26): vapaat ryhmät, DM ja hätäkanava. Tyhjä `view` samasta syystä
+  // kuin devices/deviceCodes: "ei tätä kautta kenellekään". Kanava on aina jonkun
+  // HENKILÖKOHTAINEN osallistujalista (kohdesidonnainen sivukartta-solmu ei sovi
+  // ollenkaan — osallistujuus ei riipu kohteesta eikä roolista), joten oma näkymä on
+  // omalla reitillään (/api/kanavat/omat, server/index.js) joka suodattaa
+  // `osallistujat`-kentän perusteella eikä tämän taulukon kautta. Palvelimen ylläpitämä:
+  // tyhjä touch estää kokoelman kirjoittamisen suoraan (osallistujalistan voisi muuten
+  // kirjoittaa itselleen).
+  guardKanavat: {
+    view: [],
+    touch: () => [],
+    eventScoped: false,
+    tuote: 'guard',
+  },
   checkins: {
     view: ['overview', 'tike_form_in', 'tike_form_out', 'tike_form_jvaction', 'planning_employees', 'global_archived_events'],
     // Ei tietuekohtaista erottelua mahdollista (ei typeId-kenttää) — samat kolme solmua

@@ -32,7 +32,10 @@ import {
   JOUSTO_MIN, aloitaVuoro, keskenOlevaVuoro, kohteetPerehdytyksenMukaan, lisaaVuoroon,
   paataVuoro, vuorovaihtoehdot, vuoronPaattymisaika,
 } from './vuorot.js';
-import { kuuluuKiinteaanKanavaan, omatKiinteatKanavat } from './kanavat.js';
+import {
+  kuuluuKiinteaanKanavaan, omatKiinteatKanavat, onOsallistuja, loydaDm, luoDmKanava,
+  vuorossaOlevatMuut,
+} from './kanavat.js';
 import {
   nykyinenHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
 } from './puheenvuoro.js';
@@ -2207,16 +2210,81 @@ app.get('/api/vuoro/oma', requireAuth, guardPortti, (req, res) => {
 
 // ====================== PTT-KANAVAT (erä 26, vaihe 1) ======================
 //
-// Vain kiinteät kanavat (kohde + mahdollinen piiri) toistaiseksi. Vapaat ryhmät,
-// henkilökohtaiset viestit, hätäkanava ja floor control tulevat myöhemmässä erässä
-// (ks. server/kanavat.js:n tiedostokommentti).
+// Vapaat ryhmät ja hätäkanava tulevat myöhemmässä erässä (ks. server/kanavat.js:n
+// tiedostokommentti). DM (vaihe 1c) on mukana.
+
+const pttPortti = (req, res) => {
+  if (req.role !== 'admin' && !canView(req.permissions, null, 'guard_ptt')) {
+    res.status(403).json({ ok: false, error: 'Ei oikeuksia PTT-kanaviin.' });
+    return false;
+  }
+  return true;
+};
 
 app.get('/api/kanavat/omat', requireAuth, guardPortti, (req, res) => {
-  if (req.role !== 'admin' && !canView(req.permissions, null, 'guard_ptt')) {
-    return res.status(403).json({ ok: false, error: 'Ei oikeuksia PTT-kanaviin.' });
-  }
+  if (!pttPortti(req, res)) return;
   const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
-  res.json({ ok: true, kanavat: omatKiinteatKanavat(vuoro) });
+  const tallennetut = (readCollection('guardKanavat') || [])
+    .filter((k) => onOsallistuja(k, req.username))
+    .map((k) => ({
+      id: k.id,
+      tyyppi: k.tyyppi,
+      // DM: nimeksi TOINEN osapuoli, ei oma tunnus — käyttöliittymän on näytettävä
+      // kenen kanssa keskustellaan, ei "minä ja joku".
+      nimi: k.tyyppi === 'dm' ? ((k.osallistujat || []).find((o) => o !== req.username) || '') : (k.nimi || ''),
+    }));
+  res.json({ ok: true, kanavat: [...omatKiinteatKanavat(vuoro), ...tallennetut] });
+});
+
+// DM-vastaanottajaehdokkaat: muut käyttäjät jotka ovat juuri nyt vuorossa samalla
+// tuotepuolella (käyttäjän päätös 19.9.2026 — pitää DM:n "vuoron sisäinen työkalu"
+// -hengessä kuten kanavatkin).
+app.get('/api/kanavat/dm/ehdokkaat', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const omatTuotteet = new Set(req.tuotteet || []);
+  const ehdokkaat = vuorossaOlevatMuut(readCollection('guardShifts') || [], req.username)
+    .map((kayttaja) => listUsers().find((u) => u.username === kayttaja))
+    .filter((u) => u && paaseeTuotteisiin(u).some((t) => omatTuotteet.has(t)))
+    .map((u) => ({ username: u.username, nimi: u.nickname || u.username }));
+  res.json({ ok: true, ehdokkaat });
+});
+
+// DM:n aloitus. Palauttaa olemassa olevan kanavan jos osapuolten välillä on jo yksi —
+// idempotentti samasta syystä kuin vuoron vastaanotto (halytystehtava.js: vastaanota):
+// "aloita keskustelu" -painikkeen toistuva painallus ei saa luoda uutta kanavaa joka kerta.
+app.post('/api/kanavat/dm', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const vastaanottaja = typeof req.body?.vastaanottaja === 'string' ? req.body.vastaanottaja : '';
+  if (!vastaanottaja) return res.status(400).json({ ok: false, error: 'Vastaanottaja vaaditaan.' });
+
+  const vuorot = readCollection('guardShifts') || [];
+  if (!keskenOlevaVuoro(vuorot, req.username)) {
+    return res.status(403).json({ ok: false, error: 'DM vaatii kesken olevan vuoron.' });
+  }
+  if (!keskenOlevaVuoro(vuorot, vastaanottaja)) {
+    return res.status(400).json({ ok: false, error: 'Vastaanottaja ei ole vuorossa juuri nyt.' });
+  }
+  const vastaanottajanTiedot = listUsers().find((u) => u.username === vastaanottaja);
+  if (!vastaanottajanTiedot) return res.status(404).json({ ok: false, error: 'Vastaanottajaa ei löytynyt.' });
+  const omatTuotteet = new Set(req.tuotteet || []);
+  if (!paaseeTuotteisiin(vastaanottajanTiedot).some((t) => omatTuotteet.has(t))) {
+    return res.status(403).json({ ok: false, error: 'Vastaanottaja ei ole samalla tuotepuolella.' });
+  }
+
+  const kanavat = readCollection('guardKanavat') || [];
+  const olemassaOleva = loydaDm(kanavat, req.username, vastaanottaja);
+  if (olemassaOleva) {
+    return res.json({ ok: true, kanava: { id: olemassaOleva.id, tyyppi: 'dm', nimi: vastaanottaja } });
+  }
+
+  const tulos = luoDmKanava({ id: crypto.randomUUID(), kayttaja1: req.username, kayttaja2: vastaanottaja });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('guardKanavat', [...kanavat, tulos.kanava]);
+  logAudit({
+    user: req.username, action: 'ptt_dm_luotu', collection: 'guardKanavat', recordId: tulos.kanava.id,
+  });
+  res.json({ ok: true, kanava: { id: tulos.kanava.id, tyyppi: 'dm', nimi: vastaanottaja } });
 });
 
 // Vuoron aloitus.

@@ -11,9 +11,10 @@
 // (kalusto.js: vuoronKalusto). Vuorot alkavat ja loppuvat, joten tallennettu
 // jäsenyyslista olisi väärässä heti seuraavalla vuoronvaihdolla.
 //
-// Vapaat ryhmät, henkilökohtaiset viestit ja hätäkanavat ovat ERI ASIA — niillä ON
-// eksplisiittinen osallistujalista, koska niitä ei voi laskea vuorosta. Ne tulevat
-// omaan tallennettuun kokoelmaansa (guardKanavat) myöhemmässä erässä.
+// Vapaat ryhmät, henkilökohtaiset viestit (DM) ja hätäkanavat ovat ERI ASIA — niillä ON
+// eksplisiittinen osallistujalista, koska niitä ei voi laskea vuorosta. Ne tallennetaan
+// `guardKanavat`-kokoelmaan (server/index.js, server/permissions.js). DM tulee tässä
+// erässä; vapaat ryhmät ja hätäkanava tulevat omina erikseen.
 
 /** Kohteen kiinteän kanavan tunnus. Sama kohde antaa saman tunnuksen aina. */
 export const kohdeKanavaId = (siteId) => `kohde:${siteId}`;
@@ -60,4 +61,83 @@ export function omatKiinteatKanavat(vuoro) {
  */
 export function kuuluuKiinteaanKanavaan(vuoro, kanavaId) {
   return omatKiinteatKanavat(vuoro).some((k) => k.id === kanavaId);
+}
+
+// --- Tallennetut kanavat: DM (erä 26, vaihe 1c) -------------------------------------
+//
+// DM ON VUORON SISÄINEN TYÖKALU (käyttäjän päätös 19.9.2026): sekä pyytäjällä että
+// vastaanottajalla on oltava kesken oleva vuoro DM:ää aloitettaessa, ja kanava
+// purkautuu kun MOLEMMAT osapuolet ovat lopettaneet vuoronsa — ei riitä että toinen
+// lopettaa, koska toinen voi yhä olla töissä ja tarvita keskustelua.
+//
+// Tuotepuoli (EVENT/GUARD) EI ole tämän tiedoston asia — se suodatetaan kutsujassa
+// (server/index.js), koska käyttäjätiedot ja tuoteoikeudet eivät kuulu tänne samasta
+// syystä kuin kohteen nimikään ei tule tästä tiedostosta.
+
+/**
+ * Muut käyttäjät jotka ovat juuri nyt vuorossa — DM-vastaanottajaehdokkaat ennen
+ * tuotepuolisuodatusta.
+ */
+export function vuorossaOlevatMuut(vuorot, omaKayttaja) {
+  const uniikit = new Set();
+  for (const v of vuorot || []) {
+    if (v?.tila === 'kesken' && v.vartija && v.vartija !== omaKayttaja) uniikit.add(v.vartija);
+  }
+  return [...uniikit];
+}
+
+/**
+ * Onko käyttäjä tallennetun kanavan (vapaa/dm/hata) osallistuja.
+ */
+export function onOsallistuja(kanava, username) {
+  return Array.isArray(kanava?.osallistujat) && kanava.osallistujat.includes(username);
+}
+
+/** Onko näiden kahden välillä jo DM-kanava. Järjestyksellä ei ole väliä. */
+export function loydaDm(kanavat, kayttaja1, kayttaja2) {
+  const osapuolet = new Set([kayttaja1, kayttaja2]);
+  return (kanavat || []).find((k) => (
+    k?.tyyppi === 'dm'
+    && Array.isArray(k.osallistujat)
+    && k.osallistujat.length === 2
+    && k.osallistujat.every((o) => osapuolet.has(o))
+  )) || null;
+}
+
+/**
+ * Uusi DM-tietue. Ei tarkista onko osapuolten välillä jo kanava — se on kutsujan
+ * vastuulla `loydaDm`:n kautta, koska vain kutsuja tietää levyllä olevan nykyisen
+ * kokoelman eikä tämä tiedosto lue levyä.
+ */
+export function luoDmKanava({ id, kayttaja1, kayttaja2, nyt = Date.now() }) {
+  if (!kayttaja1 || !kayttaja2 || kayttaja1 === kayttaja2) {
+    return { ok: false, error: 'DM vaatii kaksi eri käyttäjää.' };
+  }
+  return {
+    ok: true,
+    kanava: {
+      id,
+      tyyppi: 'dm',
+      osallistujat: [kayttaja1, kayttaja2],
+      luotu: new Date(nyt).toISOString(),
+      luoja: kayttaja1,
+    },
+  };
+}
+
+/**
+ * Onko DM valmis poistettavaksi: kumpikaan osapuoli ei ole enää vuorossa.
+ *
+ * VAIN dm-tyyppiselle kanavalle — vapaa ja hätä purkautuvat eri säännöllä (vapaa ei
+ * ole sidottu vuoroon lainkaan, hätä purkautuu hälytyksen ratkaisuun eikä vuoron
+ * loppumiseen). Väärän tyypin kanavalle tämä palauttaa aina false, ei arvaa.
+ *
+ * `vuorossaOlevat` on kutsujan kokoama Set käyttäjätunnuksista joilla on kesken oleva
+ * vuoro juuri nyt — ei koko vuorolistaa, samasta syystä kuin `vuorossaOlevatMuut` ei
+ * palauta vuorotietueita: tämä tiedosto ei tarvitse enempää kuin kysymykseen
+ * vastaamiseen vaaditaan.
+ */
+export function dmPurkautunut(kanava, vuorossaOlevat) {
+  if (kanava?.tyyppi !== 'dm') return false;
+  return !(kanava.osallistujat || []).some((kayttaja) => vuorossaOlevat.has(kayttaja));
 }

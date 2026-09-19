@@ -146,6 +146,13 @@ const COLLECTIONS = {
   // luettelo eikä yksittäisen avaimen ominaisuus — sata avainta viittaa samaan
   // yhdeksään kuvaan. Palvelimen ylläpitämä kuten muukin kalusto.
   keyTypes: 'keyTypes.json',
+  // PTT-kanavat (erä 26): vapaat ryhmät, henkilökohtaiset viestit (DM) ja hätäkanava.
+  // EI kiinteitä kanavia (kohde/piiri) — niiden jäsenyys lasketaan vuorosta eikä
+  // tallenneta lainkaan, ks. server/kanavat.js. Palvelimen ylläpitämä samasta syystä
+  // kuin guardDispatch: osallistujalista on koko toiminnon sisältö, ja selaimen
+  // kirjoitusoikeus tarkoittaisi että käyttäjä voisi lisätä itsensä mihin tahansa
+  // keskusteluun kirjoittamalla tietueen suoraan.
+  guardKanavat: 'guardKanavat.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain

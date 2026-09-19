@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
   kohdeKanavaId, piiriKanavaId, omatKiinteatKanavat, kuuluuKiinteaanKanavaan,
+  vuorossaOlevatMuut, onOsallistuja, loydaDm, luoDmKanava, dmPurkautunut,
 } from './kanavat.js';
 
 const kohdevuoro = (yli = {}) => ({
@@ -56,4 +57,68 @@ test('kuuluuKiinteaanKanavaan tunnistaa oman kohdekanavan', () => {
 
 test('kuuluuKiinteaanKanavaan ilman vuoroa ei tunnista mitään', () => {
   assert.equal(kuuluuKiinteaanKanavaan(null, kohdeKanavaId('kohde-1')), false);
+});
+
+// --- DM (vaihe 1c) -------------------------------------------------------------------
+
+test('vuorossaOlevatMuut palauttaa muut kesken olevat vuorot ilman kaksoiskappaleita', () => {
+  const vuorot = [
+    { tila: 'kesken', vartija: 'vartija1' },
+    { tila: 'kesken', vartija: 'vartija2' },
+    { tila: 'kesken', vartija: 'vartija2' },
+    { tila: 'paattynyt', vartija: 'vartija3' },
+  ];
+  assert.deepEqual(vuorossaOlevatMuut(vuorot, 'vartija1'), ['vartija2']);
+});
+
+test('vuorossaOlevatMuut ei sisällä omaa tunnusta vaikka olisi kahdesti vuorossa', () => {
+  const vuorot = [{ tila: 'kesken', vartija: 'vartija1' }];
+  assert.deepEqual(vuorossaOlevatMuut(vuorot, 'vartija1'), []);
+});
+
+test('luoDmKanava luo kahden osapuolen tietueen', () => {
+  const tulos = luoDmKanava({ id: 'k1', kayttaja1: 'vartija1', kayttaja2: 'vartija2', nyt: 0 });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.kanava.tyyppi, 'dm');
+  assert.deepEqual(tulos.kanava.osallistujat, ['vartija1', 'vartija2']);
+  assert.equal(tulos.kanava.luoja, 'vartija1');
+});
+
+test('luoDmKanava ei salli samaa käyttäjää molemmiksi osapuoliksi', () => {
+  const tulos = luoDmKanava({ id: 'k1', kayttaja1: 'vartija1', kayttaja2: 'vartija1' });
+  assert.equal(tulos.ok, false);
+});
+
+test('loydaDm löytää olemassa olevan kanavan järjestyksestä riippumatta', () => {
+  const kanavat = [{ id: 'k1', tyyppi: 'dm', osallistujat: ['vartija1', 'vartija2'] }];
+  assert.equal(loydaDm(kanavat, 'vartija1', 'vartija2')?.id, 'k1');
+  assert.equal(loydaDm(kanavat, 'vartija2', 'vartija1')?.id, 'k1');
+  assert.equal(loydaDm(kanavat, 'vartija1', 'vartija3'), null);
+});
+
+test('loydaDm ei sekoita vapaata ryhmää DM:ään vaikka osallistujat täsmäisivät', () => {
+  const kanavat = [{ id: 'k1', tyyppi: 'vapaa', osallistujat: ['vartija1', 'vartija2'] }];
+  assert.equal(loydaDm(kanavat, 'vartija1', 'vartija2'), null);
+});
+
+test('onOsallistuja tunnistaa osallistujan ja ei-osallistujan', () => {
+  const kanava = { osallistujat: ['vartija1', 'vartija2'] };
+  assert.equal(onOsallistuja(kanava, 'vartija1'), true);
+  assert.equal(onOsallistuja(kanava, 'vartija3'), false);
+  assert.equal(onOsallistuja(null, 'vartija1'), false);
+});
+
+test('dmPurkautunut on tosi kun kumpikaan osapuoli ei ole vuorossa', () => {
+  const kanava = { tyyppi: 'dm', osallistujat: ['vartija1', 'vartija2'] };
+  assert.equal(dmPurkautunut(kanava, new Set()), true);
+});
+
+test('dmPurkautunut on epätosi jos toinenkin osapuoli on yhä vuorossa', () => {
+  const kanava = { tyyppi: 'dm', osallistujat: ['vartija1', 'vartija2'] };
+  assert.equal(dmPurkautunut(kanava, new Set(['vartija2'])), false);
+});
+
+test('dmPurkautunut ei koske muun tyyppisiä kanavia', () => {
+  const kanava = { tyyppi: 'vapaa', osallistujat: ['vartija1', 'vartija2'] };
+  assert.equal(dmPurkautunut(kanava, new Set()), false);
 });
