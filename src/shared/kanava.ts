@@ -34,14 +34,26 @@ export type Sijainti = {
   lahde?: 'selain' | 'laite';
 };
 
+// PTT floor control (erä 26, vaihe 1b). `kayttaja` puuttuu hylkäyksestä jos kanava oli
+// vapaa mutta pyyntö silti hylättiin (ei pitäisi tapahtua, mutta tyyppi ei saa valehdella).
+export type PuheenvuoroTila = { kanavaId: string; kayttaja: string };
+
 export type KanavaViesti =
   | { tyyppi: 'tervetuloa'; kayttaja: string }
   | { tyyppi: 'muutos'; kokoelma: string; muutokset: Muutos[] }
-  | { tyyppi: 'sijainnit'; eventId: string | null; sijainnit: Sijainti[] };
+  | { tyyppi: 'sijainnit'; eventId: string | null; sijainnit: Sijainti[] }
+  | { tyyppi: 'puheenvuoro_myonnetty'; kanavaId: string; kayttaja: string }
+  | { tyyppi: 'puheenvuoro_hylatty'; kanavaId: string; syy: string; kayttaja: string | null }
+  | { tyyppi: 'puheenvuoro_vapautui'; kanavaId: string }
+  | { tyyppi: 'puheenvuoro_tila'; tilat: PuheenvuoroTila[] };
 
 type Kasittelijat = {
   onMuutos?: (kokoelma: string, muutokset: Muutos[]) => void;
   onSijainnit?: (sijainnit: Sijainti[]) => void;
+  onPuheenvuoroMyonnetty?: (kanavaId: string, kayttaja: string) => void;
+  onPuheenvuoroHylatty?: (kanavaId: string, syy: string, kayttaja: string | null) => void;
+  onPuheenvuoroVapautui?: (kanavaId: string) => void;
+  onPuheenvuoroTila?: (tilat: PuheenvuoroTila[]) => void;
 };
 
 // Uudelleenyhdistys kasvavalla viiveellä. Kiinteä lyhyt viive tarkoittaisi sitä, että
@@ -99,6 +111,14 @@ export function useKanava(kasittelijat: Kasittelijat) {
           kasittelija.current.onMuutos?.(viesti.kokoelma, viesti.muutokset || []);
         } else if (viesti?.tyyppi === 'sijainnit') {
           kasittelija.current.onSijainnit?.(viesti.sijainnit || []);
+        } else if (viesti?.tyyppi === 'puheenvuoro_myonnetty') {
+          kasittelija.current.onPuheenvuoroMyonnetty?.(viesti.kanavaId, viesti.kayttaja);
+        } else if (viesti?.tyyppi === 'puheenvuoro_hylatty') {
+          kasittelija.current.onPuheenvuoroHylatty?.(viesti.kanavaId, viesti.syy, viesti.kayttaja ?? null);
+        } else if (viesti?.tyyppi === 'puheenvuoro_vapautui') {
+          kasittelija.current.onPuheenvuoroVapautui?.(viesti.kanavaId);
+        } else if (viesti?.tyyppi === 'puheenvuoro_tila') {
+          kasittelija.current.onPuheenvuoroTila?.(viesti.tilat || []);
         }
       };
 

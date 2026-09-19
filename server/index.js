@@ -32,7 +32,10 @@ import {
   JOUSTO_MIN, aloitaVuoro, keskenOlevaVuoro, kohteetPerehdytyksenMukaan, lisaaVuoroon,
   paataVuoro, vuorovaihtoehdot, vuoronPaattymisaika,
 } from './vuorot.js';
-import { omatKiinteatKanavat } from './kanavat.js';
+import { kuuluuKiinteaanKanavaan, omatKiinteatKanavat } from './kanavat.js';
+import {
+  nykyinenHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
+} from './puheenvuoro.js';
 import {
   joSiirrossa, kiinnitaVuoroon, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto,
   merkitseValmiiksi as merkitseSiirtoValmiiksi,
@@ -6365,10 +6368,112 @@ function tarkistaVyohykkeet(istunto, edellinen, tietue) {
   }
 }
 
+// Kanavalta tulevat viestit jaetaan tyypin mukaan. Uudet PTT-tyypit (erä 26) ovat omina
+// funktioinaan tämän rinnalla — sijaintikäsittely pysyy ennallaan omassa funktiossaan.
+function kasitteleKanavaViesti(istunto, viesti) {
+  if (viesti.tyyppi === 'sijainti') return kasitteleSijaintiViesti(istunto, viesti);
+  if (viesti.tyyppi === 'aseta_kuunneltavat_kanavat') return kasitteleKuunneltavatKanavat(istunto, viesti);
+  if (viesti.tyyppi === 'pyyda_puheenvuoro') return kasittelePuheenvuoroPyynto(istunto, viesti);
+  if (viesti.tyyppi === 'vapauta_puheenvuoro') return kasittelePuheenvuoroVapautus(istunto, viesti);
+}
+
+// --- PTT floor control (erä 26, vaihe 1b) -------------------------------------------
+//
+// VAIN KIINTEÄT KANAVAT TOISTAISEKSI. Vapaat ryhmät, DM ja hätäkanava vaativat
+// guardKanavat-kokoelman (ei vielä olemassa) ja tulevat omana eränään — ks.
+// server/kanavat.js:n tiedostokommentti.
+//
+// SAMA TARKISTUS JOKA KERTA, EI VAIN YHTEYDEN AVATESSA. `istunto.kuunneltavatKanavat`
+// on käyttäjän oma ilmoitus siitä mitä se haluaa kuunnella, mutta oikeus ja vuoro
+// tarkistetaan aina uudelleen lähetyshetkellä — sama periaate kuin sijaintikanavalla
+// (ks. tunnistaKanava: "oikeudet luetaan roleId:stä vasta tässä"). Ilman uudelleen-
+// tarkistusta vuoron päättyminen kesken auki olevan yhteyden ei koskaan sulkisi kuuloa
+// kanavalta johon käyttäjä ei enää kuulu.
+function saaKuullaKanavaa(istunto, kanavaId) {
+  if (!istunto?.kuunneltavatKanavat?.has(kanavaId)) return false;
+  if (istunto.role === 'admin') return true;
+  if (!(istunto.tuotteet || []).includes('guard')) return false;
+  if (!canView(rolePermissions(istunto.roleId), null, 'guard_ptt')) return false;
+  const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], istunto.username);
+  return kuuluuKiinteaanKanavaan(vuoro, kanavaId);
+}
+
+// Vartija ilmoittaa mitä kanavia se juuri nyt kuuntelee (skannaus). Tallennetaan
+// istuntoon itseensä — se on sama olio koko yhteyden ajan (ks. kanava.js:
+// `ws.istunto = istunto`) — jotta puheenvuoro-broadcastit voidaan kohdistaa vain
+// niille jotka oikeasti kuuntelevat kyseistä kanavaa eikä kaikille avoimille yhteyksille.
+//
+// Pyydetyt kanavat suodatetaan heti kesken olevan vuoron mukaan: käyttäjä ei voi asettaa
+// itseään kuuntelemaan kanavaa johon ei kuulu, vaikka selain sellaisen pyytäisi.
+function kasitteleKuunneltavatKanavat(istunto, viesti) {
+  if (!istunto || !(istunto.tuotteet || []).includes('guard')) return;
+  const pyydetyt = Array.isArray(viesti.kanavat)
+    ? viesti.kanavat.filter((id) => typeof id === 'string').slice(0, 20)
+    : [];
+  const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], istunto.username);
+  istunto.kuunneltavatKanavat = new Set(
+    istunto.role === 'admin' ? pyydetyt : pyydetyt.filter((id) => kuuluuKiinteaanKanavaan(vuoro, id))
+  );
+
+  // Kerrotaan heti kenellä näistä on puheenvuoro juuri nyt — ilman tätä äsken avattu tai
+  // uudelleenyhdistynyt selain näyttäisi jokaisen kanavan vapaana vaikka joku olisi
+  // parhaillaan kesken lähetyksen.
+  const tilat = [...istunto.kuunneltavatKanavat]
+    .map((kanavaId) => ({ kanavaId, kayttaja: nykyinenHaltija(kanavaId) }))
+    .filter((t) => t.kayttaja !== null);
+  if (tilat.length > 0) {
+    lahetaViesti({ tyyppi: 'puheenvuoro_tila', tilat }, { suodatin: (vastaanottaja) => vastaanottaja === istunto });
+  }
+}
+
+function kasittelePuheenvuoroPyynto(istunto, viesti) {
+  if (!istunto || !(istunto.tuotteet || []).includes('guard')) return;
+  const kanavaId = typeof viesti.kanavaId === 'string' ? viesti.kanavaId : '';
+  if (!kanavaId) return;
+  if (istunto.role !== 'admin' && !canView(rolePermissions(istunto.roleId), null, 'guard_ptt')) return;
+  const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], istunto.username);
+  if (istunto.role !== 'admin' && !kuuluuKiinteaanKanavaan(vuoro, kanavaId)) return;
+
+  const tulos = pyydaPuheenvuoro({ kanavaId, istunto, kayttaja: istunto.username });
+  if (tulos.ok) {
+    lahetaViesti(
+      { tyyppi: 'puheenvuoro_myonnetty', kanavaId, kayttaja: tulos.kayttaja },
+      { suodatin: (vastaanottaja) => saaKuullaKanavaa(vastaanottaja, kanavaId) },
+    );
+  } else {
+    // Hylkäys vain pyytäjälle — muiden ei tarvitse tietää että joku yritti eikä saanut.
+    lahetaViesti(
+      { tyyppi: 'puheenvuoro_hylatty', kanavaId, syy: tulos.syy, kayttaja: tulos.kayttaja },
+      { suodatin: (vastaanottaja) => vastaanottaja === istunto },
+    );
+  }
+}
+
+function kasittelePuheenvuoroVapautus(istunto, viesti) {
+  const kanavaId = typeof viesti.kanavaId === 'string' ? viesti.kanavaId : '';
+  if (!kanavaId || !vapautaPuheenvuoro({ kanavaId, istunto })) return;
+  lahetaViesti(
+    { tyyppi: 'puheenvuoro_vapautui', kanavaId },
+    { suodatin: (vastaanottaja) => saaKuullaKanavaa(vastaanottaja, kanavaId) },
+  );
+}
+
+// Yhteyden katketessa (kanava.js: onClose) vapautetaan kaikki tämän istunnon pitämät
+// puheenvuorot — muuten katkennut selain jäisi näyttämään kanavan varattuna ikuisesti,
+// kunnes 60 sekunnin aikakatkaisu joskus laukeaisi.
+function kasitteleKanavanSulkeutuminen(istunto) {
+  if (!istunto) return;
+  for (const kanavaId of vapautaIstunnolta(istunto)) {
+    lahetaViesti(
+      { tyyppi: 'puheenvuoro_vapautui', kanavaId },
+      { suodatin: (vastaanottaja) => saaKuullaKanavaa(vastaanottaja, kanavaId) },
+    );
+  }
+}
+
 // Sijaintiviesti kentältä. Palvelin päättää sekä aikaleiman että sen kenelle tieto
 // kerrotaan — selain ei kumpaakaan.
-function kasitteleKanavaViesti(istunto, viesti) {
-  if (viesti.tyyppi !== 'sijainti') return;
+function kasitteleSijaintiViesti(istunto, viesti) {
   if (!seurantaKaytossa()) return;
   // Edellinen sijainti luetaan ENNEN päivitystä: vyöhykepoikkeama on rajan ylitys, ja
   // ylityksen näkee vain vertaamalla uutta sijaintia edelliseen.
@@ -6422,7 +6527,9 @@ function siirraKalustonNumerointi() {
 
 const palvelin = app.listen(PORT, '127.0.0.1', () => {
   console.log(`turvajohto-os-server kuuntelee portissa ${PORT}`);
-  liitaKanava(palvelin, { tunnista: tunnistaKanava, onViesti: kasitteleKanavaViesti });
+  liitaKanava(palvelin, {
+    tunnista: tunnistaKanava, onViesti: kasitteleKanavaViesti, onClose: kasitteleKanavanSulkeutuminen,
+  });
 
   siirraKalustonNumerointi();
 

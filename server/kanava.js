@@ -29,7 +29,7 @@ const istunnot = new Set();
 // Liittää kanavan olemassa olevaan HTTP-palvelimeen. `tunnista` saa upgrade-pyynnön ja
 // palauttaa istunnon tiedot tai nullin — index.js antaa sen, koska istunnon tunnistus
 // (eväste, JWT, käyttäjätaso) asuu siellä.
-export function liitaKanava(palvelin, { polku = '/api/kanava', tunnista, onViesti }) {
+export function liitaKanava(palvelin, { polku = '/api/kanava', tunnista, onViesti, onClose }) {
   // maxPayload rajaa selaimelta tulevan viestin koon. Kanavaa pitkin tulee vain
   // sijaintipäivityksiä ja kuittauksia, jotka ovat satoja tavuja — ilman rajaa yksi
   // istunto voisi lähettää satojen megatavujen puskurin ja viedä palvelimen muistin.
@@ -62,8 +62,12 @@ export function liitaKanava(palvelin, { polku = '/api/kanava', tunnista, onViest
       ws.istunto = istunto;
       ws.elossa = true;
       ws.on('pong', () => { ws.elossa = true; });
-      ws.on('close', () => istunnot.delete(ws));
-      ws.on('error', () => istunnot.delete(ws));
+      // onClose kertoo index.js:lle että TÄMÄ istunto on poissa — esim. puheenvuoro.js
+      // vapauttaa sen pitämät puheenvuorot. Kutsutaan sekä closessa että errorissa,
+      // koska molemmat tarkoittavat ettei yhteyttä enää ole; puheenvuoro.js:n vapautus
+      // on idempotentti, joten kahdesti kutsuminen ei ole ongelma jos molemmat laukeavat.
+      ws.on('close', () => { istunnot.delete(ws); onClose?.(ws.istunto); });
+      ws.on('error', () => { istunnot.delete(ws); onClose?.(ws.istunto); });
       // Kentältä palvelimelle: sijaintipäivitykset. Tämä moduuli on pelkkä kuljetus —
       // se ei tiedä mitä viestit tarkoittavat, vaan antaa ne index.js:lle joka tuntee
       // oikeudet ja sijaintikerroksen. Kelvoton JSON ohitetaan hiljaa: se ei ole virhe
