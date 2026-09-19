@@ -49,7 +49,21 @@ const DIREKTIIVIT = {
 
   // data: on QR-koodeja varten. Ne muodostetaan selaimessa (tarrat, TOTP-koodi,
   // ilmoitusjuliste) eivätkä ne käy palvelimella missään vaiheessa.
-  'img-src': ["'self'", 'data:'],
+  //
+  // blob: LISÄTTIIN erässä 26 (PTT, vaihe 5, viipale 5b): salattu kuvaliite puretaan
+  // asiakkaassa (src/shared/salatutliitteet.ts: haeJaPuraLiite) ja näytetään
+  // `URL.createObjectURL`-osoitteesta — palvelin näkee liitteestä vain opaakin salatun
+  // blobin, joten kuvaa EI VOI näyttää palvelimen omasta osoitteesta kuten tavallinen
+  // <img src="/api/..."> tekisi. Ilman tätä selain hylkää lataamisen hiljaa CSP-
+  // rikkomuksena ("Loading the image 'blob:...' violates img-src") — mitattu suoraan
+  // selaimessa ennen lisäystä, samalla kurinalaisuudella kuin script-srcin
+  // 'wasm-unsafe-eval'.
+  'img-src': ["'self'", 'data:', 'blob:'],
+
+  // Sama syy kuin img-srcin blob:lla, videoliitteille (m.video). Ei ollut aiemmin omaa
+  // media-src-riviä, joten video olisi perinyt default-srcin ('self') ja jäänyt samasta
+  // syystä lataamatta.
+  'media-src': ["'self'", 'blob:'],
 
   // Fira Sans isännöidään itse npm-paketista, jottei käyttäjän selain ota yhteyttä
   // kolmanteen osapuoleen (ks. main.tsx).

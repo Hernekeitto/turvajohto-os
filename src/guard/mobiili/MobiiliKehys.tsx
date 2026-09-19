@@ -451,6 +451,10 @@ export const MobiiliKehys = ({
           hylkays={ptt.hylkays}
           onPttDown={ptt.pyydaPuheenvuoro}
           onPttUp={ptt.vapautaPuheenvuoro}
+          machine={ptt.machine}
+          omaKayttaja={ptt.omaKayttaja}
+          viestiHerate={ptt.viestiHerate}
+          onLahetaJono={ptt.yritaLahettaaJono}
         />
       </div>
     </div>

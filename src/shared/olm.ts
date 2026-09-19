@@ -340,3 +340,20 @@ export async function synkronoiLaiteviestit(machine: OlmMachine): Promise<void> 
   if (viestit.length === 0) return;
   await machine.receiveSyncChanges(laiteviestitTapahtumiksi(viestit), new DeviceLists(), new Map());
 }
+
+// --- Jaettu instanssi (erä 26, vaihe 5) ----------------------------------------------
+//
+// USEA OlmMachine-INSTANSSI SAMAA IndexedDB-VARASTOA VASTEN ON VAARALLISTA: molemmat
+// kirjoittaisivat samaan pysyvään ratchet-tilaan tietämättä toisistaan, mikä voi
+// vioittaa istunnot. Mobiilikuoressa PTT-kanavapalkki (floor control) ja viestinäkymä
+// tarvitsevat kumpikin pääsyn koneeseen — tämä varmistaa että kumpikin saa SAMAN
+// instanssin sen sijaan että kumpikin alustaisi omansa.
+let jaettuKoneLupaus: Promise<OlmMachine> | null = null;
+let jaettuKoneKayttaja: string | null = null;
+
+export function haeJaettuOlmMachine(kayttaja: string): Promise<OlmMachine> {
+  if (jaettuKoneLupaus && jaettuKoneKayttaja === kayttaja) return jaettuKoneLupaus;
+  jaettuKoneKayttaja = kayttaja;
+  jaettuKoneLupaus = alustaOlmMachine(kayttaja);
+  return jaettuKoneLupaus;
+}

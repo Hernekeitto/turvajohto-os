@@ -9,12 +9,14 @@
 // mouse-käsittely: sormi voi liukua napin ulkopuolelle kesken painalluksen, ja pointer
 // capture pitää ylös-tapahtuman kiinni samassa elementissä vaikka niin kävisi — ilman
 // sitä puheenvuoro jäisi auki koska "up" ei koskaan laukeaisi napin päällä.
-import { useRef, type PointerEvent as ReactPointerEvent } from 'react';
-import { Mic, ShieldAlert, Volume2, VolumeX } from 'lucide-react';
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import type { OlmMachine } from '@matrix-org/matrix-sdk-crypto-wasm';
+import { Mic, MessageSquare, ShieldAlert, Volume2, VolumeX } from 'lucide-react';
 
 import { type Kanava, chipKanavat, hatakanavat, voiMykistaa } from './kanavapalkki.ts';
 import type { PuheTilat, KanavaPuheTila } from './puheenvuorotila.ts';
-import type { PuheenvuoroHylkays } from './kayttoPttPalkkia.ts';
+import type { PuheenvuoroHylkays, ViestiHerate } from './kayttoPttPalkkia.ts';
+import { KanavaViestit } from './KanavaViestit.tsx';
 
 type Props = {
   kanavat: Kanava[];
@@ -26,18 +28,27 @@ type Props = {
   hylkays: PuheenvuoroHylkays | null;
   onPttDown: (kanavaId: string) => void;
   onPttUp: (kanavaId: string) => void;
+  machine: OlmMachine | null;
+  omaKayttaja: string | null;
+  viestiHerate: ViestiHerate;
+  onLahetaJono: () => void;
 };
 
 export const PttPalkki = ({
   kanavat, aktiivinenId, onValitseAktiivinen, tilat, mykistetyt, onMykista,
-  hylkays, onPttDown, onPttUp,
+  hylkays, onPttDown, onPttUp, machine, omaKayttaja, viestiHerate, onLahetaJono,
 }: Props) => {
   // Kesken olevan painalluksen kanava-id. Refissä: pointerup voi tulla vaikka props olisi
   // ehtinyt vaihtua (esim. kanavalista päivittyi kesken painalluksen), ja vapautus on
   // silti kohdistettava kanavaan jolla lähetys oikeasti alkoi.
   const painettuId = useRef<string | null>(null);
+  // Minkä kanavan viestiketju on auki, tai null. Kanava-id eikä boolean, koska hätä-
+  // elementti voi avata viestit ilman että se on koskaan chip-listan "aktiivinen".
+  const [viestitAuki, setViestitAuki] = useState<string | null>(null);
 
   if (kanavat.length === 0) return null;
+
+  const viestikanava = viestitAuki ? kanavat.find((k) => k.id === viestitAuki) ?? null : null;
 
   const chipit = chipKanavat(kanavat);
   const hatat = hatakanavat(kanavat);
@@ -65,7 +76,13 @@ export const PttPalkki = ({
   return (
     <div className="shrink-0 border-t border-white/10 bg-surface-dark text-ink-on-dark px-3 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
       {hatat.map((h) => (
-        <HataElementti key={h.id} kanava={h} tila={tilat[h.id]} onVapauta={() => onPttUp(h.id)} />
+        <HataElementti
+          key={h.id}
+          kanava={h}
+          tila={tilat[h.id]}
+          onVapauta={() => onPttUp(h.id)}
+          onAvaaViestit={() => setViestitAuki(h.id)}
+        />
       ))}
 
       {hylkays && (
@@ -90,23 +107,45 @@ export const PttPalkki = ({
         </div>
       )}
 
-      <button
-        type="button"
-        disabled={!aktiivinenId}
-        onPointerDown={kasittelePttDown}
-        onPointerUp={kasittelePttUp}
-        onPointerCancel={kasittelePttUp}
-        aria-pressed={Boolean(aktiivinenTila?.mina)}
-        aria-label={aktiivinenId ? `Puhu kanavalle ${aktiivinen?.nimi ?? ''}` : 'Ei lähetyskohdetta'}
-        className={`mt-1.5 w-full h-16 rounded-xl flex items-center justify-center gap-2 text-base font-bold select-none touch-none transition-colors disabled:opacity-40 ${
-          aktiivinenTila?.mina ? 'bg-danger text-white' : 'bg-white/10 active:bg-white/20 text-ink-on-dark-muted'
-        }`}
-      >
-        <Mic size={22} />
-        <span className={aktiivinenTila?.mina ? 'text-white' : aktiivinenTila ? 'text-accent-on-dark' : ''}>
-          {tilaTeksti}
-        </span>
-      </button>
+      <div className="mt-1.5 flex gap-1.5">
+        <button
+          type="button"
+          disabled={!aktiivinenId}
+          onPointerDown={kasittelePttDown}
+          onPointerUp={kasittelePttUp}
+          onPointerCancel={kasittelePttUp}
+          aria-pressed={Boolean(aktiivinenTila?.mina)}
+          aria-label={aktiivinenId ? `Puhu kanavalle ${aktiivinen?.nimi ?? ''}` : 'Ei lähetyskohdetta'}
+          className={`flex-1 h-16 rounded-xl flex items-center justify-center gap-2 text-base font-bold select-none touch-none transition-colors disabled:opacity-40 ${
+            aktiivinenTila?.mina ? 'bg-danger text-white' : 'bg-white/10 active:bg-white/20 text-ink-on-dark-muted'
+          }`}
+        >
+          <Mic size={22} />
+          <span className={aktiivinenTila?.mina ? 'text-white' : aktiivinenTila ? 'text-accent-on-dark' : ''}>
+            {tilaTeksti}
+          </span>
+        </button>
+        <button
+          type="button"
+          disabled={!aktiivinenId}
+          onClick={() => aktiivinenId && setViestitAuki(aktiivinenId)}
+          aria-label={aktiivinen ? `Viestit: ${aktiivinen.nimi}` : 'Ei lähetyskohdetta'}
+          className="w-16 h-16 shrink-0 rounded-xl flex items-center justify-center bg-white/10 text-ink-on-dark-muted disabled:opacity-40"
+        >
+          <MessageSquare size={22} />
+        </button>
+      </div>
+
+      {viestikanava && (
+        <KanavaViestit
+          machine={machine}
+          omaKayttaja={omaKayttaja}
+          kanava={viestikanava}
+          herate={viestiHerate}
+          onLahetaJono={onLahetaJono}
+          onSulje={() => setViestitAuki(null)}
+        />
+      )}
     </div>
   );
 };
@@ -143,8 +182,8 @@ const Chip = ({
 );
 
 const HataElementti = ({
-  kanava, tila, onVapauta,
-}: { kanava: Kanava; tila?: KanavaPuheTila; onVapauta: () => void }) => (
+  kanava, tila, onVapauta, onAvaaViestit,
+}: { kanava: Kanava; tila?: KanavaPuheTila; onVapauta: () => void; onAvaaViestit: () => void }) => (
   <div className="mb-2 rounded-xl bg-danger/15 border border-danger/40 px-3 py-2.5 flex items-center gap-2.5">
     <ShieldAlert size={20} className="text-danger shrink-0" />
     <div className="min-w-0 flex-1">
@@ -161,6 +200,14 @@ const HataElementti = ({
             : 'Vapaana'}
       </p>
     </div>
+    <button
+      type="button"
+      onClick={onAvaaViestit}
+      aria-label={`Viestit: ${kanava.nimi}`}
+      className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg text-white/80 hover:bg-white/10"
+    >
+      <MessageSquare size={18} />
+    </button>
     {tila?.mina && (
       <button
         type="button"
