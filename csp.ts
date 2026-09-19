@@ -21,9 +21,17 @@ const DIREKTIIVIT = {
   // Kaikki mitä ei ole erikseen sallittu tulee samasta originista.
   'default-src': ["'self'"],
 
-  // Ei inline-skriptejä eikä evalia. index.html lataa yhden moduulin src-attribuutilla,
-  // ja kaikki muu on niputettu — joten 'self' riittää eikä poikkeuksia tarvita.
-  'script-src': ["'self'"],
+  // Ei inline-skriptejä. index.html lataa yhden moduulin src-attribuutilla, ja kaikki
+  // muu on niputettu — joten 'self' riittäisi sellaisenaan.
+  //
+  // 'wasm-unsafe-eval' LISÄTTIIN erässä 26 (PTT:n päästä-päähän-salaus,
+  // @matrix-org/matrix-sdk-crypto-wasm): WebAssembly.instantiate() rikkoo CSP:tä ilman
+  // tätä täsmälleen samalla tavalla kuin 'unsafe-eval' puuttuminen estäisi eval()in —
+  // mitattu suoraan selaimessa (CompileError, CSP-rikkomus) ennen lisäystä. Tämä EI ole
+  // sama asia kuin 'unsafe-eval': se ei salli JS-merkkijonojen suoritusta, vain
+  // WebAssembly-moduulin kääntämisen — juuri tätä varten CSP3 lisäsi oman, suppeamman
+  // avainsanansa eikä vaadi täyttä evalia WASM:lle.
+  'script-src': ["'self'", "'wasm-unsafe-eval'"],
 
   // 'unsafe-inline' on TÄSSÄ TARPEEN kahdesta syystä, eikä kumpaakaan voi poistaa
   // ilman että toiminto muuttuu:
