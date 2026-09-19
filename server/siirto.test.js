@@ -11,8 +11,9 @@ import assert from 'node:assert/strict';
 
 import {
   VIESTIN_MAX,
-  joSiirrossa, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto, merkitseValmiiksi, omatSiirrot,
-  peruSiirto,
+  joSiirrossa, kiinnitaVuoroon, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto,
+  merkitseValmiiksi, omatSiirrot,
+  peruSiirto, rauetaVuoronMukana,
   siirtojenAvaamatKohteet, vastaaSiirtoon,
 } from './siirto.js';
 
@@ -164,7 +165,7 @@ test('omat siirrot erotellaan suuntansa mukaan', () => {
   const lahteva = { ...siirto(), id: 's3', antaja: 'piirivartija', saaja: 'kolmas' };
   const vieras = { ...siirto(), id: 's4', antaja: 'x', saaja: 'y' };
 
-  const omat = omatSiirrot([odottaa, hyvaksytty, lahteva, vieras], 'piirivartija');
+  const omat = omatSiirrot([odottaa, hyvaksytty, lahteva, vieras], 'piirivartija', 'vuoro-y');
   assert.deepEqual(omat.saapuvat.map((s) => s.id), ['s1']);
   assert.deepEqual(omat.hyvaksytyt.map((s) => s.id), ['s2']);
   assert.deepEqual(omat.lahtevat.map((s) => s.id), ['s3']);
@@ -174,7 +175,7 @@ test('hyväksytty siirto avaa kohteen saajalle', () => {
   // Ilman tätä siirto olisi lupaus jota ei voi lunastaa: työ ilman kohteen ohjeita,
   // yhteystietoja ja vyöhykkeitä ei ole tehtävissä.
   const hyvaksytty = { ...siirto(), tila: 'hyvaksytty' };
-  const avatut = siirtojenAvaamatKohteet([hyvaksytty], 'piirivartija');
+  const avatut = siirtojenAvaamatKohteet([hyvaksytty], 'piirivartija', 'vuoro-y');
   assert.equal(avatut.has('kohde-a'), true);
 });
 
@@ -182,7 +183,7 @@ test('odottava, hylätty tai toisen siirto ei avaa kohdetta', () => {
   const odottaa = siirto();
   const hylatty = { ...siirto(), id: 's2', tila: 'hylatty' };
   const toisen = { ...siirto(), id: 's3', tila: 'hyvaksytty', saaja: 'joku-muu' };
-  assert.equal(siirtojenAvaamatKohteet([odottaa, hylatty, toisen], 'piirivartija').size, 0);
+  assert.equal(siirtojenAvaamatKohteet([odottaa, hylatty, toisen], 'piirivartija', 'vuoro-y').size, 0);
 });
 
 // --- Pakotus (erä 19) ---------------------------------------------------------------
@@ -318,5 +319,85 @@ test('tehty pakotus pysyy vartijan listalla', () => {
   // Katoaminen listalta samalla sekunnilla kun se merkitään tehdyksi jättäisi vartijan
   // arvaamaan menikö merkinta lapi.
   const tehty = { ...maarays('kommentti'), tila: 'valmis' };
-  assert.equal(omatSiirrot([tehty], 'Turva051').hyvaksytyt.length, 1);
+  assert.equal(omatSiirrot([tehty], 'Turva051', 'v1').hyvaksytyt.length, 1);
+});
+
+// --- Vuoro rajaa työlistan (19.9.2026) ----------------------------------------------
+//
+// Käyttäjän testivuorossa löytynyt vika: edellisessä vuorossa tehty pakotettu tehtävä
+// näkyi yhä seuraavan vuoron listalla. Sääntö on nyt se että uudessa vuorossa on vain
+// se mitä kohteen asetukset kylvävät, ja vuoron aikana annettu lisätyö jää siihen
+// vuoroon jonka aikana se annettiin.
+
+test('EDELLISEN VUORON tehty tehtava ei nay uudessa vuorossa', () => {
+  const tehty = { ...maarays('kommentti'), tila: 'valmis' };
+  // Sama tietue, eri vuoro: tehtynäkin se on menneen vuoron työtä.
+  assert.equal(omatSiirrot([tehty], 'Turva051', 'v2').hyvaksytyt.length, 0);
+  assert.equal(siirtojenAvaamatKohteet([tehty], 'Turva051', 'v2').size, 0);
+});
+
+test('edellisen vuoron kuittaamaton maarays ei esta uutta vuoroa', () => {
+  // Kuittaamaton pakotus estää muun käytön modaalilla. Menneen vuoron määräyksestä se
+  // olisi este työlle jota ei enää ole.
+  const vanha = { ...maarays('kommentti', 'odottaa'), vuoroId: 'v1' };
+  assert.equal(kuittaamattomatPakotukset([vanha], 'Turva051', 'v2').length, 0);
+  assert.equal(kuittaamattomatPakotukset([vanha], 'Turva051', 'v1').length, 1);
+});
+
+test('vuorottomalle annettu maarays odottaa seuraavaa vuoroa', () => {
+  // Pakotus ei vaadi saajalta vuoroa, joten vapaalla annettu tehtävä syntyy ilman
+  // vuorotunnusta. Sen on näyttävä sekä vuorottomalle että vuoron aloittaneelle.
+  const irrallinen = { ...maarays('kommentti', 'odottaa'), vuoroId: null };
+  assert.equal(kuittaamattomatPakotukset([irrallinen], 'Turva051', null).length, 1);
+  assert.equal(kuittaamattomatPakotukset([irrallinen], 'Turva051', 'v9').length, 1);
+});
+
+test('kiinnitys sitoo vain vuorottomat avoimet omat maaraykset', () => {
+  const irrallinen = { ...maarays('kommentti', 'odottaa'), id: 'a', vuoroId: null };
+  const tehty = { ...maarays('kommentti', 'valmis'), id: 'b', vuoroId: null };
+  const toisen = { ...maarays('kommentti', 'odottaa'), id: 'c', vuoroId: null, saaja: 'Turva052' };
+  const jokinVuoro = { ...maarays('kommentti', 'kuitattu'), id: 'd', vuoroId: 'v1' };
+
+  const muuttuneet = kiinnitaVuoroon([irrallinen, tehty, toisen, jokinVuoro], {
+    username: 'Turva051', vuoroId: 'v2',
+  });
+  assert.deepEqual(muuttuneet.map((s) => s.id), ['a']);
+  assert.equal(muuttuneet[0].vuoroId, 'v2');
+});
+
+test('vuoron paattyessa auki jaaneet maaraykset raukeavat', () => {
+  const kuittaamaton = { ...maarays('kommentti', 'odottaa'), id: 'a' };
+  const kuitattu = { ...maarays('kommentti', 'kuitattu'), id: 'b' };
+  const tehty = { ...maarays('kommentti', 'valmis'), id: 'c' };
+  const toisenVuoron = { ...maarays('kommentti', 'odottaa'), id: 'd', vuoroId: 'v9' };
+
+  const muuttuneet = rauetaVuoronMukana([kuittaamaton, kuitattu, tehty, toisenVuoron], {
+    vuoroId: 'v1', nyt: T0,
+  });
+  // Tehtyä ei kosketa: tehty työ pysyy tehtynä, ja se rajautuu pois vuorotunnuksella.
+  assert.deepEqual(muuttuneet.map((s) => s.id), ['a', 'b']);
+  assert.equal(muuttuneet[0].tila, 'rauennut');
+  assert.equal(muuttuneet[0].rauennut, new Date(T0).toISOString());
+});
+
+test('RAUKEAMINEN ON MERKINTA eika poisto', () => {
+  // Pelkkä rajaus piilottaisi nämä, mutta silloin kuittaamaton määräys jäisi ikuisesti
+  // odottavaan tilaan ja näyttäisi auki olevalta työltä joka ei ole kenenkään.
+  const rauennut = rauetaVuoronMukana([maarays('kommentti', 'odottaa')], { vuoroId: 'v1' })[0];
+  assert.equal(rauennut.antaja, 'halke');
+  assert.equal(rauennut.nimi, 'Vie vartijakutsupainike');
+  // Eikä sitä voi enää kuitata eikä tehdä: vuoro loppui alta.
+  const kuittaus = kuittaaPakotus({ siirto: rauennut, kayttaja: 'Turva051' });
+  assert.equal(kuittaus.ok, false);
+  assert.match(kuittaus.error, /päättyneeseen vuoroon/);
+  const valmis = merkitseValmiiksi({ siirto: { ...rauennut, tila: 'rauennut' }, kayttaja: 'Turva051' });
+  assert.equal(valmis.ok, false);
+  assert.match(valmis.error, /päättyneeseen vuoroon/);
+});
+
+test('rauennut ei ole kenenkaan tyota', () => {
+  const rauennut = { ...maarays('kommentti', 'rauennut') };
+  assert.equal(omatSiirrot([rauennut], 'Turva051', 'v1').hyvaksytyt.length, 0);
+  assert.equal(siirtojenAvaamatKohteet([rauennut], 'Turva051', 'v1').size, 0);
+  assert.equal(kuittaamattomatPakotukset([rauennut], 'Turva051', 'v1').length, 0);
 });

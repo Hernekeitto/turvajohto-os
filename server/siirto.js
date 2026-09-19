@@ -51,7 +51,9 @@ export const RAPORTIN_MAX = 2000;
 // `valmis` on pakotusta varten (18.9.2026): pakotettu tehtävä kuitataan nähdyksi ja
 // tehdään sen jälkeen. Kaksi eri asiaa, kaksi eri tilaa — kuittaus kertoo että määräys on
 // nähty, `valmis` että työ on tehty ja raportti kirjoitettu.
-export const TILAT = ['odottaa', 'hyvaksytty', 'hylatty', 'peruttu', 'kuitattu', 'valmis'];
+// `rauennut` on vuoronvaihdon jälki (19.9.2026): määräys joka oli yhä auki kun vuoro
+// päättyi eikä siksi kuulu seuraavaan vuoroon. Ks. rauetaVuoronMukana.
+export const TILAT = ['odottaa', 'hyvaksytty', 'hylatty', 'peruttu', 'kuitattu', 'valmis', 'rauennut'];
 
 /**
  * Uusi siirto.
@@ -180,6 +182,59 @@ export function peruSiirto({ siirto, kayttaja, nyt = Date.now() }) {
 // jossa kuitattu pakotus katosi vaikka kuittausmodaali lupasi päinvastaista.
 const OMAKSI_TULLEET = new Set(['hyvaksytty', 'kuitattu', 'valmis']);
 
+// --- VUORO RAJAA TYÖLISTAN (19.9.2026) ----------------------------------------------
+//
+// Vika jonka testivuoro paljasti: edellisessä vuorossa tehty pakotettu tehtävä näkyi yhä
+// seuraavan vuoron listalla. Syy oli se että työlista rajattiin vain tilan mukaan, ja
+// `valmis` on omaksi tullut tila — se ei kuitenkaan lakkaa olemasta valmis silloin kun
+// vartija aloittaa uuden vuoron.
+//
+// Sääntö: UUDESSA VUOROSSA ON VAIN SE MITÄ KOHTEEN ASETUKSET SANOVAT. Vuoro kylvetään
+// kohteen tehtävistä ja kierroksista (vuorot.js: aloitaVuoro), ja kaikki muu on tämän
+// vuoron aikana annettua lisätyötä. Lisätyö kuuluu siihen vuoroon jonka aikana se
+// annettiin, eikä se saa vuotaa seuraavaan — vuoro on se yksikkö jolta työ kysytään.
+//
+// `vuoroId === null` on määräys jota ei ole vielä kiinnitetty mihinkään vuoroon: pakotus
+// ei vaadi saajalta vuoroa (toisin kuin siirto), joten vuorottomalle annettu tehtävä
+// odottaa seuraavaa vuoroa. Se kiinnitetään vuoroon aloituksessa (kiinnitaVuoroon).
+const AVOIMET = new Set(['odottaa', 'hyvaksytty', 'kuitattu']);
+
+const RAUENNUT_VIRHE = 'Tehtävä kuului päättyneeseen vuoroon eikä ole enää voimassa.';
+
+export function kuuluuVuoroon(siirto, vuoroId) {
+  return siirto?.vuoroId === vuoroId || siirto?.vuoroId == null;
+}
+
+/**
+ * Vuorottomalle annetut määräykset kiinnitetään alkavaan vuoroon.
+ *
+ * Ilman tätä ne olisivat ikuisesti `null`-vuorossa ja näkyisivät joka vuorossa — eli juuri
+ * se vika jota vuororajaus korjaa, yhtä mutkaa pidempänä. Palauttaa VAIN muuttuneet.
+ */
+export function kiinnitaVuoroon(siirrot, { username, vuoroId }) {
+  return (siirrot || [])
+    .filter((s) => s?.saaja === username && s.vuoroId == null && AVOIMET.has(s.tila))
+    .map((s) => ({ ...s, vuoroId }));
+}
+
+/**
+ * Vuoron päättyessä auki jääneet määräykset raukeavat.
+ *
+ * RAUKEAMINEN ON MERKINTÄ EIKÄ POISTO. Pelkkä rajaus riittäisi piilottamaan ne, mutta
+ * silloin kuittaamaton määräys jäisi tietokantaan ikuisesti `odottaa`-tilaan ja näyttäisi
+ * hälytyskeskuksen listalla auki olevalta työltä joka ei ole kenenkään. Rauennut kertoo
+ * mitä tapahtui: määräys annettiin, vuoro loppui, työtä ei tehty.
+ *
+ * Valmiita ei kosketa — tehty työ pysyy tehtynä, ja se rajataan pois seuraavan vuoron
+ * listalta vuorotunnuksella (kuuluuVuoroon). Palauttaa VAIN muuttuneet.
+ */
+export function rauetaVuoronMukana(siirrot, { vuoroId, nyt = Date.now() }) {
+  if (!vuoroId) return [];
+  return (siirrot || [])
+    .filter((s) => s?.vuoroId === vuoroId && AVOIMET.has(s.tila))
+    .map((s) => ({ ...s, tila: 'rauennut', rauennut: new Date(nyt).toISOString() }));
+}
+
 /**
  * Vartijan siirrot molempiin suuntiin.
  *
@@ -187,14 +242,17 @@ const OMAKSI_TULLEET = new Set(['hyvaksytty', 'kuitattu', 'valmis']);
  * Molemmat tarvitaan: antajan listalla tehtävä säilyy kunnes saaja hyväksyy (päätös
  * 10.9.2026), joten antajan on nähtävä missä pyyntö menee.
  */
-export function omatSiirrot(siirrot, username) {
+export function omatSiirrot(siirrot, username, vuoroId = null) {
   const omat = (siirrot || []).filter((s) => s?.saaja === username || s?.antaja === username);
   return {
     // Pakotus EI ole saapuva siirto vaikka se odottaa vastausta: se ei ole pyyntö johon
     // vastataan vaan määräys joka kuitataan, eikä sitä saa näyttää hyväksyttävänä.
     // Kuittaamattomat pakotukset haetaan erikseen (kuittaamattomatPakotukset).
     saapuvat: omat.filter((s) => s.saaja === username && s.tila === 'odottaa' && s.tapa !== 'pakotus'),
-    hyvaksytyt: omat.filter((s) => s.saaja === username && OMAKSI_TULLEET.has(s.tila)),
+    // Rajattu kesken olevaan vuoroon: edellisen vuoron lisätyö ei ole tämän vuoron
+    // työtä, tehtynäkään. Ks. kuuluuVuoroon.
+    hyvaksytyt: omat.filter((s) => s.saaja === username && OMAKSI_TULLEET.has(s.tila)
+      && kuuluuVuoroon(s, vuoroId)),
     lahtevat: omat.filter((s) => s.antaja === username && s.tila === 'odottaa'),
   };
 }
@@ -206,10 +264,13 @@ export function omatSiirrot(siirrot, username) {
  * ja työ ilman kohteen ohjeita, yhteystietoja ja vyöhykkeitä ei ole tehtävissä. Ilman
  * tätä siirto olisi lupaus jota ei voi lunastaa.
  */
-export function siirtojenAvaamatKohteet(siirrot, username) {
+export function siirtojenAvaamatKohteet(siirrot, username, vuoroId = null) {
   return new Set(
     (siirrot || [])
-      .filter((s) => s?.saaja === username && OMAKSI_TULLEET.has(s.tila))
+      // Sama vuororajaus kuin työlistalla: kohde aukeaa työn takia, joten se sulkeutuu
+      // kun työ ei enää ole tämän vuoron työtä.
+      .filter((s) => s?.saaja === username && OMAKSI_TULLEET.has(s.tila)
+        && kuuluuVuoroon(s, vuoroId))
       .map((s) => s.siteId)
   );
 }
@@ -241,6 +302,7 @@ export function kuittaaPakotus({ siirto, kayttaja, nyt = Date.now() }) {
   // Jo kuitattu on toistona haluttu lopputulos: kuittaus voi lähteä uudelleen jonosta,
   // eikä toinen kuittaus tarkoita mitään muuta kuin ensimmäinenkään.
   if (siirto.tila === 'kuitattu') return { ok: true, siirto, duplikaatti: true };
+  if (siirto.tila === 'rauennut') return { ok: false, error: RAUENNUT_VIRHE };
   if (siirto.tila !== 'odottaa') return { ok: false, error: 'Tehtävään on jo vastattu.' };
 
   return {
@@ -253,9 +315,13 @@ export function kuittaaPakotus({ siirto, kayttaja, nyt = Date.now() }) {
  * Kuittaamattomat pakotukset. Nämä estävät muun käytön kunnes ne on kuitattu, joten
  * kutsujan on saatava ne erillään tavallisista siirroista.
  */
-export function kuittaamattomatPakotukset(siirrot, username) {
+export function kuittaamattomatPakotukset(siirrot, username, vuoroId = null) {
   return (siirrot || []).filter(
     (s) => s?.saaja === username && s.tapa === 'pakotus' && s.tila === 'odottaa'
+      // Rajattu vuoroon: edellisen vuoron kuittaamaton määräys estäisi muuten uuden
+      // vuoron käytön modaalilla joka koskee mennyttä työtä. Ne raukeavat vuoron
+      // päättyessä (rauetaVuoronMukana), ja vuoroton näkee kiinnittämättömät.
+      && kuuluuVuoroon(s, vuoroId)
   );
 }
 
@@ -284,6 +350,7 @@ export function merkitseValmiiksi({
   // Kuittaamaton pakotus on määräys jota ei ole vielä nähty. Sen merkitseminen tehdyksi
   // ohittaisi kuittauksen kokonaan, eli poistaisi sen merkinnän jonka takia pakotus on
   // olemassa.
+  if (siirto.tila === 'rauennut') return { ok: false, error: RAUENNUT_VIRHE };
   if (siirto.tila !== 'kuitattu' && siirto.tila !== 'hyvaksytty') {
     return { ok: false, error: 'Tehtävä on kuitattava ennen kuin sen voi merkitä tehdyksi.' };
   }

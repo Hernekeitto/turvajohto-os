@@ -33,9 +33,10 @@ import {
   paataVuoro, vuorovaihtoehdot, vuoronPaattymisaika,
 } from './vuorot.js';
 import {
-  joSiirrossa, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto,
+  joSiirrossa, kiinnitaVuoroon, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto,
   merkitseValmiiksi as merkitseSiirtoValmiiksi,
-  omatSiirrot, peruSiirto, siirtojenAvaamatKohteet, vastaaSiirtoon,
+  kuuluuVuoroon, omatSiirrot, peruSiirto, rauetaVuoronMukana, siirtojenAvaamatKohteet,
+  vastaaSiirtoon,
 } from './siirto.js';
 import {
   AVOIMET_TILAT,
@@ -705,11 +706,18 @@ app.get('/api/data/:name', requireAuth, (req, res) => {
     // kohteen ohjeita, yhteystietoja ja vyöhykkeitä ei ole tehtävissä. Ilman tätä siirto
     // olisi lupaus jota ei voi lunastaa — ja juuri siirron käyttötapaus on vartija jolla
     // EI ole perehdytystä siihen kohteeseen.
-    const avatut = siirtojenAvaamatKohteet(readCollection('guardAssignments') || [], req.username);
+    // Vuororajaus on sama kuin työlistalla (siirto.js): kohde aukeaa työn takia, joten
+    // edellisen vuoron siirto ei saa pitää kohdetta auki seuraavassa vuorossa.
+    const omatVuorot = readCollection('guardShifts') || [];
+    const avatut = siirtojenAvaamatKohteet(
+      readCollection('guardAssignments') || [],
+      req.username,
+      keskenOlevaVuoro(omatVuorot, req.username)?.id || null,
+    );
     const perehdytetyt = kohteetPerehdytyksenMukaan({
       kohteet: data || [],
       username: req.username,
-      vuorot: readCollection('guardShifts') || [],
+      vuorot: omatVuorot,
     });
     const nakyvat = new Set(perehdytetyt.map((k) => k.id));
     data = (data || []).filter((k) => nakyvat.has(k?.id) || avatut.has(k?.id));
@@ -2261,7 +2269,28 @@ app.post('/api/vuoro', requireAuth, guardPortti, (req, res) => {
       : {}),
   });
   kerroVuorosta(tulos.vuoro, 'create');
-  res.json({ ok: true, vuoro: tulos.vuoro });
+
+  // ALKAVA VUORO OTTAA VASTAAN VUOROTTOMALLE ANNETUT MÄÄRÄYKSET (19.9.2026).
+  //
+  // Pakotus ei vaadi saajalta vuoroa, joten vapaalla olevalle annettu tehtävä syntyy ilman
+  // vuorotunnusta. Kun työlista rajataan vuoroon, tunnukseton tehtävä näkyisi joka
+  // vuorossa — eli juuri se vika jota rajaus korjaa. Kiinnitys tekee siitä tämän vuoron
+  // työn, jolloin se myös raukeaa tämän vuoron mukana jos se jää tekemättä.
+  const kiinnitettavat = readCollection('guardAssignments') || [];
+  const kiinnitetyt = kiinnitaVuoroon(kiinnitettavat, { username: kenelle, vuoroId: tulos.vuoro.id });
+  if (kiinnitetyt.length > 0) {
+    const kartta = new Map(kiinnitetyt.map((x) => [x.id, x]));
+    writeCollection('guardAssignments', kiinnitettavat.map((x) => kartta.get(x?.id) || x));
+    for (const siirto of kiinnitetyt) {
+      logAudit({
+        user: req.username, action: 'tehtava_kiinnitetty_vuoroon', collection: 'guardAssignments',
+        recordId: siirto.id, eventId: siirto.siteId, kohdeKayttaja: kenelle, vuoroId: tulos.vuoro.id,
+      });
+      kerroSiirrosta(siirto, 'update');
+    }
+  }
+
+  res.json({ ok: true, vuoro: tulos.vuoro, kiinnitetyt: kiinnitetyt.length });
 });
 
 // Vuoron kooste: mitä kuului vuoroon, mitä tehtiin ja mikä poikkesi suoritusajastaan.
@@ -2342,15 +2371,18 @@ app.get('/api/vartija/:username', requireAuth, guardPortti, (req, res) => {
   // guardAssignments-kokoelmassa — joten se katosi näkyvistä heti kun se oli annettu.
   // Päivystäjä näki oman määräyksensä vain siitä ilmoituksesta jonka sai antaessaan sen.
   //
-  // Rajattu tähän vuoroon: eilen annettu tehtävä ei kuulu tämän vuoron lokiin, samoin
-  // kuin kooste rajaa kuittaukset vuoron kestoon. Vuorottomalla näytetään silti
-  // kuittaamattomat — määräys joka odottaa kuittausta on auki riippumatta siitä onko
-  // vartija juuri nyt kirjautunut.
-  const alkoiMs = viimeisin ? new Date(viimeisin.alkoi).getTime() : 0;
+  // Rajattu tähän vuoroon VUOROTUNNUKSELLA eikä aikaleimalla (19.9.2026). Aikaleima oli
+  // arvaus siitä mihin vuoroon tehtävä kuuluu; tunnus on se mikä tietueeseen kirjattiin
+  // sillä hetkellä kun tehtävä annettiin, ja se on sama luku jolla vartijan oma työlista
+  // rajataan (siirto.js: kuuluuVuoroon). Kaksi eri rajausta samasta asiasta olisi kaksi
+  // eri vastausta kysymykseen mikä kuului tähän vuoroon.
+  //
+  // Kiinnittämättömät (vuoroId null) näkyvät aina: vuorottomalle annettu määräys odottaa
+  // seuraavaa vuoroa, eikä se saa olla näkymätön sitä odottaessaan.
   const pakotukset = (readCollection('guardAssignments') || [])
     .filter((s) => s?.saaja === user.username
       && (s.tapa === 'pakotus' || s.tila === 'hyvaksytty' || s.tila === 'valmis')
-      && (s.tila === 'odottaa' || new Date(s.luotu).getTime() >= alkoiMs))
+      && kuuluuVuoroon(s, viimeisin?.id || null))
     .sort((a, b) => String(b.luotu).localeCompare(String(a.luotu)));
 
   res.json({
@@ -2430,6 +2462,31 @@ app.post('/api/vuoro/:id/paata', requireAuth, guardPortti, (req, res) => {
     }
   }
 
+  // VUORON PÄÄTTYESSÄ AUKI JÄÄNEET MÄÄRÄYKSET RAUKEAVAT (19.9.2026).
+  //
+  // Sääntö on käyttäjän: uudessa vuorossa on vain se mitä kohteen asetukset kylvävät, ja
+  // kaikki vuoron aikana annettu lisätyö jää siihen vuoroon. Rajaus yksin riittäisi
+  // piilottamaan nämä, mutta silloin kuittaamaton määräys jäisi ikuisesti odottavaan
+  // tilaan ja näyttäisi auki olevalta työltä joka ei ole kenenkään.
+  //
+  // RAUKEAMINEN EI OLE SUORITUS eikä poisto: se kertoo että määräys annettiin, vuoro
+  // loppui ja työ jäi tekemättä. Juuri se on tieto jonka päivystäjä tarvitsee kun hän
+  // katsoo jälkikäteen miksi painiketta ei viety.
+  const kaikkiSiirrot = readCollection('guardAssignments') || [];
+  const rauenneet = rauetaVuoronMukana(kaikkiSiirrot, { vuoroId: vuoro.id });
+  if (rauenneet.length > 0) {
+    const kartta = new Map(rauenneet.map((x) => [x.id, x]));
+    writeCollection('guardAssignments', kaikkiSiirrot.map((x) => kartta.get(x?.id) || x));
+    for (const siirto of rauenneet) {
+      logAudit({
+        user: req.username, action: 'tehtava_rauennut', collection: 'guardAssignments',
+        recordId: siirto.id, eventId: siirto.siteId, kohdeKayttaja: vuoro.vartija,
+        vuoroId: vuoro.id, antaja: siirto.antaja,
+      });
+      kerroSiirrosta(siirto, 'update');
+    }
+  }
+
   // VUORON PÄÄTTYMINEN UNOHTAA SIJAINNIN.
   //
   // sijainti.js on luvannut tämän kommentissaan alusta asti, mutta sitä ei ollut
@@ -2455,7 +2512,15 @@ app.post('/api/vuoro/:id/paata', requireAuth, guardPortti, (req, res) => {
   kerroVuorosta(tulos.vuoro, 'update');
   // Suljetut kierrokset vastaukseen: päivystäjän on nähtävä mitä hänen painalluksensa
   // teki. "Vuoro päätetty" jättäisi kertomatta että samalla keskeytyi kaksi kierrosta.
-  res.json({ ok: true, vuoro: tulos.vuoro, kierrokset: suljetutKierrokset });
+  res.json({
+    ok: true,
+    vuoro: tulos.vuoro,
+    kierrokset: suljetutKierrokset,
+    // Samasta syystä kuin suljetut kierrokset: päättäjän on nähtävä mitä hänen
+    // painalluksensa teki. Tekemättä jäänyt määräys on vuoron tulos siinä missä
+    // tekemätön kierroskin.
+    rauenneet: rauenneet.map((s) => ({ id: s.id, nimi: s.nimi })),
+  });
 });
 
 // Tehtävän tai kierroksen lisäys omaan vuoroon kohteen hakemistosta.
@@ -2512,12 +2577,17 @@ function kerroSiirrosta(siirto, action) {
 // hänet ulos juuri siitä tiedosta jonka takia koko siirto tehtiin.
 app.get('/api/siirrot/omat', requireAuth, guardPortti, (req, res) => {
   const siirrot = readCollection('guardAssignments') || [];
+  // Kesken oleva vuoro rajaa listan (19.9.2026): uudessa vuorossa on vain se mitä kohteen
+  // asetukset kylvävät, ja edellisen vuoron aikana annettu lisätyö jää sinne missä se
+  // annettiin. Ilman rajausta viime vuorossa tehty pakotettu tehtävä näkyi yhä tehtynä
+  // seuraavan vuoron listalla.
+  const vuoroId = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username)?.id || null;
   res.json({
     ok: true,
-    ...omatSiirrot(siirrot, req.username),
+    ...omatSiirrot(siirrot, req.username, vuoroId),
     // Omana kenttänään: pakotus estää muun käytön kunnes se on kuitattu, eikä sitä saa
     // sekoittaa siirtoihin joissa saaja saa valita.
-    pakotukset: kuittaamattomatPakotukset(siirrot, req.username),
+    pakotukset: kuittaamattomatPakotukset(siirrot, req.username, vuoroId),
   });
 });
 

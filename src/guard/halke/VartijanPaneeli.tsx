@@ -34,7 +34,8 @@ import type { Sijainti } from '../../shared/kanava';
 import type { Pohja } from '../../shared/pohjat';
 import { myohassaMinuutteina, paataVuoroPakolla } from '../vuorot';
 import {
-  pakotaTehtava, RAPORTTILAJIN_NIMI, RAPORTTILAJIN_SELITE, type Raporttilaji, type Siirto,
+  pakotaTehtava, RAPORTTILAJIN_NIMI, RAPORTTILAJIN_SELITE,
+  type Raporttilaji, type Siirto, type SiirronTila,
 } from '../siirrot';
 import type { Kohde } from '../tyypit';
 import { GuardKartta } from '../kartta/GuardKartta';
@@ -134,6 +135,31 @@ const TILAN_NIMI: Record<KoosteRivi['tila'], string> = {
   kesken: 'Kesken',
   keskeytetty: 'Keskeytetty',
   tekematta: 'Tekemättä',
+};
+
+// Määräyksen tila omin sanoin. Koosteen tilat (valmis/kesken/tekematta) kertovat
+// vuoron riveistä, ja pakotuksessa sama sana tarkoittaisi eri asiaa: "kesken" on
+// kuitattu mutta tekemätön, ja "keskeytetty" on vuoron mukana rauennut.
+const MAARAYKSEN_NIMI: Record<SiirronTila, string> = {
+  odottaa: 'Kuittaamatta',
+  kuitattu: 'Kuitattu',
+  hyvaksytty: 'Kuitattu',
+  valmis: 'Valmis',
+  rauennut: 'Raukesi vuoron mukana',
+  hylatty: 'Hylätty',
+  peruttu: 'Peruttu',
+};
+
+const MAARAYKSEN_TILA: Record<SiirronTila, KoosteRivi['tila']> = {
+  odottaa: 'tekematta',
+  kuitattu: 'kesken',
+  hyvaksytty: 'kesken',
+  valmis: 'valmis',
+  // Rauennut on tekemättä jäänyttä työtä eikä tyhjä rivi: se sai määräyksen ja jäi
+  // tekemättä, mikä on sama luokka kuin keskeytetty kierros.
+  rauennut: 'keskeytetty',
+  hylatty: 'keskeytetty',
+  peruttu: 'keskeytetty',
 };
 
 const Lohko = ({ otsikko, ikoni: Ikoni, lisa, children }: {
@@ -337,12 +363,15 @@ export const VartijanPaneeli = ({
   // Suoritusaikaa ei ole eikä voi olla: pakotettu tehtävä annetaan kesken vuoron, eikä
   // sillä ole suunniteltua kellonaikaa johon sitä voisi verrata (server/kooste.js:
   // onPoikkeama palauttaa pakotukselle aina false samasta syystä).
-  const pakotusrivit: (KoosteRivi & { maaraaja: string; raporttilaji?: string | null })[] =
+  const pakotusrivit: (KoosteRivi & {
+    maaraaja: string; raporttilaji?: string | null; maarayksenTila: SiirronTila;
+  })[] =
     (tiedot?.pakotukset || []).map((s) => ({
       id: s.id,
       nimi: s.nimi,
       suoritusaika: null,
-      tila: s.tila === 'valmis' ? 'valmis' : s.tila === 'odottaa' ? 'tekematta' : 'kesken',
+      tila: MAARAYKSEN_TILA[s.tila] || 'kesken',
+      maarayksenTila: s.tila,
       tehtyKlo: s.tila === 'valmis' ? (s.tehty || s.ratkaistu) : null,
       poikkeamaMin: null,
       poikkeama: false,
@@ -590,7 +619,7 @@ export const VartijanPaneeli = ({
             {pakotusrivit.map((r) => (
               <li key={r.id} className="px-3 py-2 flex flex-wrap items-center gap-2 bg-accent-soft/40">
                 <span className={`px-2 py-0.5 rounded-md border text-xs font-medium shrink-0 ${TILAN_TYYLI[r.tila]}`}>
-                  {r.tila === 'kesken' ? 'Kuitattu' : r.tila === 'tekematta' ? 'Kuittaamatta' : TILAN_NIMI[r.tila]}
+                  {MAARAYKSEN_NIMI[r.maarayksenTila] || TILAN_NIMI[r.tila]}
                 </span>
                 <span className="text-sm text-ink-strong min-w-0 flex-1 break-words">
                   {r.nimi}

@@ -9,7 +9,11 @@
 // työlista syntyy yhdistämällä vuoron omat tehtävät, hyväksytyt siirrot ja hälytykset.
 // Lista on VARTIJAN, vuoro vain kylvää sen (päätös 10.9.2026).
 
-export type SiirronTila = 'odottaa' | 'hyvaksytty' | 'hylatty' | 'peruttu' | 'kuitattu' | 'valmis';
+// 'rauennut' = määräys oli yhä auki kun vuoro päättyi (19.9.2026). Uudessa vuorossa on
+// vain se mitä kohteen asetukset kylvävät, joten vuoron aikana annettu lisätyö ei siirry
+// seuraavaan — ks. server/siirto.js: rauetaVuoronMukana.
+export type SiirronTila =
+  'odottaa' | 'hyvaksytty' | 'hylatty' | 'peruttu' | 'kuitattu' | 'valmis' | 'rauennut';
 
 export type Siirto = {
   id: string;
