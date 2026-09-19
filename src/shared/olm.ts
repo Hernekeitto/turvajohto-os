@@ -1,4 +1,5 @@
-// PTT-kanavien päästä-päähän-salauksen OlmMachine-kääre (erä 26, vaihe 2, viipale 2b).
+// PTT-kanavien päästä-päähän-salauksen OlmMachine-kääre (erä 26, vaihe 2, viipaleet
+// 2b—2c).
 //
 // Kirjastovalinta ja palvelimen avainvaraston muoto: ks. server/kryptoavaimet.js ja
 // Obsidian "Turvajohto OS PTT, vaihe 2 -suunnitelma". Tämä tiedosto on ohut kääre
@@ -12,17 +13,30 @@
 //  2. Vie OlmMachinen tuottamat pyynnöt (KeysUploadRequest ym.) palvelimen omille
 //     reiteille ja tuo vastaukset takaisin `markRequestAsSent`illa.
 //
-// TÄSSÄ VIIPALEESSA VAIN AVAINTEN SYNKRONOINTI (lataus/kysely/vaatiminen) — ei vielä
-// to-device-viestien välitystä eikä huoneavaimen jakoa (shareRoomKey). Ne vaativat oman
-// palvelinpuolen relensä (to-device-jono) eivätkä kuulu tähän viipaleeseen.
+// KOKO PROTOKOLLAKIERTO (avainten lataus, kysely, laitteiden eksplisiittinen kysely,
+// istunnon perustaminen, huoneavaimen jako, salaus, purku) on todennettu suoraan
+// selaimessa kahden OlmMachine-instanssin välillä ennen tämän tiedoston kirjoittamista
+// — ei arvattu API:sta. Kolme yllättävää löydöstä jotka muokkasivat toteutusta:
+//
+//  a) `queryKeysForUsers` on kutsuttava EKSPLISIITTISESTI ennen kuin toisen käyttäjän
+//     laitteet tunnetaan — `receiveSyncChanges`:n `DeviceLists.changed` EI riitä
+//     yksinään bootstrappaamaan tuntemattoman käyttäjän seurantaa.
+//  b) `UserId`/`RoomId`-oliot KULUVAT KÄYTÖSSÄ (wasm-bindgen "moved" -semantiikka) —
+//     samaa instanssia ei voi antaa kahdelle eri kutsulle, siksi joka funktio tekee
+//     `new UserId(...)`/`new RoomId(...)` omasta merkkijonostaan sen sijaan että
+//     tunnisteita cachettaisiin.
+//  c) `decryptRoomEvent` vaatii TÄYDEN tapahtumaolion (sender, event_id,
+//     origin_server_ts, type, content, room_id) — pelkkä `encryptRoomEvent`:n palauttama
+//     salattu sisältö ei riitä ("missing field `sender`").
 //
 // CSP: WebAssembly.instantiate() vaatii 'wasm-unsafe-eval'-lähteen script-srciin
 // (ks. csp.ts) — ilman sitä initAsync() heittää CompileError-poikkeuksen selaimessa,
 // mitattu ennen korjausta.
 
 import {
-  initAsync, OlmMachine, UserId, DeviceId, RequestType,
-  type KeysUploadRequest, type KeysQueryRequest, type KeysClaimRequest,
+  initAsync, OlmMachine, UserId, DeviceId, RoomId, RequestType,
+  EncryptionSettings, DecryptionSettings, TrustRequirement, DeviceLists,
+  type KeysUploadRequest, type KeysQueryRequest, type KeysClaimRequest, type ToDeviceRequest,
 } from '@matrix-org/matrix-sdk-crypto-wasm';
 
 // Pseudo-toimialue Matrixin tunnistemuotoa varten. EI oikea verkkotunnus eikä koskaan
@@ -160,6 +174,30 @@ export function vaadiVastausJsoniksi(avaimet: VaadiTulosRivi[]): string {
   return JSON.stringify({ one_time_keys });
 }
 
+export type LahetaLaitteelleRivi = { kayttaja: string; laiteId: string; sisalto: unknown };
+
+/** ToDeviceRequest.body -> POST /api/kanavat/avaimet/laheta-laitteelle -viestilista. */
+export function laiteviestitPyynnosta(bodyJson: string): LahetaLaitteelleRivi[] {
+  const runko = JSON.parse(bodyJson);
+  const rivit: LahetaLaitteelleRivi[] = [];
+  for (const [matriisiKayttaja, laitteet] of Object.entries<Record<string, unknown>>(runko.messages || {})) {
+    const kayttaja = omaKayttajaMatriisista(matriisiKayttaja);
+    for (const [laiteId, sisalto] of Object.entries(laitteet)) {
+      rivit.push({ kayttaja, laiteId, sisalto });
+    }
+  }
+  return rivit;
+}
+
+type SaapunutLaiteviesti = { lahettaja: string; tyyppi: string; sisalto: unknown };
+
+/** GET .../laitteelle -tulos -> receiveSyncChanges:n odottama to-device-tapahtumalista (JSON). */
+export function laiteviestitTapahtumiksi(viestit: SaapunutLaiteviesti[]): string {
+  return JSON.stringify(viestit.map((v) => ({
+    type: v.tyyppi, sender: matriisiKayttajaId(v.lahettaja), content: v.sisalto,
+  })));
+}
+
 // --- Synkronointi ---------------------------------------------------------------------
 
 async function palvelimelle(polku: string, runko: unknown) {
@@ -173,18 +211,18 @@ async function palvelimelle(polku: string, runko: unknown) {
 }
 
 /**
- * Ajaa yhden kierroksen OlmMachinen ulosmenevistä pyynnöistä: KeysUpload, KeysQuery ja
- * KeysClaim viedään palvelimen omille reiteille ja vastaukset merkitään takaisin
- * koneelle. MUUT PYYNTÖTYYPIT (ToDevice, RoomMessage, SignatureUpload, KeysBackup)
- * EIVÄT VIELÄ OLE TUETTUJA — niitä ei synny ennen kuin huoneavainten jako
- * (shareRoomKey) rakennetaan, oma viipaleensa (2c).
+ * Ajaa yhden kierroksen OlmMachinen ulosmenevistä pyynnöistä: KeysUpload, KeysQuery,
+ * KeysClaim ja ToDevice viedään palvelimen omille reiteille ja vastaukset merkitään
+ * takaisin koneelle. MUUT PYYNTÖTYYPIT (RoomMessage, SignatureUpload, KeysBackup)
+ * EIVÄT OLE TUETTUJA — RoomMessage kuuluu vasta Vaiheeseen 3 (viestit), ja kaksi muuta
+ * (ristiinallekirjoitus, avainvarmuuskopio) eivät kuulu tämän hankkeen laajuuteen.
  */
-export async function synkronoiAvaimet(machine: OlmMachine): Promise<void> {
+export async function synkronoiPyynnot(machine: OlmMachine): Promise<void> {
   const pyynnot = await machine.outgoingRequests();
   for (const pyynto of pyynnot) {
     // OutgoingRequest-unionin `id` on tyypitetty `string | undefined`, koska YKSI
     // seitsemästä jäsenestä (SignatureUploadRequest) voi olla ilman id:tä — ei koske
-    // näitä kolmea tyyppiä, joten tyyppiväite (as) vastaa ajonaikaista todellisuutta.
+    // näitä neljää tyyppiä, joten tyyppiväite (as) vastaa ajonaikaista todellisuutta.
     if (pyynto.type === RequestType.KeysUpload) {
       const upload = pyynto as KeysUploadRequest;
       const laiteId = haeTaiLuoLaiteId();
@@ -194,16 +232,111 @@ export async function synkronoiAvaimet(machine: OlmMachine): Promise<void> {
       }));
     } else if (pyynto.type === RequestType.KeysQuery) {
       const query = pyynto as KeysQueryRequest;
-      const kayttajat = kysytytKayttajat(query.body).join(',');
-      const vastaus = await fetch(`/api/kanavat/avaimet/kysely?kayttajat=${encodeURIComponent(kayttajat)}`, {
-        credentials: 'include',
-      }).then((r) => r.json()).catch(() => ({ kayttajat: {} }));
-      await machine.markRequestAsSent(query.id, query.type, kyselyVastausJsoniksi(vastaus?.kayttajat || {}));
+      await machine.markRequestAsSent(query.id, query.type, await haeJaVastaaKyselyyn(kysytytKayttajat(query.body)));
     } else if (pyynto.type === RequestType.KeysClaim) {
       const claim = pyynto as KeysClaimRequest;
       const vastaus = await palvelimelle('/api/kanavat/avaimet/vaadi', { pyynnot: vaadiPyynnotPyynnosta(claim.body) });
       await machine.markRequestAsSent(claim.id, claim.type, vaadiVastausJsoniksi(vastaus?.avaimet || []));
+    } else if (pyynto.type === RequestType.ToDevice) {
+      const toDevice = pyynto as ToDeviceRequest;
+      await palvelimelle('/api/kanavat/avaimet/laheta-laitteelle', {
+        tyyppi: toDevice.event_type, viestit: laiteviestitPyynnosta(toDevice.body),
+      });
+      await machine.markRequestAsSent(toDevice.id, toDevice.type, JSON.stringify({}));
     }
-    // Muut tyypit jätetään käsittelemättä tässä viipaleessa (ks. tiedoston yläkommentti).
+    // Muut tyypit jätetään käsittelemättä (ks. tiedoston yläkommentti).
   }
+}
+
+async function haeJaVastaaKyselyyn(kayttajat: string[]): Promise<string> {
+  const vastaus = await fetch(`/api/kanavat/avaimet/kysely?kayttajat=${encodeURIComponent(kayttajat.join(','))}`, {
+    credentials: 'include',
+  }).then((r) => r.json()).catch(() => ({ kayttajat: {} }));
+  return kyselyVastausJsoniksi(vastaus?.kayttajat || {});
+}
+
+/**
+ * Pyytää EKSPLISIITTISESTI käyttäjän laitetiedot. Tarvitaan ennen kuin OlmMachine
+ * suostuu perustamaan istunnon tai jakamaan huoneavaimen tuntemattoman käyttäjän kanssa
+ * — pelkkä `synkronoiPyynnot` ei koskaan itsestään kysele uutta käyttäjää (todennettu
+ * selaimessa: ks. tiedoston yläkommentti, kohta a).
+ */
+export async function paivitaKayttajanLaitteet(machine: OlmMachine, kayttaja: string): Promise<void> {
+  const pyynto = machine.queryKeysForUsers([new UserId(matriisiKayttajaId(kayttaja))]);
+  await machine.markRequestAsSent(pyynto.id, pyynto.type, await haeJaVastaaKyselyyn([kayttaja]));
+}
+
+/**
+ * Varmistaa Olm-istunnot annetuille käyttäjille ennen huoneavaimen jakoa. Kutsujan on
+ * kutsuttava `paivitaKayttajanLaitteet` jokaiselle uudelle käyttäjälle ensin, muuten
+ * tällä ei ole mitään laitteita joille pyytää avainta.
+ */
+export async function varmistaIstunnot(machine: OlmMachine, kayttajat: string[]): Promise<void> {
+  const pyynto = await machine.getMissingSessions(kayttajat.map((k) => new UserId(matriisiKayttajaId(k))));
+  if (!pyynto) return;
+  const vastaus = await palvelimelle('/api/kanavat/avaimet/vaadi', { pyynnot: vaadiPyynnotPyynnosta(pyynto.body) });
+  await machine.markRequestAsSent(pyynto.id, pyynto.type, vaadiVastausJsoniksi(vastaus?.avaimet || []));
+}
+
+/**
+ * Jakaa (tai kierrättää) kanavan huoneavaimen annetuille jäsenille ja toimittaa sen
+ * heille to-device-relenssin kautta. Kutsujan vastuulla: `paivitaKayttajanLaitteet` ja
+ * `varmistaIstunnot` jokaiselle jäsenelle ensin.
+ */
+export async function jaaHuoneenAvain(machine: OlmMachine, kanavaId: string, jasenet: string[]): Promise<void> {
+  const roomId = new RoomId(matriisiHuoneId(kanavaId));
+  const userIds = jasenet.map((k) => new UserId(matriisiKayttajaId(k)));
+  await machine.shareRoomKey(roomId, userIds, new EncryptionSettings());
+  await synkronoiPyynnot(machine);
+}
+
+/**
+ * Salaa sisällön kanavalle ja palauttaa TÄYDEN tapahtumaolion JSON-merkkijonona —
+ * `decryptRoomEvent` vaatii sender/event_id/origin_server_ts/room_id-kentät, pelkkä
+ * salattu sisältö ei riitä (ks. tiedoston yläkommentti, kohta c). Vaatii että
+ * `jaaHuoneenAvain` on kutsuttu tälle kanavalle aiemmin.
+ */
+export async function salaaViesti(
+  machine: OlmMachine, omaKayttaja: string, kanavaId: string, tapahtumaTyyppi: string, sisalto: unknown,
+): Promise<string> {
+  const roomId = new RoomId(matriisiHuoneId(kanavaId));
+  const salattuSisalto = await machine.encryptRoomEvent(roomId, tapahtumaTyyppi, JSON.stringify(sisalto));
+  return JSON.stringify({
+    event_id: `$${crypto.randomUUID()}`,
+    sender: matriisiKayttajaId(omaKayttaja),
+    origin_server_ts: Date.now(),
+    type: 'm.room.encrypted',
+    content: JSON.parse(salattuSisalto),
+    room_id: matriisiHuoneId(kanavaId),
+  });
+}
+
+/**
+ * Purkaa kanavalta vastaanotetun täyden tapahtumaolion. Palauttaa alkuperäisen
+ * `content`-kentän tai nullin jos purku epäonnistuu (esim. huoneavainta ei ole vielä
+ * saatu — asiakas voi tällöin näyttää "odottaa avainta" eikä kaatua).
+ */
+export async function puraViesti(machine: OlmMachine, kanavaId: string, tapahtumaJson: string): Promise<unknown | null> {
+  const roomId = new RoomId(matriisiHuoneId(kanavaId));
+  try {
+    const tulos = await machine.decryptRoomEvent(tapahtumaJson, roomId, new DecryptionSettings(TrustRequirement.Untrusted));
+    return JSON.parse(tulos.event)?.content ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Hakee ja tyhjentää oman laitteen jonossa olevat to-device-viestit ja syöttää ne
+ * OlmMachinelle. Kutsutaan `laiteviesti_saapui`-WS-herätteestä (src/shared/kanava.ts)
+ * tai kytkeytymisen yhteydessä (jäljellä olevat viestit edelliseltä kerralta).
+ */
+export async function synkronoiLaiteviestit(machine: OlmMachine): Promise<void> {
+  const laiteId = haeTaiLuoLaiteId();
+  const vastaus = await fetch(`/api/kanavat/avaimet/laitteelle?laiteId=${encodeURIComponent(laiteId)}`, {
+    credentials: 'include',
+  }).then((r) => r.json()).catch(() => ({ viestit: [] }));
+  const viestit: SaapunutLaiteviesti[] = vastaus?.viestit || [];
+  if (viestit.length === 0) return;
+  await machine.receiveSyncChanges(laiteviestitTapahtumiksi(viestit), new DeviceLists(), new Map());
 }

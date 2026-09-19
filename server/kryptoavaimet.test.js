@@ -106,6 +106,29 @@ test('paivitaAvainpaketti lisää uudet kertakäyttöavaimet eikä korvaa vanhoj
   });
 });
 
+test('paivitaAvainpaketti sallii pelkän kertakäyttöavainten täydennyksen ilman device_keys:ää', () => {
+  // Todennettu suoraan selaimessa: OlmMachine lähettää tällaisen täydennyksen kun
+  // identiteetti on jo tunnettu (ks. tiedoston yläkommentti).
+  const alkuperainen = paivitaAvainpaketti({
+    id: 'x', kayttaja: 'vartija1', laiteId: 'laite1', deviceKeys: deviceKeys(),
+    kertakayttoavaimet: { 'signed_curve25519:a': { key: '1' } },
+  }).tietue;
+  const tulos = paivitaAvainpaketti({
+    olemassaOleva: alkuperainen, id: 'x', kayttaja: 'vartija1', laiteId: 'laite1',
+    kertakayttoavaimet: { 'signed_curve25519:b': { key: '2' } },
+  });
+  assert.equal(tulos.ok, true);
+  assert.deepEqual(tulos.tietue.deviceKeys, deviceKeys());
+  assert.deepEqual(Object.keys(tulos.tietue.kertakayttoavaimet).sort(), ['signed_curve25519:a', 'signed_curve25519:b']);
+});
+
+test('paivitaAvainpaketti vaatii device_keys:n täysin uudelle laitteelle', () => {
+  const tulos = paivitaAvainpaketti({
+    id: 'x', kayttaja: 'vartija1', laiteId: 'laite1', kertakayttoavaimet: { 'signed_curve25519:a': { key: '1' } },
+  });
+  assert.equal(tulos.ok, false);
+});
+
 test('vaadiKertakayttoavain irrottaa pyydetyn algoritmin avaimen', () => {
   const tietue = { kertakayttoavaimet: { 'signed_curve25519:a': { key: '1' }, 'fallback:b': { key: '2' } } };
   const tulos = vaadiKertakayttoavain(tietue, 'signed_curve25519');

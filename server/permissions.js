@@ -548,6 +548,16 @@ const COLLECTIONS = {
     eventScoped: false,
     tuote: 'guard',
   },
+  // Laitteiden väliset kohdennetut viestit (to-device, erä 26, vaihe 2, viipale 2c) —
+  // huoneavainten jaon (shareRoomKey) kuljetus. Sama tyhjä view/touch ja sama perustelu
+  // kuin guardAvaimet: oma näkymä omilla reiteillään, koska näkyvyys on kohdennettu
+  // yksittäiselle (käyttäjä, laite) -parille eikä sivukartta-solmumalliin sovi.
+  guardLaiteviestit: {
+    view: [],
+    touch: () => [],
+    eventScoped: false,
+    tuote: 'guard',
+  },
   checkins: {
     view: ['overview', 'tike_form_in', 'tike_form_out', 'tike_form_jvaction', 'planning_employees', 'global_archived_events'],
     // Ei tietuekohtaista erottelua mahdollista (ei typeId-kenttää) — samat kolme solmua

@@ -154,10 +154,13 @@ const COLLECTIONS = {
   // keskusteluun kirjoittamalla tietueen suoraan.
   guardKanavat: 'guardKanavat.json',
   // PTT-kanavien päästä-päähän-salauksen laiteavaimet (erä 26, vaihe 2): rivi per
-  // rekisteröity laite, vain JULKISTA avainmateriaalia (server/avaimet.js). Palvelimen
-  // ylläpitämä samasta syystä kuin guardKanavat: identiteetin eheys on koko kokoelman
-  // tarkoitus, ja vapaa kirjoitusoikeus mahdollistaisi identiteetin korvaamisen.
+  // rekisteröity laite, vain JULKISTA avainmateriaalia (server/kryptoavaimet.js).
+  // Palvelimen ylläpitämä samasta syystä kuin guardKanavat: identiteetin eheys on koko
+  // kokoelman tarkoitus, ja vapaa kirjoitusoikeus mahdollistaisi identiteetin korvaamisen.
   guardAvaimet: 'guardAvaimet.json',
+  // Laitteiden väliset kohdennetut viestit (to-device, erä 26, vaihe 2, viipale 2c) —
+  // server/laiteviestit.js. Ephemeerinen jono: rivit poistuvat kun kohdelaite hakee ne.
+  guardLaiteviestit: 'guardLaiteviestit.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain

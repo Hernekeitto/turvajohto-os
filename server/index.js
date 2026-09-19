@@ -38,6 +38,7 @@ import {
   pakotaLinjaAuki, vapautaLinjanPakotus, luoVapaaKanava,
 } from './kanavat.js';
 import { paivitaAvainpaketti, vaadiKertakayttoavain, julkinenKuvaus } from './kryptoavaimet.js';
+import { luoLaiteviesti, laitteenViestit, poistaLaitteenViestit } from './laiteviestit.js';
 import {
   nykyinenHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
 } from './puheenvuoro.js';
@@ -2528,6 +2529,61 @@ app.post('/api/kanavat/avaimet/vaadi', requireAuth, guardPortti, (req, res) => {
   }
   if (muuttui) writeCollection('guardAvaimet', paketit);
   res.json({ ok: true, avaimet: vastaus });
+});
+
+// Laitteiden välinen kohdennettu viesti (ToDeviceRequest-vastine, viipale 2c) —
+// kuljettaa huoneavaimen jaon (shareRoomKey) ja Olm-istuntojen perustamisviestit.
+// Sisältö on aina jo Olm-salattu asiakkaan puolella; tämä reitti ei tulkitse sitä.
+//
+// Kohteen on oltava OLEMASSA OLEVA rekisteröity laite (guardAvaimet), ei mikä tahansa
+// merkkijono — muuten jono kasvaisi rajattomasti olemattomille laitteille joita mikään
+// ei koskaan hae tyhjäksi.
+app.post('/api/kanavat/avaimet/laheta-laitteelle', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const tyyppi = typeof req.body?.tyyppi === 'string' ? req.body.tyyppi : '';
+  const pyydetyt = Array.isArray(req.body?.viestit)
+    ? req.body.viestit.filter((v) => v && typeof v.kayttaja === 'string' && typeof v.laiteId === 'string').slice(0, 50)
+    : [];
+  if (!tyyppi || pyydetyt.length === 0) {
+    return res.status(400).json({ ok: false, error: 'tyyppi ja vähintään yksi viesti vaaditaan.' });
+  }
+
+  const avainpaketit = readCollection('guardAvaimet') || [];
+  const jono = readCollection('guardLaiteviestit') || [];
+  const uudet = [];
+  for (const { kayttaja, laiteId, sisalto } of pyydetyt) {
+    if (!avainpaketit.some((p) => p.id === `${kayttaja}:${laiteId}`)) continue;
+    uudet.push(luoLaiteviesti({
+      id: crypto.randomUUID(), lahettaja: req.username, kohdeKayttaja: kayttaja, kohdeLaite: laiteId,
+      tyyppi, sisalto,
+    }));
+  }
+  if (uudet.length === 0) return res.json({ ok: true, toimitettu: 0 });
+
+  writeCollection('guardLaiteviestit', [...jono, ...uudet]);
+  // Suora herätys kohteen kaikille yhteyksille (ei tiedetä kumpi laite/välilehti) —
+  // asiakas hakee heti GET .../laitteelle, väärä laite saa vain tyhjän vastauksen.
+  const kohdeKayttajat = new Set(uudet.map((v) => v.kohdeKayttaja));
+  for (const kayttaja of kohdeKayttajat) {
+    lahetaViesti({ tyyppi: 'laiteviesti_saapui' }, { suodatin: (istunto) => istunto?.username === kayttaja });
+  }
+  res.json({ ok: true, toimitettu: uudet.length });
+});
+
+// Oman laitteen jonossa olevien kohdennettujen viestien haku. Poistaa ne heti — ei
+// toistoa, ei historiaa (ks. server/laiteviestit.js).
+app.get('/api/kanavat/avaimet/laitteelle', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const laiteId = typeof req.query?.laiteId === 'string' ? req.query.laiteId : '';
+  if (!laiteId) return res.status(400).json({ ok: false, error: 'laiteId vaaditaan.' });
+
+  const jono = readCollection('guardLaiteviestit') || [];
+  const omat = laitteenViestit(jono, req.username, laiteId);
+  if (omat.length > 0) writeCollection('guardLaiteviestit', poistaLaitteenViestit(jono, req.username, laiteId));
+  res.json({
+    ok: true,
+    viestit: omat.map((v) => ({ lahettaja: v.lahettaja, tyyppi: v.tyyppi, sisalto: v.sisalto })),
+  });
 });
 
 // Vuoron aloitus.

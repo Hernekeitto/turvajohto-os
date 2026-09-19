@@ -1,4 +1,4 @@
-// PTT-avainsynkronoinnin kääntökerroksen testit (erä 26, vaihe 2, viipale 2b).
+// PTT-avainsynkronoinnin kääntökerroksen testit (erä 26, vaihe 2, viipaleet 2b—2c).
 //
 // Kiinteistöarvot on poimittu suoraan oikeasta OlmMachinesta selaimessa ajetusta
 // testistä (@matrix-org/matrix-sdk-crypto-wasm 18.8.0) — ei arvattu muoto.
@@ -12,6 +12,7 @@ import {
   matriisiKayttajaId, matriisiHuoneId, omaKayttajaMatriisista,
   lataaRunkoPyynnosta, kysytytKayttajat, kyselyVastausJsoniksi,
   vaadiPyynnotPyynnosta, vaadiVastausJsoniksi,
+  laiteviestitPyynnosta, laiteviestitTapahtumiksi,
 } from './olm.ts';
 
 test('matriisiKayttajaId ja omaKayttajaMatriisista ovat toistensa käänteisiä', () => {
@@ -93,4 +94,27 @@ test('vaadiVastausJsoniksi rakentaa Matrixin /keys/claim-vastausmuodon', () => {
 test('vaadiVastausJsoniksi jättää pois rivit joilta puuttuu avain', () => {
   const vastaus = vaadiVastausJsoniksi([{ kayttaja: 'vartija1', laiteId: 'laite1', keyId: null, avain: null }]);
   assert.deepEqual(JSON.parse(vastaus), { one_time_keys: {} });
+});
+
+test('laiteviestitPyynnosta purkaa ToDeviceRequest-rungon litteäksi listaksi', () => {
+  // Todellisen shareRoomKey-kutsun tuottama ToDeviceRequest.body (typistetty).
+  const bodyJson = JSON.stringify({
+    messages: {
+      '@vartija1:turvajohto.local': {
+        laite1: { algorithm: 'm.olm.v1.curve25519-aes-sha2', ciphertext: {}, sender_key: 'x' },
+      },
+    },
+  });
+  assert.deepEqual(laiteviestitPyynnosta(bodyJson), [
+    { kayttaja: 'vartija1', laiteId: 'laite1', sisalto: { algorithm: 'm.olm.v1.curve25519-aes-sha2', ciphertext: {}, sender_key: 'x' } },
+  ]);
+});
+
+test('laiteviestitTapahtumiksi rakentaa receiveSyncChanges:n odottaman muodon', () => {
+  const tapahtumat = laiteviestitTapahtumiksi([
+    { lahettaja: 'vartija1', tyyppi: 'm.room.encrypted', sisalto: { algorithm: 'x' } },
+  ]);
+  assert.deepEqual(JSON.parse(tapahtumat), [
+    { type: 'm.room.encrypted', sender: '@vartija1:turvajohto.local', content: { algorithm: 'x' } },
+  ]);
 });

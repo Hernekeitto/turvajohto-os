@@ -51,7 +51,11 @@ export type KanavaViesti =
   // Käsky EI myönnä puheenvuoroa: asiakas pyytää sen itse tämän jälkeen tavallisella
   // `pyyda_puheenvuoro`-lähetyksellä.
   | { tyyppi: 'linja_pakotettu_auki'; kanavaId: string; pakottaja: string }
-  | { tyyppi: 'linjan_pakotus_vapautettu'; kanavaId: string };
+  | { tyyppi: 'linjan_pakotus_vapautettu'; kanavaId: string }
+  // Laitteelle on saapunut kohdennettu to-device-viesti (erä 26, vaihe 2, viipale 2c) —
+  // ei sisällä itse viestiä, vain herätteen. Asiakas hakee sisällön
+  // GET /api/kanavat/avaimet/laitteelle:sta (src/shared/olm.ts).
+  | { tyyppi: 'laiteviesti_saapui' };
 
 type Kasittelijat = {
   onMuutos?: (kokoelma: string, muutokset: Muutos[]) => void;
@@ -62,6 +66,7 @@ type Kasittelijat = {
   onPuheenvuoroTila?: (tilat: PuheenvuoroTila[]) => void;
   onLinjaPakotettuAuki?: (kanavaId: string, pakottaja: string) => void;
   onLinjanPakotusVapautettu?: (kanavaId: string) => void;
+  onLaiteviestiSaapui?: () => void;
 };
 
 // Uudelleenyhdistys kasvavalla viiveellä. Kiinteä lyhyt viive tarkoittaisi sitä, että
@@ -131,6 +136,8 @@ export function useKanava(kasittelijat: Kasittelijat) {
           kasittelija.current.onLinjaPakotettuAuki?.(viesti.kanavaId, viesti.pakottaja);
         } else if (viesti?.tyyppi === 'linjan_pakotus_vapautettu') {
           kasittelija.current.onLinjanPakotusVapautettu?.(viesti.kanavaId);
+        } else if (viesti?.tyyppi === 'laiteviesti_saapui') {
+          kasittelija.current.onLaiteviestiSaapui?.();
         }
       };
 

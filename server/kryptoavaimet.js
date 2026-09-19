@@ -68,12 +68,16 @@ export function siivoaKertakayttoavaimet(kartta, olemassaOlevatIdt) {
  * Avainpaketin lataus (KeysUploadRequest-vastine). Luo uuden laitetietueen tai
  * päivittää olemassa olevaa.
  *
- * IDENTITEETTI ON PYSYVÄ: ensimmäinen ladattu device_keys lukitaan laitteelle. Myöhempi
- * lataus jolla on ERI avaimet samalle (käyttäjä, laite) -parille hylätään — se
- * tarkoittaisi joko virhettä asiakkaassa tai identiteetin korvausyritystä, eikä
- * kumpikaan saa hiljaa onnistua. Oikea identiteetin vaihto (laitteen nollaus) on oma
- * toimintonsa (vaihe 2, kohta 4, ei vielä tässä viipaleessa) joka poistaa vanhan
- * tietueen ensin.
+ * DEVICE_KEYS ON PAKOLLINEN VAIN ENSIMMÄISELLÄ LATAUKSELLA. Todennettu suoraan
+ * selaimessa kahden OlmMachine-instanssin välillä: kun identiteetti on jo tunnettu,
+ * pelkkien kertakäyttöavainten täydennys lähetetään ILMAN device_keys-kenttää
+ * lainkaan — vaatimalla sitä joka kerta olisi hylätty jokaisen täydennyksen 409:llä.
+ *
+ * IDENTITEETTI ON PYSYVÄ kun device_keys kuitenkin lähetetään: eri avaimet samalle
+ * (käyttäjä, laite) -parille hylätään — se tarkoittaisi joko virhettä asiakkaassa tai
+ * identiteetin korvausyritystä, eikä kumpikaan saa hiljaa onnistua. Oikea identiteetin
+ * vaihto (laitteen nollaus) on oma toimintonsa (vaihe 2, kohta 4, ei vielä tässä
+ * viipaleessa) joka poistaa vanhan tietueen ensin.
  *
  * KERTAKÄYTTÖAVAIMET LISÄTÄÄN eikä korvata — pooli täydentyy vähitellen kun ne kuluvat
  * (vaadiKertakayttoavain), ei tyhjene joka latauksella.
@@ -81,11 +85,17 @@ export function siivoaKertakayttoavaimet(kartta, olemassaOlevatIdt) {
 export function paivitaAvainpaketti({
   olemassaOleva, id, kayttaja, laiteId, deviceKeys, kertakayttoavaimet, nyt = Date.now(),
 }) {
-  if (!kelvollinenDeviceKeys(deviceKeys, kayttaja, laiteId)) {
-    return { ok: false, error: 'device_keys puuttuu tai on virheellinen.' };
-  }
-  if (olemassaOleva && !samaIdentiteetti(olemassaOleva.deviceKeys, deviceKeys)) {
-    return { ok: false, error: 'Laitteella on jo eri identiteettiavain. Nollaa laitesidonta ensin.' };
+  let lopullisetDeviceKeys = olemassaOleva?.deviceKeys ?? null;
+  if (deviceKeys !== undefined && deviceKeys !== null) {
+    if (!kelvollinenDeviceKeys(deviceKeys, kayttaja, laiteId)) {
+      return { ok: false, error: 'device_keys on virheellinen.' };
+    }
+    if (olemassaOleva && !samaIdentiteetti(olemassaOleva.deviceKeys, deviceKeys)) {
+      return { ok: false, error: 'Laitteella on jo eri identiteettiavain. Nollaa laitesidonta ensin.' };
+    }
+    lopullisetDeviceKeys = deviceKeys;
+  } else if (!olemassaOleva) {
+    return { ok: false, error: 'Uusi laite vaatii device_keys-tiedot.' };
   }
 
   const olemassaOlevatIdt = new Set(Object.keys(olemassaOleva?.kertakayttoavaimet || {}));
@@ -97,7 +107,7 @@ export function paivitaAvainpaketti({
       id,
       kayttaja,
       laiteId,
-      deviceKeys,
+      deviceKeys: lopullisetDeviceKeys,
       kertakayttoavaimet: { ...(olemassaOleva?.kertakayttoavaimet || {}), ...uudet },
       rekisteroity: olemassaOleva?.rekisteroity ?? new Date(nyt).toISOString(),
       paivitetty: new Date(nyt).toISOString(),
