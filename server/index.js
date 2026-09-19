@@ -2470,8 +2470,7 @@ app.post('/api/kanavat/avaimet/lataa', requireAuth, guardPortti, (req, res) => {
     id,
     kayttaja: req.username,
     laiteId,
-    identiteettiavaimet: req.body?.identiteettiavaimet,
-    allekirjoitettuPrekey: req.body?.allekirjoitettuPrekey,
+    deviceKeys: req.body?.deviceKeys,
     kertakayttoavaimet: req.body?.kertakayttoavaimet,
   });
   if (!tulos.ok) return res.status(409).json({ ok: false, error: tulos.error });
@@ -2481,7 +2480,7 @@ app.post('/api/kanavat/avaimet/lataa', requireAuth, guardPortti, (req, res) => {
     user: req.username, action: olemassaOleva ? 'ptt_avain_paivitetty' : 'ptt_avain_rekisteroity',
     collection: 'guardAvaimet', recordId: id,
   });
-  res.json({ ok: true, kertakayttoavaimiaJaljella: tulos.tietue.kertakayttoavaimet.length });
+  res.json({ ok: true, kertakayttoavaimiaJaljella: Object.keys(tulos.tietue.kertakayttoavaimet).length });
 });
 
 // Toisten käyttäjien laitteiden julkiset avaimet (KeysQueryRequest-vastine). Ei
@@ -2509,21 +2508,23 @@ app.get('/api/kanavat/avaimet/kysely', requireAuth, guardPortti, (req, res) => {
 app.post('/api/kanavat/avaimet/vaadi', requireAuth, guardPortti, (req, res) => {
   if (!pttPortti(req, res)) return;
   const pyynnot = Array.isArray(req.body?.pyynnot)
-    ? req.body.pyynnot.filter((p) => p && typeof p.kayttaja === 'string' && typeof p.laiteId === 'string').slice(0, 50)
+    ? req.body.pyynnot.filter((p) => (
+      p && typeof p.kayttaja === 'string' && typeof p.laiteId === 'string' && typeof p.algoritmi === 'string'
+    )).slice(0, 50)
     : [];
 
   let paketit = readCollection('guardAvaimet') || [];
   const vastaus = [];
   let muuttui = false;
-  for (const { kayttaja, laiteId } of pyynnot) {
+  for (const { kayttaja, laiteId, algoritmi } of pyynnot) {
     const id = `${kayttaja}:${laiteId}`;
     const idx = paketit.findIndex((p) => p.id === id);
     if (idx === -1) continue;
-    const { tietue, avain } = vaadiKertakayttoavain(paketit[idx]);
+    const { tietue, keyId, avain } = vaadiKertakayttoavain(paketit[idx], algoritmi);
     if (!avain) continue;
     paketit = [...paketit.slice(0, idx), tietue, ...paketit.slice(idx + 1)];
     muuttui = true;
-    vastaus.push({ kayttaja, laiteId, avain });
+    vastaus.push({ kayttaja, laiteId, keyId, avain });
   }
   if (muuttui) writeCollection('guardAvaimet', paketit);
   res.json({ ok: true, avaimet: vastaus });

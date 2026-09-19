@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@fontsource/fira-sans": "^5.3.0",
+    "@matrix-org/matrix-sdk-crypto-wasm": "^18.8.0",
     "lucide-react": "^1.31.0",
     "maplibre-gl": "^6.9.1",
     "pmtiles": "^4.5.0",

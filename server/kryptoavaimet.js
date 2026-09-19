@@ -1,46 +1,65 @@
-// PTT-kanavien päästä-päähän-salauksen laiteavaimet (erä 26, vaihe 2, viipale 2a).
+// PTT-kanavien päästä-päähän-salauksen laiteavaimet (erä 26, vaihe 2, viipale 2a,
+// korjattu 2a2 kun OlmMachinen oikea rajapinta selvisi).
 //
 // ERI ASIA kuin server/avaimet.js (fyysinen avainhallinta, esim. ovien yleisavaimet) ja
 // server/laite.js (laitesidonnan allekirjoitusavain, jolla vahvistetaan että API-pyyntö
 // tulee sidotulta laitteelta). Tämä tiedosto koskee PTT-VIESTIEN SISÄLLÖN salausta
 // käyttäjien laitteiden välillä — kolmas, täysin erillinen avainkäsite.
 //
-// Julkinen avainvarasto @matrix-org/matrix-sdk-crypto-wasm:n OlmMachinelle
-// (kirjastovalinta 19.9.2026, ks. Obsidian: "Turvajohto OS PTT, vaihe 2 -suunnitelma").
-// Tämä tiedosto EI tunne kirjastoa itseään eikä tee mitään kryptografiaa — se vain
-// tallentaa ja tarjoilee sen tuottaman JULKISEN avainmateriaalin samalla tavalla kuin
-// kanavat.js tallentaa kanavien tietomallin. Yksityiset avaimet eivät koskaan poistu
-// laitteelta eivätkä kulje tämän tiedoston tai sen kutsujan (server/index.js) kautta.
+// MUOTO ON MATRIXIN OMA, EI KEKSITTY: @matrix-org/matrix-sdk-crypto-wasm:n OlmMachine
+// tuottaa ja lukee JSON-rungot suoraan Matrixin client-server-spesifikaation
+// /keys/upload, /keys/query ja /keys/claim -muodoissa (device_keys, one_time_keys).
+// Ensimmäinen versio tästä tiedostosta keksi oman kentistön (identiteettiavaimet,
+// allekirjoitettuPrekey) joka ei vastannut mitään mitä kirjasto oikeasti tuottaa —
+// korjattu tähän ennen kuin asiakaspään integraatiota rakennettiin sen päälle. Palvelin
+// EI TULKITSE avainten sisältöä (ei allekirjoitusten tarkistusta — se on TOFU/asiakkaan
+// asia, ks. Obsidian: "vaihe 2 -suunnitelma", kohta 3): se vain tallentaa ja tarjoilee
+// device_keys- ja one_time_keys-oliot lähes sellaisenaan, samaan tapaan kuin oikea
+// Matrix-kotipalvelinkin tekee.
+//
+// Fallback-avain (Matrix 1.2+, "aina saatavilla oleva" kertakäyttöavain jota käytetään
+// kun pooli tyhjenee) on TARKOITUKSELLA RAJATTU POIS tästä viipaleesta — kertakäyttö-
+// avainpooli riittää perusistunnon todentamiseen, fallback on täydennys jolle ei ole
+// vielä tarvetta.
 //
 // Säännöt ovat täällä, I/O ja Express kutsujassa — sama jako kuin kanavat.js:ssä.
 
-function onMerkkijono(x) {
-  return typeof x === 'string' && x.length > 0;
-}
-
-/** Onko identiteettiavainpari (Olm: ed25519 allekirjoitusavain + curve25519 sopimusavain) kelvollinen. */
-export function kelvollinenIdentiteetti(identiteetti) {
-  return !!identiteetti && onMerkkijono(identiteetti.ed25519) && onMerkkijono(identiteetti.curve25519);
-}
-
-/** Onko allekirjoitettu prekey (id + julkinen avain + allekirjoitus) kelvollinen. */
-export function kelvollinenAllekirjoitettuPrekey(prekey) {
-  return !!prekey && onMerkkijono(prekey.id) && onMerkkijono(prekey.avain) && onMerkkijono(prekey.allekirjoitus);
+function onOlio(x) {
+  return !!x && typeof x === 'object' && !Array.isArray(x);
 }
 
 /**
- * Siivoaa syötteen kertakäyttöavainlistan: vain kelvolliset {id, avain} -parit,
- * uniikit id:t (ensimmäinen voittaa). Ei kaada eikä valita väärämuotoisesta syötteestä
- * — asiakas on aina toisen pään käyttäjä eikä sen virhe saa kaataa palvelinta.
+ * Onko annettu device_keys-olio (Matrixin /keys/upload-muoto) rakenteeltaan kelvollinen
+ * JA täsmääkö se väitettyyn käyttäjään ja laitteeseen. EI tarkista allekirjoitusta —
+ * palvelin ei ole luotettu osapuoli kryptografian suhteen, vain säilytyksen suhteen.
  */
-export function siivoaKertakayttoavaimet(lista) {
-  const nahdyt = new Set();
-  const tulos = [];
-  for (const avain of Array.isArray(lista) ? lista : []) {
-    if (!avain || !onMerkkijono(avain.id) || !onMerkkijono(avain.avain)) continue;
-    if (nahdyt.has(avain.id)) continue;
-    nahdyt.add(avain.id);
-    tulos.push({ id: avain.id, avain: avain.avain });
+export function kelvollinenDeviceKeys(deviceKeys, kayttaja, laiteId) {
+  return onOlio(deviceKeys)
+    && deviceKeys.user_id === kayttaja
+    && deviceKeys.device_id === laiteId
+    && onOlio(deviceKeys.keys)
+    && onOlio(deviceKeys.signatures);
+}
+
+/** Ovatko kaksi device_keys-oliota saman identiteetin ilmentymiä (samat julkiset avaimet). */
+function samaIdentiteetti(a, b) {
+  const aAvaimet = a?.keys || {};
+  const bAvaimet = b?.keys || {};
+  const kaikkiIdt = new Set([...Object.keys(aAvaimet), ...Object.keys(bAvaimet)]);
+  return [...kaikkiIdt].every((avainId) => aAvaimet[avainId] === bAvaimet[avainId]);
+}
+
+/**
+ * Siivoaa syötteen kertakäyttöavainten kartan (id -> allekirjoitettu avainolio):
+ * pudottaa väärämuotoiset arvot ja id:t jotka ovat jo tallessa. Ei kaada eikä valita
+ * väärämuotoisesta syötteestä — asiakas on aina toisen pään käyttäjä.
+ */
+export function siivoaKertakayttoavaimet(kartta, olemassaOlevatIdt) {
+  const tulos = {};
+  if (!onOlio(kartta)) return tulos;
+  for (const [avainId, avain] of Object.entries(kartta)) {
+    if (!avainId || olemassaOlevatIdt.has(avainId) || !onOlio(avain)) continue;
+    tulos[avainId] = avain;
   }
   return tulos;
 }
@@ -49,38 +68,28 @@ export function siivoaKertakayttoavaimet(lista) {
  * Avainpaketin lataus (KeysUploadRequest-vastine). Luo uuden laitetietueen tai
  * päivittää olemassa olevaa.
  *
- * IDENTITEETTI ON PYSYVÄ: ensimmäinen ladattu identiteettiavain lukitaan laitteelle.
- * Myöhempi lataus jolla on ERI identiteetti hylätään — se tarkoittaisi joko virhettä
- * asiakkaassa tai identiteetin korvausyritystä, eikä kumpikaan saa hiljaa onnistua.
- * Identiteetin oikea vaihto (laitteen nollaus) on oma toimintonsa (vaihe 2, kohta 4,
- * ei vielä tässä viipaleessa) joka poistaa vanhan tietueen ensin.
- *
- * ALLEKIRJOITETTU PREKEY KORVATAAN aina uusimmalla — sen rotaatio on normaalia eikä
- * vaadi erillistä oikeutta, koska se on aina saman (jo lukitun) identiteetin
- * allekirjoittama.
+ * IDENTITEETTI ON PYSYVÄ: ensimmäinen ladattu device_keys lukitaan laitteelle. Myöhempi
+ * lataus jolla on ERI avaimet samalle (käyttäjä, laite) -parille hylätään — se
+ * tarkoittaisi joko virhettä asiakkaassa tai identiteetin korvausyritystä, eikä
+ * kumpikaan saa hiljaa onnistua. Oikea identiteetin vaihto (laitteen nollaus) on oma
+ * toimintonsa (vaihe 2, kohta 4, ei vielä tässä viipaleessa) joka poistaa vanhan
+ * tietueen ensin.
  *
  * KERTAKÄYTTÖAVAIMET LISÄTÄÄN eikä korvata — pooli täydentyy vähitellen kun ne kuluvat
  * (vaadiKertakayttoavain), ei tyhjene joka latauksella.
  */
 export function paivitaAvainpaketti({
-  olemassaOleva, id, kayttaja, laiteId, identiteettiavaimet, allekirjoitettuPrekey, kertakayttoavaimet,
-  nyt = Date.now(),
+  olemassaOleva, id, kayttaja, laiteId, deviceKeys, kertakayttoavaimet, nyt = Date.now(),
 }) {
-  if (!kelvollinenIdentiteetti(identiteettiavaimet)) {
-    return { ok: false, error: 'Identiteettiavaimet puuttuvat tai ovat virheelliset.' };
+  if (!kelvollinenDeviceKeys(deviceKeys, kayttaja, laiteId)) {
+    return { ok: false, error: 'device_keys puuttuu tai on virheellinen.' };
   }
-  if (!kelvollinenAllekirjoitettuPrekey(allekirjoitettuPrekey)) {
-    return { ok: false, error: 'Allekirjoitettu prekey puuttuu tai on virheellinen.' };
-  }
-  if (olemassaOleva && (
-    olemassaOleva.identiteettiavaimet.ed25519 !== identiteettiavaimet.ed25519
-    || olemassaOleva.identiteettiavaimet.curve25519 !== identiteettiavaimet.curve25519
-  )) {
+  if (olemassaOleva && !samaIdentiteetti(olemassaOleva.deviceKeys, deviceKeys)) {
     return { ok: false, error: 'Laitteella on jo eri identiteettiavain. Nollaa laitesidonta ensin.' };
   }
 
-  const vanhatIdt = new Set((olemassaOleva?.kertakayttoavaimet || []).map((a) => a.id));
-  const uudetKelvolliset = siivoaKertakayttoavaimet(kertakayttoavaimet).filter((a) => !vanhatIdt.has(a.id));
+  const olemassaOlevatIdt = new Set(Object.keys(olemassaOleva?.kertakayttoavaimet || {}));
+  const uudet = siivoaKertakayttoavaimet(kertakayttoavaimet, olemassaOlevatIdt);
 
   return {
     ok: true,
@@ -88,9 +97,8 @@ export function paivitaAvainpaketti({
       id,
       kayttaja,
       laiteId,
-      identiteettiavaimet,
-      allekirjoitettuPrekey,
-      kertakayttoavaimet: [...(olemassaOleva?.kertakayttoavaimet || []), ...uudetKelvolliset],
+      deviceKeys,
+      kertakayttoavaimet: { ...(olemassaOleva?.kertakayttoavaimet || {}), ...uudet },
       rekisteroity: olemassaOleva?.rekisteroity ?? new Date(nyt).toISOString(),
       paivitetty: new Date(nyt).toISOString(),
     },
@@ -98,27 +106,24 @@ export function paivitaAvainpaketti({
 }
 
 /**
- * Kertakäyttöavaimen "vaatiminen" (KeysClaimRequest-vastine): irrottaa YHDEN avaimen
- * poolin kärjestä ja palauttaa sekä avaimen että päivitetyn (avaimettoman) tietueen.
- * Avain EI KOSKAAN PALAA pooliin — uudelleenkäyttö murtaisi Olm-protokollan eteenpäin
- * turvaavuuden. Tyhjästä poolista palautuu avain: null (asiakas turvautuu silloin
- * pelkkään allekirjoitettuun prekeyhin — normaali Olm-käytös, ei virhe).
+ * Kertakäyttöavaimen "vaatiminen" (KeysClaimRequest-vastine): irrottaa YHDEN pyydetyn
+ * algoritmin avaimen poolista ja palauttaa sen id:n, itse avaimen ja päivitetyn
+ * (avaimettoman) tietueen. Avain EI KOSKAAN PALAA pooliin — uudelleenkäyttö murtaisi
+ * Olm-protokollan eteenpäin turvaavuuden. Jos pyydettyä algoritmia ei ole jäljellä,
+ * avain: null (asiakas turvautuu silloin muuhun keinoon — normaali Olm-käytös, ei virhe).
  */
-export function vaadiKertakayttoavain(tietue) {
-  const pooli = tietue?.kertakayttoavaimet || [];
-  if (pooli.length === 0) return { tietue, avain: null };
-  const [avain, ...loput] = pooli;
-  return { tietue: { ...tietue, kertakayttoavaimet: loput }, avain };
+export function vaadiKertakayttoavain(tietue, algoritmi) {
+  const kartta = tietue?.kertakayttoavaimet || {};
+  const loydettyId = Object.keys(kartta).find((avainId) => avainId.startsWith(`${algoritmi}:`));
+  if (!loydettyId) return { tietue, keyId: null, avain: null };
+  const { [loydettyId]: avain, ...loput } = kartta;
+  return { tietue: { ...tietue, kertakayttoavaimet: loput }, keyId: loydettyId, avain };
 }
 
 /**
- * Laitteen julkinen kuvaus avainkyselyyn: identiteetti ja allekirjoitettu prekey,
- * EI kertakäyttöavainpoolia — sitä ei koskaan näytetä listana (ks. vaadiKertakayttoavain).
+ * Laitteen julkinen kuvaus avainkyselyyn: device_keys, EI kertakäyttöavainpoolia — sitä
+ * ei koskaan näytetä listana (ks. vaadiKertakayttoavain).
  */
 export function julkinenKuvaus(tietue) {
-  return {
-    laiteId: tietue.laiteId,
-    identiteettiavaimet: tietue.identiteettiavaimet,
-    allekirjoitettuPrekey: tietue.allekirjoitettuPrekey,
-  };
+  return { laiteId: tietue.laiteId, deviceKeys: tietue.deviceKeys };
 }
