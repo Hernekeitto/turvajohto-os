@@ -39,6 +39,7 @@ import {
 } from './kanavat.js';
 import { paivitaAvainpaketti, vaadiKertakayttoavain, julkinenKuvaus } from './kryptoavaimet.js';
 import { luoLaiteviesti, laitteenViestit, poistaLaitteenViestit } from './laiteviestit.js';
+import { luoViesti, kanavanViestit } from './viestit.js';
 import {
   nykyinenHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
 } from './puheenvuoro.js';
@@ -2251,6 +2252,10 @@ app.get('/api/kanavat/omat', requireAuth, guardPortti, (req, res) => {
       })(),
       // Vain hätäkanavalla: kertoo onko HÄLKE pakottanut linjan auki (vaihe 1e).
       ...(k.tyyppi === 'hata' ? { haltePidaHengissa: k.haltePidaHengissa || null } : {}),
+      // DM ja vapaa: osallistujalista sellaisenaan (vaihe 3) — asiakas tarvitsee sen
+      // tietääkseen kenelle huoneavain jaetaan (src/shared/olm.ts: jaaHuoneenAvain).
+      // Ei uutta tietovuotoa: osapuolet näkevät jo toisensa olemalla samassa kanavassa.
+      ...(k.tyyppi === 'dm' || k.tyyppi === 'vapaa' ? { osallistujat: k.osallistujat || [] } : {}),
     }));
   res.json({ ok: true, kanavat: [...omatKiinteatKanavat(vuoro), ...tallennetut] });
 });
@@ -2583,6 +2588,85 @@ app.get('/api/kanavat/avaimet/laitteelle', requireAuth, guardPortti, (req, res) 
   res.json({
     ok: true,
     viestit: omat.map((v) => ({ lahettaja: v.lahettaja, tyyppi: v.tyyppi, sisalto: v.sisalto })),
+  });
+});
+
+// ====================== PTT: TEKSTIVIESTIT (vaihe 3, viipale 3a) ===================
+//
+// `tapahtuma` on aina asiakkaan jo Olm/Megolm-salaama tapahtumaolio
+// (src/shared/olm.ts: salaaViesti) — nämä reitit EIVÄT tulkitse eivätkä pura sitä, ks.
+// server/viestit.js:n tiedostokommentti.
+//
+// HTTP-versio kuuluuKanavaanNyt:stä (ks. floor control -osio alempana tässä
+// tiedostossa): sama sääntö, eri oikeuslähde — req.permissions on requireAuthin jo
+// valmiiksi ratkaisema, kun taas WS-istunnolla on vain roleId josta oikeudet luetaan
+// joka kerta (rolePermissions). Kahden auth-muodon rinnakkaiselo on tässä tiedostossa
+// jo ennestään vakiintunut malli.
+function reqKuuluuKanavaanNyt(req, kanavaId) {
+  const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
+  if (kuuluuKiinteaanKanavaan(vuoro, kanavaId)) return true;
+  const kanava = (readCollection('guardKanavat') || []).find((k) => k.id === kanavaId);
+  if (!kanava) return false;
+  if (kanava.tyyppi === 'hata') {
+    return onHalyttaja(kanava, req.username) || req.role === 'admin' || canView(req.permissions, null, 'guard_dispatch');
+  }
+  if (kanava.tyyppi === 'dm' || kanava.tyyppi === 'vapaa') return onOsallistuja(kanava, req.username);
+  return false;
+}
+
+function saaKasitellaKanavaa(req, kanavaId) {
+  if (req.role === 'admin') return true;
+  if (!(req.tuotteet || []).includes('guard')) return false;
+  if (!canView(req.permissions, null, 'guard_ptt')) return false;
+  return reqKuuluuKanavaanNyt(req, kanavaId);
+}
+
+// Kanavaviesti uudesta tekstiviestistä. Oma viestityyppi eikä geneerinen 'muutos' —
+// guardViestit-näkyvyys on kanavakohtainen ja dynaaminen eikä saaNahda(istunto, eventId)
+// -mallia vasten toimi, ja asiakkaan on tiedettävä MIKÄ kanava sai uuden viestin
+// päättääkseen kannattaako hakea (sama syy kuin puheenvuoro_*-viesteillä vaihe 1b:ssä).
+function kerroViestista(viesti) {
+  lahetaViesti(
+    { tyyppi: 'uusi_viesti', kanavaId: viesti.kanavaId, viestiId: viesti.id },
+    { suodatin: (istunto) => istunto?.username !== viesti.lahettaja && saaKuullaKanavaa(istunto, viesti.kanavaId) },
+  );
+}
+
+app.post('/api/viestit', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const kanavaId = typeof req.body?.kanavaId === 'string' ? req.body.kanavaId : '';
+  if (!kanavaId) return res.status(400).json({ ok: false, error: 'kanavaId vaaditaan.' });
+  if (!saaKasitellaKanavaa(req, kanavaId)) {
+    return res.status(403).json({ ok: false, error: 'Et kuulu tähän kanavaan.' });
+  }
+
+  const tulos = luoViesti({
+    id: crypto.randomUUID(), kanavaId, lahettaja: req.username, tapahtuma: req.body?.tapahtuma,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  const viestit = readCollection('guardViestit') || [];
+  writeCollection('guardViestit', [...viestit, tulos.viesti]);
+  logAudit({
+    user: req.username, action: 'ptt_viesti_lahetetty', collection: 'guardViestit',
+    recordId: tulos.viesti.id, koko: tulos.viesti.koko,
+  });
+  kerroViestista(tulos.viesti);
+  res.json({ ok: true, id: tulos.viesti.id });
+});
+
+app.get('/api/viestit', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const kanavaId = typeof req.query?.kanavaId === 'string' ? req.query.kanavaId : '';
+  if (!kanavaId) return res.status(400).json({ ok: false, error: 'kanavaId vaaditaan.' });
+  if (!saaKasitellaKanavaa(req, kanavaId)) {
+    return res.status(403).json({ ok: false, error: 'Et kuulu tähän kanavaan.' });
+  }
+
+  const viestit = kanavanViestit(readCollection('guardViestit') || [], kanavaId).slice(-200);
+  res.json({
+    ok: true,
+    viestit: viestit.map((v) => ({ id: v.id, lahettaja: v.lahettaja, luotu: v.luotu, tapahtuma: v.tapahtuma })),
   });
 });
 

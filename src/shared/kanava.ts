@@ -55,7 +55,11 @@ export type KanavaViesti =
   // Laitteelle on saapunut kohdennettu to-device-viesti (erä 26, vaihe 2, viipale 2c) —
   // ei sisällä itse viestiä, vain herätteen. Asiakas hakee sisällön
   // GET /api/kanavat/avaimet/laitteelle:sta (src/shared/olm.ts).
-  | { tyyppi: 'laiteviesti_saapui' };
+  | { tyyppi: 'laiteviesti_saapui' }
+  // Uusi tekstiviesti kanavalla (erä 26, vaihe 3). Oma tyyppi eikä geneerinen 'muutos',
+  // koska asiakkaan on tiedettävä MIKÄ kanava sai viestin — sisältö haetaan erikseen
+  // (src/shared/viestit.ts), tämä on vain heräte.
+  | { tyyppi: 'uusi_viesti'; kanavaId: string; viestiId: string };
 
 type Kasittelijat = {
   onMuutos?: (kokoelma: string, muutokset: Muutos[]) => void;
@@ -67,6 +71,7 @@ type Kasittelijat = {
   onLinjaPakotettuAuki?: (kanavaId: string, pakottaja: string) => void;
   onLinjanPakotusVapautettu?: (kanavaId: string) => void;
   onLaiteviestiSaapui?: () => void;
+  onUusiViesti?: (kanavaId: string, viestiId: string) => void;
 };
 
 // Uudelleenyhdistys kasvavalla viiveellä. Kiinteä lyhyt viive tarkoittaisi sitä, että
@@ -138,6 +143,8 @@ export function useKanava(kasittelijat: Kasittelijat) {
           kasittelija.current.onLinjanPakotusVapautettu?.(viesti.kanavaId);
         } else if (viesti?.tyyppi === 'laiteviesti_saapui') {
           kasittelija.current.onLaiteviestiSaapui?.();
+        } else if (viesti?.tyyppi === 'uusi_viesti') {
+          kasittelija.current.onUusiViesti?.(viesti.kanavaId, viesti.viestiId);
         }
       };
 

@@ -558,6 +558,16 @@ const COLLECTIONS = {
     eventScoped: false,
     tuote: 'guard',
   },
+  // PTT-kanavien tekstiviestit (erä 26, vaihe 3): salattuja tapahtumaolioita. Sama tyhjä
+  // view/touch ja sama perustelu kuin guardKanavat/guardAvaimet — näkyvyys on
+  // kanavakohtainen ja dynaaminen (kuuluuKanavaanNyt, server/index.js), ei
+  // sivukartta-solmumalliin sovi.
+  guardViestit: {
+    view: [],
+    touch: () => [],
+    eventScoped: false,
+    tuote: 'guard',
+  },
   checkins: {
     view: ['overview', 'tike_form_in', 'tike_form_out', 'tike_form_jvaction', 'planning_employees', 'global_archived_events'],
     // Ei tietuekohtaista erottelua mahdollista (ei typeId-kenttää) — samat kolme solmua

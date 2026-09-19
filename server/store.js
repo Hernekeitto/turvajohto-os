@@ -161,6 +161,9 @@ const COLLECTIONS = {
   // Laitteiden väliset kohdennetut viestit (to-device, erä 26, vaihe 2, viipale 2c) —
   // server/laiteviestit.js. Ephemeerinen jono: rivit poistuvat kun kohdelaite hakee ne.
   guardLaiteviestit: 'guardLaiteviestit.json',
+  // PTT-kanavien tekstiviestit (erä 26, vaihe 3): salattuja tapahtumaolioita, ei
+  // sisältöä (server/viestit.js). Palvelin ei koskaan pura eikä lue niitä.
+  guardViestit: 'guardViestit.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain
