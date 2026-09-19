@@ -153,6 +153,11 @@ const COLLECTIONS = {
   // kirjoitusoikeus tarkoittaisi että käyttäjä voisi lisätä itsensä mihin tahansa
   // keskusteluun kirjoittamalla tietueen suoraan.
   guardKanavat: 'guardKanavat.json',
+  // PTT-kanavien päästä-päähän-salauksen laiteavaimet (erä 26, vaihe 2): rivi per
+  // rekisteröity laite, vain JULKISTA avainmateriaalia (server/avaimet.js). Palvelimen
+  // ylläpitämä samasta syystä kuin guardKanavat: identiteetin eheys on koko kokoelman
+  // tarkoitus, ja vapaa kirjoitusoikeus mahdollistaisi identiteetin korvaamisen.
+  guardAvaimet: 'guardAvaimet.json',
 };
 
 // Kentät jotka salataan levyllä (ks. fieldcrypto.js). Tässä on tarkoituksella vain

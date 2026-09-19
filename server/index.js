@@ -37,6 +37,7 @@ import {
   vuorossaOlevatMuut, hataKanavaId, luoHataKanava, hataKanavaPurkautunut, onHalyttaja,
   pakotaLinjaAuki, vapautaLinjanPakotus, luoVapaaKanava,
 } from './kanavat.js';
+import { paivitaAvainpaketti, vaadiKertakayttoavain, julkinenKuvaus } from './kryptoavaimet.js';
 import {
   nykyinenHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
 } from './puheenvuoro.js';
@@ -2443,6 +2444,89 @@ app.delete('/api/kanavat/vapaa/:id', requireAuth, guardPortti, (req, res) => {
   });
   kerroKanavastaMuutos('delete', kanava, (istunto) => onOsallistuja(kanava, istunto?.username));
   res.json({ ok: true });
+});
+
+// ====================== PTT: PÄÄSTÄ-PÄÄHÄN-SALAUKSEN AVAIMET (vaihe 2, viipale 2a) ==
+//
+// Julkinen avainvarasto @matrix-org/matrix-sdk-crypto-wasm:n OlmMachinelle
+// (kirjastovalinta 19.9.2026, ks. Obsidian: "Turvajohto OS PTT, vaihe 2 -suunnitelma").
+// VAIN JULKISTA MATERIAALIA kulkee näiden reittien kautta — yksityiset avaimet eivät
+// koskaan poistu laitteelta. Eheys on silti tärkeä (avaimen vaihto palvelimella
+// mahdollistaisi väliintulohyökkäyksen), siksi lataus vaatii aina kirjautumisen OMAAN
+// tunnukseen eikä admin voi ladata tai "korjata" toisen käyttäjän identiteettiä.
+
+// Laitteen avainpaketin lataus/päivitys (KeysUploadRequest-vastine).
+app.post('/api/kanavat/avaimet/lataa', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const laiteId = typeof req.body?.laiteId === 'string' ? req.body.laiteId : '';
+  if (!laiteId) return res.status(400).json({ ok: false, error: 'laiteId vaaditaan.' });
+
+  const id = `${req.username}:${laiteId}`;
+  const paketit = readCollection('guardAvaimet') || [];
+  const olemassaOleva = paketit.find((p) => p.id === id);
+
+  const tulos = paivitaAvainpaketti({
+    olemassaOleva,
+    id,
+    kayttaja: req.username,
+    laiteId,
+    identiteettiavaimet: req.body?.identiteettiavaimet,
+    allekirjoitettuPrekey: req.body?.allekirjoitettuPrekey,
+    kertakayttoavaimet: req.body?.kertakayttoavaimet,
+  });
+  if (!tulos.ok) return res.status(409).json({ ok: false, error: tulos.error });
+
+  writeCollection('guardAvaimet', [...paketit.filter((p) => p.id !== id), tulos.tietue]);
+  logAudit({
+    user: req.username, action: olemassaOleva ? 'ptt_avain_paivitetty' : 'ptt_avain_rekisteroity',
+    collection: 'guardAvaimet', recordId: id,
+  });
+  res.json({ ok: true, kertakayttoavaimiaJaljella: tulos.tietue.kertakayttoavaimet.length });
+});
+
+// Toisten käyttäjien laitteiden julkiset avaimet (KeysQueryRequest-vastine). Ei
+// osallistuja- tai vuorotarkistusta: kuka saa VIESTIÄ kenelle ratkeaa kanavan
+// jäsenyydestä muualla, tämä reitti vain tarjoilee julkista avainmateriaalia kuten
+// mikä tahansa avoin avainpalvelin.
+app.get('/api/kanavat/avaimet/kysely', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const pyydetyt = typeof req.query?.kayttajat === 'string'
+    ? req.query.kayttajat.split(',').map((k) => k.trim()).filter(Boolean).slice(0, 50)
+    : [];
+
+  const paketit = readCollection('guardAvaimet') || [];
+  const kayttajat = {};
+  for (const kayttaja of new Set(pyydetyt)) {
+    const laitteet = paketit.filter((p) => p.kayttaja === kayttaja).map(julkinenKuvaus);
+    if (laitteet.length > 0) kayttajat[kayttaja] = laitteet;
+  }
+  res.json({ ok: true, kayttajat });
+});
+
+// Kertakäyttöavainten vaatiminen (KeysClaimRequest-vastine) uuden Olm-istunnon
+// aloittamiseksi. Kuluttaa avaimet pysyvästi (ei koskaan uudelleenkäyttöä) — ks.
+// server/kryptoavaimet.js: vaadiKertakayttoavain.
+app.post('/api/kanavat/avaimet/vaadi', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  const pyynnot = Array.isArray(req.body?.pyynnot)
+    ? req.body.pyynnot.filter((p) => p && typeof p.kayttaja === 'string' && typeof p.laiteId === 'string').slice(0, 50)
+    : [];
+
+  let paketit = readCollection('guardAvaimet') || [];
+  const vastaus = [];
+  let muuttui = false;
+  for (const { kayttaja, laiteId } of pyynnot) {
+    const id = `${kayttaja}:${laiteId}`;
+    const idx = paketit.findIndex((p) => p.id === id);
+    if (idx === -1) continue;
+    const { tietue, avain } = vaadiKertakayttoavain(paketit[idx]);
+    if (!avain) continue;
+    paketit = [...paketit.slice(0, idx), tietue, ...paketit.slice(idx + 1)];
+    muuttui = true;
+    vastaus.push({ kayttaja, laiteId, avain });
+  }
+  if (muuttui) writeCollection('guardAvaimet', paketit);
+  res.json({ ok: true, avaimet: vastaus });
 });
 
 // Vuoron aloitus.

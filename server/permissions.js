@@ -536,6 +536,18 @@ const COLLECTIONS = {
     eventScoped: false,
     tuote: 'guard',
   },
+  // PTT-avainvarasto (erä 26, vaihe 2): laitteiden JULKISET Olm-avaimet
+  // (@matrix-org/matrix-sdk-crypto-wasm, kirjastovalinta 19.9.2026). Sama tyhjä
+  // view/touch ja sama perustelu kuin guardKanavat: oma näkymä omilla reiteillään
+  // (/api/kanavat/avaimet/..., server/index.js), koska lukusääntö ei ole "kaikki tai ei
+  // mitään" (identiteetti+prekey näkyy kaikille, kertakäyttöavain vain kuluttamalla
+  // eikä koskaan listana) eikä sivukartta-solmumalliin sovi.
+  guardAvaimet: {
+    view: [],
+    touch: () => [],
+    eventScoped: false,
+    tuote: 'guard',
+  },
   checkins: {
     view: ['overview', 'tike_form_in', 'tike_form_out', 'tike_form_jvaction', 'planning_employees', 'global_archived_events'],
     // Ei tietuekohtaista erottelua mahdollista (ei typeId-kenttää) — samat kolme solmua
