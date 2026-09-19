@@ -12,16 +12,13 @@
 import { useState } from 'react';
 import { Send, X } from 'lucide-react';
 
-// Valmiit tilatiedot. Nämä ovat ne viisi asiaa jotka vuoron aikana ilmoitetaan, ja
-// valmis nappi on kentällä nopeampi ja luettavampi kuin käsin kirjoitettu teksti.
-const VALMIIT = [
-  'Kaikki kunnossa',
-  'Saavuin kohteeseen',
-  'Kierros aloitettu',
-  'Kierros päättynyt',
-  'Tauolla',
-  'Poistun kohteesta',
-];
+// Valmiit tilatiedot. Nämä ovat ne asiat jotka vuoron aikana ilmoitetaan, ja valmis
+// nappi on kentällä nopeampi ja luettavampi kuin käsin kirjoitettu teksti.
+//
+// Lista on tilannekuvassa eikä täällä (19.9.2026): hälytyskeskus tarvitsee saman listan
+// erottaakseen valmiin napin vartijan itse kirjoittamasta tekstistä, ja kaksi kopiota
+// eroaisi toisistaan ensimmäisenä päivänä jona nappeja muutetaan.
+import { VALMIIT_TILATIEDOT as VALMIIT } from '../tilannekuva';
 
 type Props = {
   kohdeNimi: string;

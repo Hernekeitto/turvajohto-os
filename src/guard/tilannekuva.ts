@@ -310,6 +310,69 @@ const merkinnanTaso = (tapahtuma: string, halytys: Halytys): Kiireys => {
   return 'rauhallinen';
 };
 
+// --- Tilatiedot omana listanaan (19.9.2026) -----------------------------------------
+//
+// Tilatieto on vartijan kuittaus siitä missä hän on ja miten menee ("Kaikki kunnossa",
+// "Tauolla", "Saavuin kohteeseen"). Se tallennetaan toimenpidekirjauksena eikä omana
+// kokoelmanaan, koska sillä on jo kaikki mitä tarvitaan — kirjaaja, aika, kohde ja
+// teksti (ks. mobiili/Tilatieto.tsx).
+//
+// OMA LISTA, EIKÄ VIRRASSA. Näitä tulee kymmeniä vuorossa, ja tapahtumavirta näyttää
+// oletuksena kymmenen riviä: muutama "Kaikki kunnossa" työntää pois juuri sen mitä
+// virta on olemassa näyttämään. Ero on käyttötarkoituksessa eikä tärkeydessä — virta
+// vastaa kysymykseen mitä poikkeavaa tapahtui, tilatietolista kysymykseen kuka on
+// hereillä ja missä. Jälkimmäinen luetaan lävitse, ensimmäinen silmäillään.
+export const TILATIEDON_TYYPPI = 'Tilatieto';
+
+// Valmiit tilatiedot: ne asiat jotka vuoron aikana ilmoitetaan. Täällä eikä
+// mobiilinäkymässä, koska molemmat päät tarvitsevat saman listan — vartija nappeina ja
+// hälytyskeskus siihen että erottaa valmiin napin itse kirjoitetusta tekstistä.
+export const VALMIIT_TILATIEDOT = [
+  'Kaikki kunnossa',
+  'Saavuin kohteeseen',
+  'Kierros aloitettu',
+  'Kierros päättynyt',
+  'Tauolla',
+  'Poistun kohteesta',
+];
+
+const VALMIIT_JOUKKO = new Set(VALMIIT_TILATIEDOT.map((t) => t.toLowerCase()));
+
+export const onTilatieto = (r: GuardRaportti) =>
+  r?.typeId === 'guard_action' && r.type === TILATIEDON_TYYPPI;
+
+export type Tilailmoitus = {
+  id: string;
+  ts: string;
+  kohdeId: string;
+  vartija: string;
+  teksti: string;
+  // Itse kirjoitettu vai valmis nappi. EI TÄRKEYSJÄRJESTYS vaan merkintä: käsin
+  // kirjoitettu teksti on aina jotain mitä ei ollut valmiina, ja se on syytä erottaa
+  // silmäiltäessä. Järjestys pysyy aikajärjestyksenä — tilatietolista on loki, ja
+  // lokista luetaan mitä tapahtui missä järjestyksessä.
+  oma: boolean;
+};
+
+export function tilatiedot(lahteet: Lahteet, raja = 50): Tilailmoitus[] {
+  return lahteet.raportit
+    .filter(onTilatieto)
+    .map((r) => {
+      const teksti = (r.summary || r.description || '').trim();
+      return {
+        id: r.id,
+        ts: raportinAika(r) || '',
+        kohdeId: r.siteId,
+        vartija: r.author || '',
+        teksti,
+        oma: teksti !== '' && !VALMIIT_JOUKKO.has(teksti.toLowerCase()),
+      };
+    })
+    .filter((t) => !!t.ts)
+    .sort((a, b) => b.ts.localeCompare(a.ts))
+    .slice(0, raja);
+}
+
 export function tapahtumavirta(lahteet: Lahteet, raja = 40): Tapahtuma[] {
   const virta: Tapahtuma[] = [];
 
@@ -363,6 +426,9 @@ export function tapahtumavirta(lahteet: Lahteet, raja = 40): Tapahtuma[] {
   }
 
   for (const r of lahteet.raportit) {
+    // Tilatiedot ovat omassa listassaan (ks. tilatiedot): ne ovat vuoron rutiinia jota
+    // tulee kymmeniä, ja virrassa ne hukuttavat sen mitä virta on olemassa näyttämään.
+    if (onTilatieto(r)) continue;
     const ts = raportinAika(r);
     if (!ts) continue;
     virta.push({

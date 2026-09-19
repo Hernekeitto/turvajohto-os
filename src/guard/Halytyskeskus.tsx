@@ -22,7 +22,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Siren, Timer, MapPin, Phone, Check, Users, Route, KeyRound, Megaphone,
   TriangleAlert, Activity, Volume2, VolumeX, Building2, ShieldCheck, MessageSquare,
-  History, Wifi, WifiOff, BellRing, Search, X, ShieldAlert, Square,
+  History, Wifi, WifiOff, BellRing, Search, X, ShieldAlert, Square, Radio,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
@@ -45,7 +45,7 @@ import {
   PANEELIT, avaaIkkunassa, avaaValilehdessa, paneelinOsoite, type PaneeliId,
 } from './halke/paneelit';
 import {
-  kentalla, kohteenTilanne, tapahtumavirta, type Kiireys, type Lahteet,
+  kentalla, kohteenTilanne, tapahtumavirta, tilatiedot, type Kiireys, type Lahteet,
 } from './tilannekuva';
 import type { Kohde } from './tyypit';
 import {
@@ -67,6 +67,10 @@ type Oikeudet = {
   sijainnit: boolean;
   kalusto: boolean;
   tiedotteet: boolean;
+  // Kenttäkirjaukset, joista tilatiedot ovat yksi laji. Ilman lippua tyhjä tilatietolista
+  // näyttäisi hiljaiselta vuorolta silloinkin kun se on oikeuden puute — ja juuri se on
+  // tämän näkymän ykkössääntö.
+  raportit: boolean;
 };
 
 type Props = {
@@ -584,6 +588,15 @@ export const Halytyskeskus = ({
   const [virtaMaara, setVirtaMaara] = useState(10);
   const virta = useMemo(() => tapahtumavirta(lahteet, virtaMaara), [lahteet, virtaMaara]);
 
+  // Tilatietoloki on pidempi kuin virta tarkoituksella: virtaa silmäillään ("mitä juuri
+  // tapahtui"), lokia luetaan ("kuka on hereillä ja missä"). Kolmekymmentä riviä kattaa
+  // tavallisen vuoron, ja pidemmät valinnat ovat listan alla kun se ei riitä.
+  const [tilatietoMaara, setTilatietoMaara] = useState(30);
+  const tilailmoitukset = useMemo(
+    () => tilatiedot(lahteet, tilatietoMaara),
+    [lahteet, tilatietoMaara]
+  );
+
   const kierroksetKesken = useMemo(
     () => lahteet.kierrokset
       .filter((k) => k.tila === 'kesken')
@@ -875,6 +888,9 @@ export const Halytyskeskus = ({
       Number(onUnohtunutVuoro(b, minuutti * 60_000)) - Number(onUnohtunutVuoro(a, minuutti * 60_000)));
   const kentallaNakyvat = kentallaNyt.filter(
     (v) => osuu([v.vartija, v.mita, ...(v.kohteet || []).map(kohdeNimi)], haku('kentalla'))
+  );
+  const tilatiedotNakyva = tilailmoitukset.filter(
+    (t) => osuu([t.teksti, t.vartija, kohdeNimi(t.kohdeId)], haku('tilatiedot'))
   );
   const virtaNakyva = virta.filter(
     (t) => osuu([t.otsikko, t.teksti, t.kuka, kohdeNimi(t.kohdeId)], haku('virta'))
@@ -1901,6 +1917,89 @@ export const Halytyskeskus = ({
             </ul>
           </>
         )}
+      </Osio>
+      </>)}
+
+      {nayta('tilatiedot') && (<>
+      {/* --- Tilatiedot ---------------------------------------------------------
+
+          OMA PANEELINSA eikä rivejä tapahtumavirrassa (19.9.2026, käyttäjän pyyntö).
+          Tilatietoja tulee kymmeniä vuorossa, ja virta näyttää oletuksena kymmenen
+          riviä: muutama "Kaikki kunnossa" työnsi pois juuri sen mitä virta on olemassa
+          näyttämään. Ero on käyttötarkoituksessa eikä tärkeydessä — virta vastaa
+          kysymykseen mitä poikkeavaa tapahtui, tämä lista kysymykseen kuka on hereillä. */}
+      <Osio
+        otsikko="Tilatiedot"
+        ikoni={Radio}
+        maara={oikeudet.raportit ? tilailmoitukset.length : null}
+      >
+        <p className="text-xs text-ink-subtle mb-3">
+          Vartijoiden lähettämät tilatiedot aikajärjestyksessä, uusin ylimpänä. Omalla
+          tekstillä kirjoitettu tilatieto on merkitty — se on aina jotain mitä ei ollut
+          valmiina napeissa.
+        </p>
+        {!oikeudet.raportit ? (
+          <EiOikeutta mita="kenttäkirjauksiin" />
+        ) : (<>
+          <Hakukentta
+            arvo={haku('tilatiedot')}
+            muuta={(v) => asetaHaku('tilatiedot', v)}
+            paikanpitaja="Hae tilatieto, vartija tai kohde"
+            piilotettu={tilailmoitukset.length - tilatiedotNakyva.length}
+          />
+          {tilailmoitukset.length === 0 ? (
+            <p className="text-sm text-ink-muted bg-sunken border border-line rounded-lg px-4 py-3">
+              Yhtään tilatietoa ei ole lähetetty.
+            </p>
+          ) : tilatiedotNakyva.length === 0 ? (
+            <EiOsumia haku={haku('tilatiedot')} />
+          ) : (
+            <ul className="divide-y divide-line-soft border border-line rounded-lg overflow-hidden">
+              {tilatiedotNakyva.map((t) => (
+                <li key={t.id} className="px-4 py-2.5 bg-surface flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="text-xs text-ink-subtle tabular-nums shrink-0 w-12">{kellonaika(t.ts)}</span>
+                  <span className="text-sm font-medium text-ink-strong shrink-0">{t.vartija || 'Tuntematon'}</span>
+                  <span className={`text-sm min-w-0 flex-1 ${t.oma ? 'text-ink-strong font-medium' : 'text-ink-body'}`}>
+                    {t.teksti}
+                    {/* Merkki eikä väri yksin: värisokealle ja seinätaululta katsovalle
+                        sana on se joka erottuu. */}
+                    {t.oma && <span className="text-xs text-ink-subtle font-normal"> · oma teksti</span>}
+                  </span>
+                  <span className="text-xs text-ink-subtle shrink-0">{kohdeNimi(t.kohdeId)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {/* Pituusvalinta pois seinätaululta. Seinätaulussa painikkeet piilotetaan
+              CSS:llä (.halke-taulu), jolloin pelkkä "Näytä viimeisimmät" jäisi
+              roikkumaan ilman mitään valittavaa — ja seinätaulu on katsottavaksi, ei
+              kosketettavaksi. */}
+          {!taulu && (
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-ink-subtle">Näytä viimeisimmät</span>
+            {[30, 60, 120].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setTilatietoMaara(n)}
+                aria-pressed={tilatietoMaara === n}
+                className={`rounded-lg border px-2.5 py-1 text-xs font-medium tabular-nums transition-colors ${
+                  tilatietoMaara === n
+                    ? 'bg-accent-soft text-accent-ink border-accent/40'
+                    : 'bg-surface text-ink-body border-line hover:bg-sunken'
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+            {tilailmoitukset.length < tilatietoMaara && (
+              <span className="text-xs text-ink-subtle">
+                — tilatietoja on {tilailmoitukset.length}
+              </span>
+            )}
+          </div>
+          )}
+        </>)}
       </Osio>
       </>)}
 

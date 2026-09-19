@@ -11,11 +11,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  kentalla, kohteenTilanne, kohteenToiminnot, lyhytAika, tapahtumavirta, tyhjatLahteet,
+  kentalla, kohteenTilanne, kohteenToiminnot, lyhytAika, tapahtumavirta, tilatiedot,
+  tyhjatLahteet,
   type Lahteet,
 } from './tilannekuva.ts';
 import type { Halytys } from '../shared/halytykset.ts';
-import type { Kierros, TehtavaSuoritus } from './tyypit.ts';
+import type { GuardRaportti, Kierros, TehtavaSuoritus } from './tyypit.ts';
 import type { KalustoTietue } from './kalusto/tyypit.ts';
 import type { KaynnissaVuoro } from './vuorot.ts';
 
@@ -245,6 +246,79 @@ test('hätäpainikkeen painallus on virrassa kriittinen jo luontimerkinnästä',
 test('tapahtumavirta rajataan pyydettyyn pituuteen', () => {
   const tehtavat = Array.from({ length: 60 }, (_, i) => tehtava({ id: `t${i}`, aika: hetki(i + 1) }));
   assert.equal(tapahtumavirta(lahteilla({ tehtavat }), 25).length, 25);
+});
+
+// --- Tilatiedot omana listanaan (19.9.2026) -----------------------------------------
+//
+// Tilatieto on toimenpidekirjaus jonka `type` on 'Tilatieto'. Näitä tulee kymmeniä
+// vuorossa, ja virrassa ne hukuttivat sen mitä virta on olemassa näyttämään.
+
+const kirjaus = (osat: Partial<GuardRaportti>): GuardRaportti => ({
+  id: 'r1',
+  siteId: 'kohde1',
+  typeId: 'guard_action',
+  type: 'Toimenpide',
+  author: 'vartija1',
+  date: '2026-09-19',
+  time: '22:00',
+  luotu: hetki(5),
+  summary: 'Ovi lukittu',
+  ...osat,
+});
+
+const tilatieto = (osat: Partial<GuardRaportti>): GuardRaportti =>
+  kirjaus({ type: 'Tilatieto', summary: 'Kaikki kunnossa', ...osat });
+
+test('TILATIETO EI OLE tapahtumavirrassa, muu kirjaus on', () => {
+  // Käyttäjän havainto: tilatiedot hukuttivat virran. Virta näyttää oletuksena kymmenen
+  // riviä, ja muutama "Kaikki kunnossa" työntää poikkeamat pois ruudulta.
+  const virta = tapahtumavirta(lahteilla({
+    raportit: [tilatieto({ id: 'r1', luotu: hetki(1) }), kirjaus({ id: 'r2', luotu: hetki(2) })],
+  }));
+  assert.deepEqual(virta.map((t) => t.id), ['raportti-r2']);
+});
+
+test('tilatiedot ovat omassa listassaan uusin ensin', () => {
+  const lista = tilatiedot(lahteilla({
+    raportit: [
+      tilatieto({ id: 'a', luotu: hetki(30), summary: 'Tauolla' }),
+      tilatieto({ id: 'b', luotu: hetki(2), summary: 'Saavuin kohteeseen' }),
+      // Muu kirjaus ei kuulu tähän listaan sen enempää kuin tilatieto virtaan.
+      kirjaus({ id: 'c', luotu: hetki(1) }),
+    ],
+  }));
+  assert.deepEqual(lista.map((t) => t.id), ['b', 'a']);
+  assert.equal(lista[0].vartija, 'vartija1');
+  assert.equal(lista[0].kohdeId, 'kohde1');
+});
+
+test('itse kirjoitettu tilatieto erottuu valmiista napista', () => {
+  // Käsin kirjoitettu teksti on aina jotain mitä ei ollut valmiina, ja juuri se on se
+  // rivi jonka päivystäjän on luettava eikä silmäiltävä.
+  const lista = tilatiedot(lahteilla({
+    raportit: [
+      tilatieto({ id: 'a', luotu: hetki(3), summary: 'Ovi 3 jäänyt auki, ilmoitettu huoltoon' }),
+      tilatieto({ id: 'b', luotu: hetki(4), summary: 'Kaikki kunnossa' }),
+      // Kirjainkoko ei saa ratkaista: sama nappi eri kirjoitusasussa on yhä nappi.
+      tilatieto({ id: 'c', luotu: hetki(5), summary: 'kaikki kunnossa' }),
+    ],
+  }));
+  assert.deepEqual(lista.map((t) => t.oma), [true, false, false]);
+});
+
+test('tilatieto ilman aikaleimaa ei putoa listalta vaan lasketaan ilmoitetusta ajasta', () => {
+  // Vanhassa kirjauksessa `luotu` voi puuttua. Pudottaminen tarkoittaisi että
+  // päivystäjän lista on hiljaisempi kuin kenttä oli.
+  const lista = tilatiedot(lahteilla({
+    raportit: [tilatieto({ id: 'a', luotu: undefined, date: '2026-09-19', time: '21:15' })],
+  }));
+  assert.equal(lista.length, 1);
+  assert.equal(lista[0].ts, '2026-09-19T21:15');
+});
+
+test('tilatietolista rajataan pyydettyyn pituuteen', () => {
+  const raportit = Array.from({ length: 80 }, (_, i) => tilatieto({ id: `t${i}`, luotu: hetki(i + 1) }));
+  assert.equal(tilatiedot(lahteilla({ raportit }), 30).length, 30);
 });
 
 // --- Kohteen valikon tiivistelmät ---------------------------------------------------

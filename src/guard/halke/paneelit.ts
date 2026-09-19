@@ -20,7 +20,8 @@
 // palautuu index.html:ään ilman palvelinmuutosta. Polut pysyvät myös manifestin
 // scopessa (/guard), joten asennettu sovellus ei putoa selaimeen.
 
-export type PaneeliId = 'keikat' | 'halytykset' | 'vartijat' | 'kartta' | 'kohteet' | 'tausta';
+export type PaneeliId =
+  'keikat' | 'halytykset' | 'vartijat' | 'kartta' | 'tilatiedot' | 'kohteet' | 'tausta';
 
 export type Paneeli = {
   id: PaneeliId;
@@ -72,6 +73,16 @@ export const PANEELIT: Paneeli[] = [
     // Seinätaulukelpoinen, ja tämä on se paneeli jota varten seinätaulu ensisijaisesti
     // on: kartta kertoo tilanteen yhdellä silmäyksellä kolmen metrin päästä, mihin
     // yksikään lista ei pysty.
+    taulukelpoinen: true,
+  },
+  {
+    id: 'tilatiedot',
+    polku: '/guard/halke/tilatiedot',
+    label: 'Tilatiedot',
+    kuvaus: 'Vartijoiden lähettämät tilatiedot aikajärjestyksessä: kuka on hereillä ja missä.',
+    // Seinätaulukelpoinen. Tilatietoloki on lyhytrivinen ja ajassa etenevä — se on
+    // juuri se lista jota katsotaan kaukaa sivusilmällä, kuten radioliikennettä
+    // seurataan: uusi rivi ylhäällä kertoo että kentällä on elämää.
     taulukelpoinen: true,
   },
   {

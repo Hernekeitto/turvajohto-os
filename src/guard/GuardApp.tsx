@@ -2170,6 +2170,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             kalusto: saaNahdaKalustoa,
             tiedotteet: saaNahdaTiedotteet,
             sijainnit: saaNahdaSijainnit,
+            raportit: saaNahdaRaportit,
           }}
           sijainnit={sijainnit}
           paneeli={HALKE_OSOITE.paneeli}
