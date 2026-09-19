@@ -35,7 +35,7 @@ import {
 import {
   kuuluuKiinteaanKanavaan, omatKiinteatKanavat, onOsallistuja, loydaDm, luoDmKanava,
   vuorossaOlevatMuut, hataKanavaId, luoHataKanava, hataKanavaPurkautunut, onHalyttaja,
-  pakotaLinjaAuki, vapautaLinjanPakotus,
+  pakotaLinjaAuki, vapautaLinjanPakotus, luoVapaaKanava,
 } from './kanavat.js';
 import {
   nykyinenHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
@@ -2379,6 +2379,70 @@ app.post('/api/kanavat/:id/vapauta-linjan-pakotus', requireAuth, guardPortti, (r
     { suodatin: (istunto) => istunto?.username === paivitetty.vartija },
   );
   res.json({ ok: true, kanava: paivitetty });
+});
+
+// Vapaa ryhmä (vaihe 1g): sama guard_dispatch MUOKKAUS -valtuus kuin linjan pakotuksella
+// — tämä on hallinnollinen toiminto, ei kaikkien guard_ptt NÄKY -oikeudella varustettujen.
+const saaHallinnoidaVapaitaRyhmia = (req) =>
+  req.role === 'admin' || canEdit(req.permissions, null, 'guard_dispatch');
+
+app.post('/api/kanavat/vapaa', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  if (!saaHallinnoidaVapaitaRyhmia(req)) {
+    return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus voi perustaa ryhmiä.' });
+  }
+  const nimi = typeof req.body?.nimi === 'string' ? req.body.nimi : '';
+  const pyydetyt = Array.isArray(req.body?.osallistujat)
+    ? req.body.osallistujat.filter((k) => typeof k === 'string')
+    : [];
+
+  // Jokaisen osallistujan on oltava olemassa oleva GUARD-puolen käyttäjä — PTT on
+  // kokonaan GUARD-ominaisuus, joten tuotepuolivertailua ei tarvita (toisin kuin DM:ssä,
+  // jossa molemmat osapuolet voivat olla kummalla puolella tahansa).
+  const tuntemattomat = [...new Set(pyydetyt)].filter((kayttaja) => {
+    const tiedot = listUsers().find((u) => u.username === kayttaja);
+    return !tiedot || !paaseeTuotteisiin(tiedot).includes('guard');
+  });
+  if (tuntemattomat.length > 0) {
+    return res.status(400).json({
+      ok: false, error: `Tuntematon tai ei-GUARD-käyttäjä: ${tuntemattomat.join(', ')}`,
+    });
+  }
+
+  const tulos = luoVapaaKanava({ id: crypto.randomUUID(), nimi, osallistujat: pyydetyt, luoja: req.username });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  const kanavat = readCollection('guardKanavat') || [];
+  writeCollection('guardKanavat', [...kanavat, tulos.kanava]);
+  logAudit({
+    user: req.username, action: 'ptt_vapaa_luotu', collection: 'guardKanavat', recordId: tulos.kanava.id,
+    detail: tulos.kanava.nimi,
+  });
+  kerroKanavastaMuutos('create', tulos.kanava, (istunto) => onOsallistuja(tulos.kanava, istunto?.username));
+  res.json({ ok: true, kanava: { id: tulos.kanava.id, tyyppi: 'vapaa', nimi: tulos.kanava.nimi } });
+});
+
+// Vapaan ryhmän poisto. Ei purkuautomatiikkaa (toisin kuin DM ja hätäkanava) — ryhmä ei
+// ole sidottu vuoroon eikä hälytykseen, joten mikään tapahtuma ei koskaan tee siitä
+// tarpeetonta automaattisesti. Poisto on siis aina käsin tehty hallinnollinen päätös.
+app.delete('/api/kanavat/vapaa/:id', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  if (!saaHallinnoidaVapaitaRyhmia(req)) {
+    return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus voi poistaa ryhmiä.' });
+  }
+  const kanavat = readCollection('guardKanavat') || [];
+  const kanava = kanavat.find((k) => k.id === req.params.id);
+  if (!kanava || kanava.tyyppi !== 'vapaa') {
+    return res.status(404).json({ ok: false, error: 'Ryhmää ei löytynyt.' });
+  }
+
+  writeCollection('guardKanavat', kanavat.filter((k) => k.id !== kanava.id));
+  logAudit({
+    user: req.username, action: 'ptt_vapaa_poistettu', collection: 'guardKanavat', recordId: kanava.id,
+    detail: kanava.nimi,
+  });
+  kerroKanavastaMuutos('delete', kanava, (istunto) => onOsallistuja(kanava, istunto?.username));
+  res.json({ ok: true });
 });
 
 // Vuoron aloitus.
@@ -6593,10 +6657,11 @@ function kasitteleKanavaViesti(istunto, viesti) {
   if (viesti.tyyppi === 'vapauta_puheenvuoro') return kasittelePuheenvuoroVapautus(istunto, viesti);
 }
 
-// --- PTT floor control (erä 26, vaihe 1b; hätäkanava ja DM mukaan vaihe 1e/1f) -------
+// --- PTT floor control (erä 26, vaihe 1b; hätäkanava/DM/vapaa mukaan vaihe 1e/1f/1g) -
 //
-// KIINTEÄT KANAVAT, HÄTÄKANAVA JA DM. Vapaa ryhmä vaatii vielä oman jäsenyys-
-// tarkistuksensa tähän — ks. server/kanavat.js:n tiedostokommentti.
+// KAIKKI TÄHÄNASTISET KANAVATYYPIT: kiinteät (kohde/piiri), hätäkanava, DM ja vapaa
+// ryhmä. Jäsenyyssääntö kullekin on server/kanavat.js:ssä; tämä tiedosto vain kokoaa ne
+// yhdeksi tarkistukseksi ja lisää tuoteoikeuden (guard_ptt).
 //
 // SAMA TARKISTUS JOKA KERTA, EI VAIN YHTEYDEN AVATESSA. `istunto.kuunneltavatKanavat`
 // on käyttäjän oma ilmoitus siitä mitä se haluaa kuunnella, mutta oikeus ja vuoro
@@ -6621,7 +6686,8 @@ function kuuluuKanavaanNyt(istunto, kanavaId, vuoro) {
       || istunto?.role === 'admin'
       || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch');
   }
-  if (kanava.tyyppi === 'dm') return onOsallistuja(kanava, istunto?.username);
+  // DM ja vapaa ryhmä jakavat saman osallistujalista-muotoisen tietueen.
+  if (kanava.tyyppi === 'dm' || kanava.tyyppi === 'vapaa') return onOsallistuja(kanava, istunto?.username);
   return false;
 }
 

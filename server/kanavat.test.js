@@ -12,7 +12,7 @@ import {
   kohdeKanavaId, piiriKanavaId, omatKiinteatKanavat, kuuluuKiinteaanKanavaan,
   vuorossaOlevatMuut, onOsallistuja, loydaDm, luoDmKanava, dmPurkautunut,
   hataKanavaId, luoHataKanava, onHalyttaja, hataKanavaPurkautunut,
-  pakotaLinjaAuki, vapautaLinjanPakotus,
+  pakotaLinjaAuki, vapautaLinjanPakotus, luoVapaaKanava,
 } from './kanavat.js';
 
 const kohdevuoro = (yli = {}) => ({
@@ -186,4 +186,35 @@ test('vapautaLinjanPakotus tyhjentää kentän', () => {
 test('vapautaLinjanPakotus ei koske muun tyyppistä kanavaa', () => {
   const kanava = { tyyppi: 'vapaa', haltePidaHengissa: { kayttaja: 'x' } };
   assert.equal(vapautaLinjanPakotus(kanava), kanava);
+});
+
+// --- Vapaa ryhmä (vaihe 1g) --------------------------------------------------------
+
+test('luoVapaaKanava luo nimetyn ryhmän uniikeista osallistujista', () => {
+  const tulos = luoVapaaKanava({
+    id: 'k1', nimi: '  Yöpartio  ', osallistujat: ['vartija1', 'vartija2', 'vartija1'], luoja: 'admin', nyt: 0,
+  });
+  assert.equal(tulos.ok, true);
+  assert.equal(tulos.kanava.tyyppi, 'vapaa');
+  assert.equal(tulos.kanava.nimi, 'Yöpartio');
+  assert.deepEqual(tulos.kanava.osallistujat, ['vartija1', 'vartija2']);
+  assert.equal(tulos.kanava.luoja, 'admin');
+});
+
+test('luoVapaaKanava vaatii nimen', () => {
+  const tulos = luoVapaaKanava({ id: 'k1', nimi: '  ', osallistujat: ['vartija1', 'vartija2'], luoja: 'admin' });
+  assert.equal(tulos.ok, false);
+});
+
+test('luoVapaaKanava vaatii vähintään kaksi eri osallistujaa', () => {
+  assert.equal(luoVapaaKanava({ id: 'k1', nimi: 'Ryhmä', osallistujat: ['vartija1'], luoja: 'admin' }).ok, false);
+  assert.equal(
+    luoVapaaKanava({ id: 'k1', nimi: 'Ryhmä', osallistujat: ['vartija1', 'vartija1'], luoja: 'admin' }).ok, false,
+  );
+});
+
+test('onOsallistuja tunnistaa vapaan ryhmän jäsenen', () => {
+  const tulos = luoVapaaKanava({ id: 'k1', nimi: 'Ryhmä', osallistujat: ['vartija1', 'vartija2'], luoja: 'admin' });
+  assert.equal(onOsallistuja(tulos.kanava, 'vartija1'), true);
+  assert.equal(onOsallistuja(tulos.kanava, 'vartija3'), false);
 });

@@ -13,8 +13,7 @@
 //
 // Vapaat ryhmät, henkilökohtaiset viestit (DM) ja hätäkanavat ovat ERI ASIA — niillä ON
 // eksplisiittinen osallistujalista tai vastaava, koska niitä ei voi laskea vuorosta. Ne
-// tallennetaan `guardKanavat`-kokoelmaan (server/index.js, server/permissions.js). DM ja
-// hätäkanava ovat mukana; vapaan ryhmän luonti tulee omana erikseen.
+// tallennetaan `guardKanavat`-kokoelmaan (server/index.js, server/permissions.js).
 
 import { AVOIMET as HALYTYS_AVOIMET } from './halytys.js';
 
@@ -229,4 +228,37 @@ export function pakotaLinjaAuki(kanava, kayttaja, nyt = Date.now()) {
 export function vapautaLinjanPakotus(kanava) {
   if (kanava?.tyyppi !== 'hata') return kanava;
   return { ...kanava, haltePidaHengissa: null };
+}
+
+// --- Vapaa ryhmä (erä 26, vaihe 1g) --------------------------------------------------
+//
+// HÄLKE:n (tai pääkäyttäjän) käsin perustama nimetty kanava kiinteälle osallistuja-
+// joukolle — esim. ryhmä joka ei vastaa mitään yksittäistä kohdetta tai vuorotyyppiä.
+//
+// TOISIN KUIN DM: jäsenyys EI riipu vuorosta. Osallistujalista on kiinteä perustamis-
+// hetkestä siihen asti kunnes ryhmä poistetaan käsin — jäsenen vuoron päättyminen ei
+// poista häntä ryhmästä eikä alkava vuoro lisää ketään siihen. Siksi tälle kanavatyypille
+// ei ole (eikä tule) vastinetta `dmPurkautunut`-funktiolle.
+//
+// Osallistujuuden LUKEMINEN käyttää samaa `onOsallistuja`-funktiota kuin DM, koska
+// tietueen muoto (osallistujat-taulukko) on sama — vain luontisääntö eroaa.
+export function luoVapaaKanava({ id, nimi, osallistujat, luoja, nyt = Date.now() }) {
+  const puhdasNimi = String(nimi || '').trim();
+  if (!puhdasNimi) return { ok: false, error: 'Ryhmä vaatii nimen.' };
+
+  const uniikit = [...new Set((osallistujat || []).filter((k) => typeof k === 'string' && k))];
+  // Vähintään kaksi, jotta "ryhmä" ei ole vain toinen nimi DM:lle.
+  if (uniikit.length < 2) return { ok: false, error: 'Ryhmä vaatii vähintään kaksi osallistujaa.' };
+
+  return {
+    ok: true,
+    kanava: {
+      id,
+      tyyppi: 'vapaa',
+      nimi: puhdasNimi.slice(0, 100),
+      osallistujat: uniikit,
+      luotu: new Date(nyt).toISOString(),
+      luoja,
+    },
+  };
 }
