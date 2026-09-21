@@ -1,14 +1,11 @@
-// PTT-kanavapalkin tila ja yhteydet (erä 26, vaihe 5, viipale 5a).
+// PTT-kanavapalkin tila ja yhteydet (erä 26, vaihe 5).
 //
-// OMA WEBSOCKET-YHTEYS, EI JAETTU GuardAppin YHTEYDEN KANSSA. src/shared/kanava.ts:n
-// oma kommentti sanoo ettei kahta rinnakkaista yhteyttä samaan istuntoon kannata avata,
-// ja se pitää paikkansa lopullisessa tilassa. Tässä vaiheessa GuardApp.tsx:ssä on
-// käyttäjän oma, kesken oleva ja committoimaton muutos (tilatietopaneelin päivitys-
-// bugikorjaus) jota ei tule sotkea PTT-työhön koskematta tiedostoon lainkaan — ks. vaihe
-// 5 -suunnitelman toteutusmerkintä Obsidiania varten. Floor control on joka tapauksessa
-// SIDOTTU YHTEYTEEN eikä käyttäjätunnukseen (server/puheenvuoro.js), joten oma yhteys
-// toimii oikein sellaisenaan; ainoa haitta on ylimääräinen avoin soketti selainta kohden,
-// joka poistuu kun tämä yhdistetään GuardAppin yhteyteen erillisenä siivousaskeleena.
+// TÄMÄ KUTSUU useKanava:aa (src/shared/kanava.ts) KUTEN GuardApp.tsx:KIN, EIKÄ SE OLE
+// KAKSI ERILLISTÄ YHTEYTTÄ: kanava.ts jakaa yhden soketin kaikkien tilaajien kesken
+// (viipale 5a avasi tähän aluksi oman rinnakkaisen yhteytensä väliaikaisena
+// kompromissina, koska GuardApp.tsx:ssä oli käyttäjän oma kesken oleva muutos jota ei
+// haluttu koskea — se korjattiin lopullisesti tekemällä kanava.ts:stä moniliittyjäinen
+// sen sijaan että tätä tiedostoa tai GuardApp.tsx:ää olisi pitänyt sovittaa toisiinsa).
 import { useCallback, useEffect, useState } from 'react';
 import type { OlmMachine } from '@matrix-org/matrix-sdk-crypto-wasm';
 

@@ -311,6 +311,20 @@ export const MobiiliKehys = ({
                 </p>
               </div>
 
+              {/* PTT-kanavapalkin taustakäytön rajoite (erä 26, vaihe 5, kohta 7).
+                  Sama linja kuin hälytysäänen rajoite yllä: sanotaan ääneen ETUKÄTEEN
+                  eikä jätetä vartijaa ihmettelemään lukitulla ruudulla miksei kanava
+                  soi. Pysyy voimassa kunnes vaihe 6 (natiivi taustakäyttö) on tehty —
+                  tähän asti mikään PTT:ssä ei toimi suljetulla sovelluksella. */}
+              <div className="mb-6 border-t border-white/10 pt-5">
+                <span className="text-base font-medium">Kanavapalkki (PTT)</span>
+                <p className="text-xs text-ink-on-dark-muted mt-2 leading-relaxed">
+                  Kanavat ja puheenvuoro toimivat vain kun sovellus on auki ja näkyvissä.
+                  Suljetulla sovelluksella tai lukitulla ruudulla mikään PTT:ssä ei vielä
+                  toimi — siihen tarvitaan puhelinsovellus.
+                </p>
+              </div>
+
               {/* Man-down: TILA eikä kytkin.
 
                   Tässä oli 12.9.2026 asti kytkin ja liukusäädin, joilla vartija saattoi

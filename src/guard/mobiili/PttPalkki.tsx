@@ -9,6 +9,15 @@
 // mouse-käsittely: sormi voi liukua napin ulkopuolelle kesken painalluksen, ja pointer
 // capture pitää ylös-tapahtuman kiinni samassa elementissä vaikka niin kävisi — ilman
 // sitä puheenvuoro jäisi auki koska "up" ei koskaan laukeaisi napin päällä.
+//
+// ÄÄNEN PRIORITEETTI (päätös vahvistettu 19.9.2026, Obsidian "vaihe 5 -suunnitelma"):
+// PTT keskeyttää/duckaa muun äänen aina kun ääni tulee sisään sovelluksen ollessa
+// etualalla. EI VIELÄ TOTEUTETTU TÄSSÄ TIEDOSTOSSA — tämä palkki ei vielä soita eikä
+// vastaanota mitään oikeaa ääntä (vaihe 4 on kehyssalauksen PoC, ei UI:hin kytketty
+// audiopolku), joten duckausta ei ole mitään konkreettista kohdetta jolle tehdä.
+// Toteutetaan kun vaihe 6/7 tuo oikean audiostreamin tänne (esim. Web Audio -
+// solmuna joka vaimentaa `<audio>`/media-session-toiston ajaksi jonka `mina`-tila
+// tässä palkissa on true) — päätös ei muutu, vain toteutuspaikka odottaa.
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { OlmMachine } from '@matrix-org/matrix-sdk-crypto-wasm';
 import { Mic, MessageSquare, ShieldAlert, Volume2, VolumeX } from 'lucide-react';

@@ -1,5 +1,7 @@
-// Kanavayhteys palvelimeen (WebSocket). Jaettu: molemmat puolet tarvitsevat saman
-// yhteyden, eikä kahta rinnakkaista yhteyttä samaan istuntoon kannata avata.
+// Kanavayhteys palvelimeen (WebSocket). Jaettu: YKSI soketti koko selainvälilehteä
+// kohden, vaikka useKanava-hookia kutsuttaisiin useasta komponentista yhtä aikaa (ks.
+// tiedoston loppuosan "Jaettu yhteys" -osio) — kahta rinnakkaista yhteyttä samaan
+// istuntoon ei kannata avata.
 //
 // Kanava kertoo VAIN mikä kokoelma muuttui ja mitkä id:t. Sisältö haetaan normaalilla
 // GET-pyynnöllä, joka käy läpi saman oikeustarkistuksen kuin ennenkin — ks.
@@ -90,118 +92,158 @@ const kanavanOsoite = () => {
   return `${protokolla}//${window.location.host}/api/kanava`;
 };
 
+function kasitteleSaapunutViesti(kasittelija: Kasittelijat, viesti: KanavaViesti) {
+  if (viesti?.tyyppi === 'muutos' && viesti.kokoelma) {
+    kasittelija.onMuutos?.(viesti.kokoelma, viesti.muutokset || []);
+  } else if (viesti?.tyyppi === 'sijainnit') {
+    kasittelija.onSijainnit?.(viesti.sijainnit || []);
+  } else if (viesti?.tyyppi === 'puheenvuoro_myonnetty') {
+    kasittelija.onPuheenvuoroMyonnetty?.(viesti.kanavaId, viesti.kayttaja);
+  } else if (viesti?.tyyppi === 'puheenvuoro_hylatty') {
+    kasittelija.onPuheenvuoroHylatty?.(viesti.kanavaId, viesti.syy, viesti.kayttaja ?? null);
+  } else if (viesti?.tyyppi === 'puheenvuoro_vapautui') {
+    kasittelija.onPuheenvuoroVapautui?.(viesti.kanavaId);
+  } else if (viesti?.tyyppi === 'puheenvuoro_tila') {
+    kasittelija.onPuheenvuoroTila?.(viesti.tilat || []);
+  } else if (viesti?.tyyppi === 'linja_pakotettu_auki') {
+    kasittelija.onLinjaPakotettuAuki?.(viesti.kanavaId, viesti.pakottaja);
+  } else if (viesti?.tyyppi === 'linjan_pakotus_vapautettu') {
+    kasittelija.onLinjanPakotusVapautettu?.(viesti.kanavaId);
+  } else if (viesti?.tyyppi === 'laiteviesti_saapui') {
+    kasittelija.onLaiteviestiSaapui?.();
+  } else if (viesti?.tyyppi === 'uusi_viesti') {
+    kasittelija.onUusiViesti?.(viesti.kanavaId, viesti.viestiId);
+  } else if (viesti?.tyyppi === 'viesti_kuitattu') {
+    kasittelija.onViestiKuitattu?.(viesti.kanavaId, viesti.viestiId, viesti.kayttaja, viesti.kuittaustyyppi);
+  }
+}
+
+// --- Jaettu yhteys (erä 26, vaihe 5, viimeistely) ------------------------------------
+//
+// YKSI SOKETTI KOKO SELAINVÄLILEHTEÄ KOHDEN, RIIPPUMATTA MONTAKO useKanava-KUTSUA ON
+// AUKI SAMAAN AIKAAN. Tiedoston yläkommentti ("ei kahta rinnakkaista yhteyttä samaan
+// istuntoon kannata avata") oli aiemmin vain toive, koska joka useKanava-kutsu avasi
+// oman soketin — GUARD-mobiilin PTT-kanavapalkki (src/guard/mobiili/kayttoPttPalkkia.ts)
+// joutui siksi väliaikaisesti avaamaan oman rinnakkaisen yhteytensä GuardAppin yhteyden
+// lisäksi (dokumentoitu tekninen velka, ks. Obsidian "vaihe 5 -suunnitelma"). Tästä
+// eteenpäin `useKanava` on TILAAJA jaettuun yhteyteen: ensimmäinen kutsu avaa soketin,
+// viimeisen sulkeutuessa se suljetaan, ja jokainen välissä oleva kutsu jakaa saman
+// soketin ja saa kaikki samat viestit. Tämä ei ole vain PTT:n korjaus — se pitää myös
+// alkuperäisen App.tsx/GuardApp.tsx-käytön (yksi tilaaja) täsmälleen ennallaan.
+type Tilaaja = { kasittelija: { current: Kasittelijat }; setYhdistetty: (yhd: boolean) => void };
+
+let soketti: WebSocket | null = null;
+let ajastin: ReturnType<typeof setTimeout> | null = null;
+let viive = VIIVE_MIN_MS;
+const tilaajat = new Set<Tilaaja>();
+
+function ilmoitaTila(yhd: boolean) {
+  for (const t of tilaajat) t.setYhdistetty(yhd);
+}
+
+function yhdista() {
+  if (soketti || tilaajat.size === 0) return;
+  let ws: WebSocket;
+  try {
+    ws = new WebSocket(kanavanOsoite());
+  } catch {
+    aikatauluUudelleenyhdistys();
+    return;
+  }
+  // Asetetaan HETI eikä vasta onopenissa: kaksi tilaajaa voi liittyä samassa
+  // React-committissa peräkkäin ennen kuin kumpikaan soketti ehtii edes avautua, ja
+  // ilman tätä molemmat ohittaisivat yllä olevan `if (soketti ...)`-vartijan ja
+  // avaisivat kumpikin oman soketin — mitattu suoraan selaimessa ennen korjausta
+  // (kaksi WebSocket-instanssia yhden sijaan). readyState on CONNECTING (0) kunnes
+  // onopen ajaa, joten `yhdistetty`/`laheta` eivät luule yhteyden olevan valmis liian
+  // aikaisin — molemmat tarkistavat erikseen readyState === OPEN.
+  soketti = ws;
+
+  ws.onopen = () => {
+    viive = VIIVE_MIN_MS;
+    ilmoitaTila(true);
+  };
+
+  ws.onmessage = (e) => {
+    let viesti: KanavaViesti;
+    try {
+      viesti = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    // Kopio ennen silmukkaa: kasittelija voisi tilaajien poistuessa/liittyessä muuttaa
+    // Setin sisältöä kesken iteroinnin, mikä olisi määrittelemätöntä JS:n Setille.
+    for (const tilaaja of [...tilaajat]) kasitteleSaapunutViesti(tilaaja.kasittelija.current, viesti);
+  };
+
+  ws.onclose = () => {
+    soketti = null;
+    ilmoitaTila(false);
+    aikatauluUudelleenyhdistys();
+  };
+
+  // Virhe johtaa aina myös oncloseen, joten uudelleenyhdistys hoidetaan siellä.
+  ws.onerror = () => {};
+}
+
+function aikatauluUudelleenyhdistys() {
+  if (ajastin || tilaajat.size === 0) return;
+  ajastin = setTimeout(() => {
+    ajastin = null;
+    viive = Math.min(viive * 2, VIIVE_MAX_MS);
+    yhdista();
+  }, viive);
+}
+
+// Lähetys kentältä palvelimelle. Hiljainen ei-mitään jos yhteyttä ei ole: sijainti on
+// hetkellinen tieto, ja jonoon jäänyt vanha sijainti kertoisi missä joku oli silloin
+// kun verkko katkesi — se on huonompi tieto kuin ei tietoa lainkaan. Moduulitason
+// funktio eikä hookin sisäinen: identiteetti on jo pysyvä sellaisenaan, mitään
+// useRefiä ei tarvita sen stabiloimiseen.
+function laheta(viesti: Record<string, unknown>): boolean {
+  if (!soketti || soketti.readyState !== WebSocket.OPEN) return false;
+  try {
+    soketti.send(JSON.stringify(viesti));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function useKanava(kasittelijat: Kasittelijat) {
-  const [yhdistetty, setYhdistetty] = useState(false);
   // Käsittelijät refissä: yhteyttä EI saa avata uudelleen joka kerta kun kutsuja
   // renderöityy ja antaa uudet funktiot. Ilman tätä jokainen renderöinti katkaisisi ja
   // avaisi soketin uudelleen.
   const kasittelija = useRef(kasittelijat);
   kasittelija.current = kasittelijat;
-  // Auki oleva soketti lähettämistä varten. Refissä samasta syystä: lähetysfunktion
-  // identiteetti ei saa muuttua joka renderillä, koska sitä käytetään useEffectien
-  // riippuvuutena.
-  const soketti = useRef<WebSocket | null>(null);
+  const [yhdistetty, setYhdistetty] = useState(soketti?.readyState === WebSocket.OPEN);
 
   useEffect(() => {
-    let ws: WebSocket | null = null;
-    let ajastin: ReturnType<typeof setTimeout> | null = null;
-    let viive = VIIVE_MIN_MS;
-    let suljettu = false;
-
-    const yhdista = () => {
-      if (suljettu) return;
-      try {
-        ws = new WebSocket(kanavanOsoite());
-      } catch {
-        uudelleen();
-        return;
-      }
-
-      ws.onopen = () => {
-        viive = VIIVE_MIN_MS;
-        soketti.current = ws;
-        setYhdistetty(true);
-      };
-
-      ws.onmessage = (e) => {
-        let viesti: KanavaViesti;
-        try {
-          viesti = JSON.parse(e.data);
-        } catch {
-          return;
-        }
-        if (viesti?.tyyppi === 'muutos' && viesti.kokoelma) {
-          kasittelija.current.onMuutos?.(viesti.kokoelma, viesti.muutokset || []);
-        } else if (viesti?.tyyppi === 'sijainnit') {
-          kasittelija.current.onSijainnit?.(viesti.sijainnit || []);
-        } else if (viesti?.tyyppi === 'puheenvuoro_myonnetty') {
-          kasittelija.current.onPuheenvuoroMyonnetty?.(viesti.kanavaId, viesti.kayttaja);
-        } else if (viesti?.tyyppi === 'puheenvuoro_hylatty') {
-          kasittelija.current.onPuheenvuoroHylatty?.(viesti.kanavaId, viesti.syy, viesti.kayttaja ?? null);
-        } else if (viesti?.tyyppi === 'puheenvuoro_vapautui') {
-          kasittelija.current.onPuheenvuoroVapautui?.(viesti.kanavaId);
-        } else if (viesti?.tyyppi === 'puheenvuoro_tila') {
-          kasittelija.current.onPuheenvuoroTila?.(viesti.tilat || []);
-        } else if (viesti?.tyyppi === 'linja_pakotettu_auki') {
-          kasittelija.current.onLinjaPakotettuAuki?.(viesti.kanavaId, viesti.pakottaja);
-        } else if (viesti?.tyyppi === 'linjan_pakotus_vapautettu') {
-          kasittelija.current.onLinjanPakotusVapautettu?.(viesti.kanavaId);
-        } else if (viesti?.tyyppi === 'laiteviesti_saapui') {
-          kasittelija.current.onLaiteviestiSaapui?.();
-        } else if (viesti?.tyyppi === 'uusi_viesti') {
-          kasittelija.current.onUusiViesti?.(viesti.kanavaId, viesti.viestiId);
-        } else if (viesti?.tyyppi === 'viesti_kuitattu') {
-          kasittelija.current.onViestiKuitattu?.(viesti.kanavaId, viesti.viestiId, viesti.kayttaja, viesti.kuittaustyyppi);
-        }
-      };
-
-      ws.onclose = () => {
-        soketti.current = null;
-        setYhdistetty(false);
-        uudelleen();
-      };
-
-      // Virhe johtaa aina myös oncloseen, joten uudelleenyhdistys hoidetaan siellä.
-      ws.onerror = () => {};
-    };
-
-    const uudelleen = () => {
-      if (suljettu || ajastin) return;
-      ajastin = setTimeout(() => {
-        ajastin = null;
-        viive = Math.min(viive * 2, VIIVE_MAX_MS);
-        yhdista();
-      }, viive);
-    };
-
+    const tilaaja: Tilaaja = { kasittelija, setYhdistetty };
+    tilaajat.add(tilaaja);
+    // Jaettu soketti on voinut olla auki jo ennen tätä tilaajaa (toinen komponentti
+    // liittyi ensin) — tila on silloin ilmoitettava heti, koska mitään uutta
+    // onopen-tapahtumaa ei enää tule tälle tilaajalle.
+    setYhdistetty(soketti?.readyState === WebSocket.OPEN);
     yhdista();
 
     return () => {
-      suljettu = true;
-      if (ajastin) clearTimeout(ajastin);
-      // onclose nollataan ennen sulkemista, jottei purkautuva komponentti käynnistä
-      // uudelleenyhdistystä.
-      if (ws) {
-        ws.onclose = null;
-        ws.close();
+      tilaajat.delete(tilaaja);
+      // Viimeinen tilaaja sulkee soketin — ei jätetä sitä roikkumaan ilman kuuntelijaa.
+      if (tilaajat.size === 0) {
+        if (ajastin) {
+          clearTimeout(ajastin);
+          ajastin = null;
+        }
+        if (soketti) {
+          const vanha = soketti;
+          soketti = null;
+          vanha.onclose = null;
+          vanha.close();
+        }
       }
-      soketti.current = null;
     };
   }, []);
-
-  // Lähetys kentältä palvelimelle. Hiljainen ei-mitään jos yhteyttä ei ole: sijainti on
-  // hetkellinen tieto, ja jonoon jäänyt vanha sijainti kertoisi missä joku oli silloin
-  // kun verkko katkesi — se on huonompi tieto kuin ei tietoa lainkaan.
-  const laheta = useRef((viesti: Record<string, unknown>) => {
-    const ws = soketti.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    try {
-      ws.send(JSON.stringify(viesti));
-      return true;
-    } catch {
-      return false;
-    }
-  }).current;
 
   return { yhdistetty, laheta };
 }
