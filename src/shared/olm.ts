@@ -36,6 +36,7 @@
 import {
   initAsync, OlmMachine, UserId, DeviceId, RoomId, RequestType,
   EncryptionSettings, DecryptionSettings, TrustRequirement, DeviceLists,
+  MegolmDecryptionError, DecryptionErrorCode,
   type KeysUploadRequest, type KeysQueryRequest, type KeysClaimRequest, type ToDeviceRequest,
 } from '@matrix-org/matrix-sdk-crypto-wasm';
 
@@ -216,10 +217,15 @@ async function palvelimelle(polku: string, runko: unknown) {
  * takaisin koneelle. MUUT PYYNTÖTYYPIT (RoomMessage, SignatureUpload, KeysBackup)
  * EIVÄT OLE TUETTUJA — RoomMessage kuuluu vasta Vaiheeseen 3 (viestit), ja kaksi muuta
  * (ristiinallekirjoitus, avainvarmuuskopio) eivät kuulu tämän hankkeen laajuuteen.
+ *
+ * Palauttaa käsiteltyjen pyyntöjen tyypit — diagnostiikkaa varten (esim. tuliko
+ * KeysUpload todella suoritettua koneen alustuksen yhteydessä).
  */
-export async function synkronoiPyynnot(machine: OlmMachine): Promise<void> {
+export async function synkronoiPyynnot(machine: OlmMachine): Promise<RequestType[]> {
   const pyynnot = await machine.outgoingRequests();
+  const kasitellytTyypit: RequestType[] = [];
   for (const pyynto of pyynnot) {
+    kasitellytTyypit.push(pyynto.type);
     // OutgoingRequest-unionin `id` on tyypitetty `string | undefined`, koska YKSI
     // seitsemästä jäsenestä (SignatureUploadRequest) voi olla ilman id:tä — ei koske
     // näitä neljää tyyppiä, joten tyyppiväite (as) vastaa ajonaikaista todellisuutta.
@@ -246,6 +252,7 @@ export async function synkronoiPyynnot(machine: OlmMachine): Promise<void> {
     }
     // Muut tyypit jätetään käsittelemättä (ks. tiedoston yläkommentti).
   }
+  return kasitellytTyypit;
 }
 
 async function haeJaVastaaKyselyyn(kayttajat: string[]): Promise<string> {
@@ -323,6 +330,33 @@ export async function puraViesti(machine: OlmMachine, kanavaId: string, tapahtum
     return JSON.parse(tulos.event)?.content ?? null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Sama kuin `puraViesti`, mutta EI nielaise purkuvirhettä — palauttaa myös
+ * `DecryptionErrorCode`-nimen (esim. "MissingRoomKey") kun purku epäonnistuu.
+ *
+ * VAIN DIAGNOSTIIKKAA VARTEN, käytä `puraViesti`ä normaalisti. Oma funktio eikä
+ * `puraViesti`n muokkaus, koska sitä kutsutaan myös tekstiviestien historian
+ * purkuun (viestit.ts:n haeJaPuraViestit) jossa purkuvirhe on ODOTETTU, tavallinen
+ * tila (vanhempi viesti jonka avainta ei vielä ole) eikä ansaitse konsolihälyä joka
+ * kerta — PTT-äänen aani_avain sen sijaan on hetkellinen eikä persistoitu, joten
+ * juuri sen purkuvirheen SYY on nähtävä heti (ks. aanikutsu.ts:n vastaanotaAvain).
+ */
+export async function puraViestiDiagnoosilla(
+  machine: OlmMachine, kanavaId: string, tapahtumaJson: string,
+): Promise<{ sisalto: unknown } | { virhe: string }> {
+  const roomId = new RoomId(matriisiHuoneId(kanavaId));
+  try {
+    const tulos = await machine.decryptRoomEvent(tapahtumaJson, roomId, new DecryptionSettings(TrustRequirement.Untrusted));
+    return { sisalto: JSON.parse(tulos.event)?.content ?? null };
+  } catch (e) {
+    if (e instanceof MegolmDecryptionError) {
+      const nimi = DecryptionErrorCode[e.code] ?? String(e.code);
+      return { virhe: `${nimi}: ${e.description}` };
+    }
+    return { virhe: e instanceof Error ? e.message : String(e) };
   }
 }
 
