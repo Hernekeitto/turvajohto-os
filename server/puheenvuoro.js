@@ -22,20 +22,32 @@
 // oikea enimmäispituus (jos sellainen halutaan) päätetään vasta kun ääni on mukana.
 export const AIKAKATKAISU_MS = 60_000;
 
-// kanavaId -> { istunto, kayttaja, alkoi }
+// Hätäkanavan puheenvuoro saa pitempään (erä 26, vaihe 8, käyttäjän päätös 22.9.2026):
+// man-down/"tarvitsen apua" -lähetys ei saa katketa kesken hätätilanteen 60 sekuntiin,
+// samalla kun tavallinen kanava pitää lyhyemmän ajan ("kanava varattu" -kokemus, ei
+// yksi puhuja joka voi pitää linjaa auki minuutitolkulla). Sama VARASUOJA-periaate kuin
+// AIKAKATKAISU_MS:llä — ei yksittäisen lähetyksen tarkoituksellinen enimmäispituus vaan
+// kova katto jos vapautusviesti ei koskaan tule.
+export const AIKAKATKAISU_HATA_MS = 5 * 60_000;
+
+// kanavaId -> { istunto, kayttaja, alkoi, aikakatkaisuMs }
 const puheenvuorot = new Map();
 
-const vanhentunut = (tila, nyt) => nyt - tila.alkoi >= AIKAKATKAISU_MS;
+const vanhentunut = (tila, nyt) => nyt - tila.alkoi >= tila.aikakatkaisuMs;
 
 /**
  * Pyyntö puheenvuorosta. Palauttaa myönnetyn tai hylätyn tuloksen — kutsuja päättää
  * mitä viestiä siitä lähetetään kenellekin, tämä moduuli ei tunne kanava.js:ää.
  *
+ * `aikakatkaisuMs` on kutsujan vastuulla (index.js päättää kanavatyypin perusteella,
+ * ks. AIKAKATKAISU_HATA_MS) — tämä moduuli ei tunne kanavatyyppejä eikä kanavaId:n
+ * muotoa, se vain säilyttää sen minkä kutsuja antoi puheenvuoron pituudeksi.
+ *
  * Saman istunnon toistuva pyyntö (esim. selain lähetti kahdesti) ei ole virhe eikä
  * uusi haltuunotto — `alkoi` ei nollaudu, jottei toistuva pyyntö pidennä puheenvuoroa
  * loputtomiin aikakatkaisua vasten.
  */
-export function pyydaPuheenvuoro({ kanavaId, istunto, kayttaja, nyt = Date.now() }) {
+export function pyydaPuheenvuoro({ kanavaId, istunto, kayttaja, nyt = Date.now(), aikakatkaisuMs = AIKAKATKAISU_MS }) {
   const vanha = puheenvuorot.get(kanavaId);
   if (vanha && !vanhentunut(vanha, nyt)) {
     if (vanha.istunto === istunto) {
@@ -43,7 +55,7 @@ export function pyydaPuheenvuoro({ kanavaId, istunto, kayttaja, nyt = Date.now()
     }
     return { ok: false, syy: 'varattu', kayttaja: vanha.kayttaja };
   }
-  puheenvuorot.set(kanavaId, { istunto, kayttaja, alkoi: nyt });
+  puheenvuorot.set(kanavaId, { istunto, kayttaja, alkoi: nyt, aikakatkaisuMs });
   return { ok: true, kayttaja };
 }
 

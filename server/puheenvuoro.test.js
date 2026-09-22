@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  AIKAKATKAISU_MS, nykyinenHaltija, onHaltija, pyydaPuheenvuoro, tyhjenna,
+  AIKAKATKAISU_MS, AIKAKATKAISU_HATA_MS, nykyinenHaltija, onHaltija, pyydaPuheenvuoro, tyhjenna,
   vapautaIstunnolta, vapautaPuheenvuoro,
 } from './puheenvuoro.js';
 
@@ -96,4 +96,22 @@ test('onHaltija: vanhentunut tila ei laske haltijaksi', () => {
   pyydaPuheenvuoro({ kanavaId: 'kohde:1', istunto: istunto1, kayttaja: 'vartija1', nyt: 0 });
   assert.equal(onHaltija('kohde:1', istunto1, AIKAKATKAISU_MS - 1), true);
   assert.equal(onHaltija('kohde:1', istunto1, AIKAKATKAISU_MS), false);
+});
+
+// --- Kanavakohtainen aikakatkaisu (erä 26, vaihe 8, käyttäjän päätös 22.9.2026) -----
+
+test('mukautettu aikakatkaisu (esim. hätäkanavan pidempi) ohittaa oletuksen', () => {
+  pyydaPuheenvuoro({
+    kanavaId: 'hata:1', istunto: istunto1, kayttaja: 'vartija1', nyt: 0, aikakatkaisuMs: AIKAKATKAISU_HATA_MS,
+  });
+  // Yli tavallisen 60 s aikakatkaisun mutta yhä hätäkanavan 5 min sisällä.
+  assert.equal(nykyinenHaltija('hata:1', AIKAKATKAISU_MS + 1), 'vartija1');
+  assert.equal(nykyinenHaltija('hata:1', AIKAKATKAISU_HATA_MS - 1), 'vartija1');
+  assert.equal(nykyinenHaltija('hata:1', AIKAKATKAISU_HATA_MS), null);
+});
+
+test('kanavat joilla ei ole mukautettua aikakatkaisua käyttävät oletusta ennallaan', () => {
+  pyydaPuheenvuoro({ kanavaId: 'kohde:1', istunto: istunto1, kayttaja: 'vartija1', nyt: 0 });
+  assert.equal(nykyinenHaltija('kohde:1', AIKAKATKAISU_MS - 1), 'vartija1');
+  assert.equal(nykyinenHaltija('kohde:1', AIKAKATKAISU_MS), null);
 });

@@ -43,9 +43,9 @@ import { luoLaiteviesti, laitteenViestit, poistaLaitteenViestit } from './laitev
 import { luoViesti, kanavanViestit } from './viestit.js';
 import { luoKuittaus, onKuitattu, viestinKuittaukset, sallitutKuittaustyypit } from './kuittaukset.js';
 import { tallennaSalattuLiite, haeSalatunLiitteenPolku, poistaSalattuLiite } from './salatutliitteet.js';
-import { poistaKanavanSisalto } from './kanavansiivous.js';
+import { poistaKanavanSisalto, poistaVanhaKiinteanKanavanSisalto } from './kanavansiivous.js';
 import {
-  nykyinenHaltija, onHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
+  AIKAKATKAISU_HATA_MS, nykyinenHaltija, onHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
 } from './puheenvuoro.js';
 import {
   joSiirrossa, kiinnitaVuoroon, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto,
@@ -4678,6 +4678,37 @@ function siivoaKanavanSisalto(kanavaId) {
   });
 }
 
+// Kiinteiden kanavien (kohde/piiri) sisällön ikäraja (erä 26, vaihe 8, käyttäjän
+// päätös 22.9.2026: "aikaperusteinen 24h jos vuoroa ei ole lopetettu ennen sitä") —
+// kutsutaan ajastimesta (ks. app.listen-lohko), EI yksittäisen tapahtuman yhteydestä,
+// koska näillä kanavilla ei ole tapahtumaa johon kiinnittyä (server/kanavansiivous.js:n
+// yläkommentti). Sama rakenne kuin siivoaKanavanSisalto yllä, mutta poistettuja-
+// laskureita EI verrata nollaan yhtä tiukasti: tämä ajetaan harvoin (kerran vuoro-
+// kaudessa) joten yksi turha audit-rivi tyhjästä kierroksesta ei kuormita lokia
+// samalla tavalla kuin se kuormittaisi jos tätä kutsuttaisiin joka viestin jälkeen.
+const KIINTEAN_KANAVAN_SISALLON_IKA_MS = 24 * 60 * 60 * 1000;
+
+function siivoaKiinteidenKanavienSisalto() {
+  const raja = Date.now() - KIINTEAN_KANAVAN_SISALLON_IKA_MS;
+  const tulos = poistaVanhaKiinteanKanavanSisalto({
+    viestit: readCollection('guardViestit') || [],
+    kuittaukset: readCollection('guardKuittaukset') || [],
+    liitteet: readCollection('guardLiitteet') || [],
+  }, raja);
+  if (tulos.poistettuja.viestit === 0 && tulos.poistettuja.liitteet === 0) return;
+
+  writeCollection('guardViestit', tulos.viestit);
+  writeCollection('guardKuittaukset', tulos.kuittaukset);
+  writeCollection('guardLiitteet', tulos.liitteet);
+  for (const liiteId of tulos.liiteIdt) poistaSalattuLiite(liiteId);
+
+  logAudit({
+    user: 'jarjestelma', action: 'ptt_kiintea_sisalto_siivottu', collection: 'guardViestit',
+    viesteja: tulos.poistettuja.viestit, liitteita: tulos.poistettuja.liitteet,
+    ikaVrk: KIINTEAN_KANAVAN_SISALLON_IKA_MS / (24 * 60 * 60 * 1000),
+  });
+}
+
 // Hälytyksen lähetystietue lähetyshistoriaan. Sama muoto kuin pikatoimintojen lähetyksillä,
 // jotta BulkSMS:n webhook osaa liittää toimituskuittaukset oikeaan riviin (smswebhook.js) —
 // hätäviestin kohdalla juuri toimitustieto on se mikä ratkaisee: lähtikö apu liikkeelle.
@@ -7173,7 +7204,16 @@ function kasittelePuheenvuoroPyynto(istunto, viesti) {
     if (!kuuluuKanavaanNyt(istunto, kanavaId, vuoro)) return;
   }
 
-  const tulos = pyydaPuheenvuoro({ kanavaId, istunto, kayttaja: istunto.username });
+  // Hätäkanavalla pitempi puheenvuoro (erä 26, vaihe 8, käyttäjän päätös 22.9.2026:
+  // man-down/"tarvitsen apua" -lähetys ei saa katketa 60 sekuntiin kesken hätätilanteen).
+  // Tunnistus kanava-id:n etuliitteestä eikä levyluvulla — hataKanavaId (kanavat.js)
+  // takaa aina "hata:"-etuliitteen, sama kevyt tunnistus kuin AaniPuhelu.java:n
+  // natiivipuolella.
+  const aikakatkaisuMs = kanavaId.startsWith('hata:') ? AIKAKATKAISU_HATA_MS : undefined;
+  const tulos = pyydaPuheenvuoro({
+    kanavaId, istunto, kayttaja: istunto.username,
+    ...(aikakatkaisuMs ? { aikakatkaisuMs } : {}),
+  });
   if (tulos.ok) {
     lahetaViesti(
       { tyyppi: 'puheenvuoro_myonnetty', kanavaId, kayttaja: tulos.kayttaja },
@@ -7391,6 +7431,12 @@ const palvelin = app.listen(PORT, '127.0.0.1', () => {
   };
   setInterval(siivoaHistoria, 24 * 60 * 60 * 1000).unref();
   siivoaHistoria();
+
+  // PTT: kiinteiden kanavien sisällön ikärajan siivous (erä 26, vaihe 8). Kerran
+  // vuorokaudessa JA heti käynnistyksessä — sama perustelu kuin siivoaHistorialla:
+  // pitkään alhaalla ollut palvelin siivoaa heti eikä vasta vuorokauden kuluttua.
+  setInterval(siivoaKiinteidenKanavienSisalto, 24 * 60 * 60 * 1000).unref();
+  siivoaKiinteidenKanavienSisalto();
 
   if (onkoKonfiguroitu()) {
     setInterval(() => { tarkistaSaldo().catch(() => {}); }, SALDO_TARKISTUSVALI_MS).unref();
