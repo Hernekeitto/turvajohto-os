@@ -43,7 +43,7 @@ import { luoViesti, kanavanViestit } from './viestit.js';
 import { luoKuittaus, onKuitattu, viestinKuittaukset, sallitutKuittaustyypit } from './kuittaukset.js';
 import { tallennaSalattuLiite, haeSalatunLiitteenPolku } from './salatutliitteet.js';
 import {
-  nykyinenHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
+  nykyinenHaltija, onHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
 } from './puheenvuoro.js';
 import {
   joSiirrossa, kiinnitaVuoroon, kuittaaPakotus, kuittaamattomatPakotukset, luoSiirto,
@@ -7014,6 +7014,8 @@ function kasitteleKanavaViesti(istunto, viesti) {
   if (viesti.tyyppi === 'aseta_kuunneltavat_kanavat') return kasitteleKuunneltavatKanavat(istunto, viesti);
   if (viesti.tyyppi === 'pyyda_puheenvuoro') return kasittelePuheenvuoroPyynto(istunto, viesti);
   if (viesti.tyyppi === 'vapauta_puheenvuoro') return kasittelePuheenvuoroVapautus(istunto, viesti);
+  if (viesti.tyyppi === 'aani_avain') return kasitteleAaniAvain(istunto, viesti);
+  if (viesti.tyyppi === 'aani_kehys') return kasitteleAaniKehys(istunto, viesti);
 }
 
 // --- PTT floor control (erä 26, vaihe 1b; hätäkanava/DM/vapaa mukaan vaihe 1e/1f/1g) -
@@ -7118,6 +7120,57 @@ function kasittelePuheenvuoroVapautus(istunto, viesti) {
   lahetaViesti(
     { tyyppi: 'puheenvuoro_vapautui', kanavaId },
     { suodatin: (vastaanottaja) => saaKuullaKanavaa(vastaanottaja, kanavaId) },
+  );
+}
+
+// --- PTT-äänen kuljetus (erä 26, vaihe 6: kuljetusratkaisu) --------------------------
+//
+// RAAKA WEBSOCKET-RELE, EI WEBRTC (vaihe 4:n avoin päätös ratkaistu natiivin hyväksi):
+// natiivi tarvitsee joka tapauksessa oman kuljetuksensa (WebView jäädyttää
+// getUserMedian taustalla, ks. Obsidian "vaihe 6 -suunnitelma" kohta 1), ja toisen
+// kuljetuksen (WebRTC natiivi-SDK) tuominen pelkästään selaimen vuoksi olisi iso uusi
+// riippuvuus jota kukaan ei vielä tarvitse. Sama rele palvelee sekä selainta että
+// natiivia — kumpikaan pää ei tiedä toisen toteutuskielestä mitään.
+//
+// PALVELIN EI NÄE ÄÄNTÄ EIKÄ AVAINTA SELVÄKIELISENÄ. `aani_avain` kuljettaa
+// Megolm-salatun tapahtuman (sama salaaViesti/puraViesti-pari kuin tekstiviesteillä,
+// src/shared/olm.ts / Kryptokone.java) jonka SISÄLTÖ on kertakäyttöinen AES-avain
+// (src/shared/aanisalaus.ts / Aanisalaus.java) — EI kanavan pysyvä huoneavain, ks.
+// näiden tiedostojen yläkommentit. `aani_kehys` kuljettaa sillä avaimella jo
+// AES-GCM-salatun äänikehyksen. Palvelin vain reitittää base64-merkkijonon, kuten
+// muutkin kanavan "vapaamuotoiset" viestit (esim. sijainnin GPS-koordinaatit) joiden
+// TULKINTA ei kuulu palvelimelle.
+//
+// HALTIJA-TARKISTUS JOKA VIESTIN KOHDALLA, EI VAIN LÄHETYKSEN ALUSSA — sama periaate
+// kuin saaKuullaKanavaa yllä ("SAMA TARKISTUS JOKA KERTA"). Muuten puheenvuoron
+// menettänyt mutta yhä auki oleva lähetin voisi jatkaa äänen (tai uuden avaimen)
+// työntämistä kanavalle sen jälkeen kun joku toinen on jo saanut vuoron.
+//
+// KOKORAJA base64-merkkijonolle ON VAIN JÄRKEVYYSTARKISTUS yhden kehyksen kokoluokalle
+// (Opus/AAC 20 ms + 24 tavun AES-GCM-ylikuorma + 13 tavun metatieto-otsake on aina
+// muutamia satoja tavuja) — kanava.js:n maxPayload (16 KiB koko JSON-viestille) rajaa
+// jo itsessään, mutta poikkeavan suuri "kehys" tämän rajan alla on silti aina virhe tai
+// väärinkäytösyritys eikä koskaan oikea ääni.
+const AANI_KEHYS_ENIMMAISPITUUS = 4_000;
+const AANI_AVAIN_ENIMMAISPITUUS = 4_000;
+
+function kasitteleAaniAvain(istunto, viesti) {
+  const kanavaId = typeof viesti.kanavaId === 'string' ? viesti.kanavaId : '';
+  if (!kanavaId || !onHaltija(kanavaId, istunto)) return;
+  if (typeof viesti.tapahtuma !== 'string' || viesti.tapahtuma.length > AANI_AVAIN_ENIMMAISPITUUS) return;
+  lahetaViesti(
+    { tyyppi: 'aani_avain', kanavaId, tapahtuma: viesti.tapahtuma },
+    { suodatin: (vastaanottaja) => vastaanottaja !== istunto && saaKuullaKanavaa(vastaanottaja, kanavaId) },
+  );
+}
+
+function kasitteleAaniKehys(istunto, viesti) {
+  const kanavaId = typeof viesti.kanavaId === 'string' ? viesti.kanavaId : '';
+  if (!kanavaId || !onHaltija(kanavaId, istunto)) return;
+  if (typeof viesti.data !== 'string' || viesti.data.length > AANI_KEHYS_ENIMMAISPITUUS) return;
+  lahetaViesti(
+    { tyyppi: 'aani_kehys', kanavaId, data: viesti.data },
+    { suodatin: (vastaanottaja) => vastaanottaja !== istunto && saaKuullaKanavaa(vastaanottaja, kanavaId) },
   );
 }
 

@@ -65,7 +65,19 @@ export type KanavaViesti =
   // Viesti kuitattu (erä 26, vaihe 3, viipale 3c) — toimitus tai (vain hätäkanavalla)
   // luku. `kuittaustyyppi` on 'toimitus' | 'luku', ei tiukemmin tyypitetty koska
   // palvelin on jo tarkistanut sen sallituksi (server/kuittaukset.js).
-  | { tyyppi: 'viesti_kuitattu'; kanavaId: string; viestiId: string; kayttaja: string; kuittaustyyppi: string };
+  | { tyyppi: 'viesti_kuitattu'; kanavaId: string; viestiId: string; kayttaja: string; kuittaustyyppi: string }
+  // PTT-äänen kuljetus (erä 26, vaihe 6: kuljetusratkaisu). Vain haltija saa lähettää
+  // kumpaakaan (server/index.js: kasitteleAaniAvain/kasitteleAaniKehys tarkistavat
+  // onHaltija joka viestin kohdalla) — kaikki tälle kanavalle kuunteleva saa molemmat.
+  //
+  // `aani_avain`: `tapahtuma` on Megolm-salattu tapahtumaolio JSON-merkkijonona (sama
+  // muoto kuin src/shared/olm.ts:n salaaViesti palauttaa), sisältäen kertakäyttöisen
+  // AES-avaimen (src/shared/aanisalaus.ts) — EI kanavan pysyvää huoneavainta.
+  //
+  // `aani_kehys`: `data` on sillä avaimella jo AES-GCM-salattu äänikehys base64:nä
+  // (src/shared/aaniraaka.ts:n pakkaaOpusKehys + aanisalaus.ts:n salaaKehys -tulos).
+  | { tyyppi: 'aani_avain'; kanavaId: string; tapahtuma: string }
+  | { tyyppi: 'aani_kehys'; kanavaId: string; data: string };
 
 type Kasittelijat = {
   onMuutos?: (kokoelma: string, muutokset: Muutos[]) => void;
@@ -79,6 +91,8 @@ type Kasittelijat = {
   onLaiteviestiSaapui?: () => void;
   onUusiViesti?: (kanavaId: string, viestiId: string) => void;
   onViestiKuitattu?: (kanavaId: string, viestiId: string, kayttaja: string, kuittaustyyppi: string) => void;
+  onAaniAvain?: (kanavaId: string, tapahtuma: string) => void;
+  onAaniKehys?: (kanavaId: string, data: string) => void;
 };
 
 // Uudelleenyhdistys kasvavalla viiveellä. Kiinteä lyhyt viive tarkoittaisi sitä, että
@@ -115,6 +129,10 @@ function kasitteleSaapunutViesti(kasittelija: Kasittelijat, viesti: KanavaViesti
     kasittelija.onUusiViesti?.(viesti.kanavaId, viesti.viestiId);
   } else if (viesti?.tyyppi === 'viesti_kuitattu') {
     kasittelija.onViestiKuitattu?.(viesti.kanavaId, viesti.viestiId, viesti.kayttaja, viesti.kuittaustyyppi);
+  } else if (viesti?.tyyppi === 'aani_avain') {
+    kasittelija.onAaniAvain?.(viesti.kanavaId, viesti.tapahtuma);
+  } else if (viesti?.tyyppi === 'aani_kehys') {
+    kasittelija.onAaniKehys?.(viesti.kanavaId, viesti.data);
   }
 }
 

@@ -78,6 +78,18 @@ export function nykyinenHaltija(kanavaId, nyt = Date.now()) {
   return tila.kayttaja;
 }
 
+/**
+ * Pitääkö TÄMÄ istunto (eikä vain sama käyttäjätunnus) kanavan puheenvuoroa juuri nyt
+ * (erä 26, vaihe 6, kuljetus) — sama istunto-identiteetti kuin vapautaPuheenvuoro käyttää.
+ * Portti äänikehysten ja PTT-avainilmoitusten relelle: kukaan muu kuin nykyinen haltija ei
+ * saa lähettää kummankaan tyyppistä viestiä kanavalle, vaikka väittäisi olevansa haltija.
+ */
+export function onHaltija(kanavaId, istunto, nyt = Date.now()) {
+  const tila = puheenvuorot.get(kanavaId);
+  if (!tila || vanhentunut(tila, nyt)) return false;
+  return tila.istunto === istunto;
+}
+
 /** Tyhjentää koko tilan. Testien apu, sama nimi ja tarkoitus kuin sijainti.js:n tyhjenna(). */
 export function tyhjenna() {
   puheenvuorot.clear();

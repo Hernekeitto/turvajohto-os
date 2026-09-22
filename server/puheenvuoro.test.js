@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  AIKAKATKAISU_MS, nykyinenHaltija, pyydaPuheenvuoro, tyhjenna,
+  AIKAKATKAISU_MS, nykyinenHaltija, onHaltija, pyydaPuheenvuoro, tyhjenna,
   vapautaIstunnolta, vapautaPuheenvuoro,
 } from './puheenvuoro.js';
 
@@ -83,4 +83,17 @@ test('vapautaIstunnolta vapauttaa kaikki tämän istunnon kanavat mutta ei muide
 
 test('vapautaIstunnolta tyhjälle tilalle ei tee mitään eikä kaadu', () => {
   assert.deepEqual(vapautaIstunnolta(istunto1), []);
+});
+
+test('onHaltija: vain nykyinen haltija-istunto läpäisee, ei sama käyttäjätunnus toisella istunnolla', () => {
+  pyydaPuheenvuoro({ kanavaId: 'kohde:1', istunto: istunto1, kayttaja: 'vartija1' });
+  assert.equal(onHaltija('kohde:1', istunto1), true);
+  assert.equal(onHaltija('kohde:1', istunto2), false);
+  assert.equal(onHaltija('kanava-jota-ei-ole', istunto1), false);
+});
+
+test('onHaltija: vanhentunut tila ei laske haltijaksi', () => {
+  pyydaPuheenvuoro({ kanavaId: 'kohde:1', istunto: istunto1, kayttaja: 'vartija1', nyt: 0 });
+  assert.equal(onHaltija('kohde:1', istunto1, AIKAKATKAISU_MS - 1), true);
+  assert.equal(onHaltija('kohde:1', istunto1, AIKAKATKAISU_MS), false);
 });
