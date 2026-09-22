@@ -34,14 +34,16 @@ import {
 } from './vuorot.js';
 import {
   kuuluuKiinteaanKanavaan, omatKiinteatKanavat, onOsallistuja, loydaDm, luoDmKanava,
-  vuorossaOlevatMuut, hataKanavaId, luoHataKanava, hataKanavaPurkautunut, onHalyttaja,
+  pttKaytossa, vuorossaOlevatMuut, vuorossaOlevat, dmPurkautunut, hataKanavaId, luoHataKanava,
+  hataKanavaPurkautunut, onHalyttaja,
   pakotaLinjaAuki, vapautaLinjanPakotus, luoVapaaKanava, jasenetKiinteallaKanavalla,
 } from './kanavat.js';
 import { paivitaAvainpaketti, vaadiKertakayttoavain, julkinenKuvaus } from './kryptoavaimet.js';
 import { luoLaiteviesti, laitteenViestit, poistaLaitteenViestit } from './laiteviestit.js';
 import { luoViesti, kanavanViestit } from './viestit.js';
 import { luoKuittaus, onKuitattu, viestinKuittaukset, sallitutKuittaustyypit } from './kuittaukset.js';
-import { tallennaSalattuLiite, haeSalatunLiitteenPolku } from './salatutliitteet.js';
+import { tallennaSalattuLiite, haeSalatunLiitteenPolku, poistaSalattuLiite } from './salatutliitteet.js';
+import { poistaKanavanSisalto } from './kanavansiivous.js';
 import {
   nykyinenHaltija, onHaltija, pyydaPuheenvuoro, vapautaIstunnolta, vapautaPuheenvuoro,
 } from './puheenvuoro.js';
@@ -2220,6 +2222,13 @@ app.get('/api/vuoro/oma', requireAuth, guardPortti, (req, res) => {
 // tiedostokommentti). DM (vaihe 1c) on mukana.
 
 const pttPortti = (req, res) => {
+  // Hätäkytkin ENSIN, ennen oikeustarkistusta: pois kytkettynä PTT on kiinni myös
+  // admin-tunnukselta, koska "sulje nopeasti" ei saa jättää yhtään reittiä auki
+  // (erä 26, vaihe 8: kovennus, ks. kanavat.js: pttKaytossa).
+  if (!pttKaytossa()) {
+    res.status(503).json({ ok: false, error: 'PTT on tilapäisesti pois käytöstä.' });
+    return false;
+  }
   if (req.role !== 'admin' && !canView(req.permissions, null, 'guard_ptt')) {
     res.status(403).json({ ok: false, error: 'Ei oikeuksia PTT-kanaviin.' });
     return false;
@@ -3105,6 +3114,35 @@ app.post('/api/vuoro/:id/paata', requireAuth, guardPortti, (req, res) => {
   // `vuoro.vartija` eikä `req.username`: hälytyskeskus voi päättää unohtuneen vuoron
   // toisen puolesta, ja silloin unohdettava sijainti on sen vartijan eikä päivystäjän.
   unohdaSijainti(vuoro.vartija);
+
+  // PTT: PÄÄTTYVÄ VUORO PURKAA MYÖS SEN VARTIJAN DM-KANAVAT JOISSA KUMPIKAAN OSAPUOLI
+  // EI OLE ENÄÄ VUOROSSA (erä 26, vaihe 8: kovennus — server/kanavat.js:n
+  // dmPurkautunut on ollut olemassa vaiheesta 1c asti mutta sitä ei koskaan kutsuttu
+  // mistään, ks. Obsidian "vaihe 3 -suunnitelma" kohta 7 / "vaihe 8 -suunnitelma"
+  // kohta 3). Vain TÄMÄN vartijan omat DM:t tarkistetaan — muu DM (jossa kumpikaan
+  // osapuoli ei tässä ollut) purkautuu vasta kun JOMPIKUMPI sen osapuolista seuraavan
+  // kerran päättää oman vuoronsa, mikä riittää: DM ei voi jäädä auki ikuisesti niin
+  // kauan kuin molemmat osapuolet joskus lopettavat vuoronsa, eikä joka vuoron
+  // päättyminen tarvitse käydä läpi koko guardKanavat-kokoelmaa jokaisen vartijan
+  // puolesta. `readCollection('guardShifts')` UUDELLEEN eikä `vuorot`-muuttujasta:
+  // tämä vuoro on jo kirjoitettu 'paattynyt'-tilaan, ja juuri sen poissaolo
+  // vuorossaOlevat-joukosta on se mitä dmPurkautunut tarvitsee.
+  const vuorossaNyt = vuorossaOlevat(readCollection('guardShifts') || []);
+  const kaikkiKanavatNyt = readCollection('guardKanavat') || [];
+  const purkautuvatDmt = kaikkiKanavatNyt.filter((k) => (
+    k?.tyyppi === 'dm' && onOsallistuja(k, vuoro.vartija) && dmPurkautunut(k, vuorossaNyt)
+  ));
+  if (purkautuvatDmt.length > 0) {
+    const poistettavatDmIdt = new Set(purkautuvatDmt.map((k) => k.id));
+    writeCollection('guardKanavat', kaikkiKanavatNyt.filter((k) => !poistettavatDmIdt.has(k.id)));
+    for (const dm of purkautuvatDmt) {
+      logAudit({
+        user: req.username, action: 'ptt_dm_paattyi', collection: 'guardKanavat', recordId: dm.id,
+      });
+      kerroKanavastaMuutos('delete', dm, (istunto) => onOsallistuja(dm, istunto?.username));
+      siivoaKanavanSisalto(dm.id);
+    }
+  }
 
   logAudit({
     user: req.username, action: 'vuoro_paattyi', collection: 'guardShifts',
@@ -4612,6 +4650,34 @@ function kerroKanavastaMuutos(action, kanava, naytKeneleKin) {
   );
 }
 
+// PTT-kanavan sisällön siivous (erä 26, vaihe 8: kovennus, server/kanavansiivous.js).
+// Kutsutaan TÄSMÄLLEEN silloin kun kanava itse poistetaan guardKanavat-kokoelmasta
+// (hätäkanavan ratkaisu, DM:n purkautuminen) — ei erillisellä ajastimella, ks.
+// kanavansiivous.js:n yläkommentti sille miksi kohde/piiri ja vapaa eivät kuulu tähän.
+// Hiljainen ei-mitään jos kanavalla ei ollut mitään poistettavaa — ei turhaa
+// audit-riviä joka veisi tilaa oikeilta siivouksilta lokissa.
+function siivoaKanavanSisalto(kanavaId) {
+  const tulos = poistaKanavanSisalto({
+    viestit: readCollection('guardViestit') || [],
+    kuittaukset: readCollection('guardKuittaukset') || [],
+    liitteet: readCollection('guardLiitteet') || [],
+  }, kanavaId);
+  if (tulos.poistettuja.viestit === 0 && tulos.poistettuja.liitteet === 0) return;
+
+  writeCollection('guardViestit', tulos.viestit);
+  writeCollection('guardKuittaukset', tulos.kuittaukset);
+  writeCollection('guardLiitteet', tulos.liitteet);
+  // Liitetiedostot levyltä VASTA kun tietueet on kirjoitettu turvallisesti pois —
+  // toisin päin epäonnistunut levykirjoitus voisi jättää tietueen osoittamaan
+  // tiedostoon joka ei enää ole olemassa.
+  for (const liiteId of tulos.liiteIdt) poistaSalattuLiite(liiteId);
+
+  logAudit({
+    user: 'jarjestelma', action: 'ptt_sisalto_siivottu', collection: 'guardViestit',
+    recordId: kanavaId, viesteja: tulos.poistettuja.viestit, liitteita: tulos.poistettuja.liitteet,
+  });
+}
+
 // Hälytyksen lähetystietue lähetyshistoriaan. Sama muoto kuin pikatoimintojen lähetyksillä,
 // jotta BulkSMS:n webhook osaa liittää toimituskuittaukset oikeaan riviin (smswebhook.js) —
 // hätäviestin kohdalla juuri toimitustieto on se mikä ratkaisee: lähtikö apu liikkeelle.
@@ -5117,6 +5183,10 @@ app.post('/api/halytys/:id/kuittaa', requireAuth, (req, res) => {
       || istunto?.username === hataKanava.vartija
       || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch')
     ));
+    // Erä 26, vaihe 8: hätäkanavan sisältö (viestit, kuittaukset, liitteet) poistuu
+    // samalla hetkellä kuin kanava itse — sama ephemeral-lupaus jonka
+    // KanavaViestit.tsx antaa käyttäjälle.
+    siivoaKanavanSisalto(hataId);
   }
   res.json({ ok: true, halytys: tulos.halytys });
 });
@@ -7011,6 +7081,10 @@ function tarkistaVyohykkeet(istunto, edellinen, tietue) {
 // funktioinaan tämän rinnalla — sijaintikäsittely pysyy ennallaan omassa funktiossaan.
 function kasitteleKanavaViesti(istunto, viesti) {
   if (viesti.tyyppi === 'sijainti') return kasitteleSijaintiViesti(istunto, viesti);
+  // Hätäkytkin (erä 26, vaihe 8: kovennus, ks. kanavat.js: pttKaytossa): KAIKKI MUU
+  // tässä funktiossa on PTT:tä — jos joskus lisätään ei-PTT-viestityyppi tähän
+  // dispatchiin, sen on mentävä ENNEN tätä riviä, samaan tapaan kuin sijainti yllä.
+  if (!pttKaytossa()) return;
   if (viesti.tyyppi === 'aseta_kuunneltavat_kanavat') return kasitteleKuunneltavatKanavat(istunto, viesti);
   if (viesti.tyyppi === 'pyyda_puheenvuoro') return kasittelePuheenvuoroPyynto(istunto, viesti);
   if (viesti.tyyppi === 'vapauta_puheenvuoro') return kasittelePuheenvuoroVapautus(istunto, viesti);

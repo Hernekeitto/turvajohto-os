@@ -17,6 +17,21 @@
 
 import { AVOIMET as HALYTYS_AVOIMET } from './halytys.js';
 
+// Hätäkytkin koko PTT-ominaisuudelle (erä 26, vaihe 8: kovennus — Obsidian
+// "vaihe 8 -suunnitelma" kohta 7: "koko PTT-ominaisuus voidaan sulkea nopeasti
+// palvelimelta ilman uutta julkaisua").
+//
+// KÄÄNTEINEN OLETUS VERRATTUNA seurantaKaytossa:iin (server/sijainti.js), TARKOITUKSELLA
+// — eri syy, eri oletus: sijaintiseuranta on julkaisueste joka ODOTTAA lupaa
+// (juridinen käsittely kesken, oletus POIS päältä), PTT on jo käyttöönotettu
+// ominaisuus jolle tarvitaan NOPEA HÄTÄKATKAISU (oletus PÄÄLLÄ, pois vain jos
+// operaattori nimenomaan kytkee sen pois hätätilanteessa — esim. väärinkäyttö,
+// kryptografiavika, tai kuormaongelma jota ei ehditä muuten korjata). "Samalla
+// periaatteella kuin SIJAINTISEURANTA" (suunnitelman oma sanamuoto) tarkoittaa
+// MEKANISMIA (yksinkertainen ympäristömuuttuja, `=== '1'`-tarkistus), ei samaa
+// oletusarvoa — polariteetti on tarkoituksella eri koska tarkoitus on eri.
+export const pttKaytossa = () => process.env.PTT_POIS_KAYTOSTA !== '1';
+
 /** Kohteen kiinteän kanavan tunnus. Sama kohde antaa saman tunnuksen aina. */
 export const kohdeKanavaId = (siteId) => `kohde:${siteId}`;
 
@@ -102,6 +117,19 @@ export function vuorossaOlevatMuut(vuorot, omaKayttaja) {
     if (v?.tila === 'kesken' && v.vartija && v.vartija !== omaKayttaja) uniikit.add(v.vartija);
   }
   return [...uniikit];
+}
+
+/**
+ * KAIKKI käyttäjät jotka ovat juuri nyt vuorossa, itse mukaan lukien — {@link dmPurkautunut}
+ * tarvitsee tämän muodon (Set, ei suodateta ketään pois) eikä {@link vuorossaOlevatMuut}
+ * kelpaa sellaisenaan sille (se on aina JONKUN näkökulmasta eikä yleinen kysymys).
+ */
+export function vuorossaOlevat(vuorot) {
+  const uniikit = new Set();
+  for (const v of vuorot || []) {
+    if (v?.tila === 'kesken' && v.vartija) uniikit.add(v.vartija);
+  }
+  return uniikit;
 }
 
 /**

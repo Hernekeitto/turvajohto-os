@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import {
   kohdeKanavaId, piiriKanavaId, omatKiinteatKanavat, kuuluuKiinteaanKanavaan,
   jasenetKiinteallaKanavalla,
-  vuorossaOlevatMuut, onOsallistuja, loydaDm, luoDmKanava, dmPurkautunut,
+  pttKaytossa, vuorossaOlevatMuut, vuorossaOlevat, onOsallistuja, loydaDm, luoDmKanava, dmPurkautunut,
   hataKanavaId, luoHataKanava, onHalyttaja, hataKanavaPurkautunut,
   pakotaLinjaAuki, vapautaLinjanPakotus, luoVapaaKanava,
 } from './kanavat.js';
@@ -24,6 +24,30 @@ const kohdevuoro = (yli = {}) => ({
   tila: 'kesken',
   piiri: false,
   ...yli,
+});
+
+test('pttKaytossa on oletuksena päällä (käänteinen oletus kuin seurantaKaytossa)', () => {
+  const alkuperainen = process.env.PTT_POIS_KAYTOSTA;
+  delete process.env.PTT_POIS_KAYTOSTA;
+  try {
+    assert.equal(pttKaytossa(), true);
+  } finally {
+    if (alkuperainen === undefined) delete process.env.PTT_POIS_KAYTOSTA;
+    else process.env.PTT_POIS_KAYTOSTA = alkuperainen;
+  }
+});
+
+test('pttKaytossa menee pois vain tarkalla arvolla "1"', () => {
+  const alkuperainen = process.env.PTT_POIS_KAYTOSTA;
+  try {
+    process.env.PTT_POIS_KAYTOSTA = '1';
+    assert.equal(pttKaytossa(), false);
+    process.env.PTT_POIS_KAYTOSTA = 'true';
+    assert.equal(pttKaytossa(), true);
+  } finally {
+    if (alkuperainen === undefined) delete process.env.PTT_POIS_KAYTOSTA;
+    else process.env.PTT_POIS_KAYTOSTA = alkuperainen;
+  }
 });
 
 test('ei kanavia ilman vuoroa', () => {
@@ -100,6 +124,19 @@ test('vuorossaOlevatMuut palauttaa muut kesken olevat vuorot ilman kaksoiskappal
 test('vuorossaOlevatMuut ei sisällä omaa tunnusta vaikka olisi kahdesti vuorossa', () => {
   const vuorot = [{ tila: 'kesken', vartija: 'vartija1' }];
   assert.deepEqual(vuorossaOlevatMuut(vuorot, 'vartija1'), []);
+});
+
+test('vuorossaOlevat sisältää itsensä toisin kuin vuorossaOlevatMuut', () => {
+  const vuorot = [
+    { tila: 'kesken', vartija: 'vartija1' },
+    { tila: 'kesken', vartija: 'vartija2' },
+    { tila: 'paattynyt', vartija: 'vartija3' },
+  ];
+  assert.deepEqual(vuorossaOlevat(vuorot), new Set(['vartija1', 'vartija2']));
+});
+
+test('vuorossaOlevat tyhjälle listalle on tyhjä joukko', () => {
+  assert.deepEqual(vuorossaOlevat([]), new Set());
 });
 
 test('luoDmKanava luo kahden osapuolen tietueen', () => {
