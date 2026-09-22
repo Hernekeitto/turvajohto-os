@@ -22,7 +22,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Siren, Timer, MapPin, Phone, Check, Users, Route, KeyRound, Megaphone,
   TriangleAlert, Activity, Volume2, VolumeX, Building2, ShieldCheck, MessageSquare,
-  History, Wifi, WifiOff, BellRing, Search, X, ShieldAlert, Square, Radio,
+  History, Wifi, WifiOff, BellRing, Search, X, ShieldAlert, Square, Radio, RefreshCw,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
@@ -327,6 +327,55 @@ const VIRRAN_TYYLI: Record<Kiireys, string> = {
 // korjauksella.
 
 const AANI_AVAIN = 'turvajohto-halke-aani';
+
+// Kuinka usein ruutu kysyy tiedot itse.
+//
+// TÄMÄ EI OLE SE TAHTI JOLLA MUUTOKSET TULEVAT. Kanava työntää muutoksen ruudulle heti
+// kun se tapahtuu — alle sekunnissa — eikä kysely nopeuta sitä. Varakysely on olemassa
+// katkennutta kanavaa varten: ilman sitä päivystäjä katsoisi pysähtynyttä kuvaa
+// tietämättä siitä.
+//
+// 30 s eikä 5 s (19.9.2026). Jokainen kysely lataa koko kokoelman, ja jokainen avattu
+// paneeli-ikkuna kysyy omansa: kolmen näytön pöydällä viiden sekunnin tahti tarkoittaisi
+// satoja täysiä kokoelmahakuja minuutissa siitä hyvästä, että ruudulla näkyisi sekunnin
+// aiemmin se mikä tulee kanavaa pitkin joka tapauksessa heti.
+const VARMISTUS_MS = 30_000;
+
+// Laskuri seuraavaan varakyselyyn.
+//
+// Käyttäjän pyyntö (19.9.2026): päivystäjän on nähtävä että homma toimii. Ikämerkki
+// (YhteysMerkki) kertoo milloin viimeksi KUULUI jotain, ja tämä kertoo milloin seuraavan
+// kerran KYSYTÄÄN — yhdessä ne erottavat hiljaisen vuoron jäätyneestä ruudusta, mihin
+// kumpikaan yksin ei pysty.
+//
+// Oma sekuntikellonsa samasta syystä kuin ikämerkillä: näkymän oma kello käy hiljaisella
+// ruudulla kymmenen sekunnin tahtia, ja siitä luettu laskuri hyppisi kymmenen sekunnin
+// askelin. Laskuri joka hyppii ei näytä toimivalta.
+const VarmistusMerkki = ({ seuraava }: { seuraava: number }) => {
+  const [nyt, setNyt] = useState(Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNyt(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  // Katkaistu välin pituuteen: ajastin asetetaan hetkeä ennen kuin kello luetaan, joten
+  // pyöristys ylöspäin näyttäisi ensimmäisellä sekunnilla luvun joka on suurempi kuin
+  // väli itse. Laskuri joka alkaa 31:stä kun välissä on 30 sekuntia näyttää rikkinäiseltä.
+  const sekunnit = Math.min(
+    Math.max(0, Math.ceil((seuraava - nyt) / 1000)),
+    Math.round(VARMISTUS_MS / 1000)
+  );
+  return (
+    <span
+      title={`Ruutu kysyy tiedot palvelimelta itse ${Math.round(VARMISTUS_MS / 1000)} sekunnin välein siltä varalta että yhteys on katkennut. Luku laskee seuraavaan kyselyyn. Muutoksia ei tarvitse odottaa siihen asti: ne tulevat ruudulle heti kun ne tapahtuvat.`}
+      className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium ${MERKKITYYLI.neutraali}`}
+    >
+      {/* Pyörähdys vain kyselyn hetkellä. Jatkuvasti pyörivä ikoni pyörisi myös
+          jäätyneellä ruudulla, eli näyttäisi elonmerkiltä silloin kun sitä ei ole. */}
+      <RefreshCw size={13} className={sekunnit <= 1 ? 'animate-spin' : undefined} />
+      <span className="tabular-nums">varmistus {sekunnit} s</span>
+    </span>
+  );
+};
 
 export const Halytyskeskus = ({
   kohteet, lahteet, kayttaja, saaKuitata, oikeudet, yhteys, paivitetty, sijaintiseuranta,
@@ -641,11 +690,20 @@ export const Halytyskeskus = ({
     return () => window.clearInterval(id);
   }, [laskettavaa]);
 
-  // Kanava tuo muutokset itsestään, mutta katkennut yhteys ei tuo mitään. Hidas varakysely
+  // Kanava tuo muutokset itsestään, mutta katkennut yhteys ei tuo mitään. Varakysely
   // pitää ruudun ajan tasalla myös silloin — ilman sitä päivystäjä katsoisi pysähtynyttä
   // kuvaa tietämättä siitä.
+  //
+  // Hetki kirjataan tilaan, koska laskuri näyttää sen ruudulla (VarmistusMerkki). Ilman
+  // kirjausta laskuri arvaisi ajastimen vaiheen, ja arvattu laskuri näyttäisi oikealta
+  // silloinkin kun ajastin on pysähtynyt — eli juuri silloin kun se ei saa näyttää.
+  const [seuraavaVarmistus, setSeuraavaVarmistus] = useState(() => Date.now() + VARMISTUS_MS);
   useEffect(() => {
-    const id = window.setInterval(() => onVirkista(), 60_000);
+    setSeuraavaVarmistus(Date.now() + VARMISTUS_MS);
+    const id = window.setInterval(() => {
+      onVirkista();
+      setSeuraavaVarmistus(Date.now() + VARMISTUS_MS);
+    }, VARMISTUS_MS);
     return () => window.clearInterval(id);
   }, [onVirkista]);
 
@@ -952,6 +1010,7 @@ export const Halytyskeskus = ({
         <div className="rounded-xl border border-line bg-surface p-2.5 shrink-0 max-w-full">
           <div className="flex flex-wrap items-center gap-1.5">
             <YhteysMerkki yhteys={yhteys} paivitetty={tuorein} onHuomio={setYhteysHuomio} />
+            <VarmistusMerkki seuraava={seuraavaVarmistus} />
             {tilamerkit.map((t) => (
               <span
                 key={t.avain}

@@ -509,7 +509,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       .catch(() => { /* virhe näkyy tiedostovälilehdellä tyhjänä listana */ });
   }, [saaNahda]);
 
-  useEffect(() => {
+  // Nämä kaksi olivat KERTAHAKUJA vaikutuslistallaan, ja se oli vika (19.9.2026).
+  //
+  // Palvelin työntää molemmista muutosviestin kanavaan (server/index.js: /api/kirjaa),
+  // mutta selain ei kuunnellut niitä eikä kysellyt uudelleen — joten kentältä tullut
+  // toimenpidekirjaus, tapahtumailmoitus tai tilatieto EI ILMESTYNYT päivystäjän ruudulle
+  // koskaan ilman sivun uudelleenlatausta. Vika oli näkymätön niin kauan kuin näitä
+  // katsottiin tapahtumavirrasta muun seassa; oma tilatietopaneeli teki siitä ilmeisen.
+  const haeTehtavasuoritukset = useCallback(() => {
     if (!saaNahdaTehtavat) return;
     fetch('/api/data/guardTaskRuns', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
@@ -519,7 +526,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       .catch(() => { /* virhe näkyy tyhjänä suorituslistana */ });
   }, [saaNahdaTehtavat]);
 
-  useEffect(() => {
+  useEffect(() => { haeTehtavasuoritukset(); }, [haeTehtavasuoritukset]);
+
+  const haeRaportit = useCallback(() => {
     if (!saaNahdaRaportit) return;
     fetch('/api/data/guardReports', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
@@ -528,6 +537,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       })
       .catch(() => { /* virhe näkyy tyhjänä raporttilistana */ });
   }, [saaNahdaRaportit]);
+
+  useEffect(() => { haeRaportit(); }, [haeRaportit]);
 
   // Kierrospohjat ja kierrokset haetaan erikseen, koska niiden oikeudet ovat eri solmuja
   // kuin kohteiden. Molemmat luetaan normaalilta kokoelmareitiltä (kirjoitus ei kulje
@@ -660,6 +671,22 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   }, [saaNahdaHalytykset]);
 
   useEffect(() => { paivitaHalytykset(); }, [paivitaHalytykset]);
+
+  // Hälytyskeskuksen varakysely (ks. Halytyskeskus: VARMISTUS_MS).
+  //
+  // Kanava tuo muutokset itsestään; tämä on sitä varten että katkennut kanava ei jätä
+  // päivystäjää katsomaan pysähtynyttä kuvaa. Aiemmin varakysely haki VAIN hälytykset,
+  // jolloin kanavan katketessa hälytykset päivittyivät ja kaikki muu jäätyi — ja ruutu
+  // näytti toimivalta, koska sen näkyvin osa liikkui.
+  //
+  // Kolme kokoelmaa eikä kaikkia: nämä ovat ne joista tapahtumavirta ja tilatietolista
+  // koostuvat ja jotka muuttuvat kesken vuoron. Jokainen kysely lataa koko kokoelman,
+  // joten lista on pidettävä lyhyenä — ja jokainen irrotettu paneeli-ikkuna kysyy omansa.
+  const paivitaTilannekuva = useCallback(() => {
+    paivitaHalytykset();
+    haeRaportit();
+    haeTehtavasuoritukset();
+  }, [paivitaHalytykset, haeRaportit, haeTehtavasuoritukset]);
 
   // Hälytystehtävät. Oma reittinsä eikä kokoelmahaku, koska kohdennus (vuoro, piirivuoro,
   // etäisyys) lasketaan palvelimella pyyntökohtaisesti — kokoelmahaku rajaisi vartijan
@@ -794,6 +821,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         paivitaKeskuksenTehtavat();
       }
       if (kokoelma === 'patrolRuns') haeKierrokset();
+      // Kenttäkirjaukset: tapahtumailmoitus, toimenpide ja tilatieto. Nämä puuttuivat
+      // listalta, joten palvelimen työntämä muutos tuli perille ja jäi huomiotta.
+      if (kokoelma === 'guardReports') haeRaportit();
+      if (kokoelma === 'guardTaskRuns') haeTehtavasuoritukset();
       if (kokoelma === 'templates') haePohjat();
       if (kokoelma === 'templateRuns') paivitaPohjaSuoritukset();
       if (kokoelma === 'broadcasts') paivitaTiedotteet();
@@ -2183,7 +2214,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           saaMuokataTehtavia={saaMuokataTehtavia}
           onTehtavaMuutos={() => { paivitaKeskuksenTehtavat(); paivitaTehtavat(); }}
           onMuutos={paivitaHalytys}
-          onVirkista={paivitaHalytykset}
+          onVirkista={paivitaTilannekuva}
           // Kohderivistä pääsee kohteen valikkoon. Osio vaihtuu samalla kohteisiin,
           // koska valikon paluulinkki vie kohdelistaan — ja siksi tämä vaatii
           // oikeuden kohdelistaan, ettei linkki vie listaan jota ei saa nähdä.
