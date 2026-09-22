@@ -103,7 +103,17 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
     return () => { peruttu = true; };
   }, [kayttaja]);
 
+  // Viimeisin saapunut aani_avain-tapahtuma per kanava, RAAKANA (vielä purkamattomana).
+  // aani_avain ON HETKELLINEN EIKÄ PERSISTOITU (ks. aanikutsu.ts:n yläkommentti) — jos
+  // huoneavain ei ole vielä ehtinyt koneelle kun tapahtuma saapuu, purku epäonnistuu eikä
+  // tapahtumaa voi hakea uudelleen palvelimelta (toisin kuin tekstiviesteillä, joilla on
+  // historia). Tallennetaan siis raaka sisältö tänne, jotta onLaiteviestiSaapui voi
+  // yrittää purkua UUDELLEEN samasta tapahtumasta sen sijaan että jäätäisiin odottamaan
+  // seuraavaa PTT-painallusta.
+  const viimeisinAaniAvain = useRef<Map<string, string>>(new Map());
+
   const kasitteleAaniAvain = useCallback((kanavaId: string, tapahtuma: string) => {
+    viimeisinAaniAvain.current.set(kanavaId, tapahtuma);
     // Vain jos TÄMÄ selain on juuri pyytänyt tätä kanavaa kuunneltavaksi — ks.
     // aloitaKuuntelu, joka luo vastaanottimen ennen kuin ilmoittaa palvelimelle.
     const vastaanotin = vastaanottimet.current.get(kanavaId);
@@ -112,7 +122,8 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
       if (!tulos) {
         // Huoneavain ei ole vielä saapunut (to-device-relenssi kesken) tai sisältö ei
         // jäsentynyt — jää odottamaan, samaan tapaan kuin KanavaViestit.tsx:n
-        // "Odottaa avainta…" tekstiviesteille.
+        // "Odottaa avainta…" tekstiviesteille. onLaiteviestiSaapui yrittää tätä samaa
+        // tapahtumaa uudelleen kun huoneavain lopulta saapuu.
         setTilat((e) => ({ ...e, [kanavaId]: 'odottaa_avainta' }));
         return;
       }
@@ -129,6 +140,20 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
     onMuutos: (kokoelma) => { if (kokoelma === 'guardKanavat') haeYhteenveto(); },
     onAaniAvain: kasitteleAaniAvain,
     onAaniKehys: kasitteleAaniKehys,
+    // Huoneavain saapui to-device-relenssin kautta (sama periaate kuin
+    // kayttoPttPalkkia.ts:llä tekstiviesteille) — synkronoitava koneelle ENNEN kuin
+    // viimeisintä aani_avain-tapahtumaa kannattaa yrittää purkaa uudelleen. Puuttuva
+    // käsittelijä oli aiemmin tässä tiedostossa — juuri se syy miksi kuuntelu jäi
+    // pysyvästi "Odottaa avainta…" -tilaan vaikka puheenvuoro ja siis lähetys toimivat
+    // (löytyi 22.9.2026 käyttäjän puhelintestissä CSP-korjauksen jälkeen).
+    onLaiteviestiSaapui: () => {
+      if (!machine) return;
+      synkronoiLaiteviestit(machine).then(() => {
+        for (const [kanavaId, tapahtuma] of viimeisinAaniAvain.current) {
+          kasitteleAaniAvain(kanavaId, tapahtuma);
+        }
+      });
+    },
   });
 
   // Kuunneltavat kanavat palvelimelle aina kun joukko tai yhteys itse muuttuu — sama
