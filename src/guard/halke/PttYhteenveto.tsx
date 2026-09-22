@@ -48,6 +48,12 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
   const [kanavat, setKanavat] = useState<KanavaRivi[]>([]);
   const [virhe, setVirhe] = useState<string | null>(null);
   const [machine, setMachine] = useState<OlmMachine | null>(null);
+  // Salauksen alustuksen virhe ERI TILASSA kuin yhteenvedon virhe — kaksi eri asiaa
+  // jotka voivat epäonnistua toisistaan riippumatta, ja päivystäjän on nähtävä KUMPI.
+  // Aiemmin tämä nieltiin hiljaa (`.catch(() => {})`), mikä näkyi vartijalle pysyvänä
+  // "Valmistellaan salausta…" -tekstinä ilman mitään vihjettä miksi — löytyi 22.9.2026
+  // ensimmäisessä oikeassa puhelintestissä.
+  const [koneVirhe, setKoneVirhe] = useState<string | null>(null);
   const [tilat, setTilat] = useState<Record<string, KuunteluTila>>({});
   // Vastaanottimet REFISSÄ eikä tilassa: se ei ole näytettävää dataa vaan ajonaikaisia
   // WebCodecs/Web Audio -olioita, ja niiden vaihtuminen ei itsessään saa laukaista
@@ -79,11 +85,21 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
   // IndexedDB-varastoa vasten (ks. sen oma kommentti).
   useEffect(() => {
     let peruttu = false;
+    setKoneVirhe(null);
     haeJaettuOlmMachine(kayttaja).then(async (kone) => {
       await synkronoiPyynnot(kone);
       await synkronoiLaiteviestit(kone);
       if (!peruttu) setMachine(kone);
-    }).catch(() => { /* virhe näkyy siten että kuuntelu ei koskaan käynnisty */ });
+    }).catch((e: unknown) => {
+      if (peruttu) return;
+      // NÄKYVÄ virhe eikä hiljainen nielaisu — konsoliin täysi olio (stack mukaan)
+      // devtoolsia varten, ruudulle lyhyt teksti jonka päivystäjä voi lukea ääneen
+      // tukipyynnössä ilman devtoolseja.
+      // eslint-disable-next-line no-console
+      console.error('PTT-salauksen alustus epäonnistui', e);
+      const viesti = e instanceof Error ? e.message : String(e);
+      setKoneVirhe(`Salauksen alustus epäonnistui: ${viesti}`);
+    });
     return () => { peruttu = true; };
   }, [kayttaja]);
 
@@ -180,7 +196,12 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
         <p className="text-sm text-ink-muted">Ei aktiivisia PTT-kanavia juuri nyt.</p>
       )}
 
-      {!machine && kanavat.length > 0 && (
+      {koneVirhe && (
+        <p className="text-xs text-danger-ink mb-2">
+          {koneVirhe} — kuuntelu ei ole käytettävissä. Yritä ladata sivu uudelleen.
+        </p>
+      )}
+      {!machine && !koneVirhe && (
         <p className="text-xs text-ink-muted mb-2">Valmistellaan salausta…</p>
       )}
 
