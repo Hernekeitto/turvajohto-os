@@ -54,6 +54,7 @@ import {
 } from './vuorot';
 import { tuoreus } from './tuoreus';
 import { VartijanPaneeli } from './halke/VartijanPaneeli';
+import { PttYhteenveto } from './halke/PttYhteenveto';
 import { KeskuksenTehtavat } from './KeskuksenTehtavat';
 import { LAJIN_NIMI, type Halytystehtava } from './halytystehtavat';
 
@@ -1193,6 +1194,16 @@ export const Halytyskeskus = ({
           saaMuokata={saaMuokataTehtavia}
           onMuutos={onTehtavaMuutos}
         />
+      </div>
+      </>)}
+
+      {nayta('ptt') && (<>
+      {/* --- PTT-yhteenveto (erä 26, vaihe 8/9) ------------------------------------
+          Oma osio, ei osa hälytyslistaa: PTT-kanava voi olla aktiivinen ilman että
+          mikään on lauennut, ja päivystäjän on nähtävä se riippumatta siitä onko
+          hälytyksiä juuri nyt. */}
+      <div className="mb-8">
+        <PttYhteenveto kayttaja={kayttaja} />
       </div>
       </>)}
 

@@ -2271,6 +2271,65 @@ app.get('/api/kanavat/omat', requireAuth, guardPortti, (req, res) => {
   res.json({ ok: true, kanavat: [...omatKiinteatKanavat(vuoro), ...tallennetut] });
 });
 
+// PTT-yhteenveto HÄLKEen (erä 26, vaihe 8/9, käyttäjän pyyntö 22.9.2026: "Lisätään
+// HÄLKE oma osio PTT varten. Sinne yhteenveto kanavista ja kuuntelumahdollisuus.").
+//
+// KAIKKI TÄLLÄ HETKELLÄ AKTIIVISET KANAVAT, EI VAIN OMAT: toisin kuin yllä oleva
+// GET /api/kanavat/omat (joka vastaa "mitä TÄMÄ käyttäjä kuuluu"), tämä vastaa
+// "mitä on olemassa juuri nyt" — päivystäjän on nähtävä koko organisaation PTT-
+// liikenne yhdellä silmäyksellä, ei vain kanavat joihin hän on itse liittynyt jonkin
+// oman vuoron kautta (jota päivystäjällä yleensä ei edes ole).
+//
+// KIINTEÄT KANAVAT PÄÄTELLÄÄN KESKEN OLEVISTA VUOROISTA, samalla periaatteella kuin
+// omatKiinteatKanavat yhdelle vartijalle — tässä vain kaikkien yli kerralla. Useampi
+// vartija samalla kohteella (esim. vuoronvaihdon limitys) tai samalla
+// piirivuorotyypillä (eri kohteissa) jakaa yhden kanavan, joten tulos on
+// deduplikoitu id:n mukaan ja kertoo jäsenmäärän.
+//
+// VAIN LUKUOIKEUS (guard_dispatch NÄKY): tämä ei myönnä mitään uutta MUOKKAUSOIKEUTTA
+// — kuuntelu- ja jäsenyysoikeudet (kuuluuKanavaanNyt/reqKuuluuKanavaanNyt,
+// jasenetKanavalla, ks. niiden omat kommentit) on laajennettu erikseen samalla
+// guard_dispatch NÄKY -tasolla, joten tämä lista ja se mitä sillä voi tehdä ovat
+// yhtä laajat eivätkä lupaa enempää kuin mitä käyttöliittymä oikeasti pystyy.
+app.get('/api/kanavat/yhteenveto', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  if (req.role !== 'admin' && !canView(req.permissions, null, 'guard_dispatch')) {
+    return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus näkee PTT-yhteenvedon.' });
+  }
+
+  const vuorot = (readCollection('guardShifts') || []).filter((v) => v?.tila === 'kesken');
+  const kiinteat = new Map();
+  for (const vuoro of vuorot) {
+    for (const kanava of omatKiinteatKanavat(vuoro)) {
+      const olemassa = kiinteat.get(kanava.id);
+      kiinteat.set(kanava.id, {
+        id: kanava.id,
+        tyyppi: kanava.tyyppi,
+        nimi: kanava.nimi,
+        jasenmaara: (olemassa?.jasenmaara || 0) + 1,
+      });
+    }
+  }
+
+  const hatakanavat = (readCollection('guardKanavat') || [])
+    .filter((k) => k?.tyyppi === 'hata')
+    .map((k) => ({
+      id: k.id,
+      tyyppi: 'hata',
+      nimi: `${HALYTYSTYYPIT[k.halytysTyyppi]?.label || 'Hätäkanava'} — ${k.vartija}`,
+      jasenmaara: 1,
+    }));
+
+  // Puhuja luetaan VASTA TÄSSÄ, viimeisenä — sama "hetkellinen tila luetaan
+  // lukuhetkellä" -periaate kuin muuallakin (server/puheenvuoro.js on muistivarasto).
+  const kanavat = [...kiinteat.values(), ...hatakanavat].map((k) => ({
+    ...k,
+    puhuja: nykyinenHaltija(k.id),
+  }));
+
+  res.json({ ok: true, kanavat });
+});
+
 // DM-vastaanottajaehdokkaat: muut käyttäjät jotka ovat juuri nyt vuorossa samalla
 // tuotepuolella (käyttäjän päätös 19.9.2026 — pitää DM:n "vuoron sisäinen työkalu"
 // -hengessä kuten kanavatkin).
@@ -2616,6 +2675,14 @@ app.get('/api/kanavat/avaimet/laitteelle', requireAuth, guardPortti, (req, res) 
 function reqKuuluuKanavaanNyt(req, kanavaId) {
   const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
   if (kuuluuKiinteaanKanavaan(vuoro, kanavaId)) return true;
+  // HÄLKE saa kuulua MIHIN TAHANSA kiinteään kanavaan vaikka heillä ei olisi omaa
+  // vuoroa (erä 26, vaihe 8/9: PTT-yhteenveto) — sama guard_dispatch NÄKY -oikeus
+  // jolla he jo pääsevät hätäkanavalle alla. Vain kohde/piiri, ei dm/vapaa: niiden
+  // jäsenyys on eksplisiittinen osallistujalista eikä "kuka tahansa päivystäjä".
+  if ((kanavaId.startsWith('kohde:') || kanavaId.startsWith('piiri:'))
+      && (req.role === 'admin' || canView(req.permissions, null, 'guard_dispatch'))) {
+    return true;
+  }
   const kanava = (readCollection('guardKanavat') || []).find((k) => k.id === kanavaId);
   if (!kanava) return false;
   if (kanava.tyyppi === 'hata') {
@@ -2797,11 +2864,20 @@ function kaikkiPaivystajat() {
 // oikeudella varustettu (myös admin, sama poikkeus kuin muualla hätäkanavalla) saa
 // huoneavaimen, vaikka ei olisi vielä koskaan avannut kanavaa — sama "kuka tahansa
 // päivystäjä voi vastata" -periaate kuin vaiheessa 1d.
+//
+// KIINTEÄ (kohde/piiri) KANAVA SAI SAMAN PÄIVYSTÄJÄLISÄN erässä 26, vaiheessa 8/9
+// (PTT-yhteenveto ja kuuntelu HÄLKEssa, käyttäjän pyyntö 22.9.2026: "yhteenveto
+// kanavista ja kuuntelumahdollisuus"). Ilman tätä lähettäjän huoneavain ei koskaan
+// tavoittaisi päivystäjän laitetta, eikä hän voisi purkaa mitä kuulee vaikka
+// kuuluuKanavaanNyt/reqKuuluuKanavaanNyt (alempana) päästäisivät hänet kuuntelemaan.
 function jasenetKanavalla(kanavaId) {
   const kanava = (readCollection('guardKanavat') || []).find((k) => k.id === kanavaId);
   if (kanava?.tyyppi === 'hata') return [...new Set([kanava.vartija, ...kaikkiPaivystajat()])];
   if (kanava?.tyyppi === 'dm' || kanava?.tyyppi === 'vapaa') return kanava.osallistujat || [];
-  return jasenetKiinteallaKanavalla(readCollection('guardShifts') || [], kanavaId);
+  return [...new Set([
+    ...jasenetKiinteallaKanavalla(readCollection('guardShifts') || [], kanavaId),
+    ...kaikkiPaivystajat(),
+  ])];
 }
 
 app.get('/api/kanavat/:id/jasenet', requireAuth, guardPortti, (req, res) => {
@@ -7144,6 +7220,17 @@ function kasitteleKanavaViesti(istunto, viesti) {
 // GET /api/kanavat/omat:ssa.
 function kuuluuKanavaanNyt(istunto, kanavaId, vuoro) {
   if (kuuluuKiinteaanKanavaan(vuoro, kanavaId)) return true;
+  // HÄLKE saa kuulua MIHIN TAHANSA kiinteään kanavaan vaikka heillä ei olisi omaa
+  // vuoroa (erä 26, vaihe 8/9: PTT-yhteenveto ja kuuntelu, käyttäjän pyyntö
+  // 22.9.2026) — sama guard_dispatch NÄKY -oikeus jolla he jo pääsevät hätäkanavalle
+  // alla. Vain kohde/piiri, ei dm/vapaa: niiden jäsenyys on eksplisiittinen
+  // osallistujalista eikä "kuka tahansa päivystäjä". Sama sääntö kuin
+  // reqKuuluuKanavaanNyt:ssä (REST-puoli) — pidettävä käsin synkronissa, ei jaettua
+  // koodia näiden kahden funktion välillä (istunto vs. req).
+  if ((kanavaId.startsWith('kohde:') || kanavaId.startsWith('piiri:'))
+      && (istunto?.role === 'admin' || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch'))) {
+    return true;
+  }
   const kanava = (readCollection('guardKanavat') || []).find((k) => k.id === kanavaId);
   if (!kanava) return false;
   if (kanava.tyyppi === 'hata') {

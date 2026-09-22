@@ -21,7 +21,7 @@
 // scopessa (/guard), joten asennettu sovellus ei putoa selaimeen.
 
 export type PaneeliId =
-  'keikat' | 'halytykset' | 'vartijat' | 'kartta' | 'tilatiedot' | 'kohteet' | 'tausta';
+  'keikat' | 'halytykset' | 'vartijat' | 'kartta' | 'tilatiedot' | 'kohteet' | 'tausta' | 'ptt';
 
 export type Paneeli = {
   id: PaneeliId;
@@ -97,6 +97,16 @@ export const PANEELIT: Paneeli[] = [
     polku: '/guard/halke/tausta',
     label: 'Kierrokset, kalusto ja tiedotteet',
     kuvaus: 'Kesken olevat kierrokset, avoimet poikkeamat ja voimassa olevat tiedotteet.',
+    taulukelpoinen: false,
+  },
+  {
+    id: 'ptt',
+    polku: '/guard/halke/ptt',
+    label: 'PTT-kanavat',
+    kuvaus: 'Aktiiviset kanavat, kuka puhuu juuri nyt, ja mahdollisuus kuunnella.',
+    // Ei seinätaulukelpoinen (toistaiseksi): kuuntelu vaatii painalluksen, ja
+    // seinätaulutila on tarkoituksella vailla toimintopainikkeita — sama rajaus kuin
+    // kohteet/tausta-paneeleilla.
     taulukelpoinen: false,
   },
 ];
