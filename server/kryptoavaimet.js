@@ -28,14 +28,29 @@ function onOlio(x) {
   return !!x && typeof x === 'object' && !Array.isArray(x);
 }
 
+// Pseudo-toimialue Matrixin tunnistemuotoa varten — SAMA VAKIO kuin
+// src/shared/olm.ts:n PSEUDO_TOIMIALUE. Kahta eri kieltä/buildia (asiakas/palvelin) ei
+// voi jakaa suoraan, joten tämä on pidettävä käsin synkronissa jos toista muutetaan. EI
+// oikea verkkotunnus eikä koskaan resolvoidu mihinkään, ks. olm.ts:n oma perustelu.
+const PSEUDO_TOIMIALUE = 'turvajohto.local';
+const matriisiKayttajaId = (kayttaja) => `@${kayttaja}:${PSEUDO_TOIMIALUE}`;
+
 /**
  * Onko annettu device_keys-olio (Matrixin /keys/upload-muoto) rakenteeltaan kelvollinen
  * JA täsmääkö se väitettyyn käyttäjään ja laitteeseen. EI tarkista allekirjoitusta —
  * palvelin ei ole luotettu osapuoli kryptografian suhteen, vain säilytyksen suhteen.
+ *
+ * `deviceKeys.user_id` ON MATRIXIN OMASSA SIGIILIMUODOSSA (esim. "@vartija1:
+ * turvajohto.local"), EI paljas käyttäjätunnus — OlmMachine tuottaa sen aina näin
+ * (spesifikaation vaatimus), joten vertailu paljasta `kayttaja`-parametria vasten
+ * hylkäsi AINA jokaisen aidon laitteen ensimmäisen rekisteröinnin. Tämä jäi huomaamatta
+ * kuukausia koska asiakaspuoli ei tarkistanut palvelimen vastausta lainkaan (korjattu
+ * src/shared/olm.ts:n synkronoiPyynnot 23.9.2026) — ks. Obsidian "PTT-äänibugin
+ * juurisyy", jossa tämä lopulta löytyi.
  */
 export function kelvollinenDeviceKeys(deviceKeys, kayttaja, laiteId) {
   return onOlio(deviceKeys)
-    && deviceKeys.user_id === kayttaja
+    && deviceKeys.user_id === matriisiKayttajaId(kayttaja)
     && deviceKeys.device_id === laiteId
     && onOlio(deviceKeys.keys)
     && onOlio(deviceKeys.signatures);

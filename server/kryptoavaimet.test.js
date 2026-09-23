@@ -11,12 +11,16 @@ import {
 } from './kryptoavaimet.js';
 
 // Muoto vastaa Matrixin /keys/upload-runkoa — ei todellisia avaimia, vain rakenne.
+// user_id ON SIGIILIMUODOSSA ("@vartija1:turvajohto.local"), EI paljas käyttäjätunnus —
+// juuri tämän eron huomiotta jättäminen tässä fixturessa piilotti kelvollinenDeviceKeys:n
+// bugin kuukausiksi (ks. sen oma kommentti). Todellinen OlmMachine ei koskaan tuota
+// paljasta käyttäjätunnusta tähän kenttään.
 const deviceKeys = (yli = {}) => ({
-  user_id: 'vartija1',
+  user_id: '@vartija1:turvajohto.local',
   device_id: 'laite1',
   algorithms: ['m.olm.v1.curve25519-aes-sha2'],
   keys: { 'curve25519:laite1': 'cv-1', 'ed25519:laite1': 'ed-1' },
-  signatures: { vartija1: { 'ed25519:laite1': 'sig-1' } },
+  signatures: { '@vartija1:turvajohto.local': { 'ed25519:laite1': 'sig-1' } },
   ...yli,
 });
 
