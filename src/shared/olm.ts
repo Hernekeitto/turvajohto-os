@@ -390,8 +390,22 @@ export async function synkronoiLaiteviestit(machine: OlmMachine): Promise<void> 
     credentials: 'include',
   }).then((r) => r.json()).catch(() => ({ viestit: [] }));
   const viestit: SaapunutLaiteviesti[] = vastaus?.viestit || [];
+  // VÄLIAIKAINEN DIAGNOSTIIKKA (23.9.2026, "Odottaa avainta" jatkuu vielä jasenet-
+  // korjauksenkin jälkeen) — näytä haettiinko mitään ylipäätään, ja heittikö
+  // receiveSyncChanges (ei ollut aiemmin try/catchin sisällä, joten virhe olisi
+  // näkynyt vain "Uncaught (in promise)" -rivinä ilman kontekstia).
+  // eslint-disable-next-line no-console
+  console.log('PTT-laiteviestit haettu', {
+    n: viestit.length,
+    viestit: viestit.map((v) => ({ tyyppi: v.tyyppi, lahettaja: v.lahettaja })),
+  });
   if (viestit.length === 0) return;
-  await machine.receiveSyncChanges(laiteviestitTapahtumiksi(viestit), new DeviceLists(), new Map());
+  try {
+    await machine.receiveSyncChanges(laiteviestitTapahtumiksi(viestit), new DeviceLists(), new Map());
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('PTT-laiteviestien syöttö koneelle epäonnistui', e);
+  }
 }
 
 // --- Jaettu instanssi (erä 26, vaihe 5) ----------------------------------------------
