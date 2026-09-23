@@ -5,6 +5,7 @@ import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
 import { paikallinenPaiva } from '../shared/ajat';
 import { Ylapalkki } from '../shared/komponentit/Ylapalkki';
+import { PttPainike } from './PttPainike';
 import { KohteenHallinta } from './KohteenHallinta';
 import { Tehtavat } from './Tehtavat';
 import { Raportit } from './Raportit';
@@ -184,6 +185,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // hälytyskeskus näyttää kaikkien kohteiden tilanteen yhtä aikaa. Jos ne olisivat sama
   // oikeus, jokainen vartija näkisi koko yrityksen valvomonäkymän.
   const saaNahdaHalytyskeskus = isAdmin || canView(perms, null, 'guard_dispatch');
+  // PTT-painike yläpalkissa (erä 26, jatko 23.9.2026). Sama oikeus jota palvelin jo
+  // vaatii kaikilta PTT-reiteiltä (server/index.js: pttPortti) — painike joka avautuisi
+  // mutta jonka jokainen toiminto 403:ttaisi olisi pahempi kuin puuttuva painike.
+  const saaNahdaPtt = isAdmin || canView(perms, null, 'guard_ptt');
   // Ohjepankki ja skenaariot (erä 8). Näkeminen riittää käyttöön: ohjekortin lukeminen ja
   // skenaarion käynnistäminen ovat saman tietueen lukemista. Muokkausoikeus ratkaisee kuka
   // laatii pohjat — se on esimiehen työtä samalla tavalla kuin kierrospohjat.
@@ -1931,6 +1936,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       tuoteNimi="Turvajohto GUARD"
       alaotsikko={alaotsikko}
       onLogo={paluuEtusivulle}
+      // Ei näytetä oikeudettomalle — sama "ei lupausta jota ei lunasteta" -periaate kuin
+      // muillakin valinnaisilla osilla tässä palkissa.
+      ekstra={saaNahdaPtt ? <PttPainike /> : undefined}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}

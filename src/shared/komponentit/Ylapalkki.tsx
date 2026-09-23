@@ -9,6 +9,7 @@
 // Se on aidosti erilainen, eikä sitä kannata pakottaa tähän lisäpropseilla — se käyttää
 // vain YlapalkkiLogoa.
 
+import type { ReactNode } from 'react';
 import { ShieldCheck, Clock } from 'lucide-react';
 import { NotificationBell, ProfileMenu, type Ilmoitus } from './YlapalkkiOsat';
 
@@ -42,6 +43,10 @@ type YlapalkkiProps<T extends Ilmoitus> = YlapalkkiLogoProps & {
   // Annettu kellonaika näytetään palkissa; puuttuva jättää kellon pois.
   kello?: string;
   sticky?: boolean;
+  // Tuotekohtainen lisäpainike ilmoituskellon VASEMMALLE puolelle (esim. GUARD-puolen
+  // PTT-painike). Puuttuva ei näytä mitään — EVENT-puoli ei anna tätä propsia lainkaan,
+  // eikä tämän jaetun komponentin tarvitse tietää mitä tuotteita on olemassa.
+  ekstra?: ReactNode;
   ilmoitukset: T[];
   onIlmoitus: (ilmoitus: T) => void;
   nimimerkki: string;
@@ -57,6 +62,7 @@ export const Ylapalkki = <T extends Ilmoitus,>({
   onLogo,
   kello,
   sticky = false,
+  ekstra,
   ilmoitukset,
   onIlmoitus,
   nimimerkki,
@@ -78,6 +84,7 @@ export const Ylapalkki = <T extends Ilmoitus,>({
           <span className="font-mono text-sm tracking-widest">{kello}</span>
         </div>
       )}
+      {ekstra}
       <NotificationBell notifications={ilmoitukset} onOpen={onIlmoitus} />
       <ProfileMenu
         nickname={nimimerkki}
