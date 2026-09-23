@@ -212,7 +212,9 @@ export function usePttPalkkia() {
           return;
         }
         setAaniDiag(`koodekki=${koodekki}, jaetaan huoneavainta…`);
-        const { lahetysAvain, tapahtuma } = await aloitaLahetys(omaKone, oma, kohdeKanava, koodekki);
+        const { lahetysAvain, tapahtuma } = await aloitaLahetys(omaKone, oma, kohdeKanava, koodekki, (viesti) => {
+          if (lahettavaKanavaRef.current === kohdeKanava) setAaniDiag(`koodekki=${koodekki} · ${viesti}`);
+        });
         // aani_avain ENNEN ensimmäistä kehystä, muuten vastaanottajalla ei ole millä
         // purkaa sitä (sama järjestys kuin aanikutsu.ts:n oma yläkommentti vaatii).
         const avainLahti = laheta({ tyyppi: 'aani_avain', kanavaId: kohdeKanava, tapahtuma });

@@ -274,15 +274,32 @@ export async function paivitaKayttajanLaitteet(machine: OlmMachine, kayttaja: st
 }
 
 /**
+ * Kuinka monta laitetta koneella on tiedossa annetulle käyttäjälle juuri nyt —
+ * diagnostiikkaa varten (esim. onko `paivitaKayttajanLaitteet` oikeasti löytänyt
+ * kohdelaitteen, vai onko huoneavaimen jako tuomittu epäonnistumaan alusta asti koska
+ * mitään laitetta ei tunneta).
+ */
+export async function laitteidenMaara(machine: OlmMachine, kayttaja: string): Promise<number> {
+  const laitteet = await machine.getUserDevices(new UserId(matriisiKayttajaId(kayttaja)));
+  return laitteet.devices().length;
+}
+
+/**
  * Varmistaa Olm-istunnot annetuille käyttäjille ennen huoneavaimen jakoa. Kutsujan on
  * kutsuttava `paivitaKayttajanLaitteet` jokaiselle uudelle käyttäjälle ensin, muuten
  * tällä ei ole mitään laitteita joille pyytää avainta.
+ *
+ * Palauttaa kuinka monta kertakäyttöavainta oikeasti saatiin vaadittua (diagnostiikkaa
+ * varten), tai -1 jos koneen mielestä mitään istuntoa ei edes puuttunut (jo olemassa
+ * olevat istunnot riittävät — ERI ASIA kuin 0 saatua kun jotain puuttui muttei saatu).
  */
-export async function varmistaIstunnot(machine: OlmMachine, kayttajat: string[]): Promise<void> {
+export async function varmistaIstunnot(machine: OlmMachine, kayttajat: string[]): Promise<number> {
   const pyynto = await machine.getMissingSessions(kayttajat.map((k) => new UserId(matriisiKayttajaId(k))));
-  if (!pyynto) return;
+  if (!pyynto) return -1;
   const vastaus = await palvelimelle('/api/kanavat/avaimet/vaadi', { pyynnot: vaadiPyynnotPyynnosta(pyynto.body) });
-  await machine.markRequestAsSent(pyynto.id, pyynto.type, vaadiVastausJsoniksi(vastaus?.avaimet || []));
+  const avaimet = vastaus?.avaimet || [];
+  await machine.markRequestAsSent(pyynto.id, pyynto.type, vaadiVastausJsoniksi(avaimet));
+  return avaimet.length;
 }
 
 /**
