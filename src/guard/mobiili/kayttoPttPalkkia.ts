@@ -82,6 +82,12 @@ export function usePttPalkkia() {
   const lahetinRef = useRef<Lahetin | null>(null);
   const lahettavaKanavaRef = useRef<string | null>(null);
   const [machine, setMachine] = useState<OlmMachine | null>(null);
+  // NÄKYVÄ virhe eikä hiljainen nielaisu — sama korjaus kuin HÄLKEn PttYhteenveto.tsx:ssä
+  // 22.9.2026 ja samasta syystä: tähän asti tämä `.catch` jäi lähes kuolleeksi koodiksi
+  // koska synkronoiPyynnot ei koskaan heittänyt mitään edes epäonnistuneesta avainten
+  // latauksesta (korjattu olm.ts:ssä 23.9.2026) — vartija näki vain "alustetaan"-tilan
+  // ikuisesti ilman mitään vihjettä siitä että oma laite ei koskaan rekisteröitynyt.
+  const [salausVirhe, setSalausVirhe] = useState<string | null>(null);
   const [viestiHerate, setViestiHerate] = useState<ViestiHerate>({ kanavaId: null, n: 0 });
 
   // OlmMachine-elinkaari: YKSI instanssi koko selainvälilehteä kohden (haeJaettuOlmMachine,
@@ -90,10 +96,16 @@ export function usePttPalkkia() {
   useEffect(() => {
     if (!omaKayttaja) return undefined;
     let peruttu = false;
+    setSalausVirhe(null);
     haeJaettuOlmMachine(omaKayttaja).then(async (kone) => {
       await synkronoiPyynnot(kone);
       if (!peruttu) setMachine(kone);
-    }).catch(() => { /* virhe näkyy siten että viestinäkymä pysyy "alustetaan"-tilassa */ });
+    }).catch((e: unknown) => {
+      if (peruttu) return;
+      // eslint-disable-next-line no-console
+      console.error('PTT-salauksen alustus epäonnistui', e);
+      setSalausVirhe(e instanceof Error ? e.message : String(e));
+    });
     return () => { peruttu = true; };
   }, [omaKayttaja]);
 
@@ -275,7 +287,7 @@ export function usePttPalkkia() {
 
   return {
     kanavat, omaKayttaja, mykistetyt, aktiivinenId, setAktiivinenId, tilat, hylkays,
-    aaniVirhe, aaniDiag, aaniSetupDiag,
+    aaniVirhe, aaniDiag, aaniSetupDiag, salausVirhe,
     pyydaPuheenvuoro, vapautaPuheenvuoro, asetaMykistys,
     machine, viestiHerate, yritaLahettaaJono,
   };

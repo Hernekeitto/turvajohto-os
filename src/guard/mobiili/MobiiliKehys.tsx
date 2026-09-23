@@ -466,6 +466,7 @@ export const MobiiliKehys = ({
           aaniVirhe={ptt.aaniVirhe}
           aaniDiag={ptt.aaniDiag}
           aaniSetupDiag={ptt.aaniSetupDiag}
+          salausVirhe={ptt.salausVirhe}
           onPttDown={ptt.pyydaPuheenvuoro}
           onPttUp={ptt.vapautaPuheenvuoro}
           machine={ptt.machine}

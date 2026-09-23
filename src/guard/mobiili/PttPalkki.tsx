@@ -51,6 +51,9 @@ type Props = {
   // Avaimenjaon askeleiden loki — säilyy näkyvissä (ei ylikirjoitu kehyslaskurilla)
   // pysähdyksen jälkeenkin, jotta ehtii lukea mitä tapahtui ennen kuin kehykset alkoivat.
   aaniSetupDiag: string[];
+  // Oman laitteen salauksen alustuksen virhe — jos tämä on asetettu, mikään PTT-ääni
+  // (lähetys eikä vastaanotto) ei voi koskaan toimia, koska laite ei rekisteröitynyt.
+  salausVirhe: string | null;
   onPttDown: (kanavaId: string) => void;
   onPttUp: (kanavaId: string) => void;
   machine: OlmMachine | null;
@@ -61,7 +64,8 @@ type Props = {
 
 export const PttPalkki = ({
   kanavat, aktiivinenId, onValitseAktiivinen, tilat, mykistetyt, onMykista,
-  hylkays, aaniVirhe, aaniDiag, aaniSetupDiag, onPttDown, onPttUp, machine, omaKayttaja, viestiHerate, onLahetaJono,
+  hylkays, aaniVirhe, aaniDiag, aaniSetupDiag, salausVirhe,
+  onPttDown, onPttUp, machine, omaKayttaja, viestiHerate, onLahetaJono,
 }: Props) => {
   // Kesken olevan painalluksen kanava-id. Refissä: pointerup voi tulla vaikka props olisi
   // ehtinyt vaihtua (esim. kanavalista päivittyi kesken painalluksen), ja vapautus on
@@ -110,6 +114,11 @@ export const PttPalkki = ({
         />
       ))}
 
+      {salausVirhe && (
+        <p className="mb-1.5 text-sm text-danger font-medium">
+          Salauksen alustus epäonnistui: {salausVirhe} — ääntä ei voi lähettää eikä vastaanottaa.
+        </p>
+      )}
       {hylkays && (
         <p className="mb-1.5 text-sm text-danger font-medium">
           Kanava varattu{hylkays.kayttaja ? ` — puhuu ${hylkays.kayttaja}` : ''}.

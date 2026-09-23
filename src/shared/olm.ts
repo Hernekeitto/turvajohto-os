@@ -233,8 +233,18 @@ export async function synkronoiPyynnot(machine: OlmMachine): Promise<RequestType
       const upload = pyynto as KeysUploadRequest;
       const laiteId = haeTaiLuoLaiteId();
       const vastaus = await palvelimelle('/api/kanavat/avaimet/lataa', lataaRunkoPyynnosta(laiteId, upload.body));
+      if (!vastaus?.ok) {
+        // NÄKYVÄ virhe eikä hiljainen nielaisu: `markRequestAsSent` kertoisi koneelle
+        // että lataus onnistui vaikka palvelin oikeasti hylkäsi sen (esim. puuttuva
+        // guard_ptt-oikeus, tai identiteetti joka ei täsmää) — kone ei silloin KOSKAAN
+        // yritä uudelleen lähettää device_keys-kenttää, ja laite jää pysyvästi
+        // tuntemattomaksi muille ilman mitään merkkiä syystä. Juuri tämä löytyi
+        // 23.9.2026: kanavan jäsenet näyttivät "0 laitetta tiedossa" lähettäjän
+        // OlmMachinesta, vaikka vastaanottaja oli alustanut salauksensa "onnistuneesti".
+        throw new Error(`Avainten lataus epäonnistui: ${vastaus?.error ?? 'tuntematon virhe'}`);
+      }
       await machine.markRequestAsSent(upload.id, upload.type, JSON.stringify({
-        one_time_key_counts: { signed_curve25519: vastaus?.kertakayttoavaimiaJaljella ?? 0 },
+        one_time_key_counts: { signed_curve25519: vastaus.kertakayttoavaimiaJaljella ?? 0 },
       }));
     } else if (pyynto.type === RequestType.KeysQuery) {
       const query = pyynto as KeysQueryRequest;
