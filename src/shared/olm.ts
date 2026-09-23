@@ -36,6 +36,7 @@
 import {
   initAsync, OlmMachine, UserId, DeviceId, RoomId, RequestType,
   EncryptionSettings, DecryptionSettings, TrustRequirement, DeviceLists, CollectStrategy,
+  DecryptionErrorCode, type MegolmDecryptionError,
   type KeysUploadRequest, type KeysQueryRequest, type KeysClaimRequest, type ToDeviceRequest,
 } from '@matrix-org/matrix-sdk-crypto-wasm';
 
@@ -364,9 +365,16 @@ export async function puraViesti(machine: OlmMachine, kanavaId: string, tapahtum
     // mutta VIRHE ITSE ei saa hävitä kokonaan: ilman tätä konsolista ei näe eroa
     // "huoneavain ei ole vielä saapunut" (odotettu, korjaantuu retryllä) ja jonkin
     // muun, pysyvän syyn välillä (23.9.2026, natiivin PTT-lähetyksen "Odottaa
-    // avainta" -jumin selvitys).
+    // avainta" -jumin selvitys). e on MegolmDecryptionError (wasm-bindgen-olio) —
+    // pelkkä console.error(e) näyttää konsolissa vain tiivistetyt "(…)"-getterit,
+    // joten kentät on luettava eksplisiittisesti että oikeat arvot tulevat näkyviin.
+    const virhe = e as Partial<MegolmDecryptionError>;
     // eslint-disable-next-line no-console
-    console.error('PTT-avaimen purku epäonnistui', e);
+    console.error('PTT-avaimen purku epäonnistui', {
+      koodi: virhe.code !== undefined ? DecryptionErrorCode[virhe.code] : undefined,
+      kuvaus: virhe.description,
+      epaamisenSyy: virhe.maybe_withheld,
+    });
     return null;
   }
 }
