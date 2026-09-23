@@ -19,6 +19,7 @@ import { ArrowLeft, Bell, BellRing, Camera, ChevronRight, LogOut, Menu, Monitor,
 
 import { PttPalkki } from './PttPalkki.tsx';
 import { usePttPalkkia } from './kayttoPttPalkkia.ts';
+import { PttPainikkeenSisalto } from '../PttPainike.tsx';
 
 export type MobiiliIlmoitus = {
   id: string;
@@ -158,6 +159,14 @@ export const MobiiliKehys = ({
             </button>
           )}
           <p className="flex-1 min-w-0 truncate text-base font-medium text-ink-on-dark-muted">{otsikko}</p>
+          {/* Radiopuhelin-ikoni (erä 26, jatko: "Lisätään radiopuhelinikoni myös
+              sovellukseen!!"). Sama pudotusvalikko kuin työpöydällä (kanavat, kuka
+              puhuu, mykistys, viestit) — EI oma usePttPalkkia-kutsu, ks. PttPainike.tsx:n
+              tiedostokommentti kaksinkertaisen mikrofonin vaarasta. Mikrofonin
+              lähetyspainike on jo olemassa alapalkissa (PttPalkki); tämä on sille lisä. */}
+          <div className="shrink-0">
+            <PttPainikkeenSisalto ptt={ptt} />
+          </div>
           <button
             type="button"
             onClick={() => vaihda('ilmoitukset')}

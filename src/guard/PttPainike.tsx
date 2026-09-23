@@ -1,18 +1,30 @@
-// Yläpalkin PTT-painike työpöytäversiolle (erä 26, jatko 23.9.2026 — käyttäjän pyyntö:
-// "Lisätään yläpalkkiin ilmoituskellon viereen radiopuhelin ikoni mistä pääsee
-// hallitsemaan PTT asetuksia ja tarkistamaan sen tilan ja viestittelemään.").
+// Radiopuhelin-painike PTT-kanavien hallintaan (erä 26, jatko 23.9.2026 — käyttäjän
+// pyyntö: "Lisätään yläpalkkiin ilmoituskellon viereen radiopuhelin ikoni mistä pääsee
+// hallitsemaan PTT asetuksia ja tarkistamaan sen tilan ja viestittelemään.", ja saman
+// päivän jatkopyyntö "Lisätään radiopuhelinikoni myös sovellukseen!!" kun käyttäjä
+// huomasi ettei se näkynyt puhelimella).
 //
 // TÄMÄ ON TYÖPÖYTÄVERSION PUUTTUVA VASTINE mobiilin PttPalkki.tsx:lle — kiinteä
 // alapalkki EI toimi työpöydällä (ei kosketusta, ei samaa tilaa), joten sama tieto
-// (kanavat, kuka puhuu, mykistys, viestit) tarjotaan pudotusvalikkona. Käyttää SAMAA
-// usePttPalkkia-koukkua kuin mobiili — ei uutta tilaa eikä uutta WS-kytkentää, sama
-// jaettu OlmMachine ja sama jaettu soketti (src/shared/kanava.ts on moniliittyjäinen).
+// (kanavat, kuka puhuu, mykistys, viestit) tarjotaan pudotusvalikkona.
 //
-// TIETOINEN RAJAUS: EI mikrofonin lähetyspainiketta. Käyttäjän oma sanamuoto oli
-// "hallita asetuksia, tarkistaa tila, viestitellä" — EI "puhua". Työpöydällä hiiren
-// painaminen pohjaan PTT-painalluksena on kömpelöä verrattuna puhelimeen, ja kentällä
-// oleva vartija käyttää joko mobiilia tai Jelly Starin fyysistä painiketta. Jos
-// työpöydältä puhuminen tarvitaan, se on oma, myöhempi lisäys.
+// SISÄLTÖ (`PttPainikkeenSisalto`) OTTAA `ptt`-TILAN PROPSINA EIKÄ KUTSU
+// usePttPalkkia:aa ITSE — tärkeä ero. `MobiiliKehys.tsx` kutsuu koukkua jo kerran
+// `PttPalkki.tsx`:ää varten, ja koukun sisällä on efekti joka reagoi puheenvuoron
+// MYÖNTYMISEEN käynnistämällä mikrofonin (luoLahetin/aloitaLahetys). Jos tämä
+// komponentti kutsuisi koukkua UUDESTAAN, syntyisi KAKSI RIIPPUMATONTA efektiä jotka
+// molemmat yrittäisivät avata mikrofonin ja lähettää ääntä samalle myönnetylle
+// puheenvuorolle — kaksi rinnakkaista Opus-virtaa saman käyttäjän nimissä. Siksi
+// mobiiliversio antaa oman, jo olemassa olevan `ptt`-olionsa tälle sisällölle propsina
+// sen sijaan että loisi toisen. Työpöytäversion oma `PttPainike`-export (alla) EI
+// jaa tätä ongelmaa — se on ainoa `usePttPalkkia`-kutsuja työpöydällä — joten se saa
+// kutsua koukkua suoraan niin kuin ennenkin.
+//
+// TIETOINEN RAJAUS: EI mikrofonin lähetyspainiketta TÄSSÄ pudotusvalikossa. Käyttäjän
+// oma sanamuoto oli "hallita asetuksia, tarkistaa tila, viestitellä" — EI "puhua".
+// Työpöydällä hiiren painaminen pohjaan PTT-painalluksena on kömpelöä verrattuna
+// puhelimeen, ja mobiilipuolella mikrofonipainike on jo olemassa PttPalkki.tsx:ssä —
+// tämä valikko on sille lisä (asetukset/tila/viestit) eikä korvaaja.
 import { useState } from 'react';
 import { Radio, Volume2, VolumeX, MessageSquare, ShieldAlert } from 'lucide-react';
 
@@ -20,8 +32,13 @@ import { usePttPalkkia } from './mobiili/kayttoPttPalkkia.ts';
 import { chipKanavat, hatakanavat, voiMykistaa, type Kanava } from './mobiili/kanavapalkki.ts';
 import { KanavaViestit } from './mobiili/KanavaViestit.tsx';
 
+// Työpöytäversio: ainoa kutsuja tällä puolella, joten koukku kutsutaan suoraan.
 export const PttPainike = () => {
   const ptt = usePttPalkkia();
+  return <PttPainikkeenSisalto ptt={ptt} />;
+};
+
+export const PttPainikkeenSisalto = ({ ptt }: { ptt: ReturnType<typeof usePttPalkkia> }) => {
   const [auki, setAuki] = useState(false);
   // Minkä kanavan viestiketju on auki, tai null — sama malli kuin PttPalkki.tsx:llä.
   const [viestitAuki, setViestitAuki] = useState<string | null>(null);
