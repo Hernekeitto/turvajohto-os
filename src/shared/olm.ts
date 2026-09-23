@@ -359,7 +359,14 @@ export async function puraViesti(machine: OlmMachine, kanavaId: string, tapahtum
   try {
     const tulos = await machine.decryptRoomEvent(tapahtumaJson, roomId, new DecryptionSettings(TrustRequirement.Untrusted));
     return JSON.parse(tulos.event)?.content ?? null;
-  } catch {
+  } catch (e) {
+    // Palautetaan yhä null (kutsuja jättää vain kuulumatta/odottamaan, ei muutu) —
+    // mutta VIRHE ITSE ei saa hävitä kokonaan: ilman tätä konsolista ei näe eroa
+    // "huoneavain ei ole vielä saapunut" (odotettu, korjaantuu retryllä) ja jonkin
+    // muun, pysyvän syyn välillä (23.9.2026, natiivin PTT-lähetyksen "Odottaa
+    // avainta" -jumin selvitys).
+    // eslint-disable-next-line no-console
+    console.error('PTT-avaimen purku epäonnistui', e);
     return null;
   }
 }
