@@ -28,14 +28,14 @@ test('paatettavaKoodekki palauttaa nullin kun WebCodecsia ei ole', async () => {
 test('Lahetin.aloita palauttaa falsen eikä kaadu kun rajapintoja ei ole', async () => {
   const avain = await luoLahetysAvain();
   const lahetin = luoLahetin();
-  const onnistui = await lahetin.aloita(avain, 'opus', () => {});
+  const onnistui = await lahetin.aloita(avain, 'opus', () => {}, () => {});
   assert.equal(onnistui, false);
 });
 
 test('lopeta on turvallinen kutsua vaikka aloita ei olisi koskaan onnistunut', async () => {
   const avain = await luoLahetysAvain();
   const lahetin = luoLahetin();
-  await lahetin.aloita(avain, 'opus', () => {});
+  await lahetin.aloita(avain, 'opus', () => {}, () => {});
   assert.doesNotThrow(() => lahetin.lopeta());
   assert.doesNotThrow(() => lahetin.lopeta());
 });

@@ -104,7 +104,11 @@ export type Lahetin = {
    * epäsi luvan tms.) — kutsuja näyttää tämän käyttöliittymässä ja vapauttaa
    * puheenvuoron, koska ääntä ei silloin ole tulossa.
    */
-  aloita: (avain: LahetysAvain, koodekki: Koodekki, onKehys: (paketti: ArrayBuffer) => void) => Promise<boolean>;
+  aloita: (
+    avain: LahetysAvain, koodekki: Koodekki,
+    onKehys: (paketti: ArrayBuffer) => void,
+    onVirhe: (viesti: string) => void,
+  ) => Promise<boolean>;
   /** Pysäyttää kaappauksen ja vapauttaa mikrofonin. Turvallinen kutsua vaikka ei olisi käynnissä. */
   lopeta: () => void;
 };
@@ -121,7 +125,7 @@ export function luoLahetin(): Lahetin {
   let encoder: AudioEncoder | null = null;
   let pysaytetty = false;
 
-  async function lueSilmukka(oma: ReadableStreamDefaultReader<AudioData>) {
+  async function lueSilmukka(oma: ReadableStreamDefaultReader<AudioData>, onVirhe: (viesti: string) => void) {
     try {
       for (;;) {
         const { value, done } = await oma.read();
@@ -134,15 +138,18 @@ export function luoLahetin(): Lahetin {
         encoder.encode(value);
         value.close();
       }
-    } catch {
-      // Raita katkesi kesken (esim. käyttäjä perui mikrofoniluvan kesken puhumisen) —
-      // pysäytetään siisti alla olevan error-käsittelijän tai lopeta()-kutsun kautta,
-      // ei kaadeta mitään tästä silmukasta.
+    } catch (e) {
+      // Raita katkesi kesken (esim. käyttäjä perui mikrofoniluvan kesken puhumisen, tai
+      // puhelin sulki mikrofonin toisen sovelluksen tieltä) — näkyvä virhe eikä hiljainen
+      // nielaisu, sama perustelu kuin enkooderin omalla virhekäsittelijällä yllä.
+      if (!pysaytetty) onVirhe(`Mikrofonin luku katkesi: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   async function aloita(
-    avain: LahetysAvain, koodekki: Koodekki, onKehys: (paketti: ArrayBuffer) => void,
+    avain: LahetysAvain, koodekki: Koodekki,
+    onKehys: (paketti: ArrayBuffer) => void,
+    onVirhe: (viesti: string) => void,
   ): Promise<boolean> {
     lopeta();
     pysaytetty = false;
@@ -177,8 +184,10 @@ export function luoLahetin(): Lahetin {
         },
         // Enkooderin sisäinen virhe sulkee koko lähetyksen — sama periaate kuin
         // vastaanottopuolen dekooderivirheellä (aanivastaanotto.ts): ei yritetä paikata,
-        // pysäytetään siisti ja odotetaan seuraavaa painallusta.
-        error: () => lopeta(),
+        // pysäytetään siisti ja odotetaan seuraavaa painallusta. NÄKYVÄ virhe eikä
+        // hiljainen nielaisu (ks. olm.ts:n koneVirhe-korjauksen perustelu 22.9.2026) —
+        // muuten "ääntä ei kuulu" näyttäisi identtiseltä onnistuneen lähetyksen kanssa.
+        error: (e) => { onVirhe(`Äänenkoodaus epäonnistui: ${e.message}`); lopeta(); },
       });
       encoder.configure({
         codec: koodekkimerkkijono(koodekki),
@@ -193,7 +202,7 @@ export function luoLahetin(): Lahetin {
 
     const uusiReader = new MediaStreamTrackProcessor({ track: raita }).readable.getReader();
     reader = uusiReader;
-    lueSilmukka(uusiReader);
+    lueSilmukka(uusiReader, onVirhe);
     return true;
   }
 

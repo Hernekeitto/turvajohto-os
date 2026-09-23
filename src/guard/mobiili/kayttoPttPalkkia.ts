@@ -66,6 +66,10 @@ export function usePttPalkkia() {
   // myönnetty mutta ääni ei silti lähde mihinkään, mikä on kertakaikkisen eri vika ja
   // vartijan on nähtävä KUMPI (sama periaate kuin HÄLKEn PttYhteenveto.tsx:n koneVirhe).
   const [aaniVirhe, setAaniVirhe] = useState<string | null>(null);
+  // TILAPÄINEN DIAGNOSTIIKKA (23.9.2026, ensimmäinen puhelintesti: mic pyysi luvan
+  // mutta ääntä ei kuulunut) — näkyy ruudulla, ei vain konsolissa, koska vartija testaa
+  // puhelimella eikä devtoolsia yleensä ole auki. Poistettavissa kun syy on löytynyt.
+  const [aaniDiag, setAaniDiag] = useState('');
   // Käynnissä oleva lähetin ja sen kanava REFISSÄ: ajonaikainen WebCodecs/getUserMedia-
   // olio eikä näytettävää tilaa, sama perustelu kuin PttYhteenveto.tsx:n vastaanottimet.
   const lahetinRef = useRef<Lahetin | null>(null);
@@ -199,6 +203,7 @@ export function usePttPalkkia() {
       const kohdeKanava = kanavaId;
       const omaKone = machine;
       const oma = omaKayttaja;
+      setAaniDiag('valitaan koodekkia…');
       (async () => {
         const koodekki = await paatettavaKoodekki();
         if (!koodekki) {
@@ -206,18 +211,32 @@ export function usePttPalkkia() {
           vapautaPuheenvuoro(kohdeKanava);
           return;
         }
+        setAaniDiag(`koodekki=${koodekki}, jaetaan huoneavainta…`);
         const { lahetysAvain, tapahtuma } = await aloitaLahetys(omaKone, oma, kohdeKanava, koodekki);
         // aani_avain ENNEN ensimmäistä kehystä, muuten vastaanottajalla ei ole millä
         // purkaa sitä (sama järjestys kuin aanikutsu.ts:n oma yläkommentti vaatii).
-        laheta({ tyyppi: 'aani_avain', kanavaId: kohdeKanava, tapahtuma });
+        const avainLahti = laheta({ tyyppi: 'aani_avain', kanavaId: kohdeKanava, tapahtuma });
+        setAaniDiag(`koodekki=${koodekki}, aani_avain lähti=${avainLahti}, pyydetään mikrofonia…`);
         // Kanava on voinut vaihtua (painettu toista chippiä) sen aikana kun avaimen
         // jako oli kesken — ei käynnistetä mikrofonia enää vanhalle kanavalle.
         if (lahettavaKanavaRef.current !== kohdeKanava) return;
         const lahetin = luoLahetin();
         lahetinRef.current = lahetin;
-        const onnistui = await lahetin.aloita(lahetysAvain, koodekki, (paketti) => {
-          laheta({ tyyppi: 'aani_kehys', kanavaId: kohdeKanava, data: kehysLahetettavaksi(paketti) });
-        });
+        let kehyksia = 0;
+        let viimeisinLahetysOnnistui: boolean | null = null;
+        const onnistui = await lahetin.aloita(
+          lahetysAvain, koodekki,
+          (paketti) => {
+            kehyksia += 1;
+            viimeisinLahetysOnnistui = laheta({
+              tyyppi: 'aani_kehys', kanavaId: kohdeKanava, data: kehysLahetettavaksi(paketti),
+            });
+            if (lahettavaKanavaRef.current === kohdeKanava) {
+              setAaniDiag(`koodekki=${koodekki}, kehyksiä lähetetty=${kehyksia}, viimeisin onnistui=${viimeisinLahetysOnnistui}`);
+            }
+          },
+          (viesti) => { if (lahettavaKanavaRef.current === kohdeKanava) setAaniVirhe(viesti); },
+        );
         if (!onnistui) {
           setAaniVirhe('Mikrofonia ei saatu käyttöön.');
           lahetinRef.current = null;
@@ -228,6 +247,7 @@ export function usePttPalkkia() {
       lahettavaKanavaRef.current = null;
       lahetinRef.current?.lopeta();
       lahetinRef.current = null;
+      setAaniDiag('');
     }
   }, [aktiivinenId, tilat, machine, omaKayttaja, laheta, vapautaPuheenvuoro]);
 
@@ -244,7 +264,7 @@ export function usePttPalkkia() {
   }, []);
 
   return {
-    kanavat, omaKayttaja, mykistetyt, aktiivinenId, setAktiivinenId, tilat, hylkays, aaniVirhe,
+    kanavat, omaKayttaja, mykistetyt, aktiivinenId, setAktiivinenId, tilat, hylkays, aaniVirhe, aaniDiag,
     pyydaPuheenvuoro, vapautaPuheenvuoro, asetaMykistys,
     machine, viestiHerate, yritaLahettaaJono,
   };

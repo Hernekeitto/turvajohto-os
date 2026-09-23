@@ -46,6 +46,8 @@ type Props = {
   // Äänen lähetyksen virhe (mikrofoni evätty tai WebCodecs puuttuu) — eri asia kuin
   // hylkays, joka koskee puheenvuoron epäämistä. Ks. kayttoPttPalkkia.ts:n oma perustelu.
   aaniVirhe: string | null;
+  // Tilapäinen diagnostiikka, ks. kayttoPttPalkkia.ts:n aaniDiag-kommentti.
+  aaniDiag: string;
   onPttDown: (kanavaId: string) => void;
   onPttUp: (kanavaId: string) => void;
   machine: OlmMachine | null;
@@ -56,7 +58,7 @@ type Props = {
 
 export const PttPalkki = ({
   kanavat, aktiivinenId, onValitseAktiivinen, tilat, mykistetyt, onMykista,
-  hylkays, aaniVirhe, onPttDown, onPttUp, machine, omaKayttaja, viestiHerate, onLahetaJono,
+  hylkays, aaniVirhe, aaniDiag, onPttDown, onPttUp, machine, omaKayttaja, viestiHerate, onLahetaJono,
 }: Props) => {
   // Kesken olevan painalluksen kanava-id. Refissä: pointerup voi tulla vaikka props olisi
   // ehtinyt vaihtua (esim. kanavalista päivittyi kesken painalluksen), ja vapautus on
@@ -112,6 +114,11 @@ export const PttPalkki = ({
       )}
       {aaniVirhe && (
         <p className="mb-1.5 text-sm text-danger font-medium">{aaniVirhe}</p>
+      )}
+      {/* Tilapäinen diagnostiikka, ks. kayttoPttPalkkia.ts:n aaniDiag-kommentti —
+          poistettavissa kun "ääntä ei kuulu" -syy on löytynyt ja korjattu. */}
+      {aaniDiag && (
+        <p className="mb-1.5 text-[11px] text-ink-on-dark-muted font-mono break-all">diag: {aaniDiag}</p>
       )}
 
       {chipit.length > 0 && (
