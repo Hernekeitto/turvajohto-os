@@ -55,6 +55,7 @@ import {
 import { tuoreus } from './tuoreus';
 import { VartijanPaneeli } from './halke/VartijanPaneeli';
 import { PttYhteenveto } from './halke/PttYhteenveto';
+import { KohdeKeskustelu } from './halke/KohdeKeskustelu';
 import { KeskuksenTehtavat } from './KeskuksenTehtavat';
 import { LAJIN_NIMI, type Halytystehtava } from './halytystehtavat';
 
@@ -400,6 +401,10 @@ export const Halytyskeskus = ({
   // paneelin osoitteessa: valinta on työvaihe eikä paikka johon palataan kirjanmerkillä,
   // ja seinätaulun on aina näytettävä listaa.
   const [valittuVartija, setValittuVartija] = useState<string | null>(null);
+  // Kohteen keskustelu auki (22.9.2026 illan pyyntö) — sama malli kuin valittuVartija:
+  // tilassa eikä osoitteessa, koska tämäkin on työvaihe eikä paikka johon palataan
+  // kirjanmerkillä.
+  const [avattuKeskustelu, setAvattuKeskustelu] = useState<Kohde | null>(null);
   const [paatosSyy, setPaatosSyy] = useState('');
   const [paattamassa, setPaattamassa] = useState(false);
   // Kesken olevat vuorot. ERI LISTA kuin "Kentällä juuri nyt", joka johdetaan
@@ -716,6 +721,14 @@ export const Halytyskeskus = ({
     window.addEventListener('keydown', kuuntele);
     return () => window.removeEventListener('keydown', kuuntele);
   }, [valittuVartija]);
+
+  // Sama Esc-sulkukäytäntö kohteen keskustelulle.
+  useEffect(() => {
+    if (!avattuKeskustelu) return;
+    const kuuntele = (e: KeyboardEvent) => { if (e.key === 'Escape') setAvattuKeskustelu(null); };
+    window.addEventListener('keydown', kuuntele);
+    return () => window.removeEventListener('keydown', kuuntele);
+  }, [avattuKeskustelu]);
 
   useEffect(() => {
     try {
@@ -1535,17 +1548,27 @@ export const Halytyskeskus = ({
                   </div>
                 </>
               );
-              return onAvaaKohde ? (
-                <button
-                  key={kohde.id}
-                  type="button"
-                  onClick={() => onAvaaKohde(kohde)}
-                  className={`text-left border rounded-xl p-4 transition-colors hover:border-line-strong ${tyyli.reuna}`}
-                >
-                  {sisalto}
-                </button>
-              ) : (
-                <div key={kohde.id} className={`border rounded-xl p-4 ${tyyli.reuna}`}>{sisalto}</div>
+              return (
+                <div key={kohde.id} className="flex flex-col gap-1.5">
+                  {onAvaaKohde ? (
+                    <button
+                      type="button"
+                      onClick={() => onAvaaKohde(kohde)}
+                      className={`text-left border rounded-xl p-4 transition-colors hover:border-line-strong ${tyyli.reuna}`}
+                    >
+                      {sisalto}
+                    </button>
+                  ) : (
+                    <div className={`border rounded-xl p-4 ${tyyli.reuna}`}>{sisalto}</div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setAvattuKeskustelu(kohde)}
+                    className="self-start inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-ink-body hover:bg-sunken"
+                  >
+                    <MessageSquare size={13} /> Keskustelu
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -2293,6 +2316,28 @@ export const Halytyskeskus = ({
               onMuutos={() => { haeVuorot(); onVirkista(); }}
             />
           </div>
+        </div>
+      )}
+
+      {/* Kohteen keskustelu (22.9.2026 illan pyyntö) — täysin oma ikkuna eikä laatikko
+          sivun päällä, koska KanavaViestit.tsx on suunniteltu täyden ruudun mobiili-
+          näkymäksi (oma otsikko, vieritettävä keskiosa, kiinteä syöttöpalkki) eikä mahdu
+          järkevästi keskitettyyn kortti-laatikkoon kuten VartijanPaneeli. Ei seinätaulussa,
+          samasta syystä kuin vartijalaatikkokaan ei ole siellä. */}
+      {avattuKeskustelu && !taulu && (
+        <div
+          className="fixed inset-0 z-50"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Kohteen ${avattuKeskustelu.name} keskustelu`}
+        >
+          <KohdeKeskustelu
+            kayttaja={kayttaja}
+            // Kohteen kiinteän kanavan tunnus — sama muoto kuin server/kanavat.js:n
+            // kohdeKanavaId(siteId), ei muuten johdettu tästä palvelimelta.
+            kanava={{ id: `kohde:${avattuKeskustelu.id}`, tyyppi: 'kohde', nimi: avattuKeskustelu.name }}
+            onSulje={() => setAvattuKeskustelu(null)}
+          />
         </div>
       )}
     </div>
