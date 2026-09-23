@@ -10,14 +10,22 @@
 // capture pitää ylös-tapahtuman kiinni samassa elementissä vaikka niin kävisi — ilman
 // sitä puheenvuoro jäisi auki koska "up" ei koskaan laukeaisi napin päällä.
 //
+// LÄHETYS ON KYTKETTY (23.9.2026, käyttäjän pyyntö "Siirrytään rakentamaan manuaalinen
+// äänenlähetys" sen jälkeen kun kaksipäiväinen bugimetsästys paljasti ettei mikään
+// manuaalinen polku ollut koskaan kaapannut ääntä, ks. Obsidian "PTT-äänibugin
+// juurisyy"): mic-nappi TÄSSÄ TIEDOSTOSSA tekee yhä VAIN puheenvuoropyynnön
+// (onPttDown/onPttUp), mutta kayttoPttPalkkia.ts reagoi myöntymään käynnistämällä
+// oikean mikrofonin (src/shared/aanilahetys.ts) — sama kaksivaiheinen malli kuin
+// natiivin AaniPuhelu.java:lla. VASTAANOTTO/TOISTO PUUTTUU YHÄ TÄSTÄ TIEDOSTOSTA: guard
+// ei kuule TOISTA guardia tämän palkin kautta, vain HÄLKE kuulee (src/guard/halke/
+// PttYhteenveto.tsx, aanivastaanotto.ts) — guard-guard-kuuntelu on oma, tekemätön
+// tehtävänsä.
+//
 // ÄÄNEN PRIORITEETTI (päätös vahvistettu 19.9.2026, Obsidian "vaihe 5 -suunnitelma"):
 // PTT keskeyttää/duckaa muun äänen aina kun ääni tulee sisään sovelluksen ollessa
-// etualalla. EI VIELÄ TOTEUTETTU TÄSSÄ TIEDOSTOSSA — tämä palkki ei vielä soita eikä
-// vastaanota mitään oikeaa ääntä (vaihe 4 on kehyssalauksen PoC, ei UI:hin kytketty
-// audiopolku), joten duckausta ei ole mitään konkreettista kohdetta jolle tehdä.
-// Toteutetaan kun vaihe 6/7 tuo oikean audiostreamin tänne (esim. Web Audio -
-// solmuna joka vaimentaa `<audio>`/media-session-toiston ajaksi jonka `mina`-tila
-// tässä palkissa on true) — päätös ei muutu, vain toteutuspaikka odottaa.
+// etualalla. EI VIELÄ TOTEUTETTU: yllä mainitusta vastaanoton puutteesta johtuen tässä
+// palkissa ei ole mitään sisääntulevaa ääntä jota duckata. Toteutetaan kun guard-guard-
+// vastaanotto rakennetaan.
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { OlmMachine } from '@matrix-org/matrix-sdk-crypto-wasm';
 import { Mic, MessageSquare, ShieldAlert, Volume2, VolumeX } from 'lucide-react';
@@ -35,6 +43,9 @@ type Props = {
   mykistetyt: Set<string>;
   onMykista: (id: string, mykistetty: boolean) => void;
   hylkays: PuheenvuoroHylkays | null;
+  // Äänen lähetyksen virhe (mikrofoni evätty tai WebCodecs puuttuu) — eri asia kuin
+  // hylkays, joka koskee puheenvuoron epäämistä. Ks. kayttoPttPalkkia.ts:n oma perustelu.
+  aaniVirhe: string | null;
   onPttDown: (kanavaId: string) => void;
   onPttUp: (kanavaId: string) => void;
   machine: OlmMachine | null;
@@ -45,7 +56,7 @@ type Props = {
 
 export const PttPalkki = ({
   kanavat, aktiivinenId, onValitseAktiivinen, tilat, mykistetyt, onMykista,
-  hylkays, onPttDown, onPttUp, machine, omaKayttaja, viestiHerate, onLahetaJono,
+  hylkays, aaniVirhe, onPttDown, onPttUp, machine, omaKayttaja, viestiHerate, onLahetaJono,
 }: Props) => {
   // Kesken olevan painalluksen kanava-id. Refissä: pointerup voi tulla vaikka props olisi
   // ehtinyt vaihtua (esim. kanavalista päivittyi kesken painalluksen), ja vapautus on
@@ -98,6 +109,9 @@ export const PttPalkki = ({
         <p className="mb-1.5 text-sm text-danger font-medium">
           Kanava varattu{hylkays.kayttaja ? ` — puhuu ${hylkays.kayttaja}` : ''}.
         </p>
+      )}
+      {aaniVirhe && (
+        <p className="mb-1.5 text-sm text-danger font-medium">{aaniVirhe}</p>
       )}
 
       {chipit.length > 0 && (

@@ -463,6 +463,7 @@ export const MobiiliKehys = ({
           mykistetyt={ptt.mykistetyt}
           onMykista={ptt.asetaMykistys}
           hylkays={ptt.hylkays}
+          aaniVirhe={ptt.aaniVirhe}
           onPttDown={ptt.pyydaPuheenvuoro}
           onPttUp={ptt.vapautaPuheenvuoro}
           machine={ptt.machine}
