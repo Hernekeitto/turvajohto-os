@@ -10,10 +10,8 @@
 // puhelimen selaimessa) on eri, vielä tekemätön tehtävä, ks. Obsidian
 // "vaihe 8 -suunnitelma": "Selaimen getUserMedia/AudioEncoder-kytkentä".
 //
-// EI TESTATTU OIKEALLA ÄÄNELLÄ. Tämän ympäristön selain ei voi todistaa kuuluuko mitään
-// — vain että WebCodecs-/Web Audio -rajapintoja kutsutaan oikealla muodolla ja että
-// virheet eivät kaada mitään. Todellinen todennus vaatii oikean laitteen jonka
-// AaniPuhelu.java lähettää ääntä ja tämän koodin selaimen, jossa joku oikeasti kuuntelee.
+// TODENNETTU OIKEALLA ÄÄNELLÄ 23.9.2026: selaimen manuaalinen lähetys (aanilahetys.ts)
+// puhelimen mikrofonista tämän koodin kautta HÄLKEn kaiuttimeen asti, Opus-koodekilla.
 //
 // AAC-VARAPOLKU ON KOKEELLISEMPI KUIN OPUS: WebCodecsin AudioDecoder vaatii AAC:lle
 // tyypillisesti `description`-kentän (AudioSpecificConfig), jota natiivin

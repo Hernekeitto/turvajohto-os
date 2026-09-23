@@ -36,7 +36,6 @@
 import {
   initAsync, OlmMachine, UserId, DeviceId, RoomId, RequestType,
   EncryptionSettings, DecryptionSettings, TrustRequirement, DeviceLists, CollectStrategy,
-  MegolmDecryptionError, DecryptionErrorCode,
   type KeysUploadRequest, type KeysQueryRequest, type KeysClaimRequest, type ToDeviceRequest,
 } from '@matrix-org/matrix-sdk-crypto-wasm';
 
@@ -217,24 +216,10 @@ async function palvelimelle(polku: string, runko: unknown) {
  * takaisin koneelle. MUUT PYYNTÖTYYPIT (RoomMessage, SignatureUpload, KeysBackup)
  * EIVÄT OLE TUETTUJA — RoomMessage kuuluu vasta Vaiheeseen 3 (viestit), ja kaksi muuta
  * (ristiinallekirjoitus, avainvarmuuskopio) eivät kuulu tämän hankkeen laajuuteen.
- *
- * Palauttaa käsiteltyjen pyyntöjen tyypit — diagnostiikkaa varten (esim. tuliko
- * KeysUpload todella suoritettua koneen alustuksen yhteydessä).
- *
- * `onEteneminen` on VALINNAINEN diagnostiikkakoukku, sama periaate kuin
- * aanikutsu.ts:n aloitaLahetys:ssä — koko tämä funktio on ollut musta laatikko
- * ja piilottanut jo kaksi erillistä hiljaista virhettä (KeysUpload 23.9.2026, ja
- * ToDeviceen asti tämä koukku antaa nyt näkyvyyden: palvelimen `laheta-laitteelle`
- * palauttaa AINA `ok:true` vaikka pudottaisi JOKAISEN viestin hiljaa — `toimitettu`-
- * lukua ei ole koskaan tähän asti edes luettu asiakkaassa).
  */
-export async function synkronoiPyynnot(
-  machine: OlmMachine, onEteneminen?: (viesti: string) => void,
-): Promise<RequestType[]> {
+export async function synkronoiPyynnot(machine: OlmMachine): Promise<void> {
   const pyynnot = await machine.outgoingRequests();
-  const kasitellytTyypit: RequestType[] = [];
   for (const pyynto of pyynnot) {
-    kasitellytTyypit.push(pyynto.type);
     // OutgoingRequest-unionin `id` on tyypitetty `string | undefined`, koska YKSI
     // seitsemästä jäsenestä (SignatureUploadRequest) voi olla ilman id:tä — ei koske
     // näitä neljää tyyppiä, joten tyyppiväite (as) vastaa ajonaikaista todellisuutta.
@@ -247,12 +232,11 @@ export async function synkronoiPyynnot(
         // että lataus onnistui vaikka palvelin oikeasti hylkäsi sen (esim. puuttuva
         // guard_ptt-oikeus, tai identiteetti joka ei täsmää) — kone ei silloin KOSKAAN
         // yritä uudelleen lähettää device_keys-kenttää, ja laite jää pysyvästi
-        // tuntemattomaksi muille ilman mitään merkkiä syystä. Juuri tämä löytyi
-        // 23.9.2026: kanavan jäsenet näyttivät "0 laitetta tiedossa" lähettäjän
-        // OlmMachinesta, vaikka vastaanottaja oli alustanut salauksensa "onnistuneesti".
+        // tuntemattomaksi muille ilman mitään merkkiä syystä. Löytyi 23.9.2026: kanavan
+        // jäsenet näyttivät "0 laitetta tiedossa" lähettäjän OlmMachinesta, vaikka
+        // vastaanottaja oli alustanut salauksensa "onnistuneesti".
         throw new Error(`Avainten lataus epäonnistui: ${vastaus?.error ?? 'tuntematon virhe'}`);
       }
-      onEteneminen?.(`KeysUpload OK (avaimia jäljellä: ${vastaus.kertakayttoavaimiaJaljella ?? '?'})`);
       await machine.markRequestAsSent(upload.id, upload.type, JSON.stringify({
         one_time_key_counts: { signed_curve25519: vastaus.kertakayttoavaimiaJaljella ?? 0 },
       }));
@@ -264,11 +248,10 @@ export async function synkronoiPyynnot(
       const vastaus = await palvelimelle('/api/kanavat/avaimet/vaadi', { pyynnot: vaadiPyynnotPyynnosta(claim.body) });
       await machine.markRequestAsSent(claim.id, claim.type, vaadiVastausJsoniksi(vastaus?.avaimet || []));
     } else if (pyynto.type === RequestType.ToDevice) {
-      await laheteToDeviceKohde(machine, pyynto as ToDeviceRequest, onEteneminen);
+      await laheteToDeviceKohde(machine, pyynto as ToDeviceRequest);
     }
     // Muut tyypit jätetään käsittelemättä (ks. tiedoston yläkommentti).
   }
-  return kasitellytTyypit;
 }
 
 /**
@@ -277,18 +260,9 @@ export async function synkronoiPyynnot(
  * ei saa pyyntöjään `outgoingRequests()`-jonosta vaan `shareRoomKey`:n SUORASTA
  * paluuarvosta (ks. sen oma kommentti), mutta lähetys palvelimelle on identtinen.
  */
-async function laheteToDeviceKohde(
-  machine: OlmMachine, toDevice: ToDeviceRequest, onEteneminen?: (viesti: string) => void,
-): Promise<void> {
+async function laheteToDeviceKohde(machine: OlmMachine, toDevice: ToDeviceRequest): Promise<void> {
   const viestit = laiteviestitPyynnosta(toDevice.body);
-  const vastaus = await palvelimelle('/api/kanavat/avaimet/laheta-laitteelle', {
-    tyyppi: toDevice.event_type, viestit,
-  });
-  onEteneminen?.(
-    `ToDevice ${toDevice.event_type}: kohteita=${viestit.length} `
-    + `[${viestit.map((v) => `${v.kayttaja}:${v.laiteId}`).join(', ')}], `
-    + `palvelin toimitti=${vastaus?.toimitettu ?? '(ei vastausta)'}`,
-  );
+  await palvelimelle('/api/kanavat/avaimet/laheta-laitteelle', { tyyppi: toDevice.event_type, viestit });
   await machine.markRequestAsSent(toDevice.id, toDevice.type, JSON.stringify({}));
 }
 
@@ -311,32 +285,15 @@ export async function paivitaKayttajanLaitteet(machine: OlmMachine, kayttaja: st
 }
 
 /**
- * Kuinka monta laitetta koneella on tiedossa annetulle käyttäjälle juuri nyt —
- * diagnostiikkaa varten (esim. onko `paivitaKayttajanLaitteet` oikeasti löytänyt
- * kohdelaitteen, vai onko huoneavaimen jako tuomittu epäonnistumaan alusta asti koska
- * mitään laitetta ei tunneta).
- */
-export async function laitteidenMaara(machine: OlmMachine, kayttaja: string): Promise<number> {
-  const laitteet = await machine.getUserDevices(new UserId(matriisiKayttajaId(kayttaja)));
-  return laitteet.devices().length;
-}
-
-/**
  * Varmistaa Olm-istunnot annetuille käyttäjille ennen huoneavaimen jakoa. Kutsujan on
  * kutsuttava `paivitaKayttajanLaitteet` jokaiselle uudelle käyttäjälle ensin, muuten
  * tällä ei ole mitään laitteita joille pyytää avainta.
- *
- * Palauttaa kuinka monta kertakäyttöavainta oikeasti saatiin vaadittua (diagnostiikkaa
- * varten), tai -1 jos koneen mielestä mitään istuntoa ei edes puuttunut (jo olemassa
- * olevat istunnot riittävät — ERI ASIA kuin 0 saatua kun jotain puuttui muttei saatu).
  */
-export async function varmistaIstunnot(machine: OlmMachine, kayttajat: string[]): Promise<number> {
+export async function varmistaIstunnot(machine: OlmMachine, kayttajat: string[]): Promise<void> {
   const pyynto = await machine.getMissingSessions(kayttajat.map((k) => new UserId(matriisiKayttajaId(k))));
-  if (!pyynto) return -1;
+  if (!pyynto) return;
   const vastaus = await palvelimelle('/api/kanavat/avaimet/vaadi', { pyynnot: vaadiPyynnotPyynnosta(pyynto.body) });
-  const avaimet = vastaus?.avaimet || [];
-  await machine.markRequestAsSent(pyynto.id, pyynto.type, vaadiVastausJsoniksi(avaimet));
-  return avaimet.length;
+  await machine.markRequestAsSent(pyynto.id, pyynto.type, vaadiVastausJsoniksi(vastaus?.avaimet || []));
 }
 
 /**
@@ -353,9 +310,7 @@ export async function varmistaIstunnot(machine: OlmMachine, kayttajat: string[])
  * tiedossa, Olm-istunto pystyssä, aani_avain lähti) oli jo todistetusti kunnossa mutta
  * diag näytti silti pysyvästi "EI YHTÄÄN ToDevice-pyyntöä" — viimeinen katkoskohta.
  */
-export async function jaaHuoneenAvain(
-  machine: OlmMachine, kanavaId: string, jasenet: string[], onEteneminen?: (viesti: string) => void,
-): Promise<void> {
+export async function jaaHuoneenAvain(machine: OlmMachine, kanavaId: string, jasenet: string[]): Promise<void> {
   const roomId = new RoomId(matriisiHuoneId(kanavaId));
   const userIds = jasenet.map((k) => new UserId(matriisiKayttajaId(k)));
   const asetukset = new EncryptionSettings();
@@ -367,14 +322,10 @@ export async function jaaHuoneenAvain(
   // TrustRequirement.Untrusted purkupuolella, jako- ja purkupuolen on oltava
   // johdonmukaiset keskenään.
   asetukset.sharingStrategy = CollectStrategy.allDevices();
-  const pyynnot = await machine.shareRoomKey(roomId, userIds, asetukset);
-  if (onEteneminen && pyynnot.length === 0) {
-    onEteneminen('shareRoomKey palautti nolla pyyntöä (huoneavain jo jaettu kaikille tunnetuille laitteille?)');
+  for (const pyynto of await machine.shareRoomKey(roomId, userIds, asetukset)) {
+    await laheteToDeviceKohde(machine, pyynto);
   }
-  for (const pyynto of pyynnot) {
-    await laheteToDeviceKohde(machine, pyynto, onEteneminen);
-  }
-  await synkronoiPyynnot(machine, onEteneminen);
+  await synkronoiPyynnot(machine);
 }
 
 /**
@@ -410,33 +361,6 @@ export async function puraViesti(machine: OlmMachine, kanavaId: string, tapahtum
     return JSON.parse(tulos.event)?.content ?? null;
   } catch {
     return null;
-  }
-}
-
-/**
- * Sama kuin `puraViesti`, mutta EI nielaise purkuvirhettä — palauttaa myös
- * `DecryptionErrorCode`-nimen (esim. "MissingRoomKey") kun purku epäonnistuu.
- *
- * VAIN DIAGNOSTIIKKAA VARTEN, käytä `puraViesti`ä normaalisti. Oma funktio eikä
- * `puraViesti`n muokkaus, koska sitä kutsutaan myös tekstiviestien historian
- * purkuun (viestit.ts:n haeJaPuraViestit) jossa purkuvirhe on ODOTETTU, tavallinen
- * tila (vanhempi viesti jonka avainta ei vielä ole) eikä ansaitse konsolihälyä joka
- * kerta — PTT-äänen aani_avain sen sijaan on hetkellinen eikä persistoitu, joten
- * juuri sen purkuvirheen SYY on nähtävä heti (ks. aanikutsu.ts:n vastaanotaAvain).
- */
-export async function puraViestiDiagnoosilla(
-  machine: OlmMachine, kanavaId: string, tapahtumaJson: string,
-): Promise<{ sisalto: unknown } | { virhe: string }> {
-  const roomId = new RoomId(matriisiHuoneId(kanavaId));
-  try {
-    const tulos = await machine.decryptRoomEvent(tapahtumaJson, roomId, new DecryptionSettings(TrustRequirement.Untrusted));
-    return { sisalto: JSON.parse(tulos.event)?.content ?? null };
-  } catch (e) {
-    if (e instanceof MegolmDecryptionError) {
-      const nimi = DecryptionErrorCode[e.code] ?? String(e.code);
-      return { virhe: `${nimi}: ${e.description}` };
-    }
-    return { virhe: e instanceof Error ? e.message : String(e) };
   }
 }
 

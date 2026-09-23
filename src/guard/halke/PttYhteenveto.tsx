@@ -4,8 +4,10 @@
 // lähteekö ääni puhelimesta minnekkään.").
 //
 // TÄMÄ ON ENSIMMÄINEN PAIKKA JOSSA SELAIN OIKEASTI TOISTAA PTT-ÄÄNTÄ (ks.
-// src/shared/aanivastaanotto.ts:n yläkommentti). EI TESTATTU OIKEALLA ÄÄNELLÄ —
-// tarkoitettu juuri sen testaamiseen kun natiivilaite lähettää.
+// src/shared/aanivastaanotto.ts:n yläkommentti). TODENNETTU OIKEALLA ÄÄNELLÄ
+// 23.9.2026 puhelintestissä selaimen manuaalisesta lähetyksestä (aanilahetys.ts)
+// asti — ks. Obsidian "PTT-äänibugin juurisyy" yhdeksän kerrostuneen bugin
+// listalle jotka piti korjata ennen kuin tämä toimi.
 //
 // PÄIVYSTÄJÄ SAA KUUNNELLA MITÄ TAHANSA KIINTEÄÄ (kohde/piiri) KANAVAA VAIKKA HÄNELLÄ
 // EI OLE OMAA VUOROA (server/index.js: kuuluuKanavaanNyt/reqKuuluuKanavaanNyt/
@@ -17,11 +19,11 @@
 // AaniPuhelu.java:n kanavakohtainen `vastaanotot`-kartta).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RequestType, type OlmMachine } from '@matrix-org/matrix-sdk-crypto-wasm';
+import type { OlmMachine } from '@matrix-org/matrix-sdk-crypto-wasm';
 import { Radio, Volume2, VolumeX, RefreshCw } from 'lucide-react';
 
 import { useKanava } from '../../shared/kanava';
-import { haeJaettuOlmMachine, synkronoiPyynnot, synkronoiLaiteviestit, puraViestiDiagnoosilla } from '../../shared/olm';
+import { haeJaettuOlmMachine, synkronoiPyynnot, synkronoiLaiteviestit } from '../../shared/olm';
 import { vastaanotaAvain } from '../../shared/aanikutsu';
 import { luoVastaanotin, type Vastaanotin } from '../../shared/aanivastaanotto';
 
@@ -55,14 +57,6 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
   // ensimmäisessä oikeassa puhelintestissä.
   const [koneVirhe, setKoneVirhe] = useState<string | null>(null);
   const [tilat, setTilat] = useState<Record<string, KuunteluTila>>({});
-  // TILAPÄINEN DIAGNOSTIIKKA (22.9.2026, toinen puhelintesti CSP-korjauksen ja
-  // onLaiteviestiSaapui-korjauksen jälkeen — kuuntelu jäi silti "Odottaa avainta…"
-  // -tilaan). Näkyy aina ruudulla, ei vain konsolissa, koska tätä testataan yleensä
-  // toiselta laitteelta eikä devtoolsia välttämättä ole auki. Poistettavissa kun syy
-  // on löytynyt ja korjattu.
-  const [laiteDiag, setLaiteDiag] = useState<string>('');
-  const [laiteviestiLaskuri, setLaiteviestiLaskuri] = useState(0);
-  const [avainDiag, setAvainDiag] = useState<Record<string, { saatu: number; virhe: string | null }>>({});
   // Vastaanottimet REFISSÄ eikä tilassa: se ei ole näytettävää dataa vaan ajonaikaisia
   // WebCodecs/Web Audio -olioita, ja niiden vaihtuminen ei itsessään saa laukaista
   // uudelleenrenderöintiä — vain `tilat`-tilan muutos näytetään.
@@ -95,17 +89,9 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
     let peruttu = false;
     setKoneVirhe(null);
     haeJaettuOlmMachine(kayttaja).then(async (kone) => {
-      const tyypit = await synkronoiPyynnot(kone);
+      await synkronoiPyynnot(kone);
       await synkronoiLaiteviestit(kone);
-      if (!peruttu) {
-        // Diagnostiikka: nousiko oman laitteen avainten lataus (KeysUpload) mukaan
-        // heti alustuksessa? Jos ei, laite ei ole vielä rekisteröity palvelimen
-        // guardAvaimet-varastoon eikä natiivi voi koskaan löytää sitä jakaakseen
-        // huoneavainta — ks. Obsidian-muistiinpanon "toisen puhelintestin löydös".
-        const nimet = tyypit.map((t) => RequestType[t] ?? String(t));
-        setLaiteDiag(`alustuksen pyynnöt: [${nimet.join(', ') || 'ei mitään'}]`);
-        setMachine(kone);
-      }
+      if (!peruttu) setMachine(kone);
     }).catch((e: unknown) => {
       if (peruttu) return;
       // NÄKYVÄ virhe eikä hiljainen nielaisu — konsoliin täysi olio (stack mukaan)
@@ -130,7 +116,6 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
 
   const kasitteleAaniAvain = useCallback((kanavaId: string, tapahtuma: string) => {
     viimeisinAaniAvain.current.set(kanavaId, tapahtuma);
-    setAvainDiag((e) => ({ ...e, [kanavaId]: { saatu: (e[kanavaId]?.saatu ?? 0) + 1, virhe: e[kanavaId]?.virhe ?? null } }));
     // Vain jos TÄMÄ selain on juuri pyytänyt tätä kanavaa kuunneltavaksi — ks.
     // aloitaKuuntelu, joka luo vastaanottimen ennen kuin ilmoittaa palvelimelle.
     const vastaanotin = vastaanottimet.current.get(kanavaId);
@@ -142,13 +127,6 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
         // "Odottaa avainta…" tekstiviesteille. onLaiteviestiSaapui yrittää tätä samaa
         // tapahtumaa uudelleen kun huoneavain lopulta saapuu.
         setTilat((e) => ({ ...e, [kanavaId]: 'odottaa_avainta' }));
-        // Diagnostiikka: sama purku uudelleen VAIN virhekoodin selvittämiseksi —
-        // puraViestiDiagnoosilla ei nielaise DecryptionErrorCode:a niin kuin
-        // vastaanotaAvain/puraViesti tekevät (ks. olm.ts:n perustelu).
-        puraViestiDiagnoosilla(machine, kanavaId, tapahtuma).then((tulos2) => {
-          const virhe = 'virhe' in tulos2 ? tulos2.virhe : null;
-          setAvainDiag((e) => ({ ...e, [kanavaId]: { saatu: e[kanavaId]?.saatu ?? 1, virhe } }));
-        });
         return;
       }
       const onnistui = await vastaanotin.aloita(tulos.lahetysAvain, tulos.koodekki);
@@ -171,7 +149,6 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
     // pysyvästi "Odottaa avainta…" -tilaan vaikka puheenvuoro ja siis lähetys toimivat
     // (löytyi 22.9.2026 käyttäjän puhelintestissä CSP-korjauksen jälkeen).
     onLaiteviestiSaapui: () => {
-      setLaiteviestiLaskuri((n) => n + 1);
       if (!machine) return;
       synkronoiLaiteviestit(machine).then(() => {
         for (const [kanavaId, tapahtuma] of viimeisinAaniAvain.current) {
@@ -255,12 +232,6 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
         <p className="text-xs text-ink-muted mb-2">Valmistellaan salausta…</p>
       )}
 
-      {/* TILAPÄINEN DIAGNOSTIIKKA, ks. yllä olevan tilan määrittelyn kommentti —
-          poistettavissa kun kuuntelun jumiutumisen syy on löytynyt ja korjattu. */}
-      <p className="text-[10px] text-ink-subtle mb-2 font-mono break-all">
-        diag: laite={laiteDiag || '(ei vielä)'} · laiteviestejä={laiteviestiLaskuri}
-      </p>
-
       <ul className="flex flex-col gap-1.5">
         {kanavat.map((k) => {
           const tila = tilat[k.id];
@@ -282,11 +253,6 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
                   {kuunnellaan && tila === 'odottaa_avainta' && ' · Odottaa avainta…'}
                   {kuunnellaan && tila === 'virhe' && ' · Kuuntelu epäonnistui (selain ei tue koodekkia?)'}
                 </p>
-                {kuunnellaan && tila === 'odottaa_avainta' && (
-                  <p className="text-[10px] text-ink-subtle font-mono break-all">
-                    diag: saatu={avainDiag[k.id]?.saatu ?? 0}× · {avainDiag[k.id]?.virhe ?? '(ei vielä purkuyritystä)'}
-                  </p>
-                )}
               </div>
               <button
                 type="button"

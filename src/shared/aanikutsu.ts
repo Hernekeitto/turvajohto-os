@@ -24,9 +24,7 @@
 
 import type { OlmMachine } from '@matrix-org/matrix-sdk-crypto-wasm';
 
-import {
-  paivitaKayttajanLaitteet, varmistaIstunnot, jaaHuoneenAvain, salaaViesti, puraViesti, laitteidenMaara,
-} from './olm.ts';
+import { paivitaKayttajanLaitteet, varmistaIstunnot, jaaHuoneenAvain, salaaViesti, puraViesti } from './olm.ts';
 import { haeKanavanJasenet } from './viestit.ts';
 import { uint8ToBase64, base64ToUint8 } from './salatutliitteet.ts';
 import { luoLahetysAvain, vieLahetysAvain, tuoLahetysAvain, type LahetysAvain } from './aanisalaus.ts';
@@ -47,27 +45,16 @@ type AaniAvainSisalto = { avain: string; etuliite: string; koodekki: Koodekki };
  * `aani_avain`-viestinä (kanava.ts:n laheta()) ENNEN ensimmäistä `aani_kehys`-kehystä,
  * muuten vastaanottajalla ei ole millä purkaa sitä.
  *
- * `onEteneminen` on VALINNAINEN diagnostiikkakoukku (ei vaikuta toimintaan) — koko
- * avaimenjakoketju on tähän asti ollut musta laatikko: joko se onnistuu tai
- * vastaanottaja jää pysyvästi "Odottaa avainta" -tilaan eikä kumpikaan pää tietää MIKSI
- * (ks. Obsidian "PTT-äänibugin juurisyy", 23.9.2026 ensimmäinen äänenlähetystesti).
  */
 export async function aloitaLahetys(
   machine: OlmMachine, omaKayttaja: string, kanavaId: string, koodekki: Koodekki,
-  onEteneminen?: (viesti: string) => void,
 ): Promise<{ lahetysAvain: LahetysAvain; tapahtuma: string }> {
   const jasenet = (await haeKanavanJasenet(kanavaId)).filter((k) => k !== omaKayttaja);
-  onEteneminen?.(`jäseniä=${jasenet.length} [${jasenet.join(', ')}]`);
   for (const kayttaja of jasenet) {
     await paivitaKayttajanLaitteet(machine, kayttaja);
   }
-  if (onEteneminen) {
-    const laitteet = await Promise.all(jasenet.map(async (k) => `${k}=${await laitteidenMaara(machine, k)}`));
-    onEteneminen(`laitteita tiedossa: ${laitteet.join(', ') || '(ei jäseniä)'}`);
-  }
-  const vaadittuja = await varmistaIstunnot(machine, jasenet);
-  onEteneminen?.(`kertakäyttöavaimia vaadittu: ${vaadittuja} (-1 = ei tarvittu, istunnot jo olemassa)`);
-  await jaaHuoneenAvain(machine, kanavaId, jasenet, onEteneminen);
+  await varmistaIstunnot(machine, jasenet);
+  await jaaHuoneenAvain(machine, kanavaId, jasenet);
 
   const lahetysAvain = await luoLahetysAvain();
   const viety = await vieLahetysAvain(lahetysAvain);

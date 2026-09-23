@@ -46,11 +46,6 @@ type Props = {
   // Äänen lähetyksen virhe (mikrofoni evätty tai WebCodecs puuttuu) — eri asia kuin
   // hylkays, joka koskee puheenvuoron epäämistä. Ks. kayttoPttPalkkia.ts:n oma perustelu.
   aaniVirhe: string | null;
-  // Tilapäinen diagnostiikka, ks. kayttoPttPalkkia.ts:n aaniDiag-kommentti.
-  aaniDiag: string;
-  // Avaimenjaon askeleiden loki — säilyy näkyvissä (ei ylikirjoitu kehyslaskurilla)
-  // pysähdyksen jälkeenkin, jotta ehtii lukea mitä tapahtui ennen kuin kehykset alkoivat.
-  aaniSetupDiag: string[];
   // Oman laitteen salauksen alustuksen virhe — jos tämä on asetettu, mikään PTT-ääni
   // (lähetys eikä vastaanotto) ei voi koskaan toimia, koska laite ei rekisteröitynyt.
   salausVirhe: string | null;
@@ -64,7 +59,7 @@ type Props = {
 
 export const PttPalkki = ({
   kanavat, aktiivinenId, onValitseAktiivinen, tilat, mykistetyt, onMykista,
-  hylkays, aaniVirhe, aaniDiag, aaniSetupDiag, salausVirhe,
+  hylkays, aaniVirhe, salausVirhe,
   onPttDown, onPttUp, machine, omaKayttaja, viestiHerate, onLahetaJono,
 }: Props) => {
   // Kesken olevan painalluksen kanava-id. Refissä: pointerup voi tulla vaikka props olisi
@@ -126,18 +121,6 @@ export const PttPalkki = ({
       )}
       {aaniVirhe && (
         <p className="mb-1.5 text-sm text-danger font-medium">{aaniVirhe}</p>
-      )}
-      {/* Tilapäinen diagnostiikka, ks. kayttoPttPalkkia.ts:n aaniDiag-kommentti —
-          poistettavissa kun "ääntä ei kuulu" -syy on löytynyt ja korjattu. Setup-loki
-          ERI RIVEINÄ eikä yhtenä pitkänä, koska kehyslaskuri (aaniDiag) päivittyy
-          kymmeniä kertoja sekunnissa heti perään ja peittäisi yhden rivin heti. */}
-      {aaniSetupDiag.length > 0 && (
-        <div className="mb-1.5 text-[11px] text-ink-on-dark-muted font-mono break-all">
-          {aaniSetupDiag.map((rivi, i) => <p key={i}>diag: {rivi}</p>)}
-        </div>
-      )}
-      {aaniDiag && (
-        <p className="mb-1.5 text-[11px] text-ink-on-dark-muted font-mono break-all">diag: {aaniDiag}</p>
       )}
 
       {chipit.length > 0 && (

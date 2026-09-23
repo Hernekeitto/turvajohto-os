@@ -21,10 +21,10 @@
 // AudioEncoder.configure() tuottaa AAC:lle description-kentän automaattisesti, joten
 // selain->selain-AAC voisi toimia silti. Ei testattu tässä siivussa.
 //
-// EI TESTATTU OIKEALLA MIKROFONILLA. Sandboxattu ympäristö ei voi todistaa lähteekö
-// ääntä mihinkään — vain että WebCodecs-/getUserMedia-rajapintoja kutsutaan oikealla
-// muodolla eivätkä virheet kaada mitään. Todellinen todennus vaatii oikean laitteen ja
-// mikrofonin, sama rajaus kuin aanivastaanotto.ts:llä toiseen suuntaan.
+// TODENNETTU OIKEALLA MIKROFONILLA 23.9.2026: puhelimen Chrome, Opus-koodekki, ääni
+// kuului HÄLKEssä asti. Yhdeksän muuta, riippumatonta bugia piti löytää ja korjata
+// avaimenjako- ja kuljetusketjusta ennen kuin tämä oikeasti kuului — ks. Obsidian
+// "PTT-äänibugin juurisyy" täydelle listalle.
 
 import { luoLahetysKasittelija } from './aaniraaka.ts';
 import type { Koodekki } from './aanikutsu.ts';
