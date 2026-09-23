@@ -35,7 +35,7 @@
 
 import {
   initAsync, OlmMachine, UserId, DeviceId, RoomId, RequestType,
-  EncryptionSettings, DecryptionSettings, TrustRequirement, DeviceLists,
+  EncryptionSettings, DecryptionSettings, TrustRequirement, DeviceLists, CollectStrategy,
   MegolmDecryptionError, DecryptionErrorCode,
   type KeysUploadRequest, type KeysQueryRequest, type KeysClaimRequest, type ToDeviceRequest,
 } from '@matrix-org/matrix-sdk-crypto-wasm';
@@ -341,7 +341,17 @@ export async function jaaHuoneenAvain(
 ): Promise<void> {
   const roomId = new RoomId(matriisiHuoneId(kanavaId));
   const userIds = jasenet.map((k) => new UserId(matriisiKayttajaId(k)));
-  await machine.shareRoomKey(roomId, userIds, new EncryptionSettings());
+  const asetukset = new EncryptionSettings();
+  // EKSPLISIITTINEN allDevices — EI oletusarvoa. `shareRoomKey`:n oletusstrategia
+  // (device-/identiteettipohjainen) jättää huoneavaimen jakamatta laitteille joilla ei
+  // ole ristiinallekirjoitusta/vahvistusta, ja tämä sovellus EI TEE ristiinallekirjoitusta
+  // lainkaan (tietoinen rajaus, ks. tiedoston yläkommentti kohta "vaihe 2: ei
+  // ristiinallekirjoitusta") — ilman tätä `shareRoomKey` ei tuota YHTÄÄN ToDevice-
+  // pyyntöä kenellekään, hiljaa, ei koskaan. Löytyi 23.9.2026 kun kaikki muu ketjussa
+  // (laite tiedossa, Olm-istunto pystyssä, aani_avain lähti) oli jo todistetusti kunnossa
+  // mutta "diag" näytti silti "EI YHTÄÄN ToDevice-pyyntöä" — viimeinen katkoskohta.
+  asetukset.sharingStrategy = CollectStrategy.allDevices();
+  await machine.shareRoomKey(roomId, userIds, asetukset);
   await synkronoiPyynnot(machine, onEteneminen);
 }
 
