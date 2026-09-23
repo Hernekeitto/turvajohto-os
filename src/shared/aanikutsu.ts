@@ -67,7 +67,7 @@ export async function aloitaLahetys(
   }
   const vaadittuja = await varmistaIstunnot(machine, jasenet);
   onEteneminen?.(`kertakäyttöavaimia vaadittu: ${vaadittuja} (-1 = ei tarvittu, istunnot jo olemassa)`);
-  await jaaHuoneenAvain(machine, kanavaId, jasenet);
+  await jaaHuoneenAvain(machine, kanavaId, jasenet, onEteneminen);
 
   const lahetysAvain = await luoLahetysAvain();
   const viety = await vieLahetysAvain(lahetysAvain);
