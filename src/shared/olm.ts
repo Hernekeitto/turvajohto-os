@@ -264,24 +264,32 @@ export async function synkronoiPyynnot(
       const vastaus = await palvelimelle('/api/kanavat/avaimet/vaadi', { pyynnot: vaadiPyynnotPyynnosta(claim.body) });
       await machine.markRequestAsSent(claim.id, claim.type, vaadiVastausJsoniksi(vastaus?.avaimet || []));
     } else if (pyynto.type === RequestType.ToDevice) {
-      const toDevice = pyynto as ToDeviceRequest;
-      const viestit = laiteviestitPyynnosta(toDevice.body);
-      const vastaus = await palvelimelle('/api/kanavat/avaimet/laheta-laitteelle', {
-        tyyppi: toDevice.event_type, viestit,
-      });
-      onEteneminen?.(
-        `ToDevice ${toDevice.event_type}: kohteita=${viestit.length} `
-        + `[${viestit.map((v) => `${v.kayttaja}:${v.laiteId}`).join(', ')}], `
-        + `palvelin toimitti=${vastaus?.toimitettu ?? '(ei vastausta)'}`,
-      );
-      await machine.markRequestAsSent(toDevice.id, toDevice.type, JSON.stringify({}));
+      await laheteToDeviceKohde(machine, pyynto as ToDeviceRequest, onEteneminen);
     }
     // Muut tyypit jätetään käsittelemättä (ks. tiedoston yläkommentti).
   }
-  if (onEteneminen && !kasitellytTyypit.includes(RequestType.ToDevice)) {
-    onEteneminen('EI YHTÄÄN ToDevice-pyyntöä tällä kierroksella (shareRoomKey ei tuottanut mitään)');
-  }
   return kasitellytTyypit;
+}
+
+/**
+ * Vie yhden ToDeviceRequestin palvelimelle ja merkitsee sen lähetetyksi koneelle.
+ * Yhteinen `synkronoiPyynnot`:n ToDevice-haaralle JA `jaaHuoneenAvain`:lle — jälkimmäinen
+ * ei saa pyyntöjään `outgoingRequests()`-jonosta vaan `shareRoomKey`:n SUORASTA
+ * paluuarvosta (ks. sen oma kommentti), mutta lähetys palvelimelle on identtinen.
+ */
+async function laheteToDeviceKohde(
+  machine: OlmMachine, toDevice: ToDeviceRequest, onEteneminen?: (viesti: string) => void,
+): Promise<void> {
+  const viestit = laiteviestitPyynnosta(toDevice.body);
+  const vastaus = await palvelimelle('/api/kanavat/avaimet/laheta-laitteelle', {
+    tyyppi: toDevice.event_type, viestit,
+  });
+  onEteneminen?.(
+    `ToDevice ${toDevice.event_type}: kohteita=${viestit.length} `
+    + `[${viestit.map((v) => `${v.kayttaja}:${v.laiteId}`).join(', ')}], `
+    + `palvelin toimitti=${vastaus?.toimitettu ?? '(ei vastausta)'}`,
+  );
+  await machine.markRequestAsSent(toDevice.id, toDevice.type, JSON.stringify({}));
 }
 
 async function haeJaVastaaKyselyyn(kayttajat: string[]): Promise<string> {
@@ -335,6 +343,15 @@ export async function varmistaIstunnot(machine: OlmMachine, kayttajat: string[])
  * Jakaa (tai kierrättää) kanavan huoneavaimen annetuille jäsenille ja toimittaa sen
  * heille to-device-relenssin kautta. Kutsujan vastuulla: `paivitaKayttajanLaitteet` ja
  * `varmistaIstunnot` jokaiselle jäsenelle ensin.
+ *
+ * `machine.shareRoomKey(...)` PALAUTTAA valmiit ToDeviceRequestit SUORAAN kutsujalle —
+ * ne EIVÄT päädy koneen `outgoingRequests()`-jonoon itsestään. Aiempi versio heitti
+ * tämän paluuarvon pois (`await machine.shareRoomKey(...)` ilman tulosta) ja luotti
+ * `synkronoiPyynnot`:iin, joka etsi ToDevice-pyyntöjä väärästä paikasta — huoneavain
+ * "jaettiin" onnistuneesti koneen omasta näkökulmasta, muttei KOSKAAN lähtenyt mihinkään.
+ * Löytyi 23.9.2026 kymmenennen puhelintestin jälkeen, kun kaikki muu ketjussa (laite
+ * tiedossa, Olm-istunto pystyssä, aani_avain lähti) oli jo todistetusti kunnossa mutta
+ * diag näytti silti pysyvästi "EI YHTÄÄN ToDevice-pyyntöä" — viimeinen katkoskohta.
  */
 export async function jaaHuoneenAvain(
   machine: OlmMachine, kanavaId: string, jasenet: string[], onEteneminen?: (viesti: string) => void,
@@ -343,15 +360,20 @@ export async function jaaHuoneenAvain(
   const userIds = jasenet.map((k) => new UserId(matriisiKayttajaId(k)));
   const asetukset = new EncryptionSettings();
   // EKSPLISIITTINEN allDevices — EI oletusarvoa. `shareRoomKey`:n oletusstrategia
-  // (device-/identiteettipohjainen) jättää huoneavaimen jakamatta laitteille joilla ei
+  // (device-/identiteettipohjainen) jättäisi huoneavaimen jakamatta laitteille joilla ei
   // ole ristiinallekirjoitusta/vahvistusta, ja tämä sovellus EI TEE ristiinallekirjoitusta
   // lainkaan (tietoinen rajaus, ks. tiedoston yläkommentti kohta "vaihe 2: ei
-  // ristiinallekirjoitusta") — ilman tätä `shareRoomKey` ei tuota YHTÄÄN ToDevice-
-  // pyyntöä kenellekään, hiljaa, ei koskaan. Löytyi 23.9.2026 kun kaikki muu ketjussa
-  // (laite tiedossa, Olm-istunto pystyssä, aani_avain lähti) oli jo todistetusti kunnossa
-  // mutta "diag" näytti silti "EI YHTÄÄN ToDevice-pyyntöä" — viimeinen katkoskohta.
+  // ristiinallekirjoitusta") — sama TOFU-periaate kuin decryptRoomEvent:n
+  // TrustRequirement.Untrusted purkupuolella, jako- ja purkupuolen on oltava
+  // johdonmukaiset keskenään.
   asetukset.sharingStrategy = CollectStrategy.allDevices();
-  await machine.shareRoomKey(roomId, userIds, asetukset);
+  const pyynnot = await machine.shareRoomKey(roomId, userIds, asetukset);
+  if (onEteneminen && pyynnot.length === 0) {
+    onEteneminen('shareRoomKey palautti nolla pyyntöä (huoneavain jo jaettu kaikille tunnetuille laitteille?)');
+  }
+  for (const pyynto of pyynnot) {
+    await laheteToDeviceKohde(machine, pyynto, onEteneminen);
+  }
   await synkronoiPyynnot(machine, onEteneminen);
 }
 
