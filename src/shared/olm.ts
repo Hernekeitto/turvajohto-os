@@ -339,7 +339,31 @@ export async function jaaHuoneenAvain(machine: OlmMachine, kanavaId: string, jas
   // TrustRequirement.Untrusted purkupuolella, jako- ja purkupuolen on oltava
   // johdonmukaiset keskenään.
   asetukset.sharingStrategy = CollectStrategy.allDevices();
-  for (const pyynto of await machine.shareRoomKey(roomId, userIds, asetukset)) {
+  const pyynnot = await machine.shareRoomKey(roomId, userIds, asetukset);
+  // VÄLIAIKAINEN DIAGNOSTIIKKA (26.9.2026): huoneavain tavoittaa vain kaksi Turva051:n
+  // neljästä rekisteröidystä laitteesta johdonmukaisesti, vaikka nyt aktiivinen laite on
+  // yksi niistä kahdesta joita EI koskaan tavoiteta — selvitetään tavoittaako
+  // shareRoomKey ylipäätään kaikki laitteet, ja onko runko käärittynä "messages"-
+  // avaimeen (sama epäily kuin natiivin FFI:llä aiemmin, ks. laiteviestitPyynnosta).
+  // eslint-disable-next-line no-console
+  console.log(`PTT-huoneavain pyyntoja=${pyynnot.length}`);
+  for (const pyynto of pyynnot) {
+    try {
+      const runko = JSON.parse(pyynto.body);
+      const kaarittyMessages = runko.messages ? Object.keys(runko.messages) : null;
+      // eslint-disable-next-line no-console
+      console.log(
+        `PTT-huoneavain pyynto tyyppi=${pyynto.type} kaarittyMessages=${JSON.stringify(kaarittyMessages)} `
+        + `runkoAvaimet=${JSON.stringify(Object.keys(runko))} laitteet=${JSON.stringify(
+          kaarittyMessages
+            ? Object.fromEntries(Object.entries(runko.messages).map(([k, v]) => [k, Object.keys(v as object)]))
+            : Object.fromEntries(Object.entries(runko).map(([k, v]) => [k, typeof v === 'object' && v ? Object.keys(v as object) : v])),
+        )}`,
+      );
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log(`PTT-huoneavain pyynnon jasennys epaonnistui: ${e instanceof Error ? e.message : String(e)}`);
+    }
     await laheteToDeviceKohde(machine, pyynto);
   }
   await synkronoiPyynnot(machine);
