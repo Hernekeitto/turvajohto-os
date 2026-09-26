@@ -70,6 +70,15 @@ export function usePttPalkkia() {
   // olio eikä näytettävää tilaa, sama perustelu kuin PttYhteenveto.tsx:n vastaanottimet.
   const lahetinRef = useRef<Lahetin | null>(null);
   const lahettavaKanavaRef = useRef<string | null>(null);
+  // Mitkä kanavat TÄMÄ selainistunto on itse pyytänyt (pyydaPuheenvuoro alla) — ei
+  // riitä että palvelin on myöntänyt puheenvuoron omalle käyttäjälle (`mina`), koska
+  // sama käyttäjä voi saada puheenvuoron myös JELLYN FYYSISEN NAPIN kautta (natiivi
+  // pyytää sen omalla API-kutsullaan, ei tämän hookin kautta). Ilman tätä rajausta
+  // tämä selain yrittäisi AINA myös itse kaapata mikrofonin ja lähettää samaan
+  // puheenvuoroon kuin natiivi jo lähettää — kaksi rinnakkaista lähetystä samalle
+  // avaimelle, joka selittää sekä aiemmat kaatumiset että pysyvät "Odottaa avainta"
+  // -jumit (löytyi 26.9.2026, ks. Obsidian "Jelly Star -napin selvitys jatkuu").
+  const pyysinItseRef = useRef<Set<string>>(new Set());
   const [machine, setMachine] = useState<OlmMachine | null>(null);
   // NÄKYVÄ virhe eikä hiljainen nielaisu — sama korjaus kuin HÄLKEn PttYhteenveto.tsx:ssä
   // 22.9.2026 ja samasta syystä: tähän asti tämä `.catch` jäi lähes kuolleeksi koodiksi
@@ -142,7 +151,10 @@ export function usePttPalkkia() {
       setTilat((edelliset) => paivitaPuheTila(edelliset, { tyyppi: 'myonnetty', kanavaId, kayttaja }, omaKayttaja));
       setHylkays(null);
     },
-    onPuheenvuoroHylatty: (kanavaId, _syy, kayttaja) => setHylkays({ kanavaId, kayttaja }),
+    onPuheenvuoroHylatty: (kanavaId, _syy, kayttaja) => {
+      pyysinItseRef.current.delete(kanavaId);
+      setHylkays({ kanavaId, kayttaja });
+    },
     onPuheenvuoroVapautui: (kanavaId) => {
       setTilat((edelliset) => paivitaPuheTila(edelliset, { tyyppi: 'vapautui', kanavaId }, omaKayttaja));
     },
@@ -173,10 +185,12 @@ export function usePttPalkkia() {
   }, [hylkays]);
 
   const pyydaPuheenvuoro = useCallback((kanavaId: string) => {
+    pyysinItseRef.current.add(kanavaId);
     laheta({ tyyppi: 'pyyda_puheenvuoro', kanavaId });
   }, [laheta]);
 
   const vapautaPuheenvuoro = useCallback((kanavaId: string) => {
+    pyysinItseRef.current.delete(kanavaId);
     laheta({ tyyppi: 'vapauta_puheenvuoro', kanavaId });
   }, [laheta]);
 
@@ -194,7 +208,9 @@ export function usePttPalkkia() {
   // riippumatonta Opus-virtaa saman haltijan nimissä yhtä aikaa.
   useEffect(() => {
     const kanavaId = aktiivinenId;
-    const lahetetaanNyt = Boolean(kanavaId && tilat[kanavaId]?.mina);
+    // `mina` yksin ei riitä (ks. pyysinItseRef:n kommentti) — muuten Jellyn fyysisen
+    // napin natiivin kautta saama puheenvuoro käynnistäisi TÄMÄNKIN selaimen lähetyksen.
+    const lahetetaanNyt = Boolean(kanavaId && tilat[kanavaId]?.mina && pyysinItseRef.current.has(kanavaId));
 
     if (lahetetaanNyt && lahettavaKanavaRef.current !== kanavaId && kanavaId) {
       lahettavaKanavaRef.current = kanavaId;
