@@ -15,11 +15,12 @@
 // vaaka-asennossa on 915 px leveä, ja silloin leveyteen sidottu kehys puristi sovelluksen
 // 164 pikselin levyiseksi malliksi keskelle ruutua. Ks. index.css.
 import { useEffect, useState, type ReactNode } from 'react';
-import { ArrowLeft, Bell, BellRing, Camera, ChevronRight, LogOut, Menu, Monitor, MoreVertical, Send, TriangleAlert, Volume2, VolumeX, X } from 'lucide-react';
+import { ArrowLeft, Bell, BellRing, Camera, ChevronRight, ClipboardList, LogOut, Menu, Monitor, MoreVertical, Radio, Send, TriangleAlert, Volume2, VolumeX, X } from 'lucide-react';
 
 import { PttPalkki } from './PttPalkki.tsx';
 import { usePttPalkkia } from './kayttoPttPalkkia.ts';
-import { PttPainikkeenSisalto } from '../PttPainike.tsx';
+import { RadioNakyma } from './RadioNakyma.tsx';
+import { useTakaisinEste } from '../../shared/navigointi.ts';
 
 export type MobiiliIlmoitus = {
   id: string;
@@ -116,6 +117,19 @@ export const MobiiliKehys = ({
   // WebSocket-yhteydestä).
   const ptt = usePttPalkkia();
 
+  // Radiopuhelin-sivu (erä 26, käyttäjän pyyntö 26.9.2026: korvaa pienen, kuvaruutuun
+  // huonosti sopineen ponnahdusvalikon kokoruutuisella sivulla). PAIKALLINEN TILA
+  // EIKÄ osa GuardApp.tsx:n Osio/nakyma-koneistoa: silloin sama yläpalkin nappi
+  // palauttaa aina täsmälleen sen näytön joka alla oli, koskematta GuardAppin
+  // näkymäketjuun. useTakaisinEste on sama yleiskäyttöinen hook jota GuardApp.tsx
+  // käyttää omille modaaleilleen (ks. sen oma tiedostokommentti) — se ei vaadi
+  // kutsumista juuri GuardAppista.
+  const [radioAuki, setRadioAuki] = useState(false);
+  useTakaisinEste(radioAuki, () => setRadioAuki(false));
+  // Puhuja-merkkivalo yläpalkin napissa, sama laskenta kuin PttPainike.tsx:n
+  // poistetulla pudotusvalikolla oli.
+  const puhujia = ptt.kanavat.filter((k) => ptt.tilat[k.id]).length;
+
   const vaihda = (mika: 'valikko' | 'pika' | 'ilmoitukset') =>
     setAuki((edellinen) => (edellinen === mika ? null : mika));
 
@@ -159,14 +173,25 @@ export const MobiiliKehys = ({
             </button>
           )}
           <p className="flex-1 min-w-0 truncate text-base font-medium text-ink-on-dark-muted">{otsikko}</p>
-          {/* Radiopuhelin-ikoni (erä 26, jatko: "Lisätään radiopuhelinikoni myös
-              sovellukseen!!"). Sama pudotusvalikko kuin työpöydällä (kanavat, kuka
-              puhuu, mykistys, viestit) — EI oma usePttPalkkia-kutsu, ks. PttPainike.tsx:n
-              tiedostokommentti kaksinkertaisen mikrofonin vaarasta. Mikrofonin
-              lähetyspainike on jo olemassa alapalkissa (PttPalkki); tämä on sille lisä. */}
-          <div className="shrink-0">
-            <PttPainikkeenSisalto ptt={ptt} />
-          </div>
+          {/* Radiopuhelin-ikoni (erä 26, jatko, käyttäjän pyyntö 26.9.2026): vaihtaa
+              koko sivun sisällön radiosivun ja tavallisen näkymän välillä samasta
+              napista — ei enää pudotusvalikkoa (ks. `radioAuki` yllä). Ikoni ja
+              aria-label vaihtuvat kertomaan kummalla puolella ollaan, samalla
+              kuviolla kuin `onTakaisin`-propin hampurilainen↔nuoli-vaihto tässä
+              samassa palkissa. */}
+          <button
+            type="button"
+            onClick={() => { setAuki(null); setRadioAuki((a) => !a); }}
+            title={radioAuki ? 'Takaisin' : puhujia > 0 ? `${puhujia} kanavalla puhutaan` : 'PTT-kanavat'}
+            aria-label={radioAuki ? 'Takaisin' : 'Radiopuhelin'}
+            aria-pressed={radioAuki}
+            className="relative w-11 h-11 shrink-0 flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors"
+          >
+            {radioAuki ? <ClipboardList size={24} /> : <Radio size={24} />}
+            {!radioAuki && puhujia > 0 && (
+              <span className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full bg-danger animate-pulse" aria-hidden="true" />
+            )}
+          </button>
           <button
             type="button"
             onClick={() => vaihda('ilmoitukset')}
@@ -461,7 +486,7 @@ export const MobiiliKehys = ({
         )}
 
         <main className="flex-1 overflow-y-auto px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          {children}
+          {radioAuki ? <RadioNakyma ptt={ptt} /> : children}
         </main>
 
         <PttPalkki

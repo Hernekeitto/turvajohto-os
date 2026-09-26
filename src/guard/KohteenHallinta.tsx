@@ -343,6 +343,12 @@ export const KohteenHallinta = ({
             onChange={(v) => onChange({ ...kohde, address: v })}
             placeholder="Katuosoite, postinumero ja kaupunki"
           />
+          <Kentta
+            label="Alue"
+            arvo={kohde.alue || ''}
+            onChange={(v) => onChange({ ...kohde, alue: v })}
+            placeholder="esim. Tampere — kokoaa PTT:n alueen yleiskanavan"
+          />
           <div className="grid gap-4 sm:grid-cols-2">
             <Kentta
               label="Yhteyshenkilö"

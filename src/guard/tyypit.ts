@@ -94,6 +94,9 @@ export type Kohde = {
   id: string;
   name: string;
   address?: string;
+  // Alue (esim. kaupunki), jonka perusteella lasketaan PTT:n alueen yleiskanava
+  // (server/kanavat.js: alueKanavaId) — vapaaehtoinen, ei vaikuta mihinkään muuhun.
+  alue?: string;
   contactName?: string;
   contactPhone?: string;
   notes?: string;

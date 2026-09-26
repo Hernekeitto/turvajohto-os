@@ -40,6 +40,11 @@ export const kohdeKanavaId = (siteId) => `kohde:${siteId}`;
  * eivät jaa samaa kanavaa, koska ne ovat eri partio eri liikenteellä. */
 export const piiriKanavaId = (vuorotyyppiId) => `piiri:${vuorotyyppiId}`;
 
+/** Alueen (esim. kaupunki) kiinteän kanavan tunnus. Normalisoidaan (trim + lowercase)
+ * ennen tunnuksen muodostusta, jotta sama alue eri kirjoitusasuilla ("Tampere" vs.
+ * "tampere ") osuu samaan kanavaan eikä synnytä kahta rinnakkaista aluekanavaa. */
+export const alueKanavaId = (alue) => `alue:${String(alue).trim().toLowerCase()}`;
+
 /**
  * Tämän vartijan kiinteät kanavat juuri nyt, kesken olevan vuoron perusteella.
  *
@@ -63,6 +68,18 @@ export function omatKiinteatKanavat(vuoro) {
       tyyppi: 'piiri',
       vuorotyyppiId: vuoro.vuorotyyppiId,
       nimi: vuoro.vuorotyyppiNimi || '',
+    });
+  }
+  // Alueen yleiskanava (käyttäjän pyyntö 26.9.2026: "alueen yleinen ryhmä esim
+  // Tampere") — VAIN jos vuorolla on alue kopioituna (kohteella oli alue asetettuna
+  // vuoron alkaessa). Sama kiinteä/laskettu periaate kuin kohde- ja piirikanavalla:
+  // ei tallenneta, lasketaan aina kesken olevasta vuorosta.
+  if (typeof vuoro.alue === 'string' && vuoro.alue.trim() !== '') {
+    kanavat.push({
+      id: alueKanavaId(vuoro.alue),
+      tyyppi: 'alue',
+      alue: vuoro.alue,
+      nimi: vuoro.alue,
     });
   }
   return kanavat;

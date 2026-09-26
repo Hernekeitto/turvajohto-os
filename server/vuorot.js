@@ -244,6 +244,10 @@ export function aloitaVuoro({
       // ei saa muuttaa sitä millä perusteella kesken olevalle vuorolle on lähetetty
       // hälytyksiä. Ks. halytystehtava.js: nakeeTehtavan.
       piiri: vuorotyyppi.piiri === true,
+      // Alue kopioidaan kohteesta samasta syystä kuin siteNimi: PTT:n alue-kanava
+      // (server/kanavat.js) lasketaan tästä, eikä kohteen myöhempi muokkaus saa
+      // muuttaa kesken olevan vuoron kanavaa.
+      alue: kohde.alue || '',
       vartija: username,
       alkoi: new Date(nyt).toISOString(),
       paattyi: null,

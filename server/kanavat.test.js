@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  kohdeKanavaId, piiriKanavaId, omatKiinteatKanavat, kuuluuKiinteaanKanavaan,
+  kohdeKanavaId, piiriKanavaId, alueKanavaId, omatKiinteatKanavat, kuuluuKiinteaanKanavaan,
   jasenetKiinteallaKanavalla,
   pttKaytossa, vuorossaOlevatMuut, vuorossaOlevat, onOsallistuja, loydaDm, luoDmKanava, dmPurkautunut,
   hataKanavaId, luoHataKanava, onHalyttaja, hataKanavaPurkautunut,
@@ -73,6 +73,24 @@ test('piirivuoro tuo sekä kohde- että piirikanavan', () => {
   assert.equal(kanavat[1].id, piiriKanavaId('v-piiri-301'));
   assert.equal(kanavat[1].tyyppi, 'piiri');
   assert.equal(kanavat[1].nimi, 'Piiri 301');
+});
+
+test('vuoro ilman aluetta ei tuo aluekanavaa', () => {
+  const kanavat = omatKiinteatKanavat(kohdevuoro());
+  assert.equal(kanavat.some((k) => k.tyyppi === 'alue'), false);
+});
+
+test('vuoro jolla on alue tuo sekä kohde- että aluekanavan', () => {
+  const kanavat = omatKiinteatKanavat(kohdevuoro({ alue: 'Tampere' }));
+  assert.equal(kanavat.length, 2);
+  assert.equal(kanavat[0].tyyppi, 'kohde');
+  assert.equal(kanavat[1].id, alueKanavaId('Tampere'));
+  assert.equal(kanavat[1].tyyppi, 'alue');
+  assert.equal(kanavat[1].nimi, 'Tampere');
+});
+
+test('alueKanavaId normalisoi kirjainkoon ja välilyönnit samaan tunnukseen', () => {
+  assert.equal(alueKanavaId('Tampere'), alueKanavaId(' tampere '));
 });
 
 test('kuuluuKiinteaanKanavaan tunnistaa oman kohdekanavan', () => {

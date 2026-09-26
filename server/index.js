@@ -2677,9 +2677,9 @@ function reqKuuluuKanavaanNyt(req, kanavaId) {
   if (kuuluuKiinteaanKanavaan(vuoro, kanavaId)) return true;
   // HÄLKE saa kuulua MIHIN TAHANSA kiinteään kanavaan vaikka heillä ei olisi omaa
   // vuoroa (erä 26, vaihe 8/9: PTT-yhteenveto) — sama guard_dispatch NÄKY -oikeus
-  // jolla he jo pääsevät hätäkanavalle alla. Vain kohde/piiri, ei dm/vapaa: niiden
-  // jäsenyys on eksplisiittinen osallistujalista eikä "kuka tahansa päivystäjä".
-  if ((kanavaId.startsWith('kohde:') || kanavaId.startsWith('piiri:'))
+  // jolla he jo pääsevät hätäkanavalle alla. Vain kohde/piiri/alue, ei dm/vapaa:
+  // niiden jäsenyys on eksplisiittinen osallistujalista eikä "kuka tahansa päivystäjä".
+  if ((kanavaId.startsWith('kohde:') || kanavaId.startsWith('piiri:') || kanavaId.startsWith('alue:'))
       && (req.role === 'admin' || canView(req.permissions, null, 'guard_dispatch'))) {
     return true;
   }
@@ -7223,11 +7223,11 @@ function kuuluuKanavaanNyt(istunto, kanavaId, vuoro) {
   // HÄLKE saa kuulua MIHIN TAHANSA kiinteään kanavaan vaikka heillä ei olisi omaa
   // vuoroa (erä 26, vaihe 8/9: PTT-yhteenveto ja kuuntelu, käyttäjän pyyntö
   // 22.9.2026) — sama guard_dispatch NÄKY -oikeus jolla he jo pääsevät hätäkanavalle
-  // alla. Vain kohde/piiri, ei dm/vapaa: niiden jäsenyys on eksplisiittinen
+  // alla. Vain kohde/piiri/alue, ei dm/vapaa: niiden jäsenyys on eksplisiittinen
   // osallistujalista eikä "kuka tahansa päivystäjä". Sama sääntö kuin
   // reqKuuluuKanavaanNyt:ssä (REST-puoli) — pidettävä käsin synkronissa, ei jaettua
   // koodia näiden kahden funktion välillä (istunto vs. req).
-  if ((kanavaId.startsWith('kohde:') || kanavaId.startsWith('piiri:'))
+  if ((kanavaId.startsWith('kohde:') || kanavaId.startsWith('piiri:') || kanavaId.startsWith('alue:'))
       && (istunto?.role === 'admin' || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch'))) {
     return true;
   }

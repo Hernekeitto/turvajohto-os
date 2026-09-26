@@ -20,15 +20,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { OlmMachine } from '@matrix-org/matrix-sdk-crypto-wasm';
-import { Radio, Volume2, VolumeX, RefreshCw } from 'lucide-react';
+import { Radio, Volume2, VolumeX, RefreshCw, MessageSquare } from 'lucide-react';
 
 import { useKanava } from '../../shared/kanava';
 import { haeJaettuOlmMachine, synkronoiPyynnot, synkronoiLaiteviestit } from '../../shared/olm';
 import { vastaanotaAvain } from '../../shared/aanikutsu';
 import { luoVastaanotin, type Vastaanotin } from '../../shared/aanivastaanotto';
 import { soitaAanimerkki } from '../../shared/aanimerkki';
+import { KohdeKeskustelu } from './KohdeKeskustelu';
 
-type KanavaTyyppi = 'kohde' | 'piiri' | 'hata';
+type KanavaTyyppi = 'kohde' | 'piiri' | 'alue' | 'hata';
 
 type KanavaRivi = {
   id: string;
@@ -45,7 +46,9 @@ type KuunteluTila = 'odottaa_avainta' | 'kuuntelee' | 'virhe';
 // herättää haun heti kanavan kautta (ks. useKanava onMuutos alla) joka tapauksessa.
 const HAKUVALI_MS = 20_000;
 
-const TYYPIN_NIMI: Record<KanavaTyyppi, string> = { kohde: 'Kohde', piiri: 'Piiri', hata: 'Hätäkanava' };
+const TYYPIN_NIMI: Record<KanavaTyyppi, string> = {
+  kohde: 'Kohde', piiri: 'Piiri', alue: 'Alue', hata: 'Hätäkanava',
+};
 
 export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
   const [kanavat, setKanavat] = useState<KanavaRivi[]>([]);
@@ -58,6 +61,11 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
   // ensimmäisessä oikeassa puhelintestissä.
   const [koneVirhe, setKoneVirhe] = useState<string | null>(null);
   const [tilat, setTilat] = useState<Record<string, KuunteluTila>>({});
+  // Avoinna oleva viestiketju (erä 26, käyttäjän pyyntö 26.9.2026: "Lisätään myös
+  // HÄLKE näkymään soveltuvin osin") — KohdeKeskustelu on jo olemassa ja täysin
+  // kanavatyyppiriippumaton (ottaa vain {id, tyyppi, nimi}), joten sama komponentti
+  // toimii sellaisenaan kohde-, piiri- ja alue-kanaville, ei vain kohteen omalle.
+  const [avattuViesti, setAvattuViesti] = useState<KanavaRivi | null>(null);
   // Vastaanottimet REFISSÄ eikä tilassa: se ei ole näytettävää dataa vaan ajonaikaisia
   // WebCodecs/Web Audio -olioita, ja niiden vaihtuminen ei itsessään saa laukaista
   // uudelleenrenderöintiä — vain `tilat`-tilan muutos näytetään.
@@ -292,10 +300,28 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
                 {kuunnellaan ? <Volume2 size={14} /> : <VolumeX size={14} />}
                 {kuunnellaan ? 'Lopeta' : 'Kuuntele'}
               </button>
+              <button
+                type="button"
+                onClick={() => setAvattuViesti(k)}
+                aria-label={`Viestit: ${k.nimi}`}
+                className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-ink-subtle hover:bg-sunken"
+              >
+                <MessageSquare size={14} />
+              </button>
             </li>
           );
         })}
       </ul>
+
+      {avattuViesti && (
+        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={`Viestit: ${avattuViesti.nimi}`}>
+          <KohdeKeskustelu
+            kayttaja={kayttaja}
+            kanava={{ id: avattuViesti.id, tyyppi: avattuViesti.tyyppi, nimi: avattuViesti.nimi }}
+            onSulje={() => setAvattuViesti(null)}
+          />
+        </div>
+      )}
     </div>
   );
 };

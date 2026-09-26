@@ -5,7 +5,7 @@
 // kohta 5) — vartija ei "valitse" hätäkanavaa lähetyskohteeksi samalla tavalla kuin
 // tavallisen ryhmän, se ilmestyy hälytyksen mukana.
 
-export type KanavaTyyppi = 'kohde' | 'piiri' | 'hata' | 'dm' | 'vapaa';
+export type KanavaTyyppi = 'kohde' | 'piiri' | 'alue' | 'hata' | 'dm' | 'vapaa';
 
 export type Kanava = {
   id: string;
@@ -17,7 +17,7 @@ export type Kanava = {
   osallistujat?: string[];
 };
 
-const KIINTEA: KanavaTyyppi[] = ['kohde', 'piiri'];
+const KIINTEA: KanavaTyyppi[] = ['kohde', 'piiri', 'alue'];
 
 /** Hätäkanavat omaa, aina näkyvää elementtiään varten — ei chip-listaan. */
 export function hatakanavat(kanavat: Kanava[]): Kanava[] {
@@ -25,8 +25,8 @@ export function hatakanavat(kanavat: Kanava[]): Kanava[] {
 }
 
 /**
- * Chip-listan kanavat järjestettynä: kiinteät (kohde, piiri) ensin, koska ne ovat
- * vartijan oma työkohde eikä valinnainen ryhmä. Array.sort on vakaa (ES2019+), joten
+ * Chip-listan kanavat järjestettynä: kiinteät (kohde, piiri, alue) ensin, koska ne
+ * ovat vartijan oma työkohde eikä valinnainen ryhmä. Array.sort on vakaa (ES2019+), joten
  * ryhmien SISÄINEN järjestys säilyy palvelimen antamana.
  */
 export function chipKanavat(kanavat: Kanava[]): Kanava[] {
