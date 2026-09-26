@@ -310,9 +310,25 @@ export async function varmistaIstunnot(machine: OlmMachine, kayttajat: string[])
  * Löytyi 23.9.2026 kymmenennen puhelintestin jälkeen, kun kaikki muu ketjussa (laite
  * tiedossa, Olm-istunto pystyssä, aani_avain lähti) oli jo todistetusti kunnossa mutta
  * diag näytti silti pysyvästi "EI YHTÄÄN ToDevice-pyyntöä" — viimeinen katkoskohta.
+ *
+ * `invalidateGroupSession` PAKOTETAAN ENSIN (löytynyt 26.9.2026, ensimmäinen HÄLKE→
+ * puhelin-puhetesti): `shareRoomKey` merkitsee laitteen "jo saaneeksi avaimen" HETI
+ * PYYNNÖN LUONTIHETKELLÄ, ei vasta perilletulon varmistuttua (server/index.js:n
+ * `/api/kanavat/avaimet/laheta-laitteelle` vahvisti tämän — `guardLaiteviestit`-jonossa
+ * oli VAIN yhden, ensimmäisen yrityksen viestit tunteja myöhemmin, koska jokainen
+ * seuraava kutsu ohitti jaon hiljaa luullen sen jo onnistuneen). Jos toimitus
+ * epäonnistuu (kuten tässä — natiivi ei koskaan ehtinyt hakea sitä), kirjasto EI
+ * KOSKAAN YRITÄ UUDELLEEN samalle huoneelle ilman eksplisiittistä pakotusta. Sama
+ * bugiluokka ja sama korjaus kuin natiivin `Kryptokone.pakotaUusiHuoneavain`
+ * (`discardRoomKey`, WASM-sidonnassa `invalidateGroupSession`) — natiivi koki tämän jo
+ * lähettäjän puolella 23.9.2026 ja korjasi sen pakottamalla uuden avaimen jokaista
+ * lähetystä varten. Sama pakotus tarvitaan nyt tälle, koska HÄLKEn puhekyky (erä 26,
+ * jatko) ja tekstiviestitkin (viestit.ts) kutsuvat tätä samaa funktiota, eikä kumpikaan
+ * voi luottaa siihen että aiempi jako oikeasti onnistui.
  */
 export async function jaaHuoneenAvain(machine: OlmMachine, kanavaId: string, jasenet: string[]): Promise<void> {
   const roomId = new RoomId(matriisiHuoneId(kanavaId));
+  await machine.invalidateGroupSession(roomId);
   const userIds = jasenet.map((k) => new UserId(matriisiKayttajaId(k)));
   const asetukset = new EncryptionSettings();
   // EKSPLISIITTINEN allDevices — EI oletusarvoa. `shareRoomKey`:n oletusstrategia
