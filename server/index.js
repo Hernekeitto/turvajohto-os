@@ -158,6 +158,8 @@ import { kaytossaOlevatNapit, ratkaiseVastaanottajat, taytaPaikkamerkit, halytys
 import { lisaaJonoon, otaKasittelyyn, kuittaaKasitellyksi, jononPituus } from './smsqueue.js';
 import { salaisuusTasmaa, tulkitseTapahtuma, soveltaTilaraportit, soveltaVastaukset } from './smswebhook.js';
 import { logAudit, readAuditLog } from './audit.js';
+import { lahetaSahkoposti, onkoKonfiguroitu as sahkopostiKonfiguroitu } from './sahkoposti.js';
+import { toimitaTunnustiedot, tulkitseKanavat } from './tunnuslahetys.js';
 import { validateRecords, wouldWipeNonEmptyCollection } from './validation.js';
 
 const PORT = process.env.PORT || 4000;
@@ -1247,14 +1249,46 @@ app.post('/api/kirjaa/:name', requireAuth, (req, res) => {
   });
 });
 
+// Tunnustietojen toimitus työntekijälle (tunnuslahetys.js): tunnus sähköpostiin,
+// väliaikainen salasana tekstiviestinä. Yhteystiedot luetaan työntekijätietueesta
+// palvelimella, ei pyynnöstä. Palauttaa null jos lähetystä ei pyydetty.
+//
+// Lähetys tehdään SAMASSA pyynnössä kuin salasanan arvonta, koska salasanaa ei
+// tallenneta selväkielisenä eikä sitä voi myöhemmin hakea lähetettäväksi.
+async function toimitaTunnus({ req, kanavat, username, password, employeeId, nimi, puoli, syy }) {
+  if (!kanavat) return null;
+  const tyontekija = employeeId
+    ? (readCollection('employees') || []).find((t) => t?.id === employeeId) || null
+    : null;
+  const tulos = await toimitaTunnustiedot({
+    kanavat,
+    tyontekija,
+    nimi,
+    username,
+    password,
+    puoli,
+    syy,
+    lahetaSahkoposti,
+    lahetaSms: lahetaViestit,
+  });
+  // Lokiin vain kanavat ja lopputulos: ei osoitteita, numeroita eikä viestien sisältöä.
+  logAudit({
+    user: req.username,
+    action: 'user_credentials_sent',
+    targetUser: username,
+    kanavat: Object.fromEntries(Object.entries(tulos).map(([k, v]) => [k, v.tila])),
+  });
+  return tulos;
+}
+
 // Käyttäjähallinta (vain admin) ja oman salasanan itsepalveluvaihto (kuka tahansa kirjautunut).
 app.get('/api/users', requireAuth, requireAdmin, (req, res) => {
   res.json({ ok: true, users: listUsers() });
 });
 
-app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
   // password ei tule enää pyynnöstä: palvelin arpoo sen (ks. arvoSalasana).
-  const { username, nickname, displayId, employeeId } = req.body || {};
+  const { username, nickname, displayId, employeeId, lahetys, puoli } = req.body || {};
   if (typeof username !== 'string' || !username.trim()) {
     return res.status(400).json({ ok: false, error: 'Käyttäjätunnus vaaditaan.' });
   }
@@ -1288,9 +1322,26 @@ app.post('/api/users', requireAuth, requireAdmin, (req, res) => {
   });
   setMustChangePassword(trimmedUsername, true);
   logAudit({ user: req.username, action: 'user_create', targetUser: trimmedUsername });
+  // Tunnus on jo olemassa, joten lähetyksen epäonnistuminen ei saa kaataa vastausta:
+  // salasana on palautettava pääkäyttäjälle joka tapauksessa.
+  let toimitus = null;
+  try {
+    toimitus = await toimitaTunnus({
+      req,
+      kanavat: tulkitseKanavat(lahetys),
+      username: trimmedUsername,
+      password: arvottu,
+      employeeId: typeof employeeId === 'string' ? employeeId : null,
+      nimi: nickname.trim(),
+      puoli,
+      syy: 'luotu',
+    });
+  } catch (err) {
+    console.error('Tunnustietojen toimitus epäonnistui:', err?.message);
+  }
   // Salasana palautetaan VAIN tässä vastauksessa — sitä ei tallenneta selväkielisenä
   // eikä sitä voi hakea myöhemmin uudelleen.
-  res.json({ ok: true, password: arvottu, mustChangePassword: true });
+  res.json({ ok: true, password: arvottu, mustChangePassword: true, ...(toimitus ? { toimitus } : {}) });
 });
 
 app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
@@ -1447,7 +1498,7 @@ app.post('/api/users/:username/logout', requireAuth, requireAdmin, (req, res) =>
 //
 // Erillinen /api/change-password-reitistä, joka on käyttäjän oma itsepalvelu ja vaatii
 // nykyisen salasanan. Tähän ei tarvita vanhaa salasanaa — pääsy on jo rajattu adminiin.
-app.post('/api/users/:username/password', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/users/:username/password', requireAuth, requireAdmin, async (req, res) => {
   const { username } = req.params;
   const user = findUser(username);
   if (!user) return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
@@ -1457,7 +1508,22 @@ app.post('/api/users/:username/password', requireAuth, requireAdmin, (req, res) 
   // Vanhat istunnot katkaistaan: syy nollaukseen voi olla vuotanut salasana.
   if (user.role !== 'admin') forceLogout(username);
   logAudit({ user: req.username, action: 'user_password_set', targetUser: username });
-  res.json({ ok: true, password: arvottu, mustChangePassword: true });
+  let toimitus = null;
+  try {
+    toimitus = await toimitaTunnus({
+      req,
+      kanavat: tulkitseKanavat(req.body?.lahetys),
+      username,
+      password: arvottu,
+      employeeId: user.employeeId || null,
+      nimi: user.nickname || username,
+      puoli: req.body?.puoli,
+      syy: 'nollattu',
+    });
+  } catch (err) {
+    console.error('Tunnustietojen toimitus epäonnistui:', err?.message);
+  }
+  res.json({ ok: true, password: arvottu, mustChangePassword: true, ...(toimitus ? { toimitus } : {}) });
 });
 
 app.post('/api/change-password', requireAuth, loginLimiter, (req, res) => {
@@ -7649,5 +7715,10 @@ const palvelin = app.listen(PORT, '127.0.0.1', () => {
     setTimeout(() => { tarkistaSaldo().catch(() => {}); }, 10000).unref();
   } else {
     console.log('BulkSMS-tunnuksia ei ole asetettu — hätäviestit ovat kuivaharjoittelutilassa.');
+  }
+  // Sama todennustapa kuin BulkSMS:ssä: rivin katoaminen lokista kertoo, että SMTP-asetukset
+  // ovat voimassa, paljastamatta niiden arvoja.
+  if (!sahkopostiKonfiguroitu()) {
+    console.log('SMTP-asetuksia ei ole asetettu — sähköpostit ovat kuivaharjoittelutilassa.');
   }
 });

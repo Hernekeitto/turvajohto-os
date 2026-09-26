@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle, KeyRound, UserPlus } from 'lucide-react';
+import { CheckCircle, KeyRound, Mail, MessageSquare, UserPlus } from 'lucide-react';
 
 import { buildFullName, kayttajatunnusNimesta } from '../nimet';
 import { muotoileTunniste } from '../tunnisteet';
@@ -18,6 +18,10 @@ import { KertaSalasana, type SalasanaNaytto } from './KertaSalasana';
 // Salasanaa EI kysytä: palvelin arpoo sen ja palauttaa kerran (server/index.js,
 // POST /api/users ja /password). Käyttäjä vaihtaa sen ensimmäisellä kirjautumisella.
 //
+// TOIMITUS TYÖNTEKIJÄLLE (server/tunnuslahetys.js): tunnus sähköpostiin, väliaikainen
+// salasana tekstiviestinä. Osoite ja numero luetaan palvelimella työntekijätietueesta —
+// tässä ne näytetään vain, jotta pääkäyttäjä näkee mihin viesti on lähdössä.
+//
 // Komponentti hakee itse tunnukset ja tasot. Molemmat reitit ovat pääkäyttäjärajattuja,
 // joten kutsujan on näytettävä tämä vain pääkäyttäjälle.
 
@@ -26,6 +30,18 @@ type Tyontekija = {
   firstName?: string;
   lastName?: string;
   displayId?: number | string | null;
+  email?: string;
+  phone?: string;
+};
+
+type ToimitusTila = { tila: 'lahetetty' | 'kuivaharjoittelu' | 'ei-yhteystietoa' | 'virhe'; viesti?: string; numero?: string };
+type Toimitus = { sahkoposti?: ToimitusTila; sms?: ToimitusTila };
+
+const TILATEKSTI: Record<ToimitusTila['tila'], string> = {
+  lahetetty: 'lähetetty',
+  kuivaharjoittelu: 'kuivaharjoittelu — ei lähtenyt, palvelimen lähetysasetukset puuttuvat',
+  'ei-yhteystietoa': 'ei lähetetty, yhteystieto puuttuu',
+  virhe: 'epäonnistui',
 };
 
 type Props = {
@@ -53,6 +69,12 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
   const [virhe, setVirhe] = useState('');
   const [kesken, setKesken] = useState(false);
   const [salasana, setSalasana] = useState<SalasanaNaytto | null>(null);
+  const onEmail = Boolean(tyontekija.email?.trim());
+  const onPuhelin = Boolean(tyontekija.phone?.trim());
+  const [lahetaEmail, setLahetaEmail] = useState(onEmail);
+  const [lahetaSms, setLahetaSms] = useState(onPuhelin);
+  const [toimitus, setToimitus] = useState<Toimitus | null>(null);
+  const lahetys = () => ({ sahkoposti: lahetaEmail && onEmail, sms: lahetaSms && onPuhelin });
 
   const hae = async () => {
     try {
@@ -92,11 +114,14 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
           nickname: buildFullName(tyontekija) || tunnus,
           ...(numero ? { displayId: numero } : {}),
           employeeId: tyontekija.id,
+          lahetys: lahetys(),
+          puoli: tuotteet.includes(puoli) ? puoli : tuotteet[0],
         }),
       });
       // Salasana näkyviin HETI: luonti on peruuttamaton ja salasana näkyy vain kerran,
       // joten epäonnistuva tason asetus ei saa viedä sitä mukanaan.
       setSalasana({ username: tunnus, password: data.password, syy: 'luotu' });
+      setToimitus(data.toimitus || null);
       try {
         await pyynto(`/api/users/${encodeURIComponent(tunnus)}`, {
           method: 'PUT',
@@ -123,8 +148,13 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
     setVirhe('');
     setKesken(true);
     try {
-      const data = await pyynto(`/api/users/${encodeURIComponent(username)}/password`, { method: 'POST' });
+      const data = await pyynto(`/api/users/${encodeURIComponent(username)}/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lahetys: lahetys(), puoli }),
+      });
       setSalasana({ username, password: data.password, syy: 'nollattu' });
+      setToimitus(data.toimitus || null);
       await hae();
       onMuuttui?.();
     } catch (e) {
@@ -136,6 +166,42 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
 
   const vaihdaTuote = (t: Tuote) =>
     setTuotteet((ed) => (ed.includes(t) ? ed.filter((x) => x !== t) : [...ed, t]));
+
+  const valinnat = (
+    <div className="space-y-1.5">
+      <span className="block text-sm font-medium text-ink-body">Toimita työntekijälle</span>
+      <label className="flex items-start gap-2 text-sm text-ink-body">
+        <input type="checkbox" className="mt-1" checked={lahetaEmail && onEmail} disabled={!onEmail} onChange={(e) => setLahetaEmail(e.target.checked)} />
+        <span className="min-w-0">
+          <Mail size={14} className="inline mr-1 text-ink-subtle" />
+          Käyttäjätunnus sähköpostiin{' '}
+          <span className="text-ink-muted break-all">{onEmail ? tyontekija.email : '(ei sähköpostiosoitetta)'}</span>
+        </span>
+      </label>
+      <label className="flex items-start gap-2 text-sm text-ink-body">
+        <input type="checkbox" className="mt-1" checked={lahetaSms && onPuhelin} disabled={!onPuhelin} onChange={(e) => setLahetaSms(e.target.checked)} />
+        <span className="min-w-0">
+          <MessageSquare size={14} className="inline mr-1 text-ink-subtle" />
+          Väliaikainen salasana tekstiviestinä{' '}
+          <span className="text-ink-muted">{onPuhelin ? tyontekija.phone : '(ei puhelinnumeroa)'}</span>
+        </span>
+      </label>
+      <p className="text-xs text-ink-muted leading-relaxed">
+        Tunnus ja salasana kulkevat eri kanavia: kumpikaan viesti ei yksin riitä kirjautumiseen.
+      </p>
+    </div>
+  );
+
+  const toimitusRaportti = toimitus && (toimitus.sahkoposti || toimitus.sms) && (
+    <div className="border border-line rounded-lg p-3 text-xs text-ink-body space-y-1">
+      {toimitus.sahkoposti && (
+        <p><Mail size={13} className="inline mr-1" />Sähköposti: {TILATEKSTI[toimitus.sahkoposti.tila]}{toimitus.sahkoposti.viesti ? ` (${toimitus.sahkoposti.viesti})` : ''}</p>
+      )}
+      {toimitus.sms && (
+        <p><MessageSquare size={13} className="inline mr-1" />Tekstiviesti{toimitus.sms.numero ? ` ${toimitus.sms.numero}` : ''}: {TILATEKSTI[toimitus.sms.tila]}{toimitus.sms.viesti ? ` (${toimitus.sms.viesti})` : ''}</p>
+      )}
+    </div>
+  );
 
   const rivi = (otsikko: string, arvo: React.ReactNode) => (
     <div className="flex justify-between items-baseline gap-3">
@@ -156,6 +222,7 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
         <p className="text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">{virhe}</p>
       )}
       {salasana && <KertaSalasana key={salasana.password} {...salasana} onSulje={() => setSalasana(null)} />}
+      {toimitusRaportti}
 
       {!ladattu ? (
         <p className="text-sm text-ink-muted">Haetaan tunnuksia…</p>
@@ -175,6 +242,7 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
               <p className="pt-1 text-ink-muted">Tason, puolet ja Authenticatorin voi muuttaa Sovellusasetukset → Käyttäjätunnukset.</p>
             </div>
           </div>
+          {valinnat}
           <div className="flex justify-end">
             <button
               type="button"
@@ -216,6 +284,7 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
               ))}
             </div>
           </div>
+          {valinnat}
           <p className="text-xs text-ink-muted leading-relaxed">
             Palvelin arpoo väliaikaisen salasanan, joka näytetään kerran. Käyttäjä vaihtaa sen
             ja ottaa Authenticatorin käyttöön ensimmäisellä kirjautumisella.
