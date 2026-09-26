@@ -369,12 +369,14 @@ export async function puraViesti(machine: OlmMachine, kanavaId: string, tapahtum
     // pelkkä console.error(e) näyttää konsolissa vain tiivistetyt "(…)"-getterit,
     // joten kentät on luettava eksplisiittisesti että oikeat arvot tulevat näkyviin.
     const virhe = e as Partial<MegolmDecryptionError>;
+    // Tekstirivinä olion sijaan: konsolista kopioitu teksti (esim. käyttäjän Obsidianiin
+    // liittämä loki) näyttäisi olion pelkkänä "Object"-sanana ilman käsin avaamista,
+    // jolloin oleellinen tieto (koodi/kuvaus) katoaisi kokonaan kopioinnissa.
     // eslint-disable-next-line no-console
-    console.error('PTT-avaimen purku epäonnistui', {
-      koodi: virhe.code !== undefined ? DecryptionErrorCode[virhe.code] : undefined,
-      kuvaus: virhe.description,
-      epaamisenSyy: virhe.maybe_withheld,
-    });
+    console.error(
+      `PTT-avaimen purku epäonnistui koodi=${virhe.code !== undefined ? DecryptionErrorCode[virhe.code] : 'tuntematon'} `
+      + `kuvaus=${virhe.description ?? '-'} epaamisenSyy=${virhe.maybe_withheld ?? '-'}`,
+    );
     return null;
   }
 }
@@ -393,18 +395,20 @@ export async function synkronoiLaiteviestit(machine: OlmMachine): Promise<void> 
   // VÄLIAIKAINEN DIAGNOSTIIKKA (23.9.2026, "Odottaa avainta" jatkuu vielä jasenet-
   // korjauksenkin jälkeen) — näytä haettiinko mitään ylipäätään, ja heittikö
   // receiveSyncChanges (ei ollut aiemmin try/catchin sisällä, joten virhe olisi
-  // näkynyt vain "Uncaught (in promise)" -rivinä ilman kontekstia).
+  // näkynyt vain "Uncaught (in promise)" -rivinä ilman kontekstia). Tekstirivinä
+  // olion sijaan samasta syystä kuin puraViesti:n virheloki alla — muuten kopioitu
+  // konsoliteksti näyttää pelkän "Object"-sanan ilman käsin avaamista.
   // eslint-disable-next-line no-console
-  console.log('PTT-laiteviestit haettu', {
-    n: viestit.length,
-    viestit: viestit.map((v) => ({ tyyppi: v.tyyppi, lahettaja: v.lahettaja })),
-  });
+  console.log(
+    `PTT-laiteviestit haettu n=${viestit.length} `
+    + `viestit=${viestit.map((v) => `${v.tyyppi}:${v.lahettaja}`).join(',') || '-'}`,
+  );
   if (viestit.length === 0) return;
   try {
     await machine.receiveSyncChanges(laiteviestitTapahtumiksi(viestit), new DeviceLists(), new Map());
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.error('PTT-laiteviestien syöttö koneelle epäonnistui', e);
+    console.error(`PTT-laiteviestien syöttö koneelle epäonnistui: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
