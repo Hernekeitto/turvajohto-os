@@ -114,6 +114,14 @@ export function luoVastaanotin(): Vastaanotin {
       // Jatketaan silti — start() epäonnistuu myöhemmin jos konteksti ei oikeasti käy,
       // eikä tätä virhettä kannata näyttää erikseen tässä vaiheessa.
     }
+    // VÄLIAIKAINEN DIAGNOSTIIKKA (26.9.2026, ääni ei kuulu vieläkään vaikka huoneavain
+    // nyt saapuu ja purkautuu onnistuneesti) — jos selain ei ole koskaan saanut
+    // käyttäjän elettä (sama syy kuin konsolin "Blocked call to navigator.vibrate
+    // because user hasn't tapped" -varoitus), AudioContext voi jäädä pysyvästi
+    // "suspended"-tilaan resume()-kutsusta huolimatta, jolloin start() ei koskaan
+    // oikeasti tuota ääntä vaikka mitään virhettä ei näy.
+    // eslint-disable-next-line no-console
+    console.log(`PTT-äänikonteksti tila=${ctx.state}`);
     avain = uusiAvain;
     seuraavaAlkuS = ctx.currentTime;
     try {
