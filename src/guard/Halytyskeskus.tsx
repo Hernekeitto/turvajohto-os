@@ -1142,17 +1142,24 @@ export const Halytyskeskus = ({
           Seitsemän lukua siinä järjestyksessä kuin päivystäjä ne tarvitsee: mikä palaa,
           mikä on käynnissä, kuka on kentällä.
 
-          TÄMÄ RIVI ON AINOA OSA SIVUA JOKA EI OLE `nayta()`-portin takana. Se näkyy
-          koostenäkymässä, jokaisessa irrotetussa ikkunassa ja seinätaululla — eli se on
-          se yhteenveto jonka varassa päivystäjä on silloin kun hän katsoo yhtä paneelia.
-          Siitä seuraa velvoite: jos jokin tilanne vaatii päivystäjän toimia, sen on
-          näyttävä TÄSSÄ eikä vain siinä osiossa johon se kuuluu. Muuten yhteenveto
-          lupaa hiljaisuutta jota ei ole.
+          TÄMÄ RIVI ON MUUTEN AINOA OSA SIVUA JOKA EI OLE `nayta()`-portin takana. Se
+          näkyy koostenäkymässä ja jokaisessa muussa irrotetussa ikkunassa ja
+          seinätaululla — eli se on se yhteenveto jonka varassa päivystäjä on silloin
+          kun hän katsoo yhtä paneelia. Siitä seuraa velvoite: jos jokin tilanne vaatii
+          päivystäjän toimia, sen on näyttävä TÄSSÄ eikä vain siinä osiossa johon se
+          kuuluu. Muuten yhteenveto lupaa hiljaisuutta jota ei ole.
 
           Lukuja ei myöskään yhdistellä toistensa kanssa. "Avointa poikkeamaa" tarkoittaa
           kalustoa (varustepoikkeama + kadonnut avain) eikä poikkeamaa yleensä; unohtunut
           vuoro on siksi oma lukunsa eikä sen sisällä. Kaksi eri asiaa saman luvun takana
-          on luku jonka merkitystä ei voi lukea ruudulta. */}
+          on luku jonka merkitystä ei voi lukea ruudulta.
+
+          POIKKEUS (26.9.2026, käyttäjän pyyntö): EI PTT-ikkunassa. PTT on oma, kevyt
+          työkalu (kanavat, kuka puhuu, jäsenten hallinta) eikä koko tilannekuvan
+          tiivistelmä — isot luvut olisivat siellä kontekstittomia eivätkä liity PTT:n
+          omaan käyttöön. Pieni yhteys/tila-rivi yllä NÄKYY yhä PTT-ikkunassakin, vain
+          tämä seitsemän luvun rivi on rajattu pois. */}
+      {paneeli !== 'ptt' && (
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-8">
         <Luku
           ikoni={Siren}
@@ -1194,6 +1201,7 @@ export const Halytyskeskus = ({
           korosta={kohteetKriittisia > 0 ? 'kriittinen' : kohteetVaroitus > 0 ? 'varoitus' : 'rauhallinen'}
         />
       </div>
+      )}
 
       {nayta('keikat') && (<>
       {/* --- Hälytystehtävät (erä 22) --------------------------------------------
@@ -1210,11 +1218,14 @@ export const Halytyskeskus = ({
       </div>
       </>)}
 
-      {nayta('ptt') && (<>
-      {/* --- PTT-yhteenveto (erä 26, vaihe 8/9) ------------------------------------
-          Oma osio, ei osa hälytyslistaa: PTT-kanava voi olla aktiivinen ilman että
-          mikään on lauennut, ja päivystäjän on nähtävä se riippumatta siitä onko
-          hälytyksiä juuri nyt. */}
+      {paneeli === 'ptt' && (<>
+      {/* --- PTT-yhteenveto (erä 26, vaihe 8/9, siirretty omaksi ikkunaksi 26.9.2026
+          käyttäjän pyynnöstä) -------------------------------------------------------
+          EI `nayta('ptt')` vaan suora `paneeli === 'ptt'` -ehto: PTT näkyy nyt VAIN
+          omassa irrotetussa ikkunassaan (ks. paneelit.ts, "Työtila"-nappi) eikä enää
+          koostenäkymän yhtenä korttina muiden joukossa. Kanava voi olla aktiivinen
+          ilman että mikään on lauennut, ja päivystäjän on nähtävä se — mutta nyt
+          siihen tarkoitukseen varatussa omassa ikkunassa, ei kaiken muun seassa. */}
       <div className="mb-8">
         <PttYhteenveto kayttaja={kayttaja} />
       </div>

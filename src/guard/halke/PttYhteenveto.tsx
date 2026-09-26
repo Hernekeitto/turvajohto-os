@@ -20,14 +20,17 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { OlmMachine } from '@matrix-org/matrix-sdk-crypto-wasm';
-import { Radio, Volume2, VolumeX, RefreshCw, MessageSquare } from 'lucide-react';
+import { Radio, Volume2, VolumeX, RefreshCw, MessageSquare, Mic, Square, Users } from 'lucide-react';
 
 import { useKanava } from '../../shared/kanava';
 import { haeJaettuOlmMachine, synkronoiPyynnot, synkronoiLaiteviestit } from '../../shared/olm';
-import { vastaanotaAvain } from '../../shared/aanikutsu';
+import { vastaanotaAvain, aloitaLahetys, kehysLahetettavaksi } from '../../shared/aanikutsu';
 import { luoVastaanotin, type Vastaanotin } from '../../shared/aanivastaanotto';
+import { luoLahetin, paatettavaKoodekki, type Lahetin } from '../../shared/aanilahetys';
 import { soitaAanimerkki } from '../../shared/aanimerkki';
+import { paivitaPuheTila, type PuheTilat } from '../mobiili/puheenvuorotila';
 import { KohdeKeskustelu } from './KohdeKeskustelu';
+import { KanavanJasenet } from './KanavanJasenet';
 
 type KanavaTyyppi = 'kohde' | 'piiri' | 'alue' | 'hata';
 
@@ -66,10 +69,30 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
   // kanavatyyppiriippumaton (ottaa vain {id, tyyppi, nimi}), joten sama komponentti
   // toimii sellaisenaan kohde-, piiri- ja alue-kanaville, ei vain kohteen omalle.
   const [avattuViesti, setAvattuViesti] = useState<KanavaRivi | null>(null);
+  // Kanavan jäsenten hallintanäkymä (erä 26, jatko 26.9.2026, käyttäjän pyyntö:
+  // "Lisätään HÄLKE mahdollisuus lisätä ja poistaa vartijoita tietyltä kanavalta").
+  const [hallintaAuki, setHallintaAuki] = useState<KanavaRivi | null>(null);
   // Vastaanottimet REFISSÄ eikä tilassa: se ei ole näytettävää dataa vaan ajonaikaisia
   // WebCodecs/Web Audio -olioita, ja niiden vaihtuminen ei itsessään saa laukaista
   // uudelleenrenderöintiä — vain `tilat`-tilan muutos näytetään.
   const vastaanottimet = useRef<Map<string, Vastaanotin>>(new Map());
+
+  // --- Puhekyky (erä 26, jatko 26.9.2026, käyttäjän pyyntö: "Lisätään HÄLKE
+  // mahdollisuus puhua tietylle kanavalle, nyt HÄLKE voi vain kuunnella") ----------
+  //
+  // ERI TILA kuin `tilat` yllä, joka on KUUNTELUTILA (per-kanava vastaanotin) —
+  // `puheTilat` on PUHEENVUOROTILA (kuka pitää mikrofonia juuri nyt milläkin
+  // kanavalla, ks. ../mobiili/puheenvuorotila.ts). `omaLahetys` on VAIN YKSI kanava
+  // kerrallaan: yksi mikrofoni, samoin kuin vartijan omalla PTT-palkilla.
+  const [puheTilat, setPuheTilat] = useState<PuheTilat>({});
+  const [omaLahetys, setOmaLahetys] = useState<string | null>(null);
+  const [aaniVirhe, setAaniVirhe] = useState<string | null>(null);
+  const [puheVirhe, setPuheVirhe] = useState<string | null>(null);
+  // Käynnissä oleva lähetin ja sen kanava REFISSÄ, sama perustelu kuin
+  // kayttoPttPalkkia.ts:llä: ajonaikainen WebCodecs/getUserMedia-olio eikä
+  // näytettävää tilaa.
+  const lahetinRef = useRef<Lahetin | null>(null);
+  const lahettavaKanavaRef = useRef<string | null>(null);
 
   const haeYhteenveto = useCallback(() => {
     fetch('/api/kanavat/yhteenveto', { credentials: 'include' })
@@ -182,10 +205,42 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
     },
     // Puhuja päästi napin irti — äänimerkki VAIN jos tätä kanavaa oikeasti kuunneltiin
     // (tila 'kuuntelee'), ei kaikille kanaville joita palvelin sattuu ilmoittamaan.
+    // Päivittää myös oman puheTilan (Osa 2) — VAPAUTUS koskee ketä tahansa kanavan
+    // haltijaa, ei vain omaa mahdollista lähetystä.
     onPuheenvuoroVapautui: (kanavaId: string) => {
       if (tilat[kanavaId] === 'kuuntelee') soitaAanimerkki('loppui');
+      setPuheTilat((e) => paivitaPuheTila(e, { tyyppi: 'vapautui', kanavaId }, kayttaja));
+    },
+    // Puhekyky (Osa 2): puheenvuoro_tila on tilannekuva NIISTÄ kanavista jotka juuri
+    // ilmoitettiin kuunneltaviksi (aseta_kuunneltavat_kanavat alla) — sama muoto kuin
+    // kayttoPttPalkkia.ts:llä.
+    onPuheenvuoroTila: (serverTilat) => {
+      setPuheTilat((edelliset) => paivitaPuheTila(
+        edelliset, { tyyppi: 'tila', kanavaIdt: Object.keys(tilat), tilat: serverTilat }, kayttaja,
+      ));
+    },
+    onPuheenvuoroMyonnetty: (kanavaId, k) => {
+      setPuheTilat((e) => paivitaPuheTila(e, { tyyppi: 'myonnetty', kanavaId, kayttaja: k }, kayttaja));
+    },
+    onPuheenvuoroHylatty: (kanavaId, _syy, k) => {
+      setOmaLahetys((nykyinen) => (nykyinen === kanavaId ? null : nykyinen));
+      setPuheVirhe(`Kanava varattu${k ? ` — puhuu ${k}` : ''}.`);
     },
   });
+
+  useEffect(() => {
+    if (!puheVirhe) return undefined;
+    const ajastin = setTimeout(() => setPuheVirhe(null), 4000);
+    return () => clearTimeout(ajastin);
+  }, [puheVirhe]);
+
+  const pyydaPuheenvuoro = useCallback((kanavaId: string) => {
+    laheta({ tyyppi: 'pyyda_puheenvuoro', kanavaId });
+  }, [laheta]);
+
+  const vapautaPuheenvuoro = useCallback((kanavaId: string) => {
+    laheta({ tyyppi: 'vapauta_puheenvuoro', kanavaId });
+  }, [laheta]);
 
   // Kuunneltavat kanavat palvelimelle aina kun joukko tai yhteys itse muuttuu — sama
   // periaate kuin kayttoPttPalkkia.ts:ssä: palvelimen istuntokohtainen kuuntelutila on
@@ -215,10 +270,93 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
     });
   };
 
+  // Puhu-painike (Osa 2). TÄRKEÄÄ: puheenvuoro_myonnetty-ilmoitus suodattuu
+  // palvelimella saaKuullaKanavaa:lla, joka vaatii että kanava on JO merkitty
+  // kuunneltavaksi (server/index.js: kasitteleKuunneltavatKanavat) — ilman sitä
+  // myöntö ei ikinä saavu eikä lähetys käynnistyisi. Siksi kuuntelu käynnistetään
+  // TÄSSÄ SYNKRONISESTI (laheta kutsutaan heti, ei jätetä ylläolevan reaktiivisen
+  // efektin varaan, koska sen laukaisu tulisi vasta seuraavalla renderöinnillä).
+  const puhu = (kanavaId: string) => {
+    if (!(kanavaId in tilat)) {
+      if (!vastaanottimet.current.has(kanavaId)) vastaanottimet.current.set(kanavaId, luoVastaanotin());
+      const seuraavat = { ...tilat, [kanavaId]: 'odottaa_avainta' as KuunteluTila };
+      laheta({ tyyppi: 'aseta_kuunneltavat_kanavat', kanavat: Object.keys(seuraavat) });
+      setTilat(seuraavat);
+    }
+    setPuheVirhe(null);
+    setOmaLahetys(kanavaId);
+    pyydaPuheenvuoro(kanavaId);
+  };
+
+  const lopetaPuhe = (kanavaId: string) => {
+    vapautaPuheenvuoro(kanavaId);
+    setOmaLahetys(null);
+  };
+
+  // Todellinen äänen kaappaus ja lähetys, reaktiivisesti puheenvuoron MYÖNTYMISEEN —
+  // sama kaksivaiheinen malli kuin kayttoPttPalkkia.ts:llä (portattu tähän UUTENA,
+  // ERILLISENÄ koodina, ei jaettu/refaktoroitu — ks. tiedoston yläkommentti Osasta 2
+  // sille miksi kayttoPttPalkkia.ts:ää ei kannata koskea).
+  useEffect(() => {
+    const kanavaId = omaLahetys;
+    const lahetetaanNyt = Boolean(kanavaId && puheTilat[kanavaId]?.mina);
+
+    if (lahetetaanNyt && kanavaId && lahettavaKanavaRef.current !== kanavaId) {
+      lahettavaKanavaRef.current = kanavaId;
+      setAaniVirhe(null);
+      if (!machine) {
+        setAaniVirhe('Salaus ei ole vielä valmis — yritä hetken kuluttua uudelleen.');
+        vapautaPuheenvuoro(kanavaId);
+        setOmaLahetys(null);
+        return;
+      }
+      const omaKone = machine;
+      (async () => {
+        const koodekki = await paatettavaKoodekki();
+        if (!koodekki) {
+          setAaniVirhe('Tämä selain ei tue äänen lähetystä.');
+          vapautaPuheenvuoro(kanavaId);
+          setOmaLahetys(null);
+          return;
+        }
+        const { lahetysAvain, tapahtuma } = await aloitaLahetys(omaKone, kayttaja, kanavaId, koodekki);
+        // aani_avain ENNEN ensimmäistä kehystä, muuten vastaanottajalla ei ole millä
+        // purkaa sitä.
+        laheta({ tyyppi: 'aani_avain', kanavaId, tapahtuma });
+        // Kanava on voinut vaihtua (uusi Puhu-painallus toiselle kanavalle) sen aikana
+        // kun avaimen jako oli kesken.
+        if (lahettavaKanavaRef.current !== kanavaId) return;
+        const lahetin = luoLahetin();
+        lahetinRef.current = lahetin;
+        const onnistui = await lahetin.aloita(
+          lahetysAvain, koodekki,
+          (paketti) => laheta({ tyyppi: 'aani_kehys', kanavaId, data: kehysLahetettavaksi(paketti) }),
+          (viesti) => { if (lahettavaKanavaRef.current === kanavaId) setAaniVirhe(viesti); },
+        );
+        if (onnistui) {
+          soitaAanimerkki('alkoi');
+        } else {
+          setAaniVirhe('Mikrofonia ei saatu käyttöön.');
+          lahetinRef.current = null;
+          if (lahettavaKanavaRef.current === kanavaId) {
+            vapautaPuheenvuoro(kanavaId);
+            setOmaLahetys(null);
+          }
+        }
+      })();
+    } else if (!lahetetaanNyt && lahettavaKanavaRef.current) {
+      lahettavaKanavaRef.current = null;
+      lahetinRef.current?.lopeta();
+      lahetinRef.current = null;
+      soitaAanimerkki('loppui');
+    }
+  }, [omaLahetys, puheTilat, machine, kayttaja, laheta, vapautaPuheenvuoro]);
+
   // Siivous kun koko paneeli poistuu näkymästä (irrotettu ikkuna suljetaan tms.) —
-  // AudioContextit eivät saa jäädä auki taustalle.
+  // AudioContextit EIVÄTKÄ mikrofoni saa jäädä auki taustalle.
   useEffect(() => () => {
     for (const vastaanotin of vastaanottimet.current.values()) vastaanotin.lopeta();
+    lahetinRef.current?.lopeta();
   }, []);
 
   if (virhe) {
@@ -231,6 +369,16 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
       </div>
     );
   }
+
+  // Järjestys (Osa 3, käyttäjän pyyntö: "kaikki PTT-kanavat, vaikka niillä ei olisi
+  // ketään" — nyt kun tyhjätkin kanavat näkyvät, tärkeimmät on pidettävä ylhäällä):
+  // puhuva ensin, sitten joilla on jäseniä, sitten tyhjät — aakkosjärjestys kunkin
+  // ryhmän sisällä.
+  const jarjestetytKanavat = [...kanavat].sort((a, b) => {
+    const pisteet = (k: KanavaRivi) => (k.puhuja ? 0 : k.jasenmaara > 0 ? 1 : 2);
+    const ero = pisteet(a) - pisteet(b);
+    return ero !== 0 ? ero : a.nimi.localeCompare(b.nimi, 'fi');
+  });
 
   return (
     <div className="rounded-xl border border-line bg-surface p-4">
@@ -260,11 +408,16 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
       {!machine && !koneVirhe && (
         <p className="text-xs text-ink-muted mb-2">Valmistellaan salausta…</p>
       )}
+      {puheVirhe && <p className="text-xs text-danger-ink mb-2">{puheVirhe}</p>}
+      {aaniVirhe && <p className="text-xs text-danger-ink mb-2">{aaniVirhe}</p>}
 
       <ul className="flex flex-col gap-1.5">
-        {kanavat.map((k) => {
+        {jarjestetytKanavat.map((k) => {
           const tila = tilat[k.id];
           const kuunnellaan = tila !== undefined;
+          const puheTila = puheTilat[k.id];
+          const puhunTata = omaLahetys === k.id;
+          const muuPuhuu = omaLahetys !== null && !puhunTata;
           return (
             <li
               key={k.id}
@@ -278,11 +431,31 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
                   {TYYPIN_NIMI[k.tyyppi]} · {k.nimi}
                 </p>
                 <p className="text-xs text-ink-muted">
-                  {k.puhuja ? `Puhuu: ${k.puhuja}` : `${k.jasenmaara} vartija${k.jasenmaara === 1 ? '' : 'a'} kanavalla`}
+                  {puheTila?.mina
+                    ? 'SINÄ PUHUT'
+                    : k.puhuja
+                      ? `Puhuu: ${k.puhuja}`
+                      : k.jasenmaara > 0
+                        ? `${k.jasenmaara} vartija${k.jasenmaara === 1 ? '' : 'a'} kanavalla`
+                        : 'Ei ketään juuri nyt'}
                   {kuunnellaan && tila === 'odottaa_avainta' && ' · Odottaa avainta…'}
                   {kuunnellaan && tila === 'virhe' && ' · Kuuntelu epäonnistui (selain ei tue koodekkia?)'}
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => (puhunTata ? lopetaPuhe(k.id) : puhu(k.id))}
+                disabled={!machine || muuPuhuu}
+                aria-pressed={puhunTata}
+                aria-label={puhunTata ? `Lopeta puhe: ${k.nimi}` : `Puhu: ${k.nimi}`}
+                title={muuPuhuu ? 'Puhut jo toisella kanavalla.' : undefined}
+                className={`shrink-0 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-40 ${
+                  puhunTata ? 'bg-danger text-white' : 'bg-surface border border-line text-ink-body hover:bg-sunken'
+                }`}
+              >
+                {puhunTata ? <Square size={14} /> : <Mic size={14} />}
+                {puhunTata ? 'Lopeta' : 'Puhu'}
+              </button>
               <button
                 type="button"
                 onClick={() => (kuunnellaan ? lopetaKuuntelu(k.id) : aloitaKuuntelu(k.id))}
@@ -308,6 +481,19 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
               >
                 <MessageSquare size={14} />
               </button>
+              {/* Jäsenten hallinta (Osa 4) — vain kiinteille kanaville, ei hätäkanavalle:
+                  hätäkanavan osallistujuus ratkeaa hälytyksen tilasta ja guard_dispatch
+                  -oikeudesta, ei käsin hallitusta poikkeuslistasta. */}
+              {k.tyyppi !== 'hata' && (
+                <button
+                  type="button"
+                  onClick={() => setHallintaAuki(k)}
+                  aria-label={`Jäsenet: ${k.nimi}`}
+                  className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-ink-subtle hover:bg-sunken"
+                >
+                  <Users size={14} />
+                </button>
+              )}
             </li>
           );
         })}
@@ -321,6 +507,13 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
             onSulje={() => setAvattuViesti(null)}
           />
         </div>
+      )}
+
+      {hallintaAuki && (
+        <KanavanJasenet
+          kanava={{ id: hallintaAuki.id, nimi: hallintaAuki.nimi }}
+          onSulje={() => setHallintaAuki(null)}
+        />
       )}
     </div>
   );

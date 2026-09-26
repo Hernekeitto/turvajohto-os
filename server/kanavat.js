@@ -46,6 +46,17 @@ export const piiriKanavaId = (vuorotyyppiId) => `piiri:${vuorotyyppiId}`;
 export const alueKanavaId = (alue) => `alue:${String(alue).trim().toLowerCase()}`;
 
 /**
+ * Onko tämä kiinteän (kohde/piiri/alue) kanavan tunnus — erotukseksi tallennetuista
+ * kanavista (dm/vapaa/hata), joilla ei ole etuliitettä. Keskitetty tänne (erä 26,
+ * jatko 26.9.2026) koska tarkistus oli aiemmin kopioitu käsin kahteen paikkaan
+ * server/index.js:ssä omalla "pidettävä käsin synkronissa" -kommentillaan — se on
+ * juuri se riski jonka keskittäminen poistaa.
+ */
+export function onKiinteaKanavaId(kanavaId) {
+  return kanavaId.startsWith('kohde:') || kanavaId.startsWith('piiri:') || kanavaId.startsWith('alue:');
+}
+
+/**
  * Tämän vartijan kiinteät kanavat juuri nyt, kesken olevan vuoron perusteella.
  *
  * Ilman kesken olevaa vuoroa lista on tyhjä — samalla tavalla kuin kalustonäkyvyyskin
@@ -111,6 +122,101 @@ export function jasenetKiinteallaKanavalla(vuorot, kanavaId) {
     if (vuoro?.vartija && kuuluuKiinteaanKanavaan(vuoro, kanavaId)) uniikit.add(vuoro.vartija);
   }
   return [...uniikit];
+}
+
+// --- Kaikkien kiinteiden kanavien katalogi (erä 26, jatko 26.9.2026) ----------------
+//
+// Käyttäjän pyyntö: "Lisätään HÄLKE mahdollisuus nähdä kaikki PTT-kanavat, vaikka
+// niillä ei olisi ketään." Yllä olevat funktiot kaikki LASKEVAT kanavia AKTIIVISISTA
+// vuoroista — kohde jolla ei ole ketään töissä juuri nyt ei tuota mitään. Tämä
+// funktio vastaa sen sijaan kysymykseen "mitä kiinteitä kanavia VOISI olla olemassa",
+// suoraan kohdetietueista, ilman yhtäkään vuoroa.
+
+/**
+ * Kaikkien mahdollisten kiinteiden kanavien katalogi kohdetietueista: yksi kohde-
+ * kanava per kohde, yksi piiri-kanava per erillinen piirivuorotyyppi (deduplikoitu
+ * id:n mukaan yli kaikkien kohteiden — kaksi kohdetta ei voi jakaa vuorotyyppiä,
+ * mutta tarkistus on silti syytä tehdä eksplisiittisesti), ja yksi alue-kanava per
+ * erillinen normalisoitu alue-arvo.
+ */
+export function kaikkiKiinteatKanavat(kohteet) {
+  const kohdekanavat = [];
+  const piirit = new Map();
+  const alueet = new Map();
+  for (const kohde of kohteet || []) {
+    if (!kohde?.id) continue;
+    kohdekanavat.push({
+      id: kohdeKanavaId(kohde.id), tyyppi: 'kohde', siteId: kohde.id, nimi: kohde.name || '',
+    });
+    for (const vt of kohde.vuorotyypit || []) {
+      if (vt?.piiri === true && vt.id && !piirit.has(vt.id)) {
+        piirit.set(vt.id, {
+          id: piiriKanavaId(vt.id), tyyppi: 'piiri', vuorotyyppiId: vt.id, nimi: vt.nimi || '',
+        });
+      }
+    }
+    if (typeof kohde.alue === 'string' && kohde.alue.trim() !== '') {
+      const alue = kohde.alue.trim();
+      const id = alueKanavaId(alue);
+      if (!alueet.has(id)) alueet.set(id, { id, tyyppi: 'alue', alue, nimi: alue });
+    }
+  }
+  return [...kohdekanavat, ...piirit.values(), ...alueet.values()];
+}
+
+// --- Jäsenpoikkeukset kiinteille kanaville (erä 26, jatko 26.9.2026) ----------------
+//
+// Käyttäjän pyyntö: "Lisätään HÄLKE mahdollisuus lisätä ja poistaa vartijoita
+// tietyltä kanavalta" — vahvistettu koskemaan MYÖS kiinteitä (kohde/piiri/alue)
+// kanavia, ei vain vapaita ryhmiä. Tämä on TIETOINEN POIKKEUS yllä olevaan
+// periaatteeseen "kiinteän kanavan jäsenyyttä ei tallenneta" — poikkeus ei korvaa
+// vuoropohjaista laskentaa vaan menee sen PÄÄLLE: 'poistettu' voittaa vuoron
+// (vartija ei kuulu kanavalle vaikka vuoro sanoisi niin), 'lisatty' myöntää
+// jäsenyyden riippumatta vuorosta. Rivit ovat guardKanavaJasenet-kokoelmassa
+// (server/index.js), yksi per (kanavaId, kayttaja) -pari.
+
+/** Tämän (kanava, käyttäjä) -parin poikkeus, tai null jos ei poikkeusta. */
+export function kayttajanKanavaPoikkeus(poikkeukset, kanavaId, kayttaja) {
+  const rivi = (poikkeukset || []).find((p) => p?.kanavaId === kanavaId && p?.kayttaja === kayttaja);
+  return rivi?.tila || null;
+}
+
+/** kuuluuKiinteaanKanavaan, poikkeukset huomioiden. */
+export function kuuluuKiinteaanKanavaanPoikkeuksin(vuoro, kanavaId, kayttaja, poikkeukset) {
+  const poikkeus = kayttajanKanavaPoikkeus(poikkeukset, kanavaId, kayttaja);
+  if (poikkeus === 'poistettu') return false;
+  if (poikkeus === 'lisatty') return true;
+  return kuuluuKiinteaanKanavaan(vuoro, kanavaId);
+}
+
+/**
+ * omatKiinteatKanavat, poikkeukset huomioiden. `katalogi` on kaikkiKiinteatKanavat:n
+ * tulos — sitä tarvitaan pakolla lisätyn kanavan nimeen ja tyyppiin, koska pakotettu
+ * kanava ei välttämättä liity käyttäjän omaan vuoroon lainkaan (esim. toisen kohteen
+ * kanava johon HÄLKE on hänet erikseen lisännyt).
+ */
+export function omatKiinteatKanavatPoikkeuksin(vuoro, kayttaja, poikkeukset, katalogi) {
+  const omat = omatKiinteatKanavat(vuoro).filter(
+    (k) => kayttajanKanavaPoikkeus(poikkeukset, k.id, kayttaja) !== 'poistettu',
+  );
+  const omatIdt = new Set(omat.map((k) => k.id));
+  const lisatyt = (poikkeukset || [])
+    .filter((p) => p?.kayttaja === kayttaja && p?.tila === 'lisatty' && !omatIdt.has(p.kanavaId))
+    .map((p) => (katalogi || []).find((k) => k.id === p.kanavaId))
+    .filter(Boolean);
+  return [...omat, ...lisatyt];
+}
+
+/** jasenetKiinteallaKanavalla, poikkeukset huomioiden. */
+export function jasenetKiinteallaKanavallaPoikkeuksin(vuorot, kanavaId, poikkeukset) {
+  const luonnolliset = jasenetKiinteallaKanavalla(vuorot, kanavaId);
+  const poistetut = new Set(
+    (poikkeukset || []).filter((p) => p?.kanavaId === kanavaId && p.tila === 'poistettu').map((p) => p.kayttaja),
+  );
+  const lisatyt = (poikkeukset || [])
+    .filter((p) => p?.kanavaId === kanavaId && p.tila === 'lisatty')
+    .map((p) => p.kayttaja);
+  return [...new Set([...luonnolliset.filter((k) => !poistetut.has(k)), ...lisatyt])];
 }
 
 // --- Tallennetut kanavat: DM (erä 26, vaihe 1c) -------------------------------------

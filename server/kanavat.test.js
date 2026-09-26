@@ -9,8 +9,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  kohdeKanavaId, piiriKanavaId, alueKanavaId, omatKiinteatKanavat, kuuluuKiinteaanKanavaan,
-  jasenetKiinteallaKanavalla,
+  kohdeKanavaId, piiriKanavaId, alueKanavaId, onKiinteaKanavaId,
+  omatKiinteatKanavat, kuuluuKiinteaanKanavaan, jasenetKiinteallaKanavalla,
+  kaikkiKiinteatKanavat, kayttajanKanavaPoikkeus, kuuluuKiinteaanKanavaanPoikkeuksin,
+  omatKiinteatKanavatPoikkeuksin, jasenetKiinteallaKanavallaPoikkeuksin,
   pttKaytossa, vuorossaOlevatMuut, vuorossaOlevat, onOsallistuja, loydaDm, luoDmKanava, dmPurkautunut,
   hataKanavaId, luoHataKanava, onHalyttaja, hataKanavaPurkautunut,
   pakotaLinjaAuki, vapautaLinjanPakotus, luoVapaaKanava,
@@ -125,6 +127,135 @@ test('jasenetKiinteallaKanavalla ei sekoita tavallista kohdevuoroa piirikanavaan
 
 test('jasenetKiinteallaKanavalla palauttaa tyhjän listan tuntemattomalle kanavalle', () => {
   assert.deepEqual(jasenetKiinteallaKanavalla([kohdevuoro({ vartija: 'vartija1' })], kohdeKanavaId('ei-ole')), []);
+});
+
+// --- onKiinteaKanavaId ---------------------------------------------------------------
+
+test('onKiinteaKanavaId tunnistaa kohde/piiri/alue-etuliitteet muttei muita', () => {
+  assert.equal(onKiinteaKanavaId(kohdeKanavaId('x')), true);
+  assert.equal(onKiinteaKanavaId(piiriKanavaId('x')), true);
+  assert.equal(onKiinteaKanavaId(alueKanavaId('x')), true);
+  assert.equal(onKiinteaKanavaId('dm:jokin'), false);
+  assert.equal(onKiinteaKanavaId('vapaa:jokin'), false);
+  assert.equal(onKiinteaKanavaId('hata:jokin'), false);
+});
+
+// --- kaikkiKiinteatKanavat (kaikki mahdolliset kanavat, ei vuoroista) -----------------
+
+const kohdeTietue = (yli = {}) => ({
+  id: 'kohde-1', name: 'Kauppakeskus Hansa', vuorotyypit: [], ...yli,
+});
+
+test('kaikkiKiinteatKanavat tuottaa kohdekanavan jokaiselle kohteelle ilman vuoroja', () => {
+  const kanavat = kaikkiKiinteatKanavat([kohdeTietue(), kohdeTietue({ id: 'kohde-2', name: 'Toinen' })]);
+  assert.equal(kanavat.length, 2);
+  assert.deepEqual(kanavat.map((k) => k.id).sort(), [kohdeKanavaId('kohde-1'), kohdeKanavaId('kohde-2')].sort());
+});
+
+test('kaikkiKiinteatKanavat deduplikoi piirikanavan yli kohteiden', () => {
+  const vt = { id: 'v-piiri-301', nimi: 'Piiri 301', piiri: true };
+  const kanavat = kaikkiKiinteatKanavat([
+    kohdeTietue({ vuorotyypit: [vt] }),
+    kohdeTietue({ id: 'kohde-2', vuorotyypit: [vt] }),
+  ]);
+  const piirikanavat = kanavat.filter((k) => k.tyyppi === 'piiri');
+  assert.equal(piirikanavat.length, 1);
+  assert.equal(piirikanavat[0].id, piiriKanavaId('v-piiri-301'));
+});
+
+test('kaikkiKiinteatKanavat ei tuota piirikanavaa vuorotyypille jolla piiri ei ole päällä', () => {
+  const kanavat = kaikkiKiinteatKanavat([kohdeTietue({ vuorotyypit: [{ id: 'v-aamu', nimi: 'Aamu', piiri: false }] })]);
+  assert.equal(kanavat.some((k) => k.tyyppi === 'piiri'), false);
+});
+
+test('kaikkiKiinteatKanavat deduplikoi alueen normalisoituna', () => {
+  const kanavat = kaikkiKiinteatKanavat([
+    kohdeTietue({ alue: 'Tampere' }),
+    kohdeTietue({ id: 'kohde-2', alue: ' tampere ' }),
+  ]);
+  const aluekanavat = kanavat.filter((k) => k.tyyppi === 'alue');
+  assert.equal(aluekanavat.length, 1);
+  assert.equal(aluekanavat[0].id, alueKanavaId('Tampere'));
+});
+
+test('kaikkiKiinteatKanavat jättää tyhjän alueen pois', () => {
+  const kanavat = kaikkiKiinteatKanavat([kohdeTietue({ alue: '' }), kohdeTietue({ id: 'kohde-2' })]);
+  assert.equal(kanavat.some((k) => k.tyyppi === 'alue'), false);
+});
+
+// --- Jäsenpoikkeukset (pakotettu lisäys/poisto kiinteälle kanavalle) ------------------
+
+test('kayttajanKanavaPoikkeus löytää oikean rivin ja palauttaa null jos ei poikkeusta', () => {
+  const poikkeukset = [{ kanavaId: 'kohde:1', kayttaja: 'v1', tila: 'lisatty' }];
+  assert.equal(kayttajanKanavaPoikkeus(poikkeukset, 'kohde:1', 'v1'), 'lisatty');
+  assert.equal(kayttajanKanavaPoikkeus(poikkeukset, 'kohde:1', 'v2'), null);
+  assert.equal(kayttajanKanavaPoikkeus(poikkeukset, 'kohde:2', 'v1'), null);
+});
+
+test('kuuluuKiinteaanKanavaanPoikkeuksin: poistettu voittaa vuoron', () => {
+  const vuoro = kohdevuoro();
+  const kanavaId = kohdeKanavaId('kohde-1');
+  const poikkeukset = [{ kanavaId, kayttaja: 'v1', tila: 'poistettu' }];
+  assert.equal(kuuluuKiinteaanKanavaanPoikkeuksin(vuoro, kanavaId, 'v1', poikkeukset), false);
+});
+
+test('kuuluuKiinteaanKanavaanPoikkeuksin: lisatty myöntää jäsenyyden ilman vuoroa', () => {
+  const kanavaId = kohdeKanavaId('toinen-kohde');
+  const poikkeukset = [{ kanavaId, kayttaja: 'v1', tila: 'lisatty' }];
+  assert.equal(kuuluuKiinteaanKanavaanPoikkeuksin(null, kanavaId, 'v1', poikkeukset), true);
+});
+
+test('kuuluuKiinteaanKanavaanPoikkeuksin: ilman poikkeusta käyttäytyy kuten kuuluuKiinteaanKanavaan', () => {
+  const vuoro = kohdevuoro();
+  const kanavaId = kohdeKanavaId('kohde-1');
+  assert.equal(kuuluuKiinteaanKanavaanPoikkeuksin(vuoro, kanavaId, 'v1', []), true);
+  assert.equal(kuuluuKiinteaanKanavaanPoikkeuksin(vuoro, kohdeKanavaId('muu'), 'v1', []), false);
+});
+
+test('omatKiinteatKanavatPoikkeuksin: poistettu suodattaa oman vuoron kanavan pois', () => {
+  const vuoro = kohdevuoro();
+  const poikkeukset = [{ kanavaId: kohdeKanavaId('kohde-1'), kayttaja: 'v1', tila: 'poistettu' }];
+  const tulos = omatKiinteatKanavatPoikkeuksin(vuoro, 'v1', poikkeukset, []);
+  assert.equal(tulos.length, 0);
+});
+
+test('omatKiinteatKanavatPoikkeuksin: lisatty tuo kanavan katalogista vaikka ei omaa vuoroa', () => {
+  const katalogi = kaikkiKiinteatKanavat([kohdeTietue({ id: 'toinen-kohde', name: 'Toinen kohde' })]);
+  const poikkeukset = [{ kanavaId: kohdeKanavaId('toinen-kohde'), kayttaja: 'v1', tila: 'lisatty' }];
+  const tulos = omatKiinteatKanavatPoikkeuksin(null, 'v1', poikkeukset, katalogi);
+  assert.equal(tulos.length, 1);
+  assert.equal(tulos[0].id, kohdeKanavaId('toinen-kohde'));
+  assert.equal(tulos[0].nimi, 'Toinen kohde');
+});
+
+test('omatKiinteatKanavatPoikkeuksin: lisatty ei tuota kaksoiskappaletta jos kanava on jo omasta vuorosta', () => {
+  const vuoro = kohdevuoro();
+  const katalogi = kaikkiKiinteatKanavat([kohdeTietue()]);
+  const poikkeukset = [{ kanavaId: kohdeKanavaId('kohde-1'), kayttaja: 'v1', tila: 'lisatty' }];
+  const tulos = omatKiinteatKanavatPoikkeuksin(vuoro, 'v1', poikkeukset, katalogi);
+  assert.equal(tulos.length, 1);
+});
+
+test('jasenetKiinteallaKanavallaPoikkeuksin: lisää ja poistaa jäseniä luonnollisen listan päälle', () => {
+  const kanavaId = kohdeKanavaId('kohde-1');
+  const vuorot = [
+    kohdevuoro({ vartija: 'v1' }),
+    kohdevuoro({ vartija: 'v2' }),
+  ];
+  const poikkeukset = [
+    { kanavaId, kayttaja: 'v2', tila: 'poistettu' },
+    { kanavaId, kayttaja: 'v3', tila: 'lisatty' },
+  ];
+  assert.deepEqual(
+    jasenetKiinteallaKanavallaPoikkeuksin(vuorot, kanavaId, poikkeukset).sort(),
+    ['v1', 'v3'],
+  );
+});
+
+test('jasenetKiinteallaKanavallaPoikkeuksin: ilman poikkeuksia vastaa jasenetKiinteallaKanavalla', () => {
+  const kanavaId = kohdeKanavaId('kohde-1');
+  const vuorot = [kohdevuoro({ vartija: 'v1' })];
+  assert.deepEqual(jasenetKiinteallaKanavallaPoikkeuksin(vuorot, kanavaId, []), ['v1']);
 });
 
 // --- DM (vaihe 1c) -------------------------------------------------------------------

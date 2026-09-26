@@ -153,6 +153,13 @@ const COLLECTIONS = {
   // kirjoitusoikeus tarkoittaisi että käyttäjä voisi lisätä itsensä mihin tahansa
   // keskusteluun kirjoittamalla tietueen suoraan.
   guardKanavat: 'guardKanavat.json',
+  // Pakotetut jäsenpoikkeukset kiinteille (kohde/piiri/alue) PTT-kanaville (erä 26,
+  // jatko 26.9.2026, käyttäjän pyyntö: HÄLKE voi lisätä/poistaa vartijan tietyltä
+  // kanavalta riippumatta vuorosta). ERI KOKOELMA kuin guardKanavat: nuo ovat itse
+  // kanavia (dm/vapaa/hata), tämä on päälle menevä poikkeuslista kiinteille
+  // kanaville joita EI tallenneta ollenkaan muuten (server/kanavat.js:n oma
+  // yläkommentti). Palvelimen ylläpitämä samasta syystä kuin guardKanavat.
+  guardKanavaJasenet: 'guardKanavaJasenet.json',
   // PTT-kanavien päästä-päähän-salauksen laiteavaimet (erä 26, vaihe 2): rivi per
   // rekisteröity laite, vain JULKISTA avainmateriaalia (server/kryptoavaimet.js).
   // Palvelimen ylläpitämä samasta syystä kuin guardKanavat: identiteetin eheys on koko

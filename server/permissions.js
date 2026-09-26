@@ -536,6 +536,16 @@ const COLLECTIONS = {
     eventScoped: false,
     tuote: 'guard',
   },
+  // Pakotetut jäsenpoikkeukset kiinteille PTT-kanaville (erä 26, jatko 26.9.2026).
+  // Sama tyhjä view/touch ja sama perustelu kuin guardKanavat: hallinta kulkee omilla
+  // reiteillään (/api/kanavat/:id/jasenpoikkeukset, server/index.js), jotka vaativat
+  // guard_dispatch MUOKKAUS -oikeuden — ei sivukartta-solmumalliin sovi.
+  guardKanavaJasenet: {
+    view: [],
+    touch: () => [],
+    eventScoped: false,
+    tuote: 'guard',
+  },
   // PTT-avainvarasto (erä 26, vaihe 2): laitteiden JULKISET Olm-avaimet
   // (@matrix-org/matrix-sdk-crypto-wasm, kirjastovalinta 19.9.2026). Sama tyhjä
   // view/touch ja sama perustelu kuin guardKanavat: oma näkymä omilla reiteillään

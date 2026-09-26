@@ -33,10 +33,13 @@ import {
   paataVuoro, vuorovaihtoehdot, vuoronPaattymisaika,
 } from './vuorot.js';
 import {
-  kuuluuKiinteaanKanavaan, omatKiinteatKanavat, onOsallistuja, loydaDm, luoDmKanava,
+  onOsallistuja, loydaDm, luoDmKanava,
   pttKaytossa, vuorossaOlevatMuut, vuorossaOlevat, dmPurkautunut, hataKanavaId, luoHataKanava,
   hataKanavaPurkautunut, onHalyttaja,
   pakotaLinjaAuki, vapautaLinjanPakotus, luoVapaaKanava, jasenetKiinteallaKanavalla,
+  onKiinteaKanavaId, kaikkiKiinteatKanavat,
+  kuuluuKiinteaanKanavaanPoikkeuksin, omatKiinteatKanavatPoikkeuksin,
+  jasenetKiinteallaKanavallaPoikkeuksin,
 } from './kanavat.js';
 import { paivitaAvainpaketti, vaadiKertakayttoavain, julkinenKuvaus } from './kryptoavaimet.js';
 import { luoLaiteviesti, laitteenViestit, poistaLaitteenViestit } from './laiteviestit.js';
@@ -2268,7 +2271,14 @@ app.get('/api/kanavat/omat', requireAuth, guardPortti, (req, res) => {
       // Ei uutta tietovuotoa: osapuolet näkevät jo toisensa olemalla samassa kanavassa.
       ...(k.tyyppi === 'dm' || k.tyyppi === 'vapaa' ? { osallistujat: k.osallistujat || [] } : {}),
     }));
-  res.json({ ok: true, kanavat: [...omatKiinteatKanavat(vuoro), ...tallennetut] });
+  // Pakotetut jäsenpoikkeukset (erä 26, jatko 26.9.2026) huomioidaan täällä, jotta
+  // vartija näkee sekä pakolla lisätyn kanavan että EI näe kanavaa josta HÄLKE on
+  // hänet erikseen poistanut — vaikka vuoro sanoisi toisin. Katalogi tarvitaan
+  // lisätyn kanavan nimeen: sitä ei välttämättä ole tässä vuorossa lainkaan.
+  const poikkeukset = readCollection('guardKanavaJasenet') || [];
+  const katalogi = kaikkiKiinteatKanavat(readCollection('guardSites') || []);
+  const kiinteat = omatKiinteatKanavatPoikkeuksin(vuoro, req.username, poikkeukset, katalogi);
+  res.json({ ok: true, kanavat: [...kiinteat, ...tallennetut] });
 });
 
 // PTT-yhteenveto HÄLKEen (erä 26, vaihe 8/9, käyttäjän pyyntö 22.9.2026: "Lisätään
@@ -2280,11 +2290,13 @@ app.get('/api/kanavat/omat', requireAuth, guardPortti, (req, res) => {
 // liikenne yhdellä silmäyksellä, ei vain kanavat joihin hän on itse liittynyt jonkin
 // oman vuoron kautta (jota päivystäjällä yleensä ei edes ole).
 //
-// KIINTEÄT KANAVAT PÄÄTELLÄÄN KESKEN OLEVISTA VUOROISTA, samalla periaatteella kuin
-// omatKiinteatKanavat yhdelle vartijalle — tässä vain kaikkien yli kerralla. Useampi
-// vartija samalla kohteella (esim. vuoronvaihdon limitys) tai samalla
-// piirivuorotyypillä (eri kohteissa) jakaa yhden kanavan, joten tulos on
-// deduplikoitu id:n mukaan ja kertoo jäsenmäärän.
+// KIINTEÄT KANAVAT TULEVAT KOKO KATALOGISTA (erä 26, jatko 26.9.2026, käyttäjän
+// pyyntö: "Lisätään HÄLKE mahdollisuus nähdä kaikki PTT-kanavat, vaikka niillä ei
+// olisi ketään"), EI vain kesken olevista vuoroista kuten aiemmin — kohde jolla ei
+// ole ketään töissä juuri nyt näkyy silti, jäsenmäärällä 0. Jäsenmäärä lasketaan
+// jasenetKiinteallaKanavallaPoikkeuksin:lla, joka huomioi myös pakotetut
+// lisäykset/poistot (Osa 4) — sama funktio jota huoneavaimen jako käyttää, joten
+// luku täsmää siihen keitä oikeasti kuuluu kanavalle.
 //
 // VAIN LUKUOIKEUS (guard_dispatch NÄKY): tämä ei myönnä mitään uutta MUOKKAUSOIKEUTTA
 // — kuuntelu- ja jäsenyysoikeudet (kuuluuKanavaanNyt/reqKuuluuKanavaanNyt,
@@ -2297,19 +2309,15 @@ app.get('/api/kanavat/yhteenveto', requireAuth, guardPortti, (req, res) => {
     return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus näkee PTT-yhteenvedon.' });
   }
 
-  const vuorot = (readCollection('guardShifts') || []).filter((v) => v?.tila === 'kesken');
-  const kiinteat = new Map();
-  for (const vuoro of vuorot) {
-    for (const kanava of omatKiinteatKanavat(vuoro)) {
-      const olemassa = kiinteat.get(kanava.id);
-      kiinteat.set(kanava.id, {
-        id: kanava.id,
-        tyyppi: kanava.tyyppi,
-        nimi: kanava.nimi,
-        jasenmaara: (olemassa?.jasenmaara || 0) + 1,
-      });
-    }
-  }
+  const vuorot = readCollection('guardShifts') || [];
+  const poikkeukset = readCollection('guardKanavaJasenet') || [];
+  const katalogi = kaikkiKiinteatKanavat(readCollection('guardSites') || []);
+  const kiinteat = katalogi.map((k) => ({
+    id: k.id,
+    tyyppi: k.tyyppi,
+    nimi: k.nimi,
+    jasenmaara: jasenetKiinteallaKanavallaPoikkeuksin(vuorot, k.id, poikkeukset).length,
+  }));
 
   const hatakanavat = (readCollection('guardKanavat') || [])
     .filter((k) => k?.tyyppi === 'hata')
@@ -2322,7 +2330,7 @@ app.get('/api/kanavat/yhteenveto', requireAuth, guardPortti, (req, res) => {
 
   // Puhuja luetaan VASTA TÄSSÄ, viimeisenä — sama "hetkellinen tila luetaan
   // lukuhetkellä" -periaate kuin muuallakin (server/puheenvuoro.js on muistivarasto).
-  const kanavat = [...kiinteat.values(), ...hatakanavat].map((k) => ({
+  const kanavat = [...kiinteat, ...hatakanavat].map((k) => ({
     ...k,
     puhuja: nykyinenHaltija(k.id),
   }));
@@ -2458,14 +2466,17 @@ app.post('/api/kanavat/:id/vapauta-linjan-pakotus', requireAuth, guardPortti, (r
   res.json({ ok: true, kanava: paivitetty });
 });
 
-// Vapaa ryhmä (vaihe 1g): sama guard_dispatch MUOKKAUS -valtuus kuin linjan pakotuksella
-// — tämä on hallinnollinen toiminto, ei kaikkien guard_ptt NÄKY -oikeudella varustettujen.
-const saaHallinnoidaVapaitaRyhmia = (req) =>
+// Kanavien hallinta (vaihe 1g, laajennettu erä 26 jatko 26.9.2026): sama
+// guard_dispatch MUOKKAUS -valtuus kuin linjan pakotuksella — tämä on hallinnollinen
+// toiminto, ei kaikkien guard_ptt NÄKY -oikeudella varustettujen. Nimetty uudelleen
+// vapaista ryhmistä yleisemmäksi ("kanavia" eikä "vapaita ryhmiä"), koska sama
+// oikeus koskee nyt myös kiinteiden kanavien jäsenpoikkeuksia (alempana).
+const saaHallinnoidaKanavia = (req) =>
   req.role === 'admin' || canEdit(req.permissions, null, 'guard_dispatch');
 
 app.post('/api/kanavat/vapaa', requireAuth, guardPortti, (req, res) => {
   if (!pttPortti(req, res)) return;
-  if (!saaHallinnoidaVapaitaRyhmia(req)) {
+  if (!saaHallinnoidaKanavia(req)) {
     return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus voi perustaa ryhmiä.' });
   }
   const nimi = typeof req.body?.nimi === 'string' ? req.body.nimi : '';
@@ -2504,7 +2515,7 @@ app.post('/api/kanavat/vapaa', requireAuth, guardPortti, (req, res) => {
 // tarpeetonta automaattisesti. Poisto on siis aina käsin tehty hallinnollinen päätös.
 app.delete('/api/kanavat/vapaa/:id', requireAuth, guardPortti, (req, res) => {
   if (!pttPortti(req, res)) return;
-  if (!saaHallinnoidaVapaitaRyhmia(req)) {
+  if (!saaHallinnoidaKanavia(req)) {
     return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus voi poistaa ryhmiä.' });
   }
   const kanavat = readCollection('guardKanavat') || [];
@@ -2519,6 +2530,101 @@ app.delete('/api/kanavat/vapaa/:id', requireAuth, guardPortti, (req, res) => {
     detail: kanava.nimi,
   });
   kerroKanavastaMuutos('delete', kanava, (istunto) => onOsallistuja(kanava, istunto?.username));
+  res.json({ ok: true });
+});
+
+// Kaikki GUARD-puolen käyttäjät, ilman vuororajausta — toisin kuin
+// GET /api/kanavat/dm/ehdokkaat (joka rajaa "juuri nyt vuorossa"), tämä on
+// kandidaattilista HÄLKEn pakotetun kanavajäsenyyden lisäykselle (alla), jossa
+// juuri se piste on lisätä joku joka EI ole vuorossa sillä kanavalla.
+app.get('/api/kanavat/vartijat', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  if (!saaHallinnoidaKanavia(req)) {
+    return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus näkee vartijalistan.' });
+  }
+  const vartijat = listUsers()
+    .filter((u) => paaseeTuotteisiin(u).includes('guard'))
+    .map((u) => ({ username: u.username, nimi: u.nickname || u.username }));
+  res.json({ ok: true, vartijat });
+});
+
+// --- Kiinteän kanavan jäsenpoikkeukset (erä 26, jatko 26.9.2026) --------------------
+//
+// Käyttäjän pyyntö: "Lisätään HÄLKE mahdollisuus lisätä ja poistaa vartijoita
+// tietyltä kanavalta" — vahvistettu koskemaan MYÖS kiinteitä (kohde/piiri/alue)
+// kanavia. Tietoinen poikkeus periaatteeseen "kiinteän kanavan jäsenyyttä ei
+// tallenneta" (server/kanavat.js): poikkeus menee vuoropohjaisen laskennan
+// PÄÄLLE eikä korvaa sitä. Tallennetaan guardKanavaJasenet-kokoelmaan, yksi rivi
+// per (kanavaId, kayttaja) -pari.
+function kerroKanavaJasenMuutoksesta(kanavaId) {
+  kerroKanavastaMuutos('jasen_muutos', { id: kanavaId }, () => true);
+}
+
+app.get('/api/kanavat/:id/jasenpoikkeukset', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  if (!saaHallinnoidaKanavia(req)) {
+    return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus hallinnoi kanavien jäseniä.' });
+  }
+  const kanavaId = req.params.id;
+  if (!onKiinteaKanavaId(kanavaId)) {
+    return res.status(400).json({ ok: false, error: 'Jäsenpoikkeukset koskevat vain kohde-, piiri- ja aluekanavia.' });
+  }
+  const luonnolliset = jasenetKiinteallaKanavalla(readCollection('guardShifts') || [], kanavaId);
+  const poikkeukset = (readCollection('guardKanavaJasenet') || [])
+    .filter((p) => p?.kanavaId === kanavaId)
+    .map((p) => ({ kayttaja: p.kayttaja, tila: p.tila }));
+  res.json({ ok: true, luonnolliset, poikkeukset });
+});
+
+app.put('/api/kanavat/:id/jasenpoikkeukset/:kayttaja', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  if (!saaHallinnoidaKanavia(req)) {
+    return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus hallinnoi kanavien jäseniä.' });
+  }
+  const kanavaId = req.params.id;
+  if (!onKiinteaKanavaId(kanavaId)) {
+    return res.status(400).json({ ok: false, error: 'Jäsenpoikkeukset koskevat vain kohde-, piiri- ja aluekanavia.' });
+  }
+  const kayttaja = req.params.kayttaja;
+  const tila = req.body?.tila;
+  if (tila !== 'lisatty' && tila !== 'poistettu') {
+    return res.status(400).json({ ok: false, error: "tila on oltava 'lisatty' tai 'poistettu'." });
+  }
+  const tiedot = listUsers().find((u) => u.username === kayttaja);
+  if (!tiedot || !paaseeTuotteisiin(tiedot).includes('guard')) {
+    return res.status(400).json({ ok: false, error: `Tuntematon tai ei-GUARD-käyttäjä: ${kayttaja}` });
+  }
+
+  const kaikki = readCollection('guardKanavaJasenet') || [];
+  const muut = kaikki.filter((p) => !(p?.kanavaId === kanavaId && p?.kayttaja === kayttaja));
+  const rivi = { kanavaId, kayttaja, tila, luoja: req.username, luotu: new Date().toISOString() };
+  writeCollection('guardKanavaJasenet', [...muut, rivi]);
+  logAudit({
+    user: req.username, action: 'ptt_jasenpoikkeus_asetettu', collection: 'guardKanavaJasenet',
+    recordId: `${kanavaId}:${kayttaja}`, detail: tila,
+  });
+  kerroKanavaJasenMuutoksesta(kanavaId);
+  res.json({ ok: true });
+});
+
+app.delete('/api/kanavat/:id/jasenpoikkeukset/:kayttaja', requireAuth, guardPortti, (req, res) => {
+  if (!pttPortti(req, res)) return;
+  if (!saaHallinnoidaKanavia(req)) {
+    return res.status(403).json({ ok: false, error: 'Vain hälytyskeskus hallinnoi kanavien jäseniä.' });
+  }
+  const kanavaId = req.params.id;
+  const kayttaja = req.params.kayttaja;
+  const kaikki = readCollection('guardKanavaJasenet') || [];
+  const jaljella = kaikki.filter((p) => !(p?.kanavaId === kanavaId && p?.kayttaja === kayttaja));
+  if (jaljella.length === kaikki.length) {
+    return res.status(404).json({ ok: false, error: 'Poikkeusta ei löytynyt.' });
+  }
+  writeCollection('guardKanavaJasenet', jaljella);
+  logAudit({
+    user: req.username, action: 'ptt_jasenpoikkeus_poistettu', collection: 'guardKanavaJasenet',
+    recordId: `${kanavaId}:${kayttaja}`,
+  });
+  kerroKanavaJasenMuutoksesta(kanavaId);
   res.json({ ok: true });
 });
 
@@ -2674,13 +2780,16 @@ app.get('/api/kanavat/avaimet/laitteelle', requireAuth, guardPortti, (req, res) 
 // jo ennestään vakiintunut malli.
 function reqKuuluuKanavaanNyt(req, kanavaId) {
   const vuoro = keskenOlevaVuoro(readCollection('guardShifts') || [], req.username);
-  if (kuuluuKiinteaanKanavaan(vuoro, kanavaId)) return true;
+  // Jäsenpoikkeukset (erä 26, jatko 26.9.2026) huomioidaan vuoron kanssa samassa
+  // kutsussa: 'poistettu' ohittaa vuoropohjaisen jäsenyyden, 'lisatty' myöntää sen
+  // ilman vuoroakin. Ks. server/kanavat.js:n oma yläkommentti Osasta 4.
+  const poikkeukset = readCollection('guardKanavaJasenet') || [];
+  if (kuuluuKiinteaanKanavaanPoikkeuksin(vuoro, kanavaId, req.username, poikkeukset)) return true;
   // HÄLKE saa kuulua MIHIN TAHANSA kiinteään kanavaan vaikka heillä ei olisi omaa
   // vuoroa (erä 26, vaihe 8/9: PTT-yhteenveto) — sama guard_dispatch NÄKY -oikeus
   // jolla he jo pääsevät hätäkanavalle alla. Vain kohde/piiri/alue, ei dm/vapaa:
   // niiden jäsenyys on eksplisiittinen osallistujalista eikä "kuka tahansa päivystäjä".
-  if ((kanavaId.startsWith('kohde:') || kanavaId.startsWith('piiri:') || kanavaId.startsWith('alue:'))
-      && (req.role === 'admin' || canView(req.permissions, null, 'guard_dispatch'))) {
+  if (onKiinteaKanavaId(kanavaId) && (req.role === 'admin' || canView(req.permissions, null, 'guard_dispatch'))) {
     return true;
   }
   const kanava = (readCollection('guardKanavat') || []).find((k) => k.id === kanavaId);
@@ -2874,8 +2983,13 @@ function jasenetKanavalla(kanavaId) {
   const kanava = (readCollection('guardKanavat') || []).find((k) => k.id === kanavaId);
   if (kanava?.tyyppi === 'hata') return [...new Set([kanava.vartija, ...kaikkiPaivystajat()])];
   if (kanava?.tyyppi === 'dm' || kanava?.tyyppi === 'vapaa') return kanava.osallistujat || [];
+  // Jäsenpoikkeukset (erä 26, jatko 26.9.2026) TÄYTYY huomioida juuri tässä: tämä
+  // syöttää huoneavaimen jaon (src/shared/aanikutsu.ts, viestit.ts) — ilman tätä
+  // pakotettu jäsen näkyisi kanavalla muttei koskaan saisi salausavainta.
   return [...new Set([
-    ...jasenetKiinteallaKanavalla(readCollection('guardShifts') || [], kanavaId),
+    ...jasenetKiinteallaKanavallaPoikkeuksin(
+      readCollection('guardShifts') || [], kanavaId, readCollection('guardKanavaJasenet') || [],
+    ),
     ...kaikkiPaivystajat(),
   ])];
 }
@@ -7219,7 +7333,10 @@ function kasitteleKanavaViesti(istunto, viesti) {
 // jäsenyys ratkeaa sen `tyyppi`-kentän mukaan — sama kaksijakoinen malli kuin
 // GET /api/kanavat/omat:ssa.
 function kuuluuKanavaanNyt(istunto, kanavaId, vuoro) {
-  if (kuuluuKiinteaanKanavaan(vuoro, kanavaId)) return true;
+  // Jäsenpoikkeukset (erä 26, jatko 26.9.2026) — sama periaate kuin
+  // reqKuuluuKanavaanNyt:ssä (REST-puoli), ks. sen oma kommentti.
+  const poikkeukset = readCollection('guardKanavaJasenet') || [];
+  if (kuuluuKiinteaanKanavaanPoikkeuksin(vuoro, kanavaId, istunto?.username, poikkeukset)) return true;
   // HÄLKE saa kuulua MIHIN TAHANSA kiinteään kanavaan vaikka heillä ei olisi omaa
   // vuoroa (erä 26, vaihe 8/9: PTT-yhteenveto ja kuuntelu, käyttäjän pyyntö
   // 22.9.2026) — sama guard_dispatch NÄKY -oikeus jolla he jo pääsevät hätäkanavalle
@@ -7227,7 +7344,7 @@ function kuuluuKanavaanNyt(istunto, kanavaId, vuoro) {
   // osallistujalista eikä "kuka tahansa päivystäjä". Sama sääntö kuin
   // reqKuuluuKanavaanNyt:ssä (REST-puoli) — pidettävä käsin synkronissa, ei jaettua
   // koodia näiden kahden funktion välillä (istunto vs. req).
-  if ((kanavaId.startsWith('kohde:') || kanavaId.startsWith('piiri:') || kanavaId.startsWith('alue:'))
+  if (onKiinteaKanavaId(kanavaId)
       && (istunto?.role === 'admin' || canView(rolePermissions(istunto?.roleId), null, 'guard_dispatch'))) {
     return true;
   }
