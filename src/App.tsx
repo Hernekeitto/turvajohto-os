@@ -3,6 +3,7 @@ import { useSession } from './SessionContext';
 // Jaetut apurit (ks. src/shared/). Nämä olivat aiemmin tässä tiedostossa, mutta ne eivät
 // koske App-komponentin tilaan ja GUARD-puoli tarvitsee ne samoina.
 import { seuraavaTunnisteNumero, muotoileTunniste, taydennaTunnisteet } from './shared/tunnisteet';
+import { TyontekijanTunnus } from './shared/komponentit/TyontekijanTunnus';
 import { kayttajatunnusNimesta, buildFullName } from './shared/nimet';
 import {
   emptyEmpForm, employeeToFormState, initialEmployees, initialCheckedInEmployees,
@@ -488,11 +489,6 @@ export default function App() {
   // Työntekijälomakkeen tunnusmodaali. Avataan osiosta 10; ei navigoi pois lomakkeelta,
   // jottei keskeneräinen työntekijän muokkaus katoa.
   const [empUserModalOpen, setEmpUserModalOpen] = useState(false);
-  const [empUserPassword, setEmpUserPassword] = useState('');
-  const [empUserPassword2, setEmpUserPassword2] = useState('');
-  const [empUserError, setEmpUserError] = useState('');
-  const [empUserNotice, setEmpUserNotice] = useState('');
-  const [empUserSubmitting, setEmpUserSubmitting] = useState(false);
   const [addEmpRole, setAddEmpRole] = useState('Järjestyksenvalvoja');
 
   // Kirjaukset ja raportit (yhteinen tila koko sovellukselle, tallennetaan palvelimelle)
@@ -1733,105 +1729,16 @@ export default function App() {
 
   // ---- Työntekijän käyttäjätunnus ----
   // Tunnus on aina sukunimi_etunimi (ks. kayttajatunnusNimesta) ja tunnistenumero on
-  // työntekijän oma pysyvä numero, joten mitään ei kysytä käyttäjältä salasanan lisäksi.
+  // työntekijän oma pysyvä numero. Luonti ja salasanan nollaus: TyontekijanTunnus.
   const empFormUsername = kayttajatunnusNimesta(empForm);
-  const empFormExistingUser = userAdminList.find((u) => u.username === empFormUsername) || null;
+  const empFormExistingUser = (editingEmp && userAdminList.find((u) => u.employeeId === editingEmp.id))
+    || userAdminList.find((u) => u.username === empFormUsername) || null;
 
-  const avaaTunnusModaali = () => {
-    setEmpUserPassword('');
-    setEmpUserPassword2('');
-    setEmpUserError('');
-    setEmpUserNotice('');
-    // Lista haetaan aina tuoreena: se kertoo onko tunnus jo olemassa ja mitkä
-    // tunnistenumerot ovat varattuja.
-    fetchUserAdminList();
-    setEmpUserModalOpen(true);
-  };
+  const avaaTunnusModaali = () => setEmpUserModalOpen(true);
 
-  const handleCreateEmployeeUser = async () => {
-    setEmpUserError('');
-    setEmpUserNotice('');
-    if (!empFormUsername) {
-      setEmpUserError('Täytä ensin etunimi ja sukunimi — käyttäjätunnus muodostetaan niistä.');
-      return;
-    }
-    if (empUserPassword !== empUserPassword2) {
-      setEmpUserError('Salasanat eivät täsmää.');
-      return;
-    }
-    if (!isValidPasswordClient(empUserPassword)) {
-      setEmpUserError('Salasanan tulee olla vähintään 10 merkkiä ja sisältää iso kirjain, pieni kirjain ja numero.');
-      return;
-    }
-    // Numero on työntekijällä jo (annettu tallennushetkellä tai migraatiossa); jos
-    // työntekijää ei ole vielä tallennettu, varataan seuraava vapaa.
-    const numero = parseInt(String(empForm.displayId ?? ''), 10) || seuraavaTunnisteNumero(employees, userAdminList);
-    setEmpUserSubmitting(true);
-    try {
-      const res = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          username: empFormUsername,
-          // Tunnuksen nimimerkki on henkilön koko nimi. Raporteissa näkyvä nimi on eri
-          // asia: se on tapahtumakohtainen nimimerkki + tunnistenumero.
-          nickname: buildFullName(empForm) || empFormUsername,
-          password: empUserPassword,
-          displayId: numero,
-          employeeId: editingEmp?.id || null,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        setEmpUserPassword('');
-        setEmpUserPassword2('');
-        setEmpUserNotice(`Tunnus ${empFormUsername} luotu (${muotoileTunniste(numero)}).`);
-        if (!empForm.displayId) updEmpForm('displayId', numero);
-        fetchUserAdminList();
-      } else {
-        setEmpUserError(data.error || 'Tunnuksen luonti epäonnistui.');
-      }
-    } catch {
-      setEmpUserError('Yhteysvirhe. Yritä uudelleen.');
-    } finally {
-      setEmpUserSubmitting(false);
-    }
-  };
-
-  const handleSetEmployeeUserPassword = async () => {
-    setEmpUserError('');
-    setEmpUserNotice('');
-    if (empUserPassword !== empUserPassword2) {
-      setEmpUserError('Salasanat eivät täsmää.');
-      return;
-    }
-    if (!isValidPasswordClient(empUserPassword)) {
-      setEmpUserError('Salasanan tulee olla vähintään 10 merkkiä ja sisältää iso kirjain, pieni kirjain ja numero.');
-      return;
-    }
-    setEmpUserSubmitting(true);
-    try {
-      const res = await fetch(`/api/users/${encodeURIComponent(empFormUsername)}/password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ password: empUserPassword }),
-      });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        setEmpUserPassword('');
-        setEmpUserPassword2('');
-        setEmpUserNotice('Salasana vaihdettu. Käyttäjä on kirjattu ulos ja kirjautuu uudella salasanalla.');
-      } else {
-        setEmpUserError(data.error || 'Salasanan vaihto epäonnistui.');
-      }
-    } catch {
-      setEmpUserError('Yhteysvirhe. Yritä uudelleen.');
-    } finally {
-      setEmpUserSubmitting(false);
-    }
-  };
+  // Kytkettävä tietue on TALLENNETTU työntekijä, ei lomakkeen keskeneräinen tila:
+  // tunnus sidotaan tietueeseen ja sen numeroon (ks. shared/komponentit/TyontekijanTunnus).
+  const empTunnusKohde = editingEmp ? employees.find((e) => e.id === editingEmp.id) || editingEmp : empForm;
 
   const handleDeleteEmployee = async (emp: Tyontekija) => {
     const confirmed = window.confirm(
@@ -9475,119 +9382,12 @@ export default function App() {
           </button>
         </div>
 
-        <div className="p-5 space-y-4 text-left">
-          {/* Tunnus ja numero muodostuvat automaattisesti — ei syötettäviä kenttiä */}
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2">
-            <div className="flex justify-between items-baseline gap-3">
-              <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Nimi</span>
-              <span className="text-sm font-medium text-slate-800 text-right">{buildFullName(empForm) || '—'}</span>
-            </div>
-            <div className="flex justify-between items-baseline gap-3">
-              <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Käyttäjätunnus</span>
-              <span className="text-sm font-mono font-bold text-slate-900 text-right">{empFormUsername || '—'}</span>
-            </div>
-            <div className="flex justify-between items-baseline gap-3">
-              <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Tunnistenumero</span>
-              <span className="text-sm font-mono font-bold text-indigo-700 text-right">
-                {empForm.displayId
-                  ? muotoileTunniste(empForm.displayId)
-                  : muotoileTunniste(seuraavaTunnisteNumero(employees, userAdminList))}
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 pt-1 leading-relaxed">
-              Molemmat muodostuvat automaattisesti eikä niitä voi muuttaa jälkikäteen:
-              tallennetut raportit viittaavat tunnistenumeroon.
-            </p>
-          </div>
-
-          {empFormExistingUser ? (
-            <>
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex gap-2.5">
-                <CheckCircle size={16} className="text-emerald-600 shrink-0 mt-0.5" />
-                <p className="text-xs text-emerald-900 leading-relaxed">
-                  Tunnus on olemassa. Oikeudet ja Authenticator-asetukset hoidetaan
-                  etusivun "Muokkaa käyttäjiä" -näkymästä.
-                </p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Aseta uusi salasana</label>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={empUserPassword}
-                  onChange={(e) => setEmpUserPassword(e.target.value)}
-                  className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Vahvista salasana</label>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={empUserPassword2}
-                  onChange={(e) => setEmpUserPassword2(e.target.value)}
-                  className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-                />
-                <p className="text-xs text-slate-400 mt-1">
-                  Vähintään 10 merkkiä, iso ja pieni kirjain sekä numero. Vaihto kirjaa käyttäjän ulos.
-                </p>
-              </div>
-            </>
-          ) : (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Salasana</label>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={empUserPassword}
-                  onChange={(e) => setEmpUserPassword(e.target.value)}
-                  className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Vahvista salasana</label>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={empUserPassword2}
-                  onChange={(e) => setEmpUserPassword2(e.target.value)}
-                  className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-                />
-                <p className="text-xs text-slate-400 mt-1">Vähintään 10 merkkiä, iso ja pieni kirjain sekä numero.</p>
-              </div>
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-2.5">
-                <Info size={16} className="text-amber-500 shrink-0 mt-0.5" />
-                <p className="text-xs text-amber-900 leading-relaxed">
-                  Uudella tunnuksella ei ole oletuksena mitään sivukartta-oikeuksia, ja se vaatii
-                  Authenticator-sovelluksen. Hoida molemmat luonnin jälkeen etusivun
-                  "Muokkaa käyttäjiä" -näkymästä.
-                </p>
-              </div>
-            </>
-          )}
-
-          {empUserError && <p className="text-sm text-rose-600">{empUserError}</p>}
-          {empUserNotice && <p className="text-sm text-emerald-700 font-medium">{empUserNotice}</p>}
-        </div>
-
-        <div className="p-4 border-t border-slate-100 flex justify-end gap-3">
-          <button
-            onClick={() => setEmpUserModalOpen(false)}
-            className="px-5 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-          >
-            Sulje
-          </button>
-          <button
-            onClick={empFormExistingUser ? handleSetEmployeeUserPassword : handleCreateEmployeeUser}
-            disabled={empUserSubmitting}
-            className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm font-bold rounded-lg transition-colors flex items-center gap-2"
-          >
-            <CheckCircle size={16} />
-            {empUserSubmitting
-              ? 'Tallennetaan…'
-              : empFormExistingUser ? 'Vaihda salasana' : 'Luo tunnus'}
-          </button>
+        <div className="p-5">
+          <TyontekijanTunnus
+            tyontekija={empTunnusKohde}
+            puoli="event"
+            onMuuttui={fetchUserAdminList}
+          />
         </div>
       </div>
     </div>

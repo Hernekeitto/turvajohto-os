@@ -2172,6 +2172,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           tyontekijat={tyontekijat}
           ladattu={tyontekijatLadattu}
           saaMuokata={saaMuokataTyontekijoita}
+          isAdmin={isAdmin}
           onTallenna={tallennaTyontekijat}
           onTakaisin={() => setOsio('etusivu')}
         />
