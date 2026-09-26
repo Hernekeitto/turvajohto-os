@@ -134,8 +134,22 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
     });
   }, [machine]);
 
+  // VÄLIAIKAINEN DIAGNOSTIIKKA (26.9.2026, ääni ei kuulu vieläkään vaikka huoneavain
+  // ja aani_avain purkautuvat nyt onnistuneesti ja AudioContext on "running") — jos
+  // kehyksiä ei edes saavu tänne asti, vika on kuljetuksessa (palvelin/WS); jos ne
+  // saapuvat mutta vastaanotinta ei löydy, `aloita()` ei ole vielä ehtinyt asettaa
+  // sitä. Laskuri per kanava, ei jokainen kehys erikseen (kehyksiä voi tulla kymmeniä
+  // sekunnissa) — vain ensimmäinen ja 50. jokaista alkavaa erää kohden.
+  const aaniKehysLaskuri = useRef<Map<string, number>>(new Map());
   const kasitteleAaniKehys = useCallback((kanavaId: string, data: string) => {
-    vastaanottimet.current.get(kanavaId)?.vastaanotaKehys(data);
+    const n = (aaniKehysLaskuri.current.get(kanavaId) ?? 0) + 1;
+    aaniKehysLaskuri.current.set(kanavaId, n);
+    const vastaanotin = vastaanottimet.current.get(kanavaId);
+    if (n === 1 || n % 50 === 0) {
+      // eslint-disable-next-line no-console
+      console.log(`PTT-äänikehys kanava=${kanavaId} n=${n} vastaanotin=${Boolean(vastaanotin)} tavuja=${data.length}`);
+    }
+    vastaanotin?.vastaanotaKehys(data);
   }, []);
 
   const { yhdistetty, laheta } = useKanava({

@@ -71,6 +71,8 @@ export function luoVastaanotin(): Vastaanotin {
   // joka aloita()-kutsulla (uusi PTT-painallus, uusi kertakäyttöavain) — muuten uuden
   // painalluksen ensimmäinen kehys odottaisi edellisen painalluksen viimeisen tauon loppuun.
   let seuraavaAlkuS = 0;
+  // VÄLIAIKAINEN DIAGNOSTIIKKA (26.9.2026) — ks. vastaanotaKehys:n oma kommentti.
+  let ekaVirheNaytetty = false;
 
   function varmistaAudioCtx(): AudioContext {
     if (!audioCtx) audioCtx = new AudioContext();
@@ -104,6 +106,7 @@ export function luoVastaanotin(): Vastaanotin {
 
   async function aloita(uusiAvain: LahetysAvain, koodekki: Koodekki): Promise<boolean> {
     lopeta();
+    ekaVirheNaytetty = false;
     if (typeof AudioDecoder === 'undefined') return false;
     const ctx = varmistaAudioCtx();
     // Selain voi keskeyttää AudioContextin ennen ensimmäistä käyttäjän elettä —
@@ -145,8 +148,20 @@ export function luoVastaanotin(): Vastaanotin {
     }
   }
 
+  // VÄLIAIKAINEN DIAGNOSTIIKKA (26.9.2026, ääni ei kuulu vieläkään vaikka avain
+  // purkautuu ja AudioContext on "running") — kolme aiemmin täysin hiljaista
+  // pudotuskohtaa (avain/decoder puuttuu, purku epäonnistuu, decode() heittää)
+  // näytetään nyt kertaalleen per vastaanotin jotta nähdään MIKÄ vaihe oikeasti
+  // pudottaa kehykset natiivin lähettämälle Opukselle.
   function vastaanotaKehys(data: string) {
-    if (!avain || !decoder || decoder.state !== 'configured') return;
+    if (!avain || !decoder || decoder.state !== 'configured') {
+      if (!ekaVirheNaytetty) {
+        ekaVirheNaytetty = true;
+        // eslint-disable-next-line no-console
+        console.log(`PTT-kehys pudotettu: avain=${Boolean(avain)} decoder=${Boolean(decoder)} tila=${decoder?.state ?? '-'}`);
+      }
+      return;
+    }
     const lahetysAvain = avain;
     const kohdeDecoder = decoder;
     puraVastaanotettu(lahetysAvain, kehysVastaanotetusta(data))
@@ -155,13 +170,26 @@ export function luoVastaanotin(): Vastaanotin {
         // vain SAMALLE dekooderille annetaan tulos, ei sille mikä sattuu olemaan
         // muuttujassa nyt.
         if (decoder === kohdeDecoder && kohdeDecoder.state === 'configured') {
-          kohdeDecoder.decode(chunk);
+          try {
+            kohdeDecoder.decode(chunk);
+          } catch (e) {
+            if (!ekaVirheNaytetty) {
+              ekaVirheNaytetty = true;
+              // eslint-disable-next-line no-console
+              console.error(`PTT-kehyksen decode() epäonnistui: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          }
         }
       })
-      .catch(() => {
+      .catch((e: unknown) => {
         // Purku epäonnistui (väärä avain, vioittunut paketti) — pudotetaan kehys
-        // hiljaa, sama periaate kuin natiivin AaniVastaanotin.java:lla ja
-        // selaimen aanisalaus.ts:n luoPurkuTransform-kommentilla.
+        // hiljaa jatkossakin, sama periaate kuin natiivin AaniVastaanotin.java:lla,
+        // mutta ENSIMMÄINEN kerta näytetään jotta syy ei jää arvailuksi.
+        if (!ekaVirheNaytetty) {
+          ekaVirheNaytetty = true;
+          // eslint-disable-next-line no-console
+          console.error(`PTT-kehyksen purku epäonnistui: ${e instanceof Error ? e.message : String(e)}`);
+        }
       });
   }
 
