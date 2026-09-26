@@ -15,6 +15,7 @@ import { haeJaettuOlmMachine, synkronoiPyynnot, synkronoiLaiteviestit } from '..
 import { kasitteleJono } from '../../shared/viestijono.ts';
 import { aloitaLahetys, kehysLahetettavaksi } from '../../shared/aanikutsu.ts';
 import { luoLahetin, paatettavaKoodekki, type Lahetin } from '../../shared/aanilahetys.ts';
+import { soitaAanimerkki } from '../../shared/aanimerkki.ts';
 import {
   type Kanava, kuunneltavatIdt, oletusLahetyskohde,
 } from './kanavapalkki.ts';
@@ -250,7 +251,9 @@ export function usePttPalkkia() {
           },
           (viesti) => { if (lahettavaKanavaRef.current === kohdeKanava) setAaniVirhe(viesti); },
         );
-        if (!onnistui) {
+        if (onnistui) {
+          soitaAanimerkki('alkoi');
+        } else {
           setAaniVirhe('Mikrofonia ei saatu käyttöön.');
           lahetinRef.current = null;
           if (lahettavaKanavaRef.current === kohdeKanava) vapautaPuheenvuoro(kohdeKanava);
@@ -260,6 +263,7 @@ export function usePttPalkkia() {
       lahettavaKanavaRef.current = null;
       lahetinRef.current?.lopeta();
       lahetinRef.current = null;
+      soitaAanimerkki('loppui');
     }
   }, [aktiivinenId, tilat, machine, omaKayttaja, laheta, vapautaPuheenvuoro]);
 

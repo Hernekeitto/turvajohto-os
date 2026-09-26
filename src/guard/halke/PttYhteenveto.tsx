@@ -26,6 +26,7 @@ import { useKanava } from '../../shared/kanava';
 import { haeJaettuOlmMachine, synkronoiPyynnot, synkronoiLaiteviestit } from '../../shared/olm';
 import { vastaanotaAvain } from '../../shared/aanikutsu';
 import { luoVastaanotin, type Vastaanotin } from '../../shared/aanivastaanotto';
+import { soitaAanimerkki } from '../../shared/aanimerkki';
 
 type KanavaTyyppi = 'kohde' | 'piiri' | 'hata';
 
@@ -131,6 +132,7 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
       }
       const onnistui = await vastaanotin.aloita(tulos.lahetysAvain, tulos.koodekki);
       setTilat((e) => ({ ...e, [kanavaId]: onnistui ? 'kuuntelee' : 'virhe' }));
+      if (onnistui) soitaAanimerkki('alkoi');
     });
   }, [machine]);
 
@@ -169,6 +171,11 @@ export const PttYhteenveto = ({ kayttaja }: { kayttaja: string }) => {
           kasitteleAaniAvain(kanavaId, tapahtuma);
         }
       });
+    },
+    // Puhuja päästi napin irti — äänimerkki VAIN jos tätä kanavaa oikeasti kuunneltiin
+    // (tila 'kuuntelee'), ei kaikille kanaville joita palvelin sattuu ilmoittamaan.
+    onPuheenvuoroVapautui: (kanavaId: string) => {
+      if (tilat[kanavaId] === 'kuuntelee') soitaAanimerkki('loppui');
     },
   });
 
