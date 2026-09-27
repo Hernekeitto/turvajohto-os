@@ -67,6 +67,9 @@ import {
   type OmatSiirrot, type Siirto, type Vastaanottaja,
 } from './siirrot';
 import { kaynnistaSovelluksessa, onAlustaJollaSovellus, paataSovelluksessa } from './mobiili/sovellusvuoro';
+import { luePuoli, tallennaPuoli, type Puoli } from './nakymavalinta';
+import { PuoliValitsin } from './PuoliValitsin';
+import { Vartijanakyma } from './Vartijanakyma';
 import { useKanava, type Sijainti } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
@@ -256,6 +259,12 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Irrotettu hälytyskeskusikkuna avautuu suoraan omaan paneeliinsa (erä 24): sen
   // etusivu olisi ylimääräinen klikkaus joka kerta kun valvomon kone käynnistetään.
   const [osio, setOsio] = useState<Osio>(HALKE_OSOITE.paneeli ? 'halytyskeskus' : 'etusivu');
+  // Pääkäyttäjän puolivalinta Ylläpito / Vartijanäkymä (ks. nakymavalinta.ts).
+  const [puoli, setPuoli] = useState<Puoli>(luePuoli);
+  // Vartijanäkymä koskee vain pääkäyttäjää työpöydällä. Irrotettu hälytyskeskusikkuna
+  // pysyy aina ylläpidossa: valvomon kone ei saa avautua tyhjään näkymään sen takia,
+  // että samalla selaimella on joskus katsottu vartijan puolta.
+  const vartijanPuolella = isAdmin && !mobiili && !HALKE_OSOITE.paneeli && puoli === 'vartija';
   // Asetusten käyttäjälistalta avattava henkilö: pankki avaa sen ja tunnusosion kerran.
   const [avattavaTyontekija, setAvattavaTyontekija] = useState<string | null>(null);
   // Kohde jonka valikko on auki. Kohdelistan ja yksittäisten näkymien VÄLISSÄ oleva taso:
@@ -1520,6 +1529,13 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     setOsio('etusivu');
   };
 
+  // Puolen vaihto EI nollaa ylläpidon näkymiä: esimies tekee muutoksen, käy katsomassa
+  // miltä se näyttää vartijalle ja palaa samaan kohtaan jatkamaan.
+  const vaihdaPuoli = (uusi: Puoli) => {
+    tallennaPuoli(uusi);
+    setPuoli(uusi);
+  };
+
   // Kohteen valikon painike avaa oikean näkymän. Yksi kytkin eikä kolmetoista propsia:
   // valikko kertoo MITÄ käyttäjä valitsi, ja näkymätilat ovat tämän komponentin asia.
   const avaaToiminto = (toiminto: Toiminto, kohde: Kohde) => {
@@ -1942,7 +1958,12 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       onLogo={paluuEtusivulle}
       // Ei näytetä oikeudettomalle — sama "ei lupausta jota ei lunasteta" -periaate kuin
       // muillakin valinnaisilla osilla tässä palkissa.
-      ekstra={saaNahdaPtt ? <PttPainike /> : undefined}
+      ekstra={(isAdmin && !HALKE_OSOITE.paneeli) || saaNahdaPtt ? (
+        <>
+          {isAdmin && !HALKE_OSOITE.paneeli && <PuoliValitsin puoli={puoli} onVaihda={vaihdaPuoli} />}
+          {saaNahdaPtt && <PttPainike />}
+        </>
+      ) : undefined}
       // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
       // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
       ilmoitukset={[]}
@@ -1974,7 +1995,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
   // Näkymän nimi palkkiin. Sama järjestys kuin renderöintiketjussa alla — jos ne
   // eroaisivat, palkissa lukisi eri näkymä kuin ruudulla on.
-  const nakymanNimi = asetuksissa ? 'Sovellusasetukset'
+  const nakymanNimi = vartijanPuolella ? 'Vartijanäkymä'
+    : asetuksissa ? 'Sovellusasetukset'
     : avattu ? `${TEHTAVAN_LAJI[avattu.laji]} — ${avattu.siteNimi}`
     : osio === 'halytyskeskus' ? 'Hälytyskeskus'
     : osio === 'kalusto' ? 'Kalustopankki'
@@ -1999,7 +2021,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Näkymien sisältö omana muuttujanaan, koska se renderöidään kahteen eri kuoreen:
   // työpöydän yläpalkin alle ja mobiiliversion puhelinkehykseen. Sisältö on molemmissa
   // sama — ero on kuoressa ja etusivussa, ei siinä mitä näkymät näyttävät.
-  const runko = (
+  //
+  // Vahdit ovat omana osanaan, koska ne näytetään myös pääkäyttäjän Vartijanäkymässä:
+  // lauennut hälytys ei saa jäädä näkemättä sen takia, että esimies on esikatselemassa.
+  const vahdit = (
     <>
       {/* Hälytysvahti on ENSIMMÄISENÄ ja kaikissa näkymissä. Ajastimen laskuri,
           man-down-kysely ja lauennut hälytys eivät saa olla yhden näkymän takana:
@@ -2030,6 +2055,12 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           liikkumatonMin={mandownMin}
         />
       )}
+    </>
+  );
+
+  const runko = (
+    <>
+      {vahdit}
 
       {virhe && (
         <p className="mb-6 text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">
@@ -2662,7 +2693,12 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
       <main className="flex-1 p-6 md:p-10">
         <div className="max-w-5xl mx-auto">
-          {runko}
+          {vartijanPuolella ? (
+            <>
+              {vahdit}
+              <Vartijanakyma />
+            </>
+          ) : runko}
         </div>
       </main>
 
