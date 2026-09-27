@@ -57,7 +57,7 @@ import {
   aloitaHalytys, ilmoita, lopetaHalytys, pyydaIlmoituslupa, varmistaAani,
 } from '../shared/aani';
 import {
-  aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, haeVuoronKooste, lisaaVuoroon,
+  aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, haeVuoronKooste, kaikkiKohteina, lisaaVuoroon,
   paataVuoroPalvelimella, myohassaMinuutteina, UNOHTUNUT_VARTIJA_MIN,
   type PalvelimenVuoro, type VuoronKooste, type Vuorokohde, type VuoroVaihtoehto,
 } from './vuorot';
@@ -2535,7 +2535,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           />
         ) : (
           <Vuorovalinta
-            kohteet={vuorovaihtoehdot}
+            kohteet={isAdmin ? kaikkiKohteina(kohteet, vuorovaihtoehdot) : vuorovaihtoehdot}
             ladattu={vuorotLadattu}
             ilmanPerehdytysta={ilmanPerehdytysta}
             virhe={vuoroVirhe}

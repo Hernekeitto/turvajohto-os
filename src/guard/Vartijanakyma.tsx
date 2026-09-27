@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 
 import {
-  aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, paataVuoroPalvelimella,
+  aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, kaikkiKohteina, paataVuoroPalvelimella,
   type PalvelimenVuoro, type VuoroVaihtoehto, type Vuorokohde, type VuoronLaitteet,
 } from './vuorot';
 import type { Kohde } from './tyypit';
@@ -49,31 +49,6 @@ const LAITETEKSTI: Record<VuoronLaitteet, string> = {
   tietokone_sovellus: 'Tietokoneella + sovelluksessa',
 };
 
-// Pääkäyttäjän esikatselu (27.9.2026, käyttäjän päätös): kun ei ole valittu minkä
-// vartijan näkymää katsotaan, näytetään KAIKKI kohteet. Omat perehdytetyt vuorot tulevat
-// palvelimelta sellaisenaan; muiden kohteiden vuorot näytetään harmaina "ei perehdytystä"
-// -riveinä, koska palvelin ei aloita niitä pääkäyttäjällekään ilman perehdytystä.
-const kaikkiKohteina = (kaikki: Kohde[], omat: Vuorokohde[]): Vuorokohde[] =>
-  kaikki
-    .filter((k) => !k.archived)
-    .map((k) => omat.find((o) => o.siteId === k.id) || {
-      siteId: k.id,
-      siteNimi: k.name,
-      vuorot: (k.vuorotyypit || [])
-        .filter((v) => v && !v.arkistoitu)
-        .map((v) => ({
-          id: v.id,
-          nimi: v.nimi,
-          kuvaus: v.kuvaus || '',
-          alkaa: v.alkaa || null,
-          paattyy: v.paattyy || null,
-          perehdytetty: false,
-          ikkunassa: false,
-          tehtavia: (v.tehtavaIdt || []).length,
-          kierroksia: (v.pohjaIdt || []).length,
-        })),
-    });
-
 const aikavali = (v: VuoroVaihtoehto) =>
   (v.alkaa && v.paattyy ? `${v.alkaa}–${v.paattyy}` : 'ei kellonaikaa');
 
@@ -84,7 +59,7 @@ const sisalto = (v: VuoroVaihtoehto) => {
   return osat.length > 0 ? osat.join(' · ') : 'ei tehtäviä eikä kierroksia';
 };
 
-// kaikkiKohteet annetaan vain pääkäyttäjälle (ks. kaikkiKohteina yllä).
+// kaikkiKohteet annetaan vain pääkäyttäjälle (ks. vuorot.ts: kaikkiKohteina).
 export const Vartijanakyma = ({ kaikkiKohteet }: { kaikkiKohteet?: Kohde[] }) => {
   // undefined = ei vielä haettu tai palvelinta ei tavoitettu, null = ei vuoroa.
   const [vuoro, setVuoro] = useState<PalvelimenVuoro | null | undefined>(undefined);

@@ -8,6 +8,8 @@
 // kulkevat guardSites-kokoelman tavallista tietä kuten vyöhykkeet ja tehtävät — oma
 // rajapinta samalle tiedolle olisi toinen tie samaan paikkaan.
 
+import type { Kohde } from './tyypit';
+
 export type Perehdytettava = {
   username: string;
   nimi: string;
@@ -60,6 +62,37 @@ export async function haeOmatVuorot(): Promise<OmatVuorot> {
     ilmanPerehdytysta: data.ilmanPerehdytysta || 0,
     joustoMin: data.joustoMin || 0,
   };
+}
+
+/**
+ * Pääkäyttäjän esikatselu (27.9.2026, käyttäjän päätös): kun ei ole valittu, kenen
+ * vartijan näkymää katsotaan, näytetään KAIKKI kohteet — sekä työpöydän
+ * Vartijanäkymässä että mobiilinäkymän vuorovalinnassa.
+ *
+ * Omat perehdytetyt vuorot tulevat palvelimelta sellaisenaan. Muiden kohteiden vuorot
+ * näytetään harmaina "ei perehdytystä" -riveinä, koska palvelin ei aloita niitä
+ * pääkäyttäjällekään ilman perehdytystä. Lista ei siis lupaa vuoroa jota ei saa.
+ */
+export function kaikkiKohteina(kaikki: Kohde[], omat: Vuorokohde[]): Vuorokohde[] {
+  return kaikki
+    .filter((k) => !k.archived)
+    .map((k) => omat.find((o) => o.siteId === k.id) || {
+      siteId: k.id,
+      siteNimi: k.name,
+      vuorot: (k.vuorotyypit || [])
+        .filter((v) => v && !v.arkistoitu)
+        .map((v) => ({
+          id: v.id,
+          nimi: v.nimi,
+          kuvaus: v.kuvaus || '',
+          alkaa: v.alkaa || null,
+          paattyy: v.paattyy || null,
+          perehdytetty: false,
+          ikkunassa: false,
+          tehtavia: (v.tehtavaIdt || []).length,
+          kierroksia: (v.pohjaIdt || []).length,
+        })),
+    });
 }
 
 // --- Vuoron elinkaari (erä 17) ------------------------------------------------------
