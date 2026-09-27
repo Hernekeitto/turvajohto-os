@@ -69,7 +69,6 @@ export const TyontekijaLista = ({
         <tr>
           <th className="p-4">Nimi</th>
           <th className="p-4 w-24">Tunniste</th>
-          <th className="p-4">Henkilötunnus</th>
           <th className="p-4">Kortit</th>
           <th className="p-4">Yhteystiedot</th>
           <th className="p-4 text-right">Toiminnot</th>
@@ -78,7 +77,7 @@ export const TyontekijaLista = ({
       <tbody className="divide-y divide-line">
         {suodatetut.length === 0 ? (
           <tr>
-            <td colSpan={6} className="p-8 text-center text-sm text-ink-muted">
+            <td colSpan={5} className="p-8 text-center text-sm text-ink-muted">
               {haku.trim() ? 'Ei hakua vastaavia työntekijöitä.' : 'Ei vielä työntekijöitä rekisterissä.'}
             </td>
           </tr>
@@ -90,7 +89,6 @@ export const TyontekijaLista = ({
                 ? <span className="font-mono text-xs font-bold text-accent-ink">{muotoileTunniste(emp.displayId)}</span>
                 : <span className="text-xs text-ink-subtle">—</span>}
             </td>
-            <td className="p-4 font-mono text-xs text-ink-body">{emp.personalId || '—'}</td>
             <td className="p-4">
               <div className="flex flex-wrap gap-1">
                 {onKortti(emp, 'hasJvCard', 'jvCard') && <span className="text-xs bg-accent-soft text-accent-ink px-2 py-0.5 rounded">JV</span>}

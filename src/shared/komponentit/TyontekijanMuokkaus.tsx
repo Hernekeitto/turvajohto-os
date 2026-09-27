@@ -10,10 +10,10 @@
 // Muokkausoikeus tulee yhtenä totuusarvona eikä perms/selectedEvent-parina, samasta
 // syystä kuin listassa.
 
-import { BadgeCheck, Briefcase, CheckCircle, Contact, HardHat, Home, IdCard, Info,
+import { BadgeCheck, Briefcase, CheckCircle, Contact, Eye, EyeOff, HardHat, Home, IdCard, Info,
   KeyRound, Landmark, Languages, Plus, Trash2, UserCheck, UserPlus } from 'lucide-react';
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { muotoileEuro, laskeKokonaispalkka } from '../../shared/muotoilu';
 import { paikallinenPaiva } from '../../shared/ajat';
@@ -52,6 +52,47 @@ type Props = {
   onLisaaKieli: () => void;
   onPoistaKieli: (idx: number) => void;
   onMuutaKieli: (idx: number, avain: string, arvo: any) => void;
+};
+
+// Henkilötunnus on piilossa kunnes sen painaa näkyviin: lomake on usein auki
+// valvomossa tai jaetulla näytöllä, eikä tunnuksen tarvitse näkyä olan yli jokaisella
+// avauskerralla. Tyhjä kenttä (uusi työntekijä) on suoraan kirjoitettavissa — piilotettavaa
+// ei ole. Näkyvyys ei säily: seuraava avaus alkaa taas piilosta.
+const HetuKentta = ({ arvo, onMuuta }: { arvo: string; onMuuta: (v: string) => void }) => {
+  const [nakyvissa, setNakyvissa] = useState(false);
+  const piilossa = !nakyvissa && Boolean(arvo);
+  return (
+    <div>
+      <label className="block text-sm font-medium text-ink-body mb-1">Henkilötunnus</label>
+      <div className="flex gap-2">
+        {piilossa ? (
+          <div className="flex-1 min-w-0 rounded-lg border-line-strong border p-2.5 text-sm font-mono text-ink-muted bg-sunken select-none">
+            ••••••-••••
+          </div>
+        ) : (
+          <input
+            type="text"
+            autoComplete="off"
+            value={arvo}
+            onChange={(e) => onMuuta(e.target.value)}
+            className="flex-1 min-w-0 rounded-lg border-line-strong border p-2.5 text-sm focus:ring-2 focus:ring-accent"
+            placeholder="PPKKVV-XXXX"
+          />
+        )}
+        {arvo && (
+          <button
+            type="button"
+            onClick={() => setNakyvissa((n) => !n)}
+            aria-label={nakyvissa ? 'Piilota henkilötunnus' : 'Näytä henkilötunnus'}
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 rounded-lg border border-line text-sm font-medium text-ink-body hover:bg-sunken"
+          >
+            {nakyvissa ? <EyeOff size={16} /> : <Eye size={16} />}
+            {nakyvissa ? 'Piilota' : 'Näytä'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 };
 
 export const TyontekijanMuokkaus = ({
@@ -98,10 +139,7 @@ export const TyontekijanMuokkaus = ({
           <label className="block text-sm font-medium text-ink-body mb-1">Sukunimi</label>
           <input type="text" value={lomake.lastName} onChange={(e) => onKentta('lastName', e.target.value)} className="w-full rounded-lg border-line-strong border p-2.5 text-sm focus:ring-2 focus:ring-accent" placeholder="Esim. Korhonen" />
         </div>
-        <div>
-          <label className="block text-sm font-medium text-ink-body mb-1">Henkilötunnus</label>
-          <input type="text" value={lomake.personalId} onChange={(e) => onKentta('personalId', e.target.value)} className="w-full rounded-lg border-line-strong border p-2.5 text-sm focus:ring-2 focus:ring-accent" placeholder="PPKKVV-XXXX" />
-        </div>
+        <HetuKentta arvo={lomake.personalId} onMuuta={(v) => onKentta('personalId', v)} />
         <div>
           <label className="block text-sm font-medium text-ink-body mb-1">Syntymäaika</label>
           <input type="date" value={lomake.birthDate} onChange={(e) => onKentta('birthDate', e.target.value)} className="w-full rounded-lg border-line-strong border p-2.5 text-sm focus:ring-2 focus:ring-accent" />
