@@ -13,7 +13,7 @@
 //
 // Korvausta vaaditaan tuotteiden ALV 0 -hinnasta (ks. anastus.ts).
 import { useState, type ReactNode } from 'react';
-import { Plus, ShoppingBag, Trash2 } from 'lucide-react';
+import { CheckCircle2, Plus, Printer, ShoppingBag, Trash2 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { Liitteet } from '../shared/komponentit/Liitteet';
@@ -26,6 +26,50 @@ import {
   type AnastettuTuote, type MuuKulu,
 } from './anastus';
 import { uusiId, type GuardRaportti, type Kohde } from './tyypit';
+import { tulostaAnastusilmoitus } from './anastustuloste';
+
+// Tulostuspainikkeet: sama pari tallennuksen vahvistuksessa ja kohteen tiedoissa.
+export const AnastusTulosteet = ({ raportti }: { raportti: GuardRaportti }) => (
+  <div className="flex flex-wrap gap-2">
+    {([['poliisi', 'Tuloste poliisille'], ['kauppias', 'Tuloste kauppiaalle']] as const).map(([v, nimi]) => (
+      <button
+        key={v}
+        type="button"
+        onClick={() => tulostaAnastusilmoitus(raportti, v)}
+        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-ink-body bg-surface border border-line hover:bg-sunken rounded-lg transition-colors"
+      >
+        <Printer size={16} />
+        {nimi}
+      </button>
+    ))}
+  </div>
+);
+
+// Tallennetun anastusilmoituksen tiivistelmä kohteen tiedoissa (KohteenTiedot).
+// Anastajan tiedot näkyvät siellä jo kohdehenkilö-lohkossa peitettyine hetuineen, joten
+// tässä on vain se mikä on anastusilmoitukselle omaa.
+export const AnastuksenYhteenveto = ({ raportti: r }: { raportti: GuardRaportti }) => {
+  const s = laskeSummat(r.theftItems || [], r.theftOtherCosts || []);
+  return (
+    <div className="bg-sunken rounded-lg p-3 space-y-2 text-xs">
+      <p className="font-medium text-ink-body">Anastusilmoitus</p>
+      <p className="text-ink-muted">
+        Korvauksen vaatija: {r.theftClaimant || '—'} · Rangaistusvaatimusmenettely:{' '}
+        {r.theftPenaltyOrderConsent === true ? 'kyllä' : r.theftPenaltyOrderConsent === false ? 'ei' : '—'}
+      </p>
+      <ul className="text-ink-muted">
+        {(r.theftItems || []).map((t) => (
+          <li key={t.id}>{t.nimi} · {euroina(Math.round(t.hinta * 100))}</li>
+        ))}
+      </ul>
+      <p className="text-ink-body font-medium">
+        Korvausvaatimus {euroina(s.vaatimusSnt)} (tuotteet ALV 0 {euroina(s.alv0Snt)}
+        {s.muutKulutSnt > 0 ? ` + muut kulut ${euroina(s.muutKulutSnt)}` : ''})
+      </p>
+      <AnastusTulosteet raportti={r} />
+    </div>
+  );
+};
 
 type Props = {
   kohde: Kohde;
@@ -52,6 +96,9 @@ export const Anastusilmoitus = ({ kohde, vartija, onTallenna, onTakaisin }: Prop
   const [virhe, setVirhe] = useState<string | null>(null);
   const [liitteet, setLiitteet] = useState<Liite[]>([]);
   const [liitteetLataa, setLiitteetLataa] = useState(false);
+  // Tallennettu ilmoitus. Lomake ei sulkeudu tallennuksessa, koska tuloste tehdään
+  // yleensä heti: poliisi ja kauppias odottavat paperia paikan päällä.
+  const [tallennettu, setTallennettu] = useState<GuardRaportti | null>(null);
 
   const [yhteystiedot, setYhteystiedot] = useState(
     [kohde.name, kohde.address, kohde.contactName, kohde.contactPhone].filter(Boolean).join('\n'),
@@ -148,8 +195,38 @@ export const Anastusilmoitus = ({ kohde, vartija, onTallenna, onTakaisin }: Prop
     };
     const ok = await onTallenna(raportti);
     setTallentaa(false);
-    if (ok) onTakaisin();
+    if (ok) setTallennettu(raportti);
   };
+
+  if (tallennettu) {
+    return (
+      <div className="max-w-3xl">
+        <div className="bg-surface rounded-xl shadow-sm border border-line-soft p-6 md:p-8">
+          <div className="flex items-start gap-3 mb-4">
+            <CheckCircle2 className="w-6 h-6 text-success-ink shrink-0 mt-0.5" strokeWidth={1.75} />
+            <div>
+              <h2 className="text-xl font-bold text-ink-strong">Anastusilmoitus tallennettu</h2>
+              <p className="text-sm text-ink-muted mt-1 leading-relaxed">
+                Korvausvaatimus {euroina(laskeSummat(tallennettu.theftItems || [], tallennettu.theftOtherCosts || []).vaatimusSnt)}.
+                Tulosta kappale poliisille ja kauppiaalle. Tulosteen saa myöhemmin myös
+                kohteen tiedoista.
+              </p>
+            </div>
+          </div>
+          <AnastusTulosteet raportti={tallennettu} />
+          <div className="flex justify-end pt-6 mt-6 border-t border-line-soft">
+            <button
+              type="button"
+              onClick={onTakaisin}
+              className="px-5 py-2.5 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors"
+            >
+              Valmis
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-3xl">
@@ -199,7 +276,7 @@ export const Anastusilmoitus = ({ kohde, vartija, onTallenna, onTakaisin }: Prop
           <Osio otsikko="Anastetut tuotteet" vinkki="Hinta sisältää ALV:n. Korvausta vaaditaan ALV 0 -hinnasta.">
             <div className="space-y-2">
               {tuotteet.map((t) => (
-                <div key={t.id} className="grid gap-2 grid-cols-[1fr_7rem_6rem_auto] items-end">
+                <div key={t.id} className="grid gap-2 grid-cols-[1fr_5.5rem_5rem_auto] sm:grid-cols-[1fr_7rem_6rem_auto] items-end">
                   <label className="block">
                     <span className="block text-xs text-ink-muted mb-1">Tuotteen nimi</span>
                     <input

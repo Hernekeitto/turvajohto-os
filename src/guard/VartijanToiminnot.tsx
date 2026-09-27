@@ -4,8 +4,7 @@
 // mutta Vartijanäkymässä niistä on riisuttu hallinta: "Siirrä kalustoa pankista",
 // "Uusi toimintakortti" ja "Uusi skenaario" eivät näy (ks. GuardApp: vartijanPuolella).
 //
-// Järjestys on käyttäjän antama. Anastusilmoitus ei ole ylläpidon kohdevalikon toiminto
-// (Toiminto-tyyppi), vaan vain vartijan puolella oleva lomake, joten se on oma tunnisteensa.
+// Järjestys on käyttäjän antama.
 import type { LucideIcon } from 'lucide-react';
 import {
   BookOpen, FileText, KeyRound, ListChecks, Megaphone, Route, ShieldAlert, ShoppingBag,
@@ -16,7 +15,8 @@ import type { Toiminto } from './tilannekuva';
 export type VartijanToiminto = Extract<
   Toiminto,
   'kierros' | 'kalusto' | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'toimenpide' | 'ilmoitus'
-> | 'anastus';
+  | 'anastus'
+>;
 
 const TOIMINNOT: { id: VartijanToiminto; nimi: string; ikoni: LucideIcon }[] = [
   { id: 'kierros', nimi: 'Kierros', ikoni: Route },

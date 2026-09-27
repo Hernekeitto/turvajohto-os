@@ -1558,6 +1558,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     else if (toiminto === 'halytykset') setHalytysKohde(kohde);
     else if (toiminto === 'toimenpide') setRaporttiKohde({ kohde, tyyppi: 'guard_action' });
     else if (toiminto === 'ilmoitus') setRaporttiKohde({ kohde, tyyppi: 'guard_jvreport' });
+    else if (toiminto === 'anastus') setRaporttiKohde({ kohde, tyyppi: 'guard_theft' });
     else if (toiminto === 'tiedot') setTietoKohde(kohde);
   };
 
@@ -1832,6 +1833,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       ...(saaNahdaHalytykset ? [{ id: 'halytykset', label: 'Hälytykset ja hätäpainike' }] : []),
       ...(saaKirjataToimenpiteen ? [{ id: 'toimenpide', label: 'Kirjaa toimenpide' }] : []),
       ...(saaKirjataIlmoituksen ? [{ id: 'ilmoitus', label: 'Tapahtumailmoitus' }] : []),
+      ...(saaKirjataAnastuksen ? [{ id: 'anastus', label: 'Anastusilmoitus' }] : []),
       ...(saaNahdaTiedot ? [{ id: 'tiedot', label: 'Kohteen tiedot' }] : []),
       // 'Vaihda kohdetta' päätti ennen vain laitteen tilan. Erässä 17 se päättää vuoron
       // myös palvelimella, joten nimi kertoo sen: vuoron päättyminen on kirjaus, ja
@@ -2508,6 +2510,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             halytykset: saaNahdaHalytykset,
             toimenpide: saaKirjataToimenpiteen,
             ilmoitus: saaKirjataIlmoituksen,
+            anastus: saaKirjataAnastuksen,
             tiedot: saaNahdaTiedot,
           }}
           saaMuokata={saaMuokata}
@@ -2736,9 +2739,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
                   ilmoitus: saaKirjataIlmoituksen,
                   anastus: saaKirjataAnastuksen,
                 }}
-                onToiminto={(toiminto, kohde) => (toiminto === 'anastus'
-                  ? setRaporttiKohde({ kohde, tyyppi: 'guard_theft' })
-                  : avaaToiminto(toiminto, kohde))}
+                onToiminto={avaaToiminto}
               />
             </>
           ) : runko}

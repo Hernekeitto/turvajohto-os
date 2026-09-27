@@ -533,7 +533,7 @@ const raportinNimi = (typeId: string) => (
 export type Toiminto =
   | 'tehtavat' | 'kierros' | 'kierrospohjat' | 'kalusto' | 'mittaristo' | 'jaksoraportit'
   | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'halytykset' | 'toimenpide' | 'ilmoitus'
-  | 'tiedot';
+  | 'anastus' | 'tiedot';
 
 export type Tiivistelma = {
   // Painikkeen alle tuleva rivi: mitä kohteessa on tämän toiminnon osalta tehty.
@@ -582,6 +582,7 @@ export function kohteenToiminnot(
   const tehtavat = lahteet.tehtavat.filter((t) => t.siteId === kohdeId);
   const toimenpiteet = lahteet.raportit.filter((r) => r.siteId === kohdeId && r.typeId === 'guard_action');
   const ilmoitukset = lahteet.raportit.filter((r) => r.siteId === kohdeId && r.typeId === 'guard_jvreport');
+  const anastukset = lahteet.raportit.filter((r) => r.siteId === kohdeId && r.typeId === 'guard_theft');
   // Kohteen kalusto on pankin rivejä joiden sijoitus osoittaa tähän kohteeseen (erä 20).
   // Avoimet pyynnöt lasketaan erikseen ja koko pankista, koska pyydetty esine EI ole
   // vielä kohteella — se on juuri se mitä valikon tiivistelmän on kerrottava.
@@ -615,6 +616,7 @@ export function kohteenToiminnot(
   const viimeisinKierros = uusinAika(kierrokset.map((k) => k.paattyi || k.alkoi));
   const viimeisinToimenpide = uusinAika(toimenpiteet.map((r) => r.luotu || r.date));
   const viimeisinIlmoitus = uusinAika(ilmoitukset.map((r) => r.luotu || r.date));
+  const viimeisinAnastus = uusinAika(anastukset.map((r) => r.luotu || r.date));
   const viimeisinTehtava = uusinAika(tehtavat.map((t) => t.aika));
 
   return {
@@ -706,6 +708,12 @@ export function kohteenToiminnot(
       teksti: ilmoitukset.length === 0
         ? 'Ei tapahtumailmoituksia'
         : `${monikko(ilmoitukset.length, 'ilmoitus', 'ilmoitusta')} · viimeisin ${lyhytAika(viimeisinIlmoitus, nyt)}`,
+      huomio: null,
+    },
+    anastus: {
+      teksti: anastukset.length === 0
+        ? 'Ei anastusilmoituksia'
+        : `${monikko(anastukset.length, 'ilmoitus', 'ilmoitusta')} · viimeisin ${lyhytAika(viimeisinAnastus, nyt)}`,
       huomio: null,
     },
     tiedot: {

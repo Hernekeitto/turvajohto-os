@@ -13,7 +13,7 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   ClipboardList, Route, QrCode, KeyRound, BarChart3, FileText, Megaphone, BookOpen,
-  ListChecks, Siren, ShieldAlert, Info, Pencil, Trash2, MapPin, Phone, ChevronRight,
+  ListChecks, Siren, ShieldAlert, ShoppingBag, Info, Pencil, Trash2, MapPin, Phone, ChevronRight,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
@@ -48,6 +48,7 @@ const TOIMINNOT: { id: Toiminto; nimi: string; ikoni: LucideIcon }[] = [
   { id: 'skenaariot', nimi: 'Skenaariot', ikoni: ListChecks },
   { id: 'toimenpide', nimi: 'Toimenpide', ikoni: FileText },
   { id: 'ilmoitus', nimi: 'Tapahtumailmoitus', ikoni: ShieldAlert },
+  { id: 'anastus', nimi: 'Anastusilmoitus', ikoni: ShoppingBag },
 ];
 
 // Kohteen ylläpito: pohjien laatiminen, kooste ja perustietojen muokkaus. Erillään
