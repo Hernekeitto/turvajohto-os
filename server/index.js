@@ -160,6 +160,7 @@ import { kaytossaOlevatNapit, ratkaiseVastaanottajat, taytaPaikkamerkit, halytys
 import { lisaaJonoon, otaKasittelyyn, kuittaaKasitellyksi, jononPituus } from './smsqueue.js';
 import { salaisuusTasmaa, tulkitseTapahtuma, soveltaTilaraportit, soveltaVastaukset } from './smswebhook.js';
 import { logAudit, readAuditLog } from './audit.js';
+import { siivoaHaku, haeOsoite } from './osoitehaku.js';
 import { lahetaSahkoposti, onkoKonfiguroitu as sahkopostiKonfiguroitu } from './sahkoposti.js';
 import { toimitaTunnustiedot, tulkitseKanavat } from './tunnuslahetys.js';
 import { validateRecords, wouldWipeNonEmptyCollection } from './validation.js';
@@ -1864,6 +1865,33 @@ app.post('/api/laite/:id/nollaa', requireAuth, (req, res) => {
     ip: req.ip,
   });
   res.json({ ok: true });
+});
+
+
+// ====================== OSOITEHAKU ======================
+// Kohteen sijoittaminen kartalle osoitteella. Vain kohteiden muokkaajille, koska muuta
+// käyttöä ei ole — ja koska jokainen haku lähtee ulkoiseen palveluun, jonka
+// käyttöehtoja tämä palvelin on velvollinen noudattamaan (ks. server/osoitehaku.js).
+const osoitehakuLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Liian monta hakua. Odota hetki ja yritä uudelleen.' },
+});
+
+app.get('/api/osoitehaku', requireAuth, osoitehakuLimiter, async (req, res) => {
+  if (!(req.role === 'admin' || canEdit(req.permissions, null, 'guard_sites'))) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta.' });
+  }
+  const haku = siivoaHaku(req.query.q);
+  if (!haku) return res.status(400).json({ ok: false, error: 'Kirjoita vähintään kolme merkkiä.' });
+  try {
+    res.json({ ok: true, tulokset: await haeOsoite(haku) });
+  } catch (e) {
+    console.error('osoitehaku epäonnistui:', e?.message || e);
+    res.status(502).json({ ok: false, error: 'Osoitepalvelu ei vastannut. Valitse sijainti kartalta.' });
+  }
 });
 
 

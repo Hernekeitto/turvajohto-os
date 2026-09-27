@@ -119,6 +119,10 @@ export type Kohde = {
   // kuin contactPhone: man-down-hälytyksessä soitetaan oman vartiointiliikkeen
   // päivystäjälle, ei toimeksiantajalle kello kolme yöllä.
   halytysNumerot?: { nimi?: string; numero: string }[];
+  // Asiakkaan nimeämät henkilöt joihin päivystäjä ottaa yhteyttä kun kohteelta tulee
+  // murto- tai muu hälytys. EI halytysNumerot: niihin server/sms.js lähettää
+  // eskalointiviestin automaattisesti, näihin ei lähetetä mitään. Näkyy hälytyskeskuksessa.
+  ilmoitettavat?: { nimi?: string; numero: string }[];
 
   // Man-down-valvonta (erä 12). KOHTEEN asetus eikä vartijan valinta, ja se on koko
   // siirron syy: 12.9.2026 asti asetus asui selaimen localStoragessa, jolloin vartija

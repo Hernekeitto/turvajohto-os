@@ -17,7 +17,7 @@
 // vielä", ja ilman perustetta se on punainen palkki josta ei seuraa mitään tekemistä.
 import { useState } from 'react';
 import {
-  Check, ChevronDown, ChevronRight, FileText, Loader2, Plus, Siren, TriangleAlert, X,
+  Check, ChevronDown, ChevronRight, FileText, Loader2, Phone, Plus, Siren, TriangleAlert, X,
 } from 'lucide-react';
 
 import {
@@ -108,6 +108,7 @@ export const KeskuksenTehtavat = ({ tehtavat, kohteet, saaMuokata, onMuutos }: P
             <TehtavaKortti
               key={t.id}
               tehtava={t}
+              kohde={kohteet.find((k) => k.id === t.siteId)}
               saaMuokata={saaMuokata}
               tyoskentelee={tyoskentelee}
               onHavainto={(teksti) => aja(() => lisaaHavainto(t.id, teksti))}
@@ -354,9 +355,10 @@ const Ilmoitus = ({
 // --- Yksi tehtävä --------------------------------------------------------------------
 
 const TehtavaKortti = ({
-  tehtava, saaMuokata, tyoskentelee, onHavainto, onRatkaise, onPeru,
+  tehtava, kohde, saaMuokata, tyoskentelee, onHavainto, onRatkaise, onPeru,
 }: {
   tehtava: Halytystehtava;
+  kohde?: Kohde;
   saaMuokata: boolean;
   tyoskentelee: boolean;
   onHavainto: (teksti: string) => void;
@@ -486,6 +488,25 @@ const TehtavaKortti = ({
 
       {auki && (
         <div className="mt-4 space-y-4 border-t border-line-soft pt-3">
+          {/* Asiakkaan ilmoitettavat henkilöt (kohteen hallinta). Päivystäjä soittaa
+              näihin itse — niihin ei lähde mitään automaattisesti. */}
+          {(kohde?.ilmoitettavat || []).some((h) => h.numero) && (
+            <div>
+              <p className="text-xs font-bold text-ink-muted">Asiakkaan ilmoitettavat</p>
+              <div className="mt-1 flex flex-wrap gap-2">
+                {(kohde?.ilmoitettavat || []).filter((h) => h.numero).map((h, i) => (
+                  <a
+                    key={i}
+                    href={`tel:${h.numero.replace(/s/g, '')}`}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-sunken px-3 py-1.5 text-xs font-medium text-ink-body hover:bg-surface transition-colors"
+                  >
+                    <Phone size={13} />
+                    {h.nimi ? `${h.nimi} · ` : ''}{h.numero}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
           {/* Yksiköt aikoineen. Tämä on se taulukko josta vasteaika luetaan. */}
           {mukana.length > 0 && (
             <div>

@@ -1,12 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, ClipboardList, GraduationCap, Building2, CheckSquare, ListChecks, FolderOpen, MapPin, CalendarClock, AlertTriangle, Route } from 'lucide-react';
+import { Plus, Trash2, ClipboardList, GraduationCap, Building2, CheckSquare, ListChecks, FolderOpen, CalendarClock, AlertTriangle, Route } from 'lucide-react';
 import { Kentta } from './Kentta';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
-import { Kartta } from '../shared/komponentit/Kartta';
-import {
-  VYOHYKEVARIT, VYOHYKKEEN_MIN_PISTEET, VYOHYKESAANNOT, uusiVyohykeId, type Piste,
-} from '../shared/vyohykkeet';
-import { luoMuunnos } from '../shared/georeferointi';
+import { KohteenSijaintikartta, OLETUS_SADE_KM } from './kartta/KohteenSijaintikartta';
 import { paikallinenPaiva } from '../shared/ajat';
 import { muotoileTunniste } from '../shared/tunnisteet';
 import { KohteenTiedostot } from './KohteenTiedostot';
@@ -69,9 +65,10 @@ type Props = {
   tiedostot: KohteenTiedosto[];
   onLisaaTiedosto: (tiedosto: File) => Promise<void>;
   onPoistaTiedosto: (id: string) => Promise<void>;
-  // Pohjakartta kulkee kohteen kentässä eikä tiedostolistassa, joten sillä on oma
-  // lähetyksensä (ks. GuardApp: lataaKartta).
-  onLataaKartta: (tiedosto: File) => Promise<void>;
+  // Pohjakartan lähetys. EI ENÄÄ KÄYTÖSSÄ: pohjakartta ja vyöhykkeet siirtyivät kohteen
+  // tiedostokansioon 27.9.2026. Valinnainen vain siksi, että GuardApp välittää sen yhä;
+  // poistetaan sieltä seuraavan GuardApp-muutoksen yhteydessä.
+  onLataaKartta?: (tiedosto: File) => Promise<void>;
   saaMuokata: boolean;
 };
 
@@ -99,71 +96,9 @@ export const KohteenHallinta = ({
   tiedostot,
   onLisaaTiedosto,
   onPoistaTiedosto,
-  onLataaKartta,
   saaMuokata,
 }: Props) => {
   const [valilehti, setValilehti] = useState<Valilehti>('perustiedot');
-  const [karttaLataa, setKarttaLataa] = useState(false);
-  const [karttaVirhe, setKarttaVirhe] = useState<string | null>(null);
-  const [vyohykeMuokkaus, setVyohykeMuokkaus] = useState(false);
-  const [piirrettava, setPiirrettava] = useState<Piste[]>([]);
-  const [uusiNimi, setUusiNimi] = useState('');
-  const [uusiVari, setUusiVari] = useState(VYOHYKEVARIT[0].id);
-  // Kartan kalibrointi (erä 7): kohtia kuvalla joiden oikeat koordinaatit tiedetään.
-  // Ilman kalibrointia vyöhykkeiden hälytyssäännöt eivät voi laueta, koska GPS-sijainnista
-  // ei voi päätellä millä vyöhykkeellä henkilö on.
-  const [kalibrointiTila, setKalibrointiTila] = useState(false);
-  const [kalibrointiPiste, setKalibrointiPiste] = useState<Piste | null>(null);
-  const [kalibrointiLat, setKalibrointiLat] = useState('');
-  const [kalibrointiLon, setKalibrointiLon] = useState('');
-
-  const kohteenVyohykkeet = kohde.zones || [];
-  const kalibrointi = kohde.mapRef || [];
-  const muunnos = luoMuunnos(kalibrointi);
-
-  const lisaaKalibrointipiste = () => {
-    if (!kalibrointiPiste) return;
-    const lat = Number(String(kalibrointiLat).replace(',', '.'));
-    const lon = Number(String(kalibrointiLon).replace(',', '.'));
-    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
-      setKarttaVirhe('Tarkista koordinaatit. Esimerkki: 61.4941 ja 23.7651.');
-      return;
-    }
-    setKarttaVirhe(null);
-    onChange({ ...kohde, mapRef: [...kalibrointi, { img: kalibrointiPiste, gps: { lat, lon } }] });
-    setKalibrointiPiste(null);
-    setKalibrointiLat('');
-    setKalibrointiLon('');
-  };
-
-  const lahetaKartta = async (tiedosto?: File) => {
-    if (!tiedosto) return;
-    setKarttaVirhe(null);
-    setKarttaLataa(true);
-    try {
-      await onLataaKartta(tiedosto);
-    } catch (e: any) {
-      setKarttaVirhe(e?.message || 'Kartan lähetys epäonnistui.');
-    } finally {
-      setKarttaLataa(false);
-    }
-  };
-
-  const lisaaVyohyke = () => {
-    if (piirrettava.length < VYOHYKKEEN_MIN_PISTEET) return;
-    const nimi = uusiNimi.trim();
-    if (!nimi) {
-      setKarttaVirhe('Anna vyöhykkeelle nimi.');
-      return;
-    }
-    setKarttaVirhe(null);
-    onChange({
-      ...kohde,
-      zones: [...kohteenVyohykkeet, { id: uusiVyohykeId(), nimi, vari: uusiVari, pisteet: piirrettava }],
-    });
-    setPiirrettava([]);
-    setUusiNimi('');
-  };
   const [uusiPerehdytys, setUusiPerehdytys] = useState({
     nimi: '', employeeId: '', username: '', pvm: paikallinenPaiva(), perehdyttaja: '',
     vuorotyyppiIdt: [] as string[],
@@ -362,59 +297,59 @@ export const KohteenHallinta = ({
               tyyppi="tel"
             />
           </div>
-          <Kentta
-            label="Ohjeet vartijalle"
-            arvo={kohde.notes || ''}
-            onChange={(v) => onChange({ ...kohde, notes: v })}
-            placeholder="Kulkuohjeet, hälytysjärjestelmä, erityishuomiot"
-            monirivinen
-          />
 
-          {/* Hälytysnumerot (erä 7). ERI ASIA KUIN YHTEYSHENKILÖ: man-down- tai
-              hätäpainikehälytyksessä soitetaan oman vartiointiliikkeen päivystäjälle, ei
-              toimeksiantajalle kello kolme yöllä. Ilman numeroita hälytys jää sovelluksen
-              sisälle — sitä ei arvata mistään muualta. */}
+          {/* Asiakkaan ilmoitettavat henkilöt.
+
+              EIVÄT OLE HÄLYTYSNUMEROITA. Kaikki hälytykset — man-down, hätäpainike,
+              kuittaamaton ajastin — menevät hälytyskeskukseen (HÄLKE), eikä tästä listasta
+              lähde mitään automaattisesti. Nämä ovat ne asiakkaan nimeämät ihmiset joihin
+              päivystäjä ottaa yhteyttä kun kohteelta tulee murto- tai muu hälytys.
+
+              Oma kenttänsä (ilmoitettavat) eikä vanha halytysNumerot, koska
+              server/sms.js lähettää halytysNumerot-kentän numeroihin eskalointiviestin:
+              sama kenttä uudella merkityksellä olisi lähettänyt man-down-viestin
+              asiakkaalle kello kolme yöllä. */}
           <div className="border-t border-line-soft pt-4">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-              <h3 className="text-sm font-bold text-ink-strong">Hälytysnumerot</h3>
+              <h3 className="text-sm font-bold text-ink-strong">Asiakkaan ilmoitettavat henkilöt</h3>
               {saaMuokata && (
                 <button
                   type="button"
                   onClick={() => onChange({
                     ...kohde,
-                    halytysNumerot: [...(kohde.halytysNumerot || []), { nimi: '', numero: '' }],
+                    ilmoitettavat: [...(kohde.ilmoitettavat || []), { nimi: '', numero: '' }],
                   })}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-line-soft hover:bg-surface-muted rounded-lg text-xs font-medium text-ink-body transition-colors"
                 >
                   <Plus size={13} />
-                  Lisää numero
+                  Lisää henkilö
                 </button>
               )}
             </div>
             <p className="text-xs text-ink-muted mb-3">
-              Näihin lähtee tekstiviesti kun hälytys eskaloituu: ajastin jää kuittaamatta,
-              man-down laukeaa tai vartija painaa hätäpainiketta.
+              Henkilöt joihin asiakas haluaa että otetaan yhteyttä, kun kohteelta tulee
+              murto- tai muu hälytys. Päivystäjä näkee listan hälytyskeskuksessa. Näihin ei
+              lähetetä mitään automaattisesti.
             </p>
-            {(kohde.halytysNumerot || []).length === 0 ? (
-              <p className="text-xs text-warning-ink bg-warning-soft border border-warning/30 rounded-lg p-2">
-                Numeroita ei ole määritetty. Lauennut hälytys näkyy vain sovelluksessa eikä
-                tavoita ketään puhelimitse.
+            {(kohde.ilmoitettavat || []).length === 0 ? (
+              <p className="text-xs text-ink-muted">
+                Ei ilmoitettavia henkilöitä.
               </p>
             ) : (
               <ul className="space-y-2">
-                {(kohde.halytysNumerot || []).map((rivi, i) => (
+                {(kohde.ilmoitettavat || []).map((rivi, i) => (
                   <li key={i} className="flex flex-wrap gap-2 items-center">
                     <input
                       type="text"
                       value={rivi.nimi || ''}
                       onChange={(e) => onChange({
                         ...kohde,
-                        halytysNumerot: (kohde.halytysNumerot || []).map((r, j) => (
+                        ilmoitettavat: (kohde.ilmoitettavat || []).map((r, j) => (
                           j === i ? { ...r, nimi: e.target.value } : r
                         )),
                       })}
                       disabled={!saaMuokata}
-                      placeholder="Kenen numero (esim. Päivystäjä)"
+                      placeholder="Nimi ja rooli (esim. Matti Meikäläinen, kiinteistöpäällikkö)"
                       className="flex-1 min-w-[150px] rounded-lg border border-line-soft p-2 text-sm"
                     />
                     <input
@@ -422,7 +357,7 @@ export const KohteenHallinta = ({
                       value={rivi.numero || ''}
                       onChange={(e) => onChange({
                         ...kohde,
-                        halytysNumerot: (kohde.halytysNumerot || []).map((r, j) => (
+                        ilmoitettavat: (kohde.ilmoitettavat || []).map((r, j) => (
                           j === i ? { ...r, numero: e.target.value } : r
                         )),
                       })}
@@ -435,9 +370,9 @@ export const KohteenHallinta = ({
                         type="button"
                         onClick={() => onChange({
                           ...kohde,
-                          halytysNumerot: (kohde.halytysNumerot || []).filter((_, j) => j !== i),
+                          ilmoitettavat: (kohde.ilmoitettavat || []).filter((_, j) => j !== i),
                         })}
-                        title="Poista numero"
+                        title="Poista henkilö"
                         className="p-2 text-ink-muted hover:text-danger"
                       >
                         <Trash2 size={15} />
@@ -447,114 +382,6 @@ export const KohteenHallinta = ({
                 ))}
               </ul>
             )}
-          </div>
-
-          {/* Avaintiedot (erä 22).
-
-              Nämä näkyvät hälytystehtävän avainvälilehdellä sille vartijalle joka on
-              OTTANUT TEHTÄVÄN VASTAAN — ei kaikille jotka hälytyksen näkevät. Hälytyksen
-              näkeminen on hälytys, ei pääsy kohteen avaimiin.
-
-              Avainten lisätiedot ja master-koodi salataan levylle (server/store.js), ja
-              koodin katsominen kirjataan auditlokiin. */}
-          <div className="border-t border-line-soft pt-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-              <h3 className="text-sm font-bold text-ink-strong">Avaintiedot</h3>
-              {saaMuokata && (
-                <button
-                  type="button"
-                  onClick={() => onChange({
-                    ...kohde,
-                    avaimet: [...(kohde.avaimet || []), { numero: '', lisatieto: '' }],
-                  })}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-line-soft hover:bg-surface-muted rounded-lg text-xs font-medium text-ink-body transition-colors"
-                >
-                  <Plus size={13} />
-                  Lisää avain
-                </button>
-              )}
-            </div>
-            <p className="text-xs text-ink-muted mb-3">
-              Avainnumerot näkyvät hälytystehtävän avainvälilehdellä. Lisätieto
-              (&rdquo;käy pääoveen&rdquo;) ja master-koodi tallennetaan salattuina.
-            </p>
-            {(kohde.avaimet || []).length > 0 && (
-              <ul className="space-y-2 mb-4">
-                {(kohde.avaimet || []).map((rivi, i) => (
-                  <li key={i} className="flex flex-wrap gap-2 items-center">
-                    <input
-                      type="text"
-                      value={rivi.numero || ''}
-                      onChange={(e) => onChange({
-                        ...kohde,
-                        avaimet: (kohde.avaimet || []).map((r, j) => (
-                          j === i ? { ...r, numero: e.target.value } : r
-                        )),
-                      })}
-                      disabled={!saaMuokata}
-                      placeholder="Avaimen numero (esim. 1084)"
-                      className="w-44 rounded-lg border border-line-soft p-2 text-sm"
-                    />
-                    <input
-                      type="text"
-                      value={rivi.lisatieto || ''}
-                      onChange={(e) => onChange({
-                        ...kohde,
-                        avaimet: (kohde.avaimet || []).map((r, j) => (
-                          j === i ? { ...r, lisatieto: e.target.value } : r
-                        )),
-                      })}
-                      disabled={!saaMuokata}
-                      placeholder="Lisätieto (esim. käy pääoveen – 10.2.26)"
-                      className="flex-1 min-w-[180px] rounded-lg border border-line-soft p-2 text-sm"
-                    />
-                    {saaMuokata && (
-                      <button
-                        type="button"
-                        onClick={() => onChange({
-                          ...kohde,
-                          avaimet: (kohde.avaimet || []).filter((_, j) => j !== i),
-                        })}
-                        title="Poista avain"
-                        className="p-2 text-ink-muted hover:text-danger"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Kentta
-                label="Hälytysjärjestelmä"
-                arvo={kohde.halytysjarjestelma || ''}
-                onChange={(v) => onChange({ ...kohde, halytysjarjestelma: v })}
-                placeholder="esim. AJAX"
-              />
-              <Kentta
-                label="Avainten ja koodipaneelin sijainti"
-                arvo={kohde.avaintenSailytys || ''}
-                onChange={(v) => onChange({ ...kohde, avaintenSailytys: v })}
-                placeholder="esim. Pääaulassa, tuulikaapissa"
-              />
-            </div>
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-ink-body mb-1.5">Master-koodi</label>
-              <input
-                type="password"
-                value={kohde.masterkoodi || ''}
-                onChange={(e) => onChange({ ...kohde, masterkoodi: e.target.value })}
-                disabled={!saaMuokata}
-                autoComplete="new-password"
-                placeholder="Hälytysjärjestelmän ohituskoodi"
-                className="w-full rounded-lg border border-line-soft p-2 text-sm"
-              />
-              <p className="text-xs text-ink-muted mt-1.5">
-                Kentällä koodi avataan erikseen silmäkuvakkeesta, ja jokainen avaaminen jää
-                auditlokiin.
-              </p>
-            </div>
           </div>
 
           {/* Hälytystehtävien kohdennus (erä 22).
@@ -572,7 +399,31 @@ export const KohteenHallinta = ({
               lisäksi se näkyy niille jotka ovat alla olevalla säteellä — mutta vain jos
               sijaintiseuranta on käytössä. Ilman seurantaa säde ei tuo ketään.
             </p>
-            <div className="grid gap-4 sm:grid-cols-3">
+            <KohteenSijaintikartta
+              gps={kohde.gps}
+              sadeKm={kohde.halytysSadeKm}
+              osoite={kohde.address}
+              onValitse={(gps) => onChange({ ...kohde, gps })}
+              saaMuokata={saaMuokata}
+            />
+            <div className="grid gap-4 sm:grid-cols-3 mt-4">
+              <Kentta
+                label="Säde (km)"
+                arvo={kohde.halytysSadeKm === undefined ? '' : String(kohde.halytysSadeKm)}
+                onChange={(v) => {
+                  const luku = Number(v.replace(',', '.'));
+                  onChange({
+                    ...kohde,
+                    halytysSadeKm: v.trim() === '' || !Number.isFinite(luku) || luku <= 0
+                      ? undefined
+                      : luku,
+                  });
+                }}
+                placeholder={String(OLETUS_SADE_KM)}
+              />
+              {/* Koordinaatit näkyvät ja ovat muokattavissa myös kartan rinnalla: kartta
+                  voi jäädä lataamatta (tiilet, WebGL), ja joskus tarkka sijainti on
+                  saatu asiakkaalta numeroina. */}
               <Kentta
                 label="Leveysaste"
                 arvo={kohde.gps ? String(kohde.gps.lat) : ''}
@@ -591,25 +442,10 @@ export const KohteenHallinta = ({
                 })}
                 placeholder="23.7610"
               />
-              <Kentta
-                label="Säde (km)"
-                arvo={kohde.halytysSadeKm === undefined ? '' : String(kohde.halytysSadeKm)}
-                onChange={(v) => {
-                  const luku = Number(v.replace(',', '.'));
-                  onChange({
-                    ...kohde,
-                    halytysSadeKm: v.trim() === '' || !Number.isFinite(luku) || luku <= 0
-                      ? undefined
-                      : luku,
-                  });
-                }}
-                placeholder="5"
-              />
             </div>
-            {!kohde.gps && (
-              <p className="text-xs text-ink-muted mt-2">
-                Ilman koordinaatteja säde lasketaan pohjakartan ensimmäisestä
-                kalibrointipisteestä. Jos sitäkään ei ole, säde ei kohdenna kenellekään.
+            {!kohde.gps && !(kohde.mapRef || []).length && (
+              <p className="text-xs text-warning-ink bg-warning-soft border border-warning/30 rounded-lg p-2 mt-2">
+                Kohteella ei ole sijaintia, joten säde ei kohdenna hälytyksiä kenellekään.
               </p>
             )}
           </div>
@@ -747,234 +583,6 @@ export const KohteenHallinta = ({
             )}
           </div>
 
-          {/* Pohjakartta ja vyöhykkeet. Sama malli kuin tapahtumapuolella: kartta on
-              kohteen kenttä, ja vyöhykkeet piirretään sen päälle osuuskoordinaatteina. */}
-          <div className="border-t border-line-soft pt-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-              <h3 className="text-sm font-bold text-ink-strong">Pohjakartta ja vyöhykkeet</h3>
-              {saaMuokata && (
-                <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-1.5 bg-surface border border-line-soft hover:bg-surface-muted rounded-lg text-xs font-medium text-ink-body transition-colors">
-                  <MapPin size={14} className="text-accent" />
-                  {karttaLataa ? 'Lähetetään…' : kohde.mapUploadId ? 'Vaihda kartta' : 'Lataa kartta'}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => lahetaKartta(e.target.files?.[0])}
-                  />
-                </label>
-              )}
-            </div>
-
-            {karttaVirhe && <p className="text-xs text-danger mb-2">{karttaVirhe}</p>}
-
-            <Kartta
-              karttaId={kohde.mapUploadId}
-              vyohykkeet={kohteenVyohykkeet}
-              piirrettava={
-                vyohykeMuokkaus ? piirrettava
-                  : kalibrointiTila
-                    ? [...kalibrointi.map((k) => k.img), ...(kalibrointiPiste ? [kalibrointiPiste] : [])]
-                    : undefined
-              }
-              onKarttaKlikkaus={
-                vyohykeMuokkaus ? (p) => setPiirrettava((edellinen) => [...edellinen, p])
-                  : kalibrointiTila ? (p) => setKalibrointiPiste(p)
-                    : undefined
-              }
-              tyhjaTeksti={
-                saaMuokata
-                  ? 'Pohjakarttaa ei ole ladattu. Lataa kohteen pohjapiirros, niin voit piirtää siihen vyöhykkeet.'
-                  : 'Pohjakarttaa ei ole ladattu.'
-              }
-            />
-
-            {kohde.mapUploadId && saaMuokata && (
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={() => { setVyohykeMuokkaus((o) => !o); setPiirrettava([]); setKalibrointiTila(false); }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                    vyohykeMuokkaus ? 'bg-ink-strong text-surface' : 'bg-surface border border-line-soft text-ink-body hover:bg-surface-muted'
-                  }`}
-                >
-                  {vyohykeMuokkaus ? 'Lopeta muokkaus' : 'Piirrä vyöhykkeitä'}
-                </button>
-                {/* Kalibrointi on vyöhykkeiden vieressä, koska se on niiden ehto: ilman
-                    sitä vyöhyke on vain kuva eikä siihen voi sitoa hälytystä. */}
-                <button
-                  type="button"
-                  onClick={() => { setKalibrointiTila((o) => !o); setKalibrointiPiste(null); setVyohykeMuokkaus(false); }}
-                  className={`ml-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                    kalibrointiTila ? 'bg-ink-strong text-surface' : 'bg-surface border border-line-soft text-ink-body hover:bg-surface-muted'
-                  }`}
-                >
-                  {kalibrointiTila ? 'Lopeta kalibrointi' : 'Kalibroi kartta'}
-                  {kalibrointi.length > 0 && !kalibrointiTila && (
-                    <span className="ml-1.5 font-normal text-ink-muted">
-                      ({kalibrointi.length}{muunnos ? '' : ' — ei riitä'})
-                    </span>
-                  )}
-                </button>
-
-                {kalibrointiTila && (
-                  <div className="mt-3 bg-sunken border border-line-soft rounded-xl p-4 space-y-3">
-                    <p className="text-xs text-ink-muted">
-                      Napsauta kartalta kohta jonka koordinaatit tiedät (esim. portti tai rakennuksen
-                      kulma) ja kirjoita sen leveys- ja pituusaste. Vähintään kaksi pistettä, kolme on
-                      tarkempi. Ilman kalibrointia vyöhykkeiden hälytyssäännöt eivät voi laueta.
-                    </p>
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <span className="text-xs text-ink-muted">
-                        {kalibrointiPiste ? 'Kohta valittu.' : 'Napsauta karttaa.'}
-                      </span>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={kalibrointiLat}
-                        onChange={(e) => setKalibrointiLat(e.target.value)}
-                        placeholder="Leveysaste, esim. 61.4941"
-                        className="flex-1 min-w-[140px] rounded-lg border border-line-soft p-2 text-sm"
-                      />
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={kalibrointiLon}
-                        onChange={(e) => setKalibrointiLon(e.target.value)}
-                        placeholder="Pituusaste, esim. 23.7651"
-                        className="flex-1 min-w-[140px] rounded-lg border border-line-soft p-2 text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={lisaaKalibrointipiste}
-                        disabled={!kalibrointiPiste}
-                        className="px-3 py-2 bg-accent text-surface disabled:bg-line-soft disabled:text-ink-muted text-xs font-bold rounded-lg"
-                      >
-                        Lisää piste
-                      </button>
-                    </div>
-                    {kalibrointi.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
-                        {kalibrointi.map((k, i) => (
-                          <span key={i} className="px-2 py-1 rounded-lg border border-line-soft bg-surface">
-                            {k.gps.lat.toFixed(5)}, {k.gps.lon.toFixed(5)}
-                          </span>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => onChange({ ...kohde, mapRef: [] })}
-                          className="text-danger hover:underline"
-                        >
-                          Tyhjennä
-                        </button>
-                      </div>
-                    )}
-                    {kalibrointi.length >= 2 && !muunnos && (
-                      <p className="text-xs text-danger-ink bg-danger-soft border border-danger/30 rounded-lg p-2">
-                        Pisteet eivät kelpaa muunnokseen: ne ovat samalla suoralla tai liian lähellä
-                        toisiaan. Tyhjennä ja ota pisteet kauempaa toisistaan.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {vyohykeMuokkaus && (
-                  <div className="mt-3 flex flex-wrap gap-2 items-center">
-                    <span className="text-xs text-ink-muted">
-                      Napsauta karttaa kulmiin (vähintään {VYOHYKKEEN_MIN_PISTEET}). Napsautettu: {piirrettava.length}.
-                    </span>
-                    <input
-                      type="text"
-                      value={uusiNimi}
-                      onChange={(e) => setUusiNimi(e.target.value)}
-                      placeholder="Esim. Piha tai Kerros 2"
-                      className="flex-1 min-w-[160px] rounded-lg border border-line-soft p-2 text-sm"
-                    />
-                    <select
-                      value={uusiVari}
-                      onChange={(e) => setUusiVari(e.target.value)}
-                      aria-label="Vyöhykkeen väri"
-                      className="rounded-lg border border-line-soft p-2 text-sm"
-                    >
-                      {VYOHYKEVARIT.map((v) => <option key={v.id} value={v.id}>{v.nimi}</option>)}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={lisaaVyohyke}
-                      disabled={piirrettava.length < VYOHYKKEEN_MIN_PISTEET}
-                      className="px-3 py-2 bg-accent text-surface disabled:bg-line-soft disabled:text-ink-muted text-xs font-bold rounded-lg"
-                    >
-                      Tallenna vyöhyke
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPiirrettava((edellinen) => edellinen.slice(0, -1))}
-                      disabled={piirrettava.length === 0}
-                      className="px-3 py-2 bg-surface border border-line-soft text-ink-body disabled:text-ink-muted text-xs font-medium rounded-lg"
-                    >
-                      Kumoa piste
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {kohteenVyohykkeet.length > 0 && (
-              <>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {kohteenVyohykkeet.map((v) => (
-                    <span key={v.id} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border border-line-soft bg-surface text-xs font-medium text-ink-body">
-                      {v.nimi}
-                      {/* Hälytyssääntö vyöhykkeen vieressä: sääntö on merkityksetön ilman
-                          sitä aluetta jolle se on piirretty, ja tässä näkee kerralla
-                          mitkä alueet hälyttävät. */}
-                      {saaMuokata ? (
-                        <select
-                          value={v.halytys || 'ei'}
-                          onChange={(e) => onChange({
-                            ...kohde,
-                            zones: kohteenVyohykkeet.map((z) => (
-                              z.id === v.id ? { ...z, halytys: e.target.value as typeof z.halytys } : z
-                            )),
-                          })}
-                          aria-label={`Vyöhykkeen ${v.nimi} hälytyssääntö`}
-                          title={VYOHYKESAANNOT.find((s) => s.id === (v.halytys || 'ei'))?.selite}
-                          className="text-[11px] rounded border border-line-soft bg-surface text-ink-muted py-0.5 pl-1 pr-4"
-                        >
-                          {VYOHYKESAANNOT.map((s) => <option key={s.id} value={s.id}>{s.nimi}</option>)}
-                        </select>
-                      ) : v.halytys && v.halytys !== 'ei' ? (
-                        <span className="text-[11px] text-ink-muted font-normal">
-                          {v.halytys === 'saapuminen' ? 'hälyttää saapumisesta' : 'hälyttää poistumisesta'}
-                        </span>
-                      ) : null}
-                      {saaMuokata && (
-                        <button
-                          type="button"
-                          onClick={() => onChange({ ...kohde, zones: kohteenVyohykkeet.filter((z) => z.id !== v.id) })}
-                          title={`Poista vyöhyke ${v.nimi}`}
-                          className="text-ink-muted hover:text-danger"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </span>
-                  ))}
-                </div>
-                {kohteenVyohykkeet.some((v) => v.halytys && v.halytys !== 'ei') && !muunnos && (
-                  <p className="text-xs text-warning-ink bg-warning-soft border border-warning/30 rounded-lg p-2 mt-2">
-                    Vyöhykehälytykset on määritetty, mutta karttaa ei ole kalibroitu. Ilman
-                    kalibrointia GPS-sijainnista ei voi päätellä millä vyöhykkeellä henkilö on,
-                    eikä sääntö voi laueta.
-                  </p>
-                )}
-              </>
-            )}
-
-            <p className="text-xs text-ink-muted mt-2">
-              Kartta ja vyöhykkeet tallentuvat vasta kun tallennat kohteen.
-            </p>
-          </div>
         </div>
       )}
 
