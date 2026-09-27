@@ -1,14 +1,9 @@
 // Anastusilmoituksen tuloste (PDF), 27.9.2026.
 //
-// Kaksi versiota samasta kirjauksesta, koska vastaanottajat tarvitsevat eri asiat:
-//
-//   poliisi    kaikki tiedot, myös anastajan koko henkilötunnus. Poliisi tunnistaa
-//              epäillyn ja käsittelee asian rangaistusvaatimusmenettelyssä, johon
-//              kauppiaan suostumus on kirjattu.
-//   kauppias   korvausvaatimus ja tapahtuman kuvaus. Henkilötunnuksesta näytetään vain
-//              syntymäaikaosa: kauppias tarvitsee henkilön yksilöimiseen nimen ja
-//              syntymäajan, eikä koko tunnus kuulu tositteeseen joka kiertää kaupan
-//              papereissa. Jos kauppias tarvitsee koko tunnuksen, se tulee poliisilta.
+// Kaksi kappaletta samasta kirjauksesta: poliisin ja kauppiaan. Sisältö on sama, myös
+// anastajan koko henkilötunnus molemmissa (käyttäjän päätös 27.9.2026: kauppias
+// tarvitsee sen korvausvaatimukseen). Kappaleet eroavat vain alatunnisteen merkinnästä,
+// jotta paperista näkee kenelle se on luovutettu.
 //
 // Tuloste on KOPIO tallennetusta kirjauksesta eikä erillinen lomake: kaikki tieto tulee
 // tietueesta, ja summat lasketaan samalla funktiolla kuin lomakkeella (anastus.ts), jotta
@@ -19,13 +14,6 @@ import { euroina, laskeSummat, riviAlv0Snt } from './anastus.ts';
 import type { GuardRaportti } from './tyypit';
 
 export type Vastaanottaja = 'poliisi' | 'kauppias';
-
-// "010190-123A" -> "010190-****". Muu kuin hetun muotoinen arvo peitetään kokonaan.
-export const peitaHetu = (hetu: string) => {
-  const t = hetu.trim();
-  if (!t) return '';
-  return /^\d{6}[-+A-Za-z]/.test(t) ? `${t.slice(0, 7)}****` : '••••••••••';
-};
 
 const aika = (paikallinen?: string) => {
   if (!paikallinen) return '—';
@@ -60,9 +48,7 @@ export function anastustulosteHtml(r: GuardRaportti, vastaanottaja: Vastaanottaj
   const kulut = r.theftOtherCosts || [];
   const s = laskeSummat(tuotteet, kulut);
   const nimi = [r.subjectLastName, r.subjectFirstNames].filter(Boolean).join(' ');
-  const hetu = r.subjectPersonalId
-    ? (vastaanottaja === 'poliisi' ? r.subjectPersonalId : peitaHetu(r.subjectPersonalId))
-    : '';
+  const hetu = r.subjectPersonalId || '';
   const suostumus = r.theftPenaltyOrderConsent === true ? 'Kyllä'
     : r.theftPenaltyOrderConsent === false ? 'Ei' : 'Ei vastattu';
 
@@ -102,9 +88,6 @@ ${kulut.length > 0 ? `<h2>Muut kulut</h2>
   <tr class="yht"><td>Korvausvaatimus yhteensä</td><td class="luku">${euroina(s.vaatimusSnt)}</td></tr>
 </table>
 <p class="ohjeteksti">Korvausta vaaditaan tuotteiden arvonlisäverottomasta hinnasta.</p>
-${vastaanottaja === 'kauppias' && r.subjectPersonalId
-    ? '<p class="ohjeteksti">Henkilötunnuksen loppuosa on peitetty. Koko tunnus on toimitettu poliisille.</p>'
-    : ''}
 <div class="nimet">
   <div>
     <div class="viiva"></div>

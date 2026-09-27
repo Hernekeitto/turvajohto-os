@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { anastustulosteHtml, peitaHetu } from './anastustuloste.ts';
+import { anastustulosteHtml } from './anastustuloste.ts';
 import type { GuardRaportti } from './tyypit.ts';
 
 const raportti: GuardRaportti = {
@@ -14,18 +14,13 @@ const raportti: GuardRaportti = {
   theftOtherCosts: [{ id: 'k', selite: 'Selvityskulut', summa: 60 }],
 };
 
-test('henkilötunnuksen peitto jättää syntymäajan', () => {
-  assert.equal(peitaHetu('010190-123A'), '010190-****');
-  assert.equal(peitaHetu('jotain muuta'), '••••••••••');
-  assert.equal(peitaHetu(''), '');
-});
-
-test('poliisin kappaleessa koko hetu, kauppiaan kappaleessa peitetty', () => {
+test('molemmissa kappaleissa koko hetu, kappale merkitty alatunnisteeseen', () => {
   const poliisi = anastustulosteHtml(raportti, 'poliisi');
   const kauppias = anastustulosteHtml(raportti, 'kauppias');
   assert.ok(poliisi.includes('010190-123A'));
-  assert.ok(!kauppias.includes('010190-123A'));
-  assert.ok(kauppias.includes('010190-****'));
+  assert.ok(kauppias.includes('010190-123A'));
+  assert.ok(poliisi.includes('Poliisin kappale'));
+  assert.ok(kauppias.includes('Kauppiaan kappale'));
 });
 
 test('summat ja käyttäjän tekstin escapetus', () => {
