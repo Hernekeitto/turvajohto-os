@@ -15,6 +15,7 @@ import {
   setMustChangePassword,
   recordLogin,
   getTotpSecret,
+  deleteUser,
   resetTotpSecret,
   setTotpRequired,
   forceLogout,
@@ -1279,7 +1280,7 @@ async function toimitaTunnus({ req, kanavat, username, password, employeeId, nim
   // nollauksella käyttäjähallinnasta.
   let totp = null;
   const kohde = findUser(username);
-  if (syy === 'luotu' && kanavat.includes('sahkoposti') && kohde
+  if ((syy === 'luotu' || syy === 'authenticator') && kanavat.includes('sahkoposti') && kohde
       && kohde.role !== 'admin' && kohde.totp_required !== false) {
     const secret = getTotpSecret(username);
     if (secret) {
@@ -1490,9 +1491,56 @@ app.post('/api/users/:username/totp/reset', requireAuth, requireAdmin, async (re
   }
   const secret = resetTotpSecret(username);
   logAudit({ user: req.username, action: 'totp_reset', targetUser: username });
+  // Uusi avain voidaan lähettää työntekijän sähköpostiin (pyynnössä lahetys.sahkoposti).
+  // Vain sähköposti: avain on toinen tunnistustekijä, eikä se kulje tekstiviestillä
+  // (ks. tunnuslahetys.js). Salasana ei muutu, joten viesti yksin ei anna pääsyä.
+  let toimitus = null;
+  if (req.body?.lahetys?.sahkoposti === true) {
+    try {
+      toimitus = await toimitaTunnus({
+        req,
+        kanavat: ['sahkoposti'],
+        username,
+        password: null,
+        employeeId: user.employeeId || null,
+        nimi: user.nickname || username,
+        puoli: Array.isArray(user.tuotteet) && user.tuotteet.length === 1 ? user.tuotteet[0] : req.body?.puoli,
+        syy: 'authenticator',
+      });
+    } catch (err) {
+      console.error('Authenticator-avaimen lähetys epäonnistui:', err?.message);
+      toimitus = { sahkoposti: { tila: 'virhe', viesti: 'Lähetys epäonnistui.' } };
+    }
+  }
   const otpauthUri = buildOtpauthUri(secret, username);
   const qrDataUri = await QRCode.toDataURL(otpauthUri, { width: 220, margin: 1 });
-  res.json({ ok: true, secret, otpauthUri, qrDataUri, totpRequired: user.totp_required !== false });
+  res.json({
+    ok: true, secret, otpauthUri, qrDataUri, totpRequired: user.totp_required !== false,
+    ...(toimitus ? { toimitus } : {}),
+  });
+});
+
+// Tunnuksen poisto (vain pääkäyttäjä). Omaa tunnusta ja viimeistä pääkäyttäjää ei voi
+// poistaa, jottei hallintaan jää kukaan. Tunnistenumero kirjataan korkeimpaan ennen
+// poistoa, jottei se palaa kiertoon (tunnistenumerot.js). Työntekijätietue jää
+// työntekijäpankkiin: tunnus ja henkilö ovat eri asioita.
+app.delete('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
+  const { username } = req.params;
+  const user = findUser(username);
+  if (!user) return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
+  if (username === req.username) {
+    return res.status(400).json({ ok: false, error: 'Omaa tunnusta ei voi poistaa.' });
+  }
+  if (user.roleId === ROLE_ADMIN || user.role === 'admin') {
+    const muitaAdmineja = listUsers().filter((u) => (u.roleId === ROLE_ADMIN || u.role === 'admin') && u.username !== username).length;
+    if (muitaAdmineja === 0) {
+      return res.status(400).json({ ok: false, error: 'Viimeistä pääkäyttäjää ei voi poistaa.' });
+    }
+  }
+  if (Number.isInteger(user.displayId)) kirjaaKorkeinTunniste(Math.max(user.displayId, lueKorkeinTunniste() ?? 0));
+  deleteUser(username);
+  logAudit({ user: req.username, action: 'user_delete', targetUser: username });
+  res.json({ ok: true });
 });
 
 // Ottaa Authenticator-vaatimuksen pois käytöstä / palauttaa sen (esim. käyttäjällä ei

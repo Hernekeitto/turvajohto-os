@@ -244,6 +244,17 @@ export function setTotpRequired(username, required) {
 
 // Pakottaa käyttäjän uloskirjautumaan: kaikki ennen tätä hetkeä myönnetyt evästeet
 // (myös vielä voimassa olevat) mitätöityvät heti, ks. index.js:n getSessionUser.
+// Poistaa tunnuksen kokonaan. Istunto lakkaa samalla, koska requireAuth hylkää
+// evästeen jonka käyttäjää ei löydy. Tunnistenumero EI palaa kiertoon: kutsuja kirjaa
+// sen korkeimpaan (store.js: kirjaaKorkeinTunniste) ennen poistoa.
+export function deleteUser(username) {
+  const users = readUsers();
+  const jaljelle = users.filter((u) => u.username !== username);
+  if (jaljelle.length === users.length) return false;
+  writeUsers(jaljelle);
+  return true;
+}
+
 export function forceLogout(username) {
   const users = readUsers();
   const existing = users.find((u) => u.username === username);

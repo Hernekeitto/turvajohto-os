@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { UserPlus, KeyRound, Smartphone, LogOut, Users } from 'lucide-react';
+import { UserPlus, KeyRound, Smartphone, LogOut, Users, Trash2 } from 'lucide-react';
 import { muotoileTunniste } from '../tunnisteet';
 import { KertaSalasana, type SalasanaNaytto } from '../komponentit/KertaSalasana';
 
@@ -56,6 +56,11 @@ export const Kayttajat = ({ kayttajat, roles, isAdmin, puoli, onMuuttui }: Props
   const [virhe, setVirhe] = useState('');
   const [tallentaa, setTallentaa] = useState(false);
   const [salasana, setSalasana] = useState<SalasanaNaytto | null>(null);
+  const [ilmoitus, setIlmoitus] = useState('');
+  // Authenticatorin nollaus avaa rivin alle vahvistuksen, jossa voi valita uuden avaimen
+  // lähetyksen sähköpostiin. Arvo on sen tunnuksen nimi jolle vahvistus on auki.
+  const [totpAuki, setTotpAuki] = useState<string | null>(null);
+  const [totpLahetys, setTotpLahetys] = useState(true);
   // Käynnissä oleva toimenpide muodossa "<tunnus>:<toiminto>", jotta vain se yksi nappi
   // näyttää odotustilan eikä koko lista lukkiudu.
   const [kesken, setKesken] = useState<string | null>(null);
@@ -166,12 +171,30 @@ export const Kayttajat = ({ kayttajat, roles, isAdmin, puoli, onMuuttui }: Props
     }
   };
 
-  const nollaaTotp = async (username: string) => {
-    if (!window.confirm(`Nollataanko käyttäjän ${username} Authenticator? Hän joutuu lukemaan uuden QR-koodin ennen kuin pääsee sisään.`)) return;
+  // Nollaus vaihtaa avaimen heti: vanha lakkaa toimimasta. Uusi avain voidaan lähettää
+  // tunnukseen kytketyn työntekijän sähköpostiin (server/index.js: totp/reset). Salasana
+  // ei muutu, joten viesti yksin ei anna pääsyä.
+  const nollaaTotp = async (username: string, lahetaSahkoposti: boolean) => {
     setKesken(`${username}:totp`);
     setVirhe('');
+    setIlmoitus('');
     try {
-      await pyynto(`/api/users/${encodeURIComponent(username)}/totp/reset`, { method: 'POST' });
+      const data = await pyynto(`/api/users/${encodeURIComponent(username)}/totp/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lahetys: { sahkoposti: lahetaSahkoposti }, puoli }),
+      });
+      const posti = data.toimitus?.sahkoposti;
+      setIlmoitus(
+        !lahetaSahkoposti
+          ? `Authenticator nollattu: ${username}. Uutta avainta ei lähetetty.`
+          : posti?.tila === 'lahetetty'
+            ? `Authenticator nollattu: ${username}. Uusi avain lähetettiin sähköpostiin.`
+            : posti?.tila === 'kuivaharjoittelu'
+              ? `Authenticator nollattu: ${username}. Sähköpostia ei lähtenyt (lähetysasetukset puuttuvat).`
+              : `Authenticator nollattu: ${username}, mutta avainta ei saatu lähetettyä${posti?.viesti ? `: ${posti.viesti}` : '.'}`,
+      );
+      setTotpAuki(null);
       onMuuttui();
     } catch (e) {
       setVirhe(e instanceof Error ? e.message : 'Nollaus epäonnistui.');
@@ -205,6 +228,29 @@ export const Kayttajat = ({ kayttajat, roles, isAdmin, puoli, onMuuttui }: Props
       onMuuttui();
     } catch (e) {
       setVirhe(e instanceof Error ? e.message : 'Muutos epäonnistui.');
+    } finally {
+      setKesken(null);
+    }
+  };
+
+  // Tunnuksen poisto. Työntekijätietue jää pankkiin, ja tunnistenumero ei palaa kiertoon.
+  const poista = async (username: string) => {
+    if (!window.confirm(
+      `Poistetaanko tunnus ${username} pysyvästi?
+
+`
+      + 'Kirjautuminen lakkaa heti. Työntekijän tiedot säilyvät työntekijäpankissa, ja jo '
+      + 'tehdyt kirjaukset säilyvät ennallaan.',
+    )) return;
+    setKesken(`${username}:poisto`);
+    setVirhe('');
+    setIlmoitus('');
+    try {
+      await pyynto(`/api/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+      setIlmoitus(`Tunnus ${username} poistettu.`);
+      onMuuttui();
+    } catch (e) {
+      setVirhe(e instanceof Error ? e.message : 'Poisto epäonnistui.');
     } finally {
       setKesken(null);
     }
@@ -262,6 +308,11 @@ export const Kayttajat = ({ kayttajat, roles, isAdmin, puoli, onMuuttui }: Props
         </p>
       )}
 
+      {ilmoitus && (
+        <p className="text-sm text-success-ink bg-success-soft border border-success/30 rounded-lg px-4 py-3">
+          {ilmoitus}
+        </p>
+      )}
       {salasana && <KertaSalasana key={salasana.password} {...salasana} onSulje={() => setSalasana(null)} />}
 
       <div className="flex items-center justify-between gap-4">
@@ -413,7 +464,7 @@ export const Kayttajat = ({ kayttajat, roles, isAdmin, puoli, onMuuttui }: Props
                       </button>
                       <button
                         type="button"
-                        onClick={() => nollaaTotp(k.username)}
+                        onClick={() => { setTotpAuki((a) => (a === k.username ? null : k.username)); setTotpLahetys(Boolean(k.employeeId)); }}
                         disabled={kesken === `${k.username}:totp`}
                         title="Nollaa Authenticator"
                         className="p-2 rounded-lg border border-line text-ink-muted hover:text-accent hover:border-line-strong transition-colors"
@@ -431,8 +482,57 @@ export const Kayttajat = ({ kayttajat, roles, isAdmin, puoli, onMuuttui }: Props
                       </button>
                     </>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => poista(k.username)}
+                    disabled={kesken === `${k.username}:poisto`}
+                    title="Poista tunnus"
+                    className="p-2 rounded-lg border border-line text-ink-muted hover:text-danger-ink hover:border-danger/40 transition-colors"
+                  >
+                    <Trash2 size={15} />
+                  </button>
                 </div>
               </div>
+              {totpAuki === k.username && (
+                <div className="mt-3 border border-warning/40 bg-warning-soft rounded-lg p-3 space-y-2">
+                  <p className="text-sm text-warning-ink">
+                    Nollataanko käyttäjän <span className="font-medium">{k.username}</span> Authenticator?
+                    Vanha avain lakkaa toimimasta heti.
+                  </p>
+                  <label className="flex items-start gap-2 text-sm text-ink-body">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={totpLahetys && Boolean(k.employeeId)}
+                      disabled={!k.employeeId}
+                      onChange={(e) => setTotpLahetys(e.target.checked)}
+                    />
+                    <span>
+                      Lähetä uusi avain sähköpostiin
+                      {!k.employeeId && (
+                        <span className="text-ink-muted"> (tunnusta ei ole kytketty työntekijään, joten osoitetta ei ole)</span>
+                      )}
+                    </span>
+                  </label>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTotpAuki(null)}
+                      className="px-3 py-1.5 text-xs font-medium text-ink-body bg-surface border border-line rounded-lg"
+                    >
+                      Peruuta
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => nollaaTotp(k.username, totpLahetys && Boolean(k.employeeId))}
+                      disabled={kesken === `${k.username}:totp`}
+                      className="px-3 py-1.5 text-xs font-bold text-white bg-action hover:bg-action-hover disabled:opacity-60 rounded-lg"
+                    >
+                      {kesken === `${k.username}:totp` ? 'Nollataan…' : 'Nollaa Authenticator'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}

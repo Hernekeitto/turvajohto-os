@@ -51,19 +51,26 @@ const htmlSuojaa = (t) => String(t).replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
 ));
 
-// totp = { secret, qrPng, otpauthUri } vain uudelle tunnukselle, jolla Authenticator on vaatimuksena.
+// syy: 'luotu' (uusi tunnus), 'nollattu' (salasana nollattu) tai 'authenticator'
+// (Authenticator nollattu, uusi avain; salasana ei muuttunut).
+// totp = { secret, qrPng, otpauthUri } uudelle tunnukselle ja Authenticatorin nollaukselle.
 export function rakennaSahkoposti({ nimi, username, osoite, syy, numeroPeitetty, totp = null }) {
+  const vainAvain = syy === 'authenticator';
   const tervehdys = nimi ? `Hei ${nimi},` : 'Hei,';
-  const alku = syy === 'nollattu'
-    ? 'Turvajohto OS -tunnuksesi salasana on nollattu.'
-    : 'Sinulle on luotu tunnus Turvajohto OS -järjestelmään.';
+  const alku = {
+    nollattu: 'Turvajohto OS -tunnuksesi salasana on nollattu.',
+    authenticator: 'Turvajohto OS -tunnuksesi Authenticator-avain on vaihdettu. Vanha avain ei enää '
+      + 'toimi, joten lisää tili sovellukseen uudelleen alla olevilla tiedoilla. Salasanasi ei muuttunut.',
+  }[syy] || 'Sinulle on luotu tunnus Turvajohto OS -järjestelmään.';
   const salasanarivi = numeroPeitetty
     ? `Väliaikainen salasana lähetetään erikseen tekstiviestinä numeroosi ${numeroPeitetty}.`
     : 'Väliaikainen salasana toimitetaan sinulle erikseen.';
   const authKappale = totp
     ? [
       'Authenticator-sovellus (tarvitaan jokaisella kirjautumisella):',
-      '1. Asenna puhelimeesi Google Authenticator tai Microsoft Authenticator.',
+      vainAvain
+        ? '1. Poista sovelluksesta vanha Turvajohto OS -tili, jos se on siellä.'
+        : '1. Asenna puhelimeesi Google Authenticator tai Microsoft Authenticator.',
       '2. Lisää tili skannaamalla tämän viestin QR-koodi, tai syötä avain käsin',
       `   (aikaperusteinen): ${ryhmitaAvain(totp.secret)}`,
       '3. Kirjautuessa annat salasanan jälkeen sovelluksen näyttämän 6-numeroisen koodin.',
@@ -74,14 +81,17 @@ export function rakennaSahkoposti({ nimi, username, osoite, syy, numeroPeitetty,
     tervehdys,
     alku,
     `Käyttäjätunnus: ${username}\nKirjautuminen: ${osoite}`,
-    salasanarivi,
+    ...(vainAvain ? [] : [salasanarivi]),
     ...(authKappale ? [authKappale] : []),
-    'Ensimmäisellä kirjautumisella vaihdat väliaikaisen salasanan omaksesi.',
+    ...(vainAvain ? [] : ['Ensimmäisellä kirjautumisella vaihdat väliaikaisen salasanan omaksesi.']),
     'Jos et odottanut tätä viestiä, ilmoita asiasta esihenkilöllesi.',
     'Tähän viestiin ei tarvitse vastata.',
   ];
   const text = kappaleet.join('\n\n');
-  const subject = syy === 'nollattu' ? 'Turvajohto OS: salasana nollattu' : 'Turvajohto OS: käyttäjätunnuksesi';
+  const subject = {
+    nollattu: 'Turvajohto OS: salasana nollattu',
+    authenticator: 'Turvajohto OS: uusi Authenticator-avain',
+  }[syy] || 'Turvajohto OS: käyttäjätunnuksesi';
   if (!totp) return { subject, text };
 
   // HTML-versio vain QR-koodin takia. Kuva on viestin sisäinen liite (cid), ei ulkoinen

@@ -124,3 +124,20 @@ test('tervehdyksessä on ensimmäinen etunimi, ei koko nimimerkkiä', async () =
   });
   assert.match(teksti, /^Hei Testi,/);
 });
+
+test('Authenticatorin nollaus: avain sähköpostiin, ei salasanaa eikä salasanaohjeita', async () => {
+  const lahetetyt = [];
+  let smsKutsuttu = false;
+  const tulos = await toimitaTunnustiedot({
+    kanavat: ['sahkoposti'], tyontekija, username: 'x', password: null, puoli: 'guard', syy: 'authenticator', totp,
+    lahetaSahkoposti: async (v) => { lahetetyt.push(v); return { ok: true }; },
+    lahetaSms: async () => { smsKutsuttu = true; return { ok: true }; },
+  });
+  const v = lahetetyt[0];
+  assert.equal(smsKutsuttu, false);
+  assert.match(v.subject, /Authenticator/);
+  assert.match(v.text, /JBSW Y3DP/);
+  assert.match(v.text, /Salasanasi ei muuttunut/);
+  assert.doesNotMatch(v.text, /Väliaikainen salasana|vaihdat väliaikaisen/);
+  assert.equal(tulos.sahkoposti.authenticator, true);
+});
