@@ -31,7 +31,7 @@ import {
   luoLyontimuisti, tarvitaankoLyonninTallennus, valvonnanTila,
 } from './laite.js';
 import {
-  JOUSTO_MIN, aloitaVuoro, keskenOlevaVuoro, kohteetPerehdytyksenMukaan, lisaaVuoroon,
+  JOUSTO_MIN, LAITTEET as VUORON_LAITTEET, aloitaVuoro, keskenOlevaVuoro, kohteetPerehdytyksenMukaan, lisaaVuoroon,
   paataVuoro, vuorovaihtoehdot, vuoronPaattymisaika,
 } from './vuorot.js';
 import {
@@ -3256,7 +3256,10 @@ app.get('/api/kanavat/:id/jasenet', requireAuth, guardPortti, (req, res) => {
 // ole oikeus tehdä työtä toisen nimissä vaan ainoa tapa avata perehdyttämätön vuoro, ja
 // siksi se vaatii syyn ja jää sekä vuoron tietueeseen että auditlokiin.
 app.post('/api/vuoro', requireAuth, guardPortti, (req, res) => {
-  const { siteId, vuorotyyppiId, vartija, poikkeusSyy } = req.body || {};
+  const { siteId, vuorotyyppiId, vartija, poikkeusSyy, laitteet } = req.body || {};
+  if (laitteet !== undefined && !VUORON_LAITTEET.has(laitteet)) {
+    return res.status(400).json({ ok: false, error: 'Tuntematon vuoron laitevalinta.' });
+  }
 
   const kenelle = typeof vartija === 'string' && vartija ? vartija : req.username;
   const toisenPuolesta = kenelle !== req.username;
@@ -3300,7 +3303,7 @@ app.post('/api/vuoro', requireAuth, guardPortti, (req, res) => {
 
   const tulos = aloitaVuoro({
     kohde, vuorotyyppiId, username: kenelle, pohjat: readCollection('templates') || [],
-    id: crypto.randomUUID(), poikkeus,
+    id: crypto.randomUUID(), poikkeus, ...(laitteet ? { laitteet } : {}),
   });
   if (!tulos.ok) {
     // Koneluettava syy mukaan: käyttöliittymä tarjoaa kertalupaa vain silloin kun este on
@@ -3311,7 +3314,7 @@ app.post('/api/vuoro', requireAuth, guardPortti, (req, res) => {
   writeCollection('guardShifts', [tulos.vuoro, ...vuorot]);
   logAudit({
     user: req.username, action: 'vuoro_alkoi', collection: 'guardShifts',
-    recordId: tulos.vuoro.id, eventId: kohde.id,
+    recordId: tulos.vuoro.id, eventId: kohde.id, laitteet: tulos.vuoro.laitteet,
     ...(toisenPuolesta ? { kohdeKayttaja: kenelle } : {}),
     ...(tulos.vuoro.perehdytysPoikkeus
       ? { poikkeus: tulos.vuoro.perehdytysPoikkeus.este, syy: tulos.vuoro.perehdytysPoikkeus.syy }

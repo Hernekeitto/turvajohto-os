@@ -288,6 +288,13 @@ test('vuoro kopioi tehtävänsä ja kierroksensa vuorotyypistä', () => {
   assert.deepEqual(vuoro.pohjat, [{ id: 'p1', nimi: 'Yökierros', lahde: 'vuoro', suoritusaika: null }]);
 });
 
+test('vuoron laitteet: oletus on puhelin, tietokonevalinnat säilyvät, tuntematon ei', () => {
+  assert.equal(aloita().vuoro.laitteet, 'sovellus');
+  assert.equal(aloita({ laitteet: 'tietokone' }).vuoro.laitteet, 'tietokone');
+  assert.equal(aloita({ laitteet: 'tietokone_sovellus' }).vuoro.laitteet, 'tietokone_sovellus');
+  assert.equal(aloita({ laitteet: 'kaikki' }).vuoro.laitteet, 'sovellus');
+});
+
 test('kohteen ja vuoron nimi kopioidaan eikä viitata', () => {
   // Kohteen nimen muutos ei saa muuttaa mennyttä vuoroa: jälkikäteen on voitava sanoa
   // missä vartija oli töissä sinä päivänä, ei missä kohde on nyt.

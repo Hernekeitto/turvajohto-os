@@ -70,6 +70,7 @@ import { kaynnistaSovelluksessa, onAlustaJollaSovellus, paataSovelluksessa } fro
 import { luePuoli, tallennaPuoli, type Puoli } from './nakymavalinta';
 import { PuoliValitsin } from './PuoliValitsin';
 import { Vartijanakyma } from './Vartijanakyma';
+import { LiitaPuhelin } from './mobiili/LiitaPuhelin';
 import { useKanava, type Sijainti } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
@@ -2149,6 +2150,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         />
       )}
 
+      {/* Tietokoneelta aloitettu vuoro: puhelin liitetään siihen täällä (ks. LiitaPuhelin). */}
+      {mobiili && vuoro && palvelimenVuoro?.laitteet && palvelimenVuoro.laitteet !== 'sovellus' && (
+        <LiitaPuhelin vuoro={vuoro} laitteet={palvelimenVuoro.laitteet} />
+      )}
+
       {valvontaVaroitus && (
         <div className="mb-6 flex items-start gap-3 rounded-lg px-4 py-3 border bg-danger-soft border-danger/30 text-danger-ink">
           <ShieldOff size={18} className="shrink-0 mt-0.5" />
@@ -2696,7 +2702,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           {vartijanPuolella ? (
             <>
               {vahdit}
-              <Vartijanakyma />
+              <Vartijanakyma kaikkiKohteet={isAdmin ? kohteet : undefined} />
             </>
           ) : runko}
         </div>

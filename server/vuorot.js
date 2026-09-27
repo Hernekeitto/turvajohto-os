@@ -24,6 +24,18 @@
 // estää työn aloittamista kellon takia ilman että joustoa on runsaasti.
 export const JOUSTO_MIN = 120;
 
+// Vuoron laitteet (27.9.2026, käyttäjän pyyntö: vuoron voi aloittaa tietokoneelta).
+//
+//   sovellus            aloitettu puhelimella — kaikki tätä kenttää vanhemmat vuorot
+//   tietokone           vain tietokoneella; natiivivalvontaa ei ole eikä sitä odoteta
+//   tietokone_sovellus  aloitettu tietokoneella, ja puhelin liitetään samaan vuoroon
+//
+// Puhelinta EI voi käynnistää tietokoneelta: natiivipalvelu käynnistyy vain puhelimella
+// tehdystä eleestä. Siksi 'tietokone_sovellus' tarkoittaa, että puhelin tarjoaa vuoron
+// liittämistä, kun sovellus seuraavan kerran avataan.
+export const LAITTEET_SOVELLUS = 'sovellus';
+export const LAITTEET = new Set([LAITTEET_SOVELLUS, 'tietokone', 'tietokone_sovellus']);
+
 // Pakkopäätöksen syyn mitat. Samat kuin kierroksen keskeytyssyyllä (kierros.js): kyse on
 // samasta asiasta eli siitä miksi jokin jäi kesken, eikä kahta eri vaatimusta samalle
 // kysymykselle kannata olla.
@@ -199,10 +211,12 @@ const LUVITETTAVAT = new Set(['ei_perehdytysta', 'ikkunan_ulkopuolella']);
  *
  * `poikkeus` on hälytyskeskuksen kertalupa: { myontaja, syy }. Se ohittaa perehdytyksen ja
  * kellon mutta ei muuta, ja se jää tietueeseen pysyvästi.
+ *
+ * `laitteet` kertoo millä laitteilla vuoro tehdään (ks. LAITTEET yllä).
  */
 export function aloitaVuoro({
   kohde, vuorotyyppiId, username, pohjat = [], id,
-  nyt = new Date(), joustoMin = JOUSTO_MIN, poikkeus = null,
+  nyt = new Date(), joustoMin = JOUSTO_MIN, poikkeus = null, laitteet = LAITTEET_SOVELLUS,
 }) {
   const portti = saakoAloittaa({ kohde, vuorotyyppiId, username, nyt, joustoMin });
   if (!portti.ok && !(poikkeus && LUVITETTAVAT.has(portti.syy))) {
@@ -254,6 +268,10 @@ export function aloitaVuoro({
       tila: 'kesken',
       tehtavat,
       pohjat: kierrokset,
+      // Kopioidaan tietueeseen, koska tästä näkee oliko vuoroon tarkoitus liittää
+      // natiivivalvonta (sijainti, man-down). Tuntematon arvo tallennetaan puhelinvuorona,
+      // koska se oli ainoa vuoro ennen tätä kenttää.
+      laitteet: LAITTEET.has(laitteet) ? laitteet : LAITTEET_SOVELLUS,
       perehdytysPoikkeus: poikkeus && !portti.ok
         ? { myontaja: poikkeus.myontaja, syy: poikkeus.syy, este: portti.syy, aika: new Date(nyt).toISOString() }
         : null,

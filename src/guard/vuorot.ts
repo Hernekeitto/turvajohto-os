@@ -85,6 +85,9 @@ export type PalvelimenVuoro = {
   tehtavat: VuoronTehtava[];
   pohjat: VuoronTehtava[];
   perehdytysPoikkeus?: { myontaja: string; syy: string; este: string; aika: string } | null;
+  // Millä laitteilla vuoro tehdään (ks. server/vuorot.js: LAITTEET). Puuttuu tätä
+  // kenttää vanhemmista vuoroista, jotka ovat kaikki puhelimella aloitettuja.
+  laitteet?: VuoronLaitteet;
   // Milloin vuoron oli MÄÄRÄ päättyä (palvelin laskee vuorotyypin kellonajasta, ks.
   // server/vuorot.js: vuoronPaattymisaika). null = kellonaikaa ei ole.
   paattyyArvio?: string | null;
@@ -115,15 +118,19 @@ export async function haeOmaVuoro(): Promise<PalvelimenVuoro | null | undefined>
   }
 }
 
+export type VuoronLaitteet = 'sovellus' | 'tietokone' | 'tietokone_sovellus';
+
 export async function aloitaVuoroPalvelimella(
   siteId: string,
   vuorotyyppiId: string,
+  // Puuttuva = puhelimella aloitettu vuoro, kuten ennen tätä parametria.
+  laitteet?: VuoronLaitteet,
 ): Promise<AloitusTulos> {
   const vastaus = await fetch('/api/vuoro', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ siteId, vuorotyyppiId }),
+    body: JSON.stringify({ siteId, vuorotyyppiId, ...(laitteet ? { laitteet } : {}) }),
   });
   const data = await vastaus.json().catch(() => null);
   if (!vastaus.ok || !data?.ok) {
