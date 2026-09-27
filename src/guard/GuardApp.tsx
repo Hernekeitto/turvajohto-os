@@ -4,6 +4,7 @@ import { useSession } from '../SessionContext';
 import { canView, canEdit } from '../shared/oikeudet';
 import { jaotteleSailytysajan } from '../shared/sailytysaika';
 import { paikallinenPaiva } from '../shared/ajat';
+import { kaytaKorjatutTunnisteet } from '../shared/tunnisteet';
 import { Ylapalkki } from '../shared/komponentit/Ylapalkki';
 import { PttPainike } from './PttPainike';
 import { KohteenHallinta } from './KohteenHallinta';
@@ -616,7 +617,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       });
       const res = await r.json().catch(() => null);
       if (r.ok && res && res.ok === true) {
-        setTyontekijat(lista);
+        // Palvelin omistaa tunnistenumerot ja palauttaa korjaamansa (server/tunnistenumerot.js).
+        setTyontekijat(kaytaKorjatutTunnisteet(lista, res.tunnisteet));
         return true;
       }
       setVirhe(res?.error || 'Työntekijöiden tallennus epäonnistui.');

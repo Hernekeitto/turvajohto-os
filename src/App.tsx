@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from './SessionContext';
 // Jaetut apurit (ks. src/shared/). Nämä olivat aiemmin tässä tiedostossa, mutta ne eivät
 // koske App-komponentin tilaan ja GUARD-puoli tarvitsee ne samoina.
-import { seuraavaTunnisteNumero, muotoileTunniste, taydennaTunnisteet } from './shared/tunnisteet';
+import { seuraavaTunnisteNumero, muotoileTunniste, taydennaTunnisteet, kaytaKorjatutTunnisteet } from './shared/tunnisteet';
 import { TyontekijanTunnus } from './shared/komponentit/TyontekijanTunnus';
 import { kayttajatunnusNimesta, buildFullName } from './shared/nimet';
 import {
@@ -803,6 +803,12 @@ export default function App() {
       if (r.ok && res && res.ok === true) {
         // Onnistunut tallennus kuittaa myös aiemman virheen pois: yhteys toimii taas.
         setSaveError(null);
+        // Palvelin korjasi tunnistenumeron (ks. server/tunnistenumerot.js). Korjaus on jo
+        // levyllä, joten sitä ei lähetetä takaisin automaattitallennuksella.
+        if (kokoelma === 'employees' && res.tunnisteet) {
+          ohitaSeuraavaTallennus.current.add('employees');
+          setEmployees((ed) => kaytaKorjatutTunnisteet(ed, res.tunnisteet));
+        }
         return true;
       }
       setSaveError(`Muutosta ei saatu tallennettua palvelimelle (${kokoelma}): ${(res && res.error) || `virhe ${r.status}`}`);

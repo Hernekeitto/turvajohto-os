@@ -174,16 +174,16 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
         <input type="checkbox" className="mt-1" checked={lahetaEmail && onEmail} disabled={!onEmail} onChange={(e) => setLahetaEmail(e.target.checked)} />
         <span className="min-w-0">
           <Mail size={14} className="inline mr-1 text-ink-subtle" />
-          Käyttäjätunnus sähköpostiin{' '}
-          <span className="text-ink-muted break-all">{onEmail ? tyontekija.email : '(ei sähköpostiosoitetta)'}</span>
+          Käyttäjätunnus sähköpostiin
+          {!onEmail && <span className="text-ink-muted"> (sähköposti puuttuu)</span>}
         </span>
       </label>
       <label className="flex items-start gap-2 text-sm text-ink-body">
         <input type="checkbox" className="mt-1" checked={lahetaSms && onPuhelin} disabled={!onPuhelin} onChange={(e) => setLahetaSms(e.target.checked)} />
         <span className="min-w-0">
           <MessageSquare size={14} className="inline mr-1 text-ink-subtle" />
-          Väliaikainen salasana tekstiviestinä{' '}
-          <span className="text-ink-muted">{onPuhelin ? tyontekija.phone : '(ei puhelinnumeroa)'}</span>
+          Väliaikainen salasana tekstiviestinä
+          {!onPuhelin && <span className="text-ink-muted"> (puhelinnumero puuttuu)</span>}
         </span>
       </label>
       <p className="text-xs text-ink-muted leading-relaxed">
@@ -198,7 +198,7 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
         <p><Mail size={13} className="inline mr-1" />Sähköposti: {TILATEKSTI[toimitus.sahkoposti.tila]}{toimitus.sahkoposti.viesti ? ` (${toimitus.sahkoposti.viesti})` : ''}</p>
       )}
       {toimitus.sms && (
-        <p><MessageSquare size={13} className="inline mr-1" />Tekstiviesti{toimitus.sms.numero ? ` ${toimitus.sms.numero}` : ''}: {TILATEKSTI[toimitus.sms.tila]}{toimitus.sms.viesti ? ` (${toimitus.sms.viesti})` : ''}</p>
+        <p><MessageSquare size={13} className="inline mr-1" />Tekstiviesti: {TILATEKSTI[toimitus.sms.tila]}{toimitus.sms.viesti ? ` (${toimitus.sms.viesti})` : ''}</p>
       )}
     </div>
   );
@@ -216,6 +216,8 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
         {rivi('Nimi', buildFullName(tyontekija) || '—')}
         {rivi('Käyttäjätunnus', <span className="font-mono font-bold">{olemassa?.username || tunnus || '—'}</span>)}
         {rivi('Tunnistenumero', <span className="font-mono font-bold">{numero ? muotoileTunniste(numero) : '—'}</span>)}
+        {rivi('Sähköposti', onEmail ? <span className="break-all">{tyontekija.email}</span> : <span className="text-ink-subtle">puuttuu</span>)}
+        {rivi('Puhelin', onPuhelin ? tyontekija.phone : <span className="text-ink-subtle">puuttuu</span>)}
       </div>
 
       {virhe && (
@@ -242,7 +244,9 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
               <p className="pt-1 text-ink-muted">Tason, puolet ja Authenticatorin voi muuttaa Sovellusasetukset → Käyttäjätunnukset.</p>
             </div>
           </div>
-          {valinnat}
+          {/* Valinnat vain uutta nollausta varten. Heti luonnin tai nollauksen jälkeen ne
+              on juuri valittu, ja toimitusraportti kertoo lopputuloksen. */}
+          {!toimitus && valinnat}
           <div className="flex justify-end">
             <button
               type="button"

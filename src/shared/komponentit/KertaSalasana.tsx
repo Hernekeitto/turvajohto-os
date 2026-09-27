@@ -1,20 +1,26 @@
 import { useState } from 'react';
-import { AlertTriangle, Check, Copy } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Eye, EyeOff } from 'lucide-react';
 
 // Palvelimen arpoma väliaikainen salasana. Se ei tallennu selväkielisenä, joten tämä on
 // ainoa hetki jolloin sen voi lukea — siksi se ei ole ohimenevä ilmoitus vaan laatikko
 // joka suljetaan käsin. Jaettu käyttäjähallinnan ja työntekijäpankin tunnusosion kesken.
+//
+// Salasana on oletuksena PIILOSSA ja tulee näkyviin silmäpainikkeesta. Kun se on jo
+// lähtenyt työntekijälle tekstiviestinä, pääkäyttäjän ei tarvitse nähdä sitä lainkaan,
+// eikä se päädy kuvakaappaukseen tai olan yli katsojalle vahingossa. Kopiointi toimii
+// myös piilotettuna.
 export type SalasanaNaytto = { username: string; password: string; syy: 'luotu' | 'nollattu' };
 
 type Props = SalasanaNaytto & { onSulje: () => void };
 
 export const KertaSalasana = ({ username, password, syy, onSulje }: Props) => {
   const [kopioitu, setKopioitu] = useState(false);
+  const [nakyvissa, setNakyvissa] = useState(false);
 
   const kopioi = () => {
     navigator.clipboard?.writeText(password).then(
       () => setKopioitu(true),
-      () => { /* leikepöytä voi olla estetty; salasana on silti näkyvissä */ },
+      () => { /* leikepöytä voi olla estetty; salasanan saa silti näkyviin silmäpainikkeesta */ },
     );
   };
 
@@ -32,8 +38,18 @@ export const KertaSalasana = ({ username, password, syy, onSulje }: Props) => {
           </p>
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             <code className="font-mono text-sm bg-surface border border-line rounded px-2 py-1 select-all">
-              {password}
+              {nakyvissa ? password : '•'.repeat(password.length)}
             </code>
+            <button
+              type="button"
+              onClick={() => setNakyvissa((n) => !n)}
+              aria-label={nakyvissa ? 'Piilota salasana' : 'Näytä salasana'}
+              title={nakyvissa ? 'Piilota salasana' : 'Näytä salasana'}
+              className="inline-flex items-center gap-1 text-xs font-medium text-ink-muted hover:text-accent"
+            >
+              {nakyvissa ? <EyeOff size={14} /> : <Eye size={14} />}
+              {nakyvissa ? 'Piilota' : 'Näytä'}
+            </button>
             <button
               type="button"
               onClick={kopioi}

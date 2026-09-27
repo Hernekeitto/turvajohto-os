@@ -19,7 +19,8 @@ import {
   setTotpRequired,
   forceLogout,
 } from './db.js';
-import { readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage } from './store.js';
+import { readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage, lueKorkeinTunniste, kirjaaKorkeinTunniste } from './store.js';
+import { vahvistaTyontekijoidenNumerot, tunnuksenNumero } from './tunnistenumerot.js';
 import { isAllowedFile, saveUpload, getUploadPath, deleteUpload, collectGarbage } from './uploads.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
 import { istunnonKesto, SOVELLUS_VUOROKAUDET } from './istunto.js';
@@ -1074,6 +1075,21 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   // säilytysaika, jonka jälkeen ne on hävitettävä, joten poiston on myös oikeasti
   // onnistuttava. allowEmpty=1 ohittaa suojan, mutta vain adminille ja vain kun
   // kutsuja pyytää sitä nimenomaisesti (ks. src/App.tsx: handlePermanentDeleteEvent).
+  // Henkilön tunnistenumero on palvelimen antama eikä koskaan kierrä uudelleen
+  // (tunnistenumerot.js). Korjatut numerot palautetaan vastauksessa tallentajalle.
+  let korjatutTunnisteet = null;
+  let uusiKorkein = null;
+  if (name === 'employees') {
+    const tulos = vahvistaTyontekijoidenNumerot({
+      nykyiset: current,
+      uudet: verdict.data,
+      kayttajat: listUsers(),
+      korkein: lueKorkeinTunniste(),
+    });
+    verdict.data = tulos.data;
+    uusiKorkein = tulos.korkein;
+    if (Object.keys(tulos.korjatut).length) korjatutTunnisteet = tulos.korjatut;
+  }
   const allowEmpty = req.query.allowEmpty === '1' && req.role === 'admin';
   if (!allowEmpty && wouldWipeNonEmptyCollection(current, verdict.data)) {
     return res.status(409).json({
@@ -1082,6 +1098,7 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
     });
   }
   writeCollection(name, verdict.data);
+  if (uusiKorkein !== null) kirjaaKorkeinTunniste(uusiKorkein);
 
   // Liitetiedostojen hävittäminen: raportin poistaminen ei aiemmin poistanut sen
   // liitettä levyltä lainkaan, joten esim. valokuva kohdehenkilöstä jäi hakemistoon
@@ -1145,7 +1162,7 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
       ...(change.correctionAdded ? { correctionAdded: true } : {}),
     });
   }
-  res.json({ ok: true });
+  res.json({ ok: true, ...(korjatutTunnisteet ? { tunnisteet: korjatutTunnisteet } : {}) });
 });
 
 // --- Tietuekohtainen kirjoitus (offline-jonon perusta, P7) -------------------------
@@ -1295,17 +1312,20 @@ app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
   if (typeof nickname !== 'string' || !nickname.trim()) {
     return res.status(400).json({ ok: false, error: 'Nimimerkki vaaditaan.' });
   }
-  // Tunnistenumero on valinnainen (vanha "Luo käyttäjä" -polku ei anna sitä), mutta jos
-  // se annetaan, sen on oltava kelvollinen ja vapaa: numero yksilöi henkilön raporteissa.
-  if (displayId !== undefined && displayId !== null) {
-    if (!Number.isInteger(displayId) || displayId < 1000) {
-      return res.status(400).json({ ok: false, error: 'Virheellinen tunnistenumero.' });
-    }
-    const varattu = listUsers().find((u) => u.displayId === displayId);
-    if (varattu) {
-      return res.status(409).json({ ok: false, error: `Tunnistenumero #${displayId} on jo tunnuksella ${varattu.username}.` });
-    }
+  // Tunnistenumero: kytketyn työntekijän oma, tai kytkemättömälle tunnukselle uusi
+  // numero joka ei ole koskaan ollut kenelläkään (tunnistenumerot.js). Toisen henkilön
+  // numeroa ei hyväksytä.
+  if (displayId !== undefined && displayId !== null && (!Number.isInteger(displayId) || displayId < 1000)) {
+    return res.status(400).json({ ok: false, error: 'Virheellinen tunnistenumero.' });
   }
+  const numero = tunnuksenNumero({
+    ehdotettu: displayId,
+    employeeId: typeof employeeId === 'string' ? employeeId : null,
+    tyontekijat: readCollection('employees') || [],
+    kayttajat: listUsers(),
+    korkein: lueKorkeinTunniste(),
+  });
+  if (!numero.ok) return res.status(409).json({ ok: false, error: numero.virhe });
   // Salasanaa EI oteta enää pyynnöstä: se arvotaan palvelimella ja palautetaan
   // pääkäyttäjälle kertaalleen. Näin uutta salasanaa ei keksitä käsin eikä se kulje
   // selaimesta palvelimelle. Käyttäjä vaihtaa sen heti ensimmäisellä kirjautumisella.
@@ -1317,9 +1337,10 @@ app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
   upsertUser(trimmedUsername, bcrypt.hashSync(arvottu, 12), {
     nickname: nickname.trim(),
     role: 'user',
-    displayId: displayId ?? undefined,
+    displayId: numero.numero,
     employeeId: typeof employeeId === 'string' ? employeeId : undefined,
   });
+  kirjaaKorkeinTunniste(numero.korkein);
   setMustChangePassword(trimmedUsername, true);
   logAudit({ user: req.username, action: 'user_create', targetUser: trimmedUsername });
   // Tunnus on jo olemassa, joten lähetyksen epäonnistuminen ei saa kaataa vastausta:

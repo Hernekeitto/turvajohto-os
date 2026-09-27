@@ -35,3 +35,14 @@ export const taydennaTunnisteet = (tyontekijat: any) => {
     return { ...e, displayId: seuraava++ };
   });
 };
+
+// Palvelin on numeroiden omistaja (server/tunnistenumerot.js) ja palauttaa tallennuksen
+// vastauksessa korjaamansa numerot muodossa { tietueenId: numero }. Selaimen oma arvaus
+// voi olla väärä, koska se ei näe poistettujen henkilöiden numeroita.
+export const kaytaKorjatutTunnisteet = <T extends { id?: string; displayId?: any }>(
+  lista: T[],
+  korjatut: Record<string, number> | null | undefined,
+): T[] => {
+  if (!korjatut || Object.keys(korjatut).length === 0) return lista;
+  return lista.map((t) => (t.id && korjatut[t.id] !== undefined ? { ...t, displayId: korjatut[t.id] } : t));
+};

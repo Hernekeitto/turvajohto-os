@@ -537,3 +537,28 @@ export function getStorageUsage() {
     usedPercent: nayttoTila > 0 ? Math.round((used / nayttoTila) * 1000) / 10 : 0,
   };
 }
+
+// Suurin koskaan annettu henkilön tunnistenumero (ks. tunnistenumerot.js). Erillinen
+// tiedosto eikä kokoelma: selain ei saa lukea eikä kirjoittaa sitä, ja se on yksi luku.
+// Puuttuva tai rikkinäinen tiedosto palauttaa null, jolloin korkein lasketaan nykyisistä
+// numeroista — se ei koskaan anna käytössä olevaa numeroa, vain unohtaa poistetut.
+const TUNNISTELASKURI = path.join(DATA_DIR, 'tunnistelaskuri.json');
+
+export function lueKorkeinTunniste() {
+  try {
+    const n = JSON.parse(fs.readFileSync(TUNNISTELASKURI, 'utf8'))?.korkein;
+    return Number.isInteger(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export function kirjaaKorkeinTunniste(n) {
+  if (!Number.isInteger(n)) return;
+  const nykyinen = lueKorkeinTunniste();
+  // Laskuri ei koskaan laske: vanhempi arvo ei saa ylikirjoittaa uudempaa.
+  if (nykyinen !== null && nykyinen >= n) return;
+  const tmp = `${TUNNISTELASKURI}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ korkein: n, paivitetty: new Date().toISOString() }));
+  fs.renameSync(tmp, TUNNISTELASKURI);
+}
