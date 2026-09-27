@@ -205,6 +205,9 @@ export type TehtavaSuoritus = {
   suoritettu?: boolean;
   kuitatut?: string[];
   huomiot?: string;
+  // Huomioihin liitetyt kuvat (27.9.2026). Palvelin tunnistaa ne liitteen omistajiksi
+  // (server/permissions.js: canReadGuardAttachment).
+  liitteet?: { id: string; name?: string }[];
 };
 
 // Vartijan raportti (guardReports). Kentät vastaavat EVENT-puolen raportteja, koska sama
@@ -369,6 +372,9 @@ export type Kierros = {
   tila: 'kesken' | 'valmis' | 'keskeytetty';
   keskeytysSyy?: string;
   huomiot?: string;
+  // Huomioihin liitetyt kuvat (27.9.2026). Palvelin tunnistaa ne liitteen omistajiksi
+  // (server/permissions.js: canReadGuardAttachment).
+  liitteet?: { id: string; name?: string }[];
   pisteet: KierroksenPiste[];
 };
 

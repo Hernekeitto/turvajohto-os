@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
+import { Liitteet } from '../shared/komponentit/Liitteet';
+import type { Liite } from '../shared/liitteet';
 import { kuunteleJonoa, lisaaJonoon } from '../shared/jono';
 import type { Kohde, Kierros as KierrosTietue, Kierrospohja } from './tyypit';
 
@@ -34,6 +36,8 @@ type Props = {
   vuoroKaynnissa?: boolean;
   vuoronPohjaIdt?: string[];
   onSiirra?: (laji: 'tehtava' | 'kierros', id: string, nimi: string) => void;
+  // Upotettuna (Kohteen tehtävät -näkymässä) paluulinkki tulee ympäröivästä näkymästä.
+  upotettu?: boolean;
 };
 
 const kello = (iso?: string | null) => {
@@ -57,13 +61,17 @@ const haeSijainti = (): Promise<{ lat: number; lon: number } | null> =>
 
 export const Kierros = ({
   kohde, pohjat, kierrokset, saaKiertaa, onPaivita, onTakaisin,
-  vuoroKaynnissa = false, vuoronPohjaIdt = [], onSiirra,
+  vuoroKaynnissa = false, vuoronPohjaIdt = [], onSiirra, upotettu = false,
 }: Props) => {
   const [virhe, setVirhe] = useState<string | null>(null);
   const [tyoskentelee, setTyoskentelee] = useState(false);
   const [keskeytys, setKeskeytys] = useState(false);
   const [syy, setSyy] = useState('');
   const [huomiot, setHuomiot] = useState('');
+  // Huomioihin liitetyt kuvat (27.9.2026). Lähtevät palvelimelle kierroksen päätöksen
+  // mukana; itse tiedostot on jo lähetetty uploads-reitille valintahetkellä.
+  const [liitteet, setLiitteet] = useState<Liite[]>([]);
+  const [liitteetLataa, setLiitteetLataa] = useState(false);
   // Käsin luettu tai kirjoitettu koodi. Kaksi käyttäjää: talon oma viivakoodilukija,
   // joka näppäilee koodin kenttään ja painaa rivinvaihdon, sekä vartija jonka puhelimen
   // kamera ei suostu lukemaan likaista tarraa — koodi lukee tarrassa myös selväkielisenä
@@ -177,13 +185,17 @@ export const Kierros = ({
   };
 
   const paata = async (tila: 'valmis' | 'keskeytetty') => {
+    if (liitteetLataa) {
+      setVirhe('Odota, että kuvien lähetys valmistuu.');
+      return;
+    }
     const onnistui = await kutsu(
       `/api/kierros/${encodeURIComponent(kesken!.id)}/paata`,
-      { tila, syy, huomiot },
+      { tila, syy, huomiot, liitteet: liitteet.map(({ id, name }) => ({ id, name })) },
       tila === 'valmis' ? `Kierros valmis: ${kesken!.templateNimi}` : `Kierros keskeytetty: ${kesken!.templateNimi}`,
       `kierrospaata:${kesken!.id}`
     );
-    if (onnistui) { setKeskeytys(false); setSyy(''); setHuomiot(''); }
+    if (onnistui) { setKeskeytys(false); setSyy(''); setHuomiot(''); setLiitteet([]); }
   };
 
   // Jonossa odottavat kuittaukset. Luetaan jonosta eikä komponentin tilasta, jotta
@@ -199,7 +211,7 @@ export const Kierros = ({
 
   return (
     <div className="max-w-3xl">
-      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohteeseen</TakaisinLinkki>
+      {!upotettu && <TakaisinLinkki onClick={onTakaisin}>Takaisin kohteeseen</TakaisinLinkki>}
 
       <div className="mb-6">
         <h2 className="text-xl font-bold text-ink-strong mb-1">Kierrokset</h2>
@@ -340,6 +352,9 @@ export const Kierros = ({
                   className="w-full rounded-lg border border-line-strong p-2.5 text-sm outline-none focus:ring-2 focus:ring-accent"
                 />
               </label>
+              <div className="mb-3">
+                <Liitteet liitteet={liitteet} onMuutos={setLiitteet} onLatausTila={setLiitteetLataa} />
+              </div>
 
               {keskeytys && (
                 <label className="block mb-3">

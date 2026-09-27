@@ -668,6 +668,15 @@ const UPLOAD_VIITTAAJAT = {
   // Avaintyyppien tunnistuskuvat. Ilman tätä riviä roskienkeruu pitäisi koko
   // avainkarttaa orpona ja tyhjentäisi sen vuorokaudessa.
   keyTypes: (arr) => (Array.isArray(arr) ? arr : []).map((t) => t?.uploadId).filter(Boolean),
+  // Kierroksen ja tehtäväsuorituksen huomioiden kuvat (27.9.2026). Molemmat on oltava
+  // tässä, vaikka niitä ei tallenneta PUT-reitillä: muuten minkä tahansa muun kokoelman
+  // tallennus pitäisi kuvia orpoina ja poistaisi ne armonajan jälkeen.
+  guardTaskRuns: (arr) => (Array.isArray(arr) ? arr : [])
+    .flatMap((s) => (Array.isArray(s?.liitteet) ? s.liitteet.map((l) => l?.id) : []))
+    .filter(Boolean),
+  patrolRuns: (arr) => (Array.isArray(arr) ? arr : [])
+    .flatMap((k) => (Array.isArray(k?.liitteet) ? k.liitteet.map((l) => l?.id) : []))
+    .filter(Boolean),
 };
 
 // Tuoteportti: kokoelma joka kuuluu vain toiselle puolelle (esim. guardSites) on
@@ -4980,6 +4989,7 @@ app.post('/api/kierros/:id/paata', requireAuth, guardPortti, (req, res) => {
     tila: req.body?.tila,
     syy: req.body?.syy,
     huomiot: req.body?.huomiot,
+    liitteet: req.body?.liitteet,
     toisto: req.body?.toisto === true,
   });
   if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
@@ -7009,7 +7019,8 @@ app.get('/api/uploads/:id', requireAuth, (req, res) => {
     && canReadGuardAttachment(
       req.role, req.permissions, req.eventAccess, req.params.id,
       readCollection('guardFiles') || [], readCollection('guardReports') || [],
-      readCollection('guardSites') || [], readCollection('keyTypes') || []
+      readCollection('guardSites') || [], readCollection('keyTypes') || [],
+      readCollection('guardTaskRuns') || [], readCollection('patrolRuns') || []
     );
   if (!tapahtumaPuoli && !guardPuoli) {
     return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän liitteen lataamiseen.' });

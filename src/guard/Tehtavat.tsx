@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { CheckSquare, ListChecks, Check, X, ClipboardList } from 'lucide-react';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
+import { Liitteet } from '../shared/komponentit/Liitteet';
+import type { Liite } from '../shared/liitteet';
 import { Kentta } from './Kentta';
 import { uusiId, type Kohde, type Tehtava, type TehtavaSuoritus } from './tyypit';
 
@@ -18,6 +20,13 @@ type Props = {
   saaKuitata: boolean;
   onSuorita: (suoritus: TehtavaSuoritus) => Promise<boolean>;
   onTakaisin: () => void;
+  // Näytetäänkö aiemmat suoritukset ("Viimeksi …" ja "Viimeisimmät suoritukset").
+  // Vartijanäkymässä ei (käyttäjän päätös 27.9.2026): yksittäiselle vartijalle ei kuulu
+  // tieto siitä, milloin edellisen vuoron vartija on suorittanut tehtävän.
+  naytaHistoria?: boolean;
+  // Upotettuna (Kohteen tehtävät -näkymässä) paluulinkki ja otsikko tulevat ympäröivästä
+  // näkymästä.
+  upotettu?: boolean;
 };
 
 const muotoileAika = (iso: string) => {
@@ -35,12 +44,16 @@ export const Tehtavat = ({
   saaKuitata,
   onSuorita,
   onTakaisin,
+  naytaHistoria = true,
+  upotettu = false,
 }: Props) => {
   // Avoinna oleva tehtävä ja sen keskeneräiset kuittaukset. Pidetään erillään
   // suorituksista: mitään ei tallenneta ennen kuin vartija painaa "Kirjaa suoritus".
   const [avoin, setAvoin] = useState<Tehtava | null>(null);
   const [kuitatut, setKuitatut] = useState<string[]>([]);
   const [huomiot, setHuomiot] = useState('');
+  const [liitteet, setLiitteet] = useState<Liite[]>([]);
+  const [liitteetLataa, setLiitteetLataa] = useState(false);
   const [tallentaa, setTallentaa] = useState(false);
 
   const tehtavat = kohde.tehtavat || [];
@@ -49,10 +62,12 @@ export const Tehtavat = ({
     setAvoin(t);
     setKuitatut([]);
     setHuomiot('');
+    setLiitteet([]);
   };
 
   const kirjaa = async (suoritettu: boolean) => {
-    if (!avoin) return;
+    // Kirjaus odottaa kuvan lähetyksen: muuten suoritus tallentuisi ilman juuri otettua kuvaa.
+    if (!avoin || liitteetLataa) return;
     setTallentaa(true);
     const suoritus: TehtavaSuoritus = {
       id: uusiId(),
@@ -67,6 +82,7 @@ export const Tehtavat = ({
         ? { kuitatut, suoritettu: kuitatut.length === avoin.kohdat.length }
         : { suoritettu }),
       huomiot: huomiot.trim() || undefined,
+      ...(liitteet.length > 0 ? { liitteet: liitteet.map(({ id, name }) => ({ id, name })) } : {}),
     };
     const ok = await onSuorita(suoritus);
     setTallentaa(false);
@@ -79,11 +95,15 @@ export const Tehtavat = ({
 
   return (
     <div className="max-w-3xl">
-      <TakaisinLinkki onClick={onTakaisin}>Takaisin kohteeseen</TakaisinLinkki>
-      <h2 className="text-2xl font-bold text-ink-strong mb-1">{kohde.name}</h2>
-      <p className="text-sm text-ink-muted mb-8">
-        Työvuoron tehtävät. Kuittaus tallentuu heti ja jää kohteen lokiin.
-      </p>
+      {!upotettu && (
+        <>
+          <TakaisinLinkki onClick={onTakaisin}>Takaisin kohteeseen</TakaisinLinkki>
+          <h2 className="text-2xl font-bold text-ink-strong mb-1">{kohde.name}</h2>
+          <p className="text-sm text-ink-muted mb-8">
+            Työvuoron tehtävät. Kuittaus tallentuu heti ja jää kohteen lokiin.
+          </p>
+        </>
+      )}
 
       {tehtavat.length === 0 ? (
         <div className="bg-surface border border-line rounded-xl p-10 text-center">
@@ -110,7 +130,7 @@ export const Tehtavat = ({
                     {t.kuvaus && (
                       <p className="text-sm text-ink-muted mt-1 leading-relaxed">{t.kuvaus}</p>
                     )}
-                    {viimeisin && (
+                    {naytaHistoria && viimeisin && (
                       <p className="text-xs text-ink-subtle mt-2">
                         Viimeksi {muotoileAika(viimeisin.aika)} · {viimeisin.vartija}
                         {viimeisin.suoritettu === false ? ' · ei suoritettu' : ''}
@@ -163,6 +183,9 @@ export const Tehtavat = ({
                         placeholder="Mitä kierroksella havaittiin"
                         monirivinen
                       />
+                      <div className="mt-3">
+                        <Liitteet liitteet={liitteet} onMuutos={setLiitteet} onLatausTila={setLiitteetLataa} />
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap justify-end gap-2">
@@ -186,7 +209,7 @@ export const Tehtavat = ({
                       )}
                       <button
                         type="button"
-                        disabled={tallentaa}
+                        disabled={tallentaa || liitteetLataa}
                         onClick={() => kirjaa(true)}
                         className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors disabled:opacity-60"
                       >
@@ -202,7 +225,7 @@ export const Tehtavat = ({
         </div>
       )}
 
-      {kohteenSuoritukset.length > 0 && (
+      {naytaHistoria && kohteenSuoritukset.length > 0 && (
         <div className="mt-10">
           <h3 className="font-bold text-ink-strong mb-3">Viimeisimmät suoritukset</h3>
           <div className="border border-line rounded-lg divide-y divide-line-soft bg-surface">

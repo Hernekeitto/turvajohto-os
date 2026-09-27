@@ -34,6 +34,18 @@ export const SYYN_MIN_PITUUS = 3;
 export const SYYN_MAX_PITUUS = 500;
 export const HUOMION_MAX_PITUUS = 2000;
 
+// Kierroksen huomioiden liitekuvat (27.9.2026). Sama katto kuin kirjauksilla
+// (src/shared/liitteet.ts: MAX_LIITTEITA). Palvelin hyväksyy vain uploads-reitin
+// antamia tunnisteita (uuid + pääte), koska tunniste päätyy tiedostopolkuun.
+export const MAX_LIITTEITA = 10;
+const LIITE_ID = /^[0-9a-f-]{36}\.[a-z0-9]{1,5}$/i;
+
+export const puhdistaLiitteet = (liitteet) =>
+  (Array.isArray(liitteet) ? liitteet : [])
+    .filter((l) => typeof l?.id === 'string' && LIITE_ID.test(l.id))
+    .slice(0, MAX_LIITTEITA)
+    .map((l) => ({ id: l.id, name: String(l.name ?? '').slice(0, 200) }));
+
 // Sijaintipakotuksen oletussietoraja metreinä, kun pakotus erikseen kytketään päälle.
 // GPS on ulkona hyvissä oloissa noin 5 metrin tarkkuudella, rakennuksen seinustalla
 // paljon huonompi — 100 metriä on väljä mutta erottaa silti oikean pisteen väärästä.
@@ -166,7 +178,9 @@ export function kuittaaPiste({
 export const kuittaamattomat = (kierros) => (kierros?.pisteet || []).filter((p) => !p.kuitattu);
 
 // Päättää kierroksen. Tässä on erän tärkein sääntö: 'valmis' vaatii jokaisen pisteen.
-export function paataKierros({ kierros, tila, syy = '', huomiot = '', nyt = new Date(), toisto = false }) {
+export function paataKierros({
+  kierros, tila, syy = '', huomiot = '', liitteet = [], nyt = new Date(), toisto = false,
+}) {
   if (!kierros) return { ok: false, error: 'Kierrosta ei löytynyt.' };
   // Jonon uudelleenyritys: jos kierros on jo päättynyt SAMAAN tilaan johon sitä nyt
   // pyydetään, pyyntö on toisto ja lopputulos on jo olemassa. Eri tilaan päättäminen on
@@ -208,6 +222,7 @@ export function paataKierros({ kierros, tila, syy = '', huomiot = '', nyt = new 
       paattyi: nyt.toISOString(),
       keskeytysSyy: tila === 'keskeytetty' ? puhdasSyy : '',
       huomiot: String(huomiot ?? '').slice(0, HUOMION_MAX_PITUUS),
+      liitteet: puhdistaLiitteet(liitteet),
     },
   };
 }

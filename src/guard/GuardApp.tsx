@@ -317,6 +317,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [kierrokset, setKierrokset] = useState<KierrosTietue[]>([]);
   const [pohjaKohde, setPohjaKohde] = useState<Kohde | null>(null);
   const [kierrosKohde, setKierrosKohde] = useState<Kohde | null>(null);
+  // Vartijanäkymän yhdistetty tehtävät + kierrokset -näkymä (27.9.2026).
+  const [kohteenTehtavatKohde, setKohteenTehtavatKohde] = useState<Kohde | null>(null);
   // Hälytykset (erä 7). Palvelimen ylläpitämä kokoelma: tänne tulee vain luettua tilaa,
   // ja jokainen muutos tehdään /api/halytys-reiteillä.
   const [halytykset, setHalytykset] = useState<Halytys[]>([]);
@@ -1450,6 +1452,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     setAsetuksissa(false);
     setPohjaKohde(null);
     setKierrosKohde(null);
+    setKohteenTehtavatKohde(null);
     setHalytysKohde(null);
     setPohjaNakyma(null);
     setTiedoteKohde(null);
@@ -1485,6 +1488,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       : tiedoteKohde ? 'tiedotteet'
       : pohjaNakyma ? 'pohjat'
       : halytysKohde ? 'halytykset'
+      : kohteenTehtavatKohde ? 'kohteen-tehtavat'
       : kierrosKohde ? 'kierrokset'
       : pohjaKohde ? 'kierrospohjat'
       : tehtavaKohde ? 'tehtavat'
@@ -2015,6 +2019,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // renderöintiketjun kautta; muuten näytetään Vartijanäkymän oma etusivu.
   const vartijanAlanakyma = !!(
     raporttiKohde || kalustoKohde || tiedoteKohde || pohjaNakyma || kierrosKohde || tehtavaKohde
+    || kohteenTehtavatKohde
   );
   const nakymanNimi = vartijanPuolella && !vartijanAlanakyma ? 'Vartijanäkymä'
     : asetuksissa ? 'Sovellusasetukset'
@@ -2031,6 +2036,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     : kalustoKohde ? 'Kalusto'
     : mittariKohde ? 'Mittaristo'
     : jaksoKohde ? 'Jaksoraportit'
+    : kohteenTehtavatKohde ? 'Kohteen tehtävät'
     : kierrosKohde ? 'Kierrokset'
     : pohjaKohde ? 'Kierrospohjat'
     : tehtavaKohde ? 'Työvuoron tehtävät'
@@ -2449,6 +2455,42 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onMuutos={paivitaHalytys}
           onTakaisin={() => setHalytysKohde(null)}
         />
+      ) : kohteenTehtavatKohde ? (
+        /* Vartijanäkymän "Kohteen tehtävät" (27.9.2026, käyttäjän päätös): työvuoron
+           tehtävät ja kierrokset saman otsikon alla. Molemmat ovat samaa työtä — asioita
+           jotka vuorossa kuitataan — eikä vartijan tarvitse tietää että ne ovat
+           järjestelmässä eri kokoelmia. Aiemmat suoritukset eivät näy vartijalle. */
+        <div className="max-w-3xl">
+          <TakaisinLinkki onClick={() => setKohteenTehtavatKohde(null)}>Takaisin</TakaisinLinkki>
+          <h2 className="text-2xl font-bold text-ink-strong mb-1">Kohteen tehtävät</h2>
+          <p className="text-sm text-ink-muted mb-8">{kohteenTehtavatKohde.name}</p>
+          {saaNahdaTehtavat && (
+            <section className="mb-10">
+              <h3 className="text-xl font-bold text-ink-strong mb-4">Työvuoron tehtävät</h3>
+              <Tehtavat
+                kohde={kohteenTehtavatKohde}
+                suoritukset={suoritukset}
+                vartija={session?.nickname || ''}
+                saaKuitata={saaKuitata}
+                onSuorita={suoritaTehtava}
+                onTakaisin={() => setKohteenTehtavatKohde(null)}
+                naytaHistoria={!vartijanPuolella && !mobiili}
+                upotettu
+              />
+            </section>
+          )}
+          {saaNahdaKierrokset && (
+            <Kierros
+              kohde={kohteenTehtavatKohde}
+              pohjat={pohjat}
+              kierrokset={kierrokset}
+              saaKiertaa={saaKiertaa}
+              onPaivita={paivitaKierros}
+              onTakaisin={() => setKohteenTehtavatKohde(null)}
+              upotettu
+            />
+          )}
+        </div>
       ) : kierrosKohde ? (
         <Kierros
           kohde={kierrosKohde}
@@ -2482,6 +2524,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           saaKuitata={saaKuitata}
           onSuorita={suoritaTehtava}
           onTakaisin={() => setTehtavaKohde(null)}
+          naytaHistoria={!vartijanPuolella && !mobiili}
         />
       ) : lomake ? (
         <KohteenHallinta
@@ -2743,8 +2786,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
                 kohdeTiedot={kohteet}
                 kaikkiKohteet={isAdmin ? kohteet : undefined}
                 sallitut={{
-                  tehtavat: saaNahdaTehtavat,
-                  kierros: saaNahdaKierrokset,
+                  kohteen_tehtavat: saaNahdaTehtavat || saaNahdaKierrokset,
                   kalusto: saaNahdaKalustoa,
                   tiedotteet: saaNahdaTiedotteet,
                   ohjeet: saaNahdaOhjeet,
@@ -2753,7 +2795,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
                   ilmoitus: saaKirjataIlmoituksen,
                   anastus: saaKirjataAnastuksen,
                 }}
-                onToiminto={avaaToiminto}
+                onToiminto={(toiminto, kohde) => (toiminto === 'kohteen_tehtavat'
+                  ? setKohteenTehtavatKohde(kohde)
+                  : avaaToiminto(toiminto, kohde))}
               />
             </>
           ) : runko}

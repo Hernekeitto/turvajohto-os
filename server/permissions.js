@@ -145,6 +145,8 @@ const TIKE_FORM_NODES = [
 // kohde- tai raporttioikeutta. Ilman tätä kartta olisi käytännössä vain pääkäyttäjän.
 const GUARD_ATTACHMENT_NODES = [
   'guard_sites', 'guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_assets',
+  // Tehtävän ja kierroksen huomioiden kuvat (27.9.2026).
+  'guard_tasks', 'guard_patrols',
 ];
 
 const REPORT_ATTACHMENT_NODES = [
@@ -920,7 +922,7 @@ export function canUploadAttachment(role, permissions) {
 // tapahtumapuolen liitelogiikkaan ole tarpeen koskea.
 export function canReadGuardAttachment(
   role, permissions, eventAccess, attachmentId, guardFilesArr = [], guardReportsArr = [],
-  guardSitesArr = [], keyTypesArr = []
+  guardSitesArr = [], keyTypesArr = [], guardTaskRunsArr = [], patrolRunsArr = []
 ) {
   if (role === 'admin') return true;
 
@@ -951,14 +953,32 @@ export function canReadGuardAttachment(
     return hasAnyView(permissions, tiedosto.siteId, ['guard_sites', 'guard_site_info']);
   }
 
+  // Sekä vanha yksittäinen `attachment` että `attachments[]` (samoin kuin
+  // index.js: raportinLiitteet). Korjattu 27.9.2026: aiemmin vain vanha kenttä luettiin,
+  // joten lomakkeiden liitteet aukesivat vain pääkäyttäjälle.
   const raportti = (Array.isArray(guardReportsArr) ? guardReportsArr : []).find(
     (r) => r?.attachment?.id === attachmentId
+      || (Array.isArray(r?.attachments) && r.attachments.some((a) => a?.id === attachmentId))
   );
   if (raportti) {
     if (!eventAllowed(eventAccess, raportti.siteId)) return false;
     return hasAnyView(permissions, raportti.siteId, [
       'guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_site_info',
     ]);
+  }
+
+  // Tehtäväsuorituksen ja kierroksen huomioiden kuvat: samat solmut kuin kokoelmien
+  // lukemisella (guardTaskRuns, patrolRuns yllä).
+  const sisaltaa = (x) => Array.isArray(x?.liitteet) && x.liitteet.some((l) => l?.id === attachmentId);
+  const suoritus = (Array.isArray(guardTaskRunsArr) ? guardTaskRunsArr : []).find(sisaltaa);
+  if (suoritus) {
+    if (!eventAllowed(eventAccess, suoritus.siteId)) return false;
+    return hasAnyView(permissions, suoritus.siteId, ['guard_tasks', 'guard_site_info']);
+  }
+  const kierros = (Array.isArray(patrolRunsArr) ? patrolRunsArr : []).find(sisaltaa);
+  if (kierros) {
+    if (!eventAllowed(eventAccess, kierros.siteId)) return false;
+    return hasAnyView(permissions, kierros.siteId, ['guard_patrols', 'guard_site_info']);
   }
 
   return false;

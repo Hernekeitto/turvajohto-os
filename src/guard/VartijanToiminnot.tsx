@@ -4,23 +4,23 @@
 // mutta Vartijanäkymässä niistä on riisuttu hallinta: "Siirrä kalustoa pankista",
 // "Uusi toimintakortti" ja "Uusi skenaario" eivät näy (ks. GuardApp: vartijanPuolella).
 //
-// Järjestys on käyttäjän antama.
+// Järjestys on käyttäjän antama. Tehtävät ja kierrokset ovat yhden painikkeen takana
+// ("Kohteen tehtävät", 27.9.2026): vartijalle ne ovat samaa työtä. Se ei ole ylläpidon
+// kohdevalikon Toiminto, joten sillä on oma tunnisteensa.
 import type { LucideIcon } from 'lucide-react';
 import {
-  BookOpen, ClipboardList, FileText, KeyRound, ListChecks, Megaphone, Route, ShieldAlert, ShoppingBag,
+  BookOpen, ClipboardList, FileText, KeyRound, ListChecks, Megaphone, ShieldAlert, ShoppingBag,
 } from 'lucide-react';
 
 import type { Toiminto } from './tilannekuva';
 
 export type VartijanToiminto = Extract<
   Toiminto,
-  'tehtavat' | 'kierros' | 'kalusto' | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'toimenpide'
-  | 'ilmoitus' | 'anastus'
->;
+  'kalusto' | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'toimenpide' | 'ilmoitus' | 'anastus'
+> | 'kohteen_tehtavat';
 
 const TOIMINNOT: { id: VartijanToiminto; nimi: string; ikoni: LucideIcon }[] = [
-  { id: 'tehtavat', nimi: 'Tehtävät', ikoni: ClipboardList },
-  { id: 'kierros', nimi: 'Kierros', ikoni: Route },
+  { id: 'kohteen_tehtavat', nimi: 'Kohteen tehtävät', ikoni: ClipboardList },
   { id: 'kalusto', nimi: 'Kalusto', ikoni: KeyRound },
   { id: 'tiedotteet', nimi: 'Tiedotteet', ikoni: Megaphone },
   { id: 'ohjeet', nimi: 'Ohjepankki', ikoni: BookOpen },
