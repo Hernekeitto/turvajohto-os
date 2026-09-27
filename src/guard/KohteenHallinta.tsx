@@ -25,6 +25,8 @@ import { uusiId, type Kierrospohja, type Kohde, type KohteenTiedosto, type Pereh
 // sanota, se näyttää täsmälleen samalta kuin toimiva.
 
 type Valilehti = 'perustiedot' | 'tiedostot' | 'perehdytys' | 'vuorot' | 'tehtavat';
+// Kohdevalikko avaa muokkauksen suoraan yhteen osioon (27.9.2026, ks. Kohdenakyma.tsx).
+export type KohteenOsio = Valilehti;
 
 const VALILEHDET: { id: Valilehti; label: string; Ikoni: typeof Building2 }[] = [
   { id: 'perustiedot', label: 'Perustiedot', Ikoni: Building2 },
@@ -70,6 +72,10 @@ type Props = {
   // poistetaan sieltä seuraavan GuardApp-muutoksen yhteydessä.
   onLataaKartta?: (tiedosto: File) => Promise<void>;
   saaMuokata: boolean;
+  // Avattava osio. Annettuna näkymä näyttää vain sen osion ilman välilehtiä, koska
+  // osiot ovat kohdevalikossa omia painikkeitaan. Puuttuva = välilehdet (uuden kohteen
+  // luonti, jossa kaikki osiot täytetään kerralla).
+  osio?: KohteenOsio;
 };
 
 // Kaksi tekstikenttää yhdeksi koordinaatiksi (erä 22). Molempien on oltava luettavissa,
@@ -97,8 +103,10 @@ export const KohteenHallinta = ({
   onLisaaTiedosto,
   onPoistaTiedosto,
   saaMuokata,
+  osio,
 }: Props) => {
-  const [valilehti, setValilehti] = useState<Valilehti>('perustiedot');
+  const [valilehti, setValilehti] = useState<Valilehti>(osio ?? 'perustiedot');
+  const osionNimi = osio ? VALILEHDET.find((v) => v.id === osio)?.label : null;
   const [uusiPerehdytys, setUusiPerehdytys] = useState({
     nimi: '', employeeId: '', username: '', pvm: paikallinenPaiva(), perehdyttaja: '',
     vuorotyyppiIdt: [] as string[],
@@ -228,13 +236,15 @@ export const KohteenHallinta = ({
     <div className="bg-surface rounded-xl shadow-sm border border-line-soft p-6 md:p-8 max-w-3xl">
       <TakaisinLinkki onClick={onPeruuta}>{kohde.id ? 'Takaisin kohteeseen' : 'Takaisin kohdelistaan'}</TakaisinLinkki>
       <h2 className="text-xl font-bold text-ink-strong mb-1">
-        {kohde.id ? kohde.name || 'Kohde' : 'Uusi kohde'}
+        {osionNimi || (kohde.id ? kohde.name || 'Kohde' : 'Uusi kohde')}
       </h2>
       <p className="text-sm text-ink-muted mb-6">
-        Kohteen perustiedot, vuorot, niihin perehdytetyt henkilöt ja työvuoron tehtävät.
+        {osionNimi
+          ? kohde.name
+          : 'Kohteen perustiedot, vuorot, niihin perehdytetyt henkilöt ja työvuoron tehtävät.'}
       </p>
 
-      <div className="flex gap-1 border-b border-line mb-6 -mx-1 overflow-x-auto">
+      <div className={`flex gap-1 border-b border-line mb-6 -mx-1 overflow-x-auto${osio ? ' hidden' : ''}`}>
         {VALILEHDET.map(({ id, label, Ikoni }) => (
           <button
             key={id}

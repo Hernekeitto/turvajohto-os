@@ -13,11 +13,13 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   ClipboardList, Route, QrCode, KeyRound, BarChart3, FileText, Megaphone, BookOpen,
-  ListChecks, Siren, ShieldAlert, ShoppingBag, Info, Pencil, Trash2, MapPin, Phone, ChevronRight,
+  ListChecks, Siren, ShieldAlert, ShoppingBag, Info, Trash2, MapPin, Phone, ChevronRight,
+  Building2, FolderOpen, CalendarClock, GraduationCap, ClipboardCheck,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import type { Kiireys, Tiivistelma, Toiminto } from './tilannekuva';
+import type { KohteenOsio } from './KohteenHallinta';
 import type { Kohde } from './tyypit';
 
 type Props = {
@@ -27,36 +29,85 @@ type Props = {
   // sama sääntö kuin ennen kohdekortissa.
   sallitut: Record<Toiminto, boolean>;
   saaMuokata: boolean;
+  // Kohteen tiedostojen määrä Tiedostot-painikkeen tiivistelmään.
+  tiedostoja: number;
   onValitse: (toiminto: Toiminto) => void;
-  onHallitse: () => void;
+  // Kohteen muokkaus avataan suoraan pyydettyyn osioon (27.9.2026): osiot ovat omia
+  // painikkeitaan eivätkä enää "Muokkaa perustietoja" -näkymän välilehtiä.
+  onHallitse: (osio: KohteenOsio) => void;
   onPoista: () => void;
   onTakaisin: () => void;
 };
 
-// Painikkeiden järjestys on työjärjestys: ensin se mitä vuorossa tehdään (tehtävät,
-// kierros), sitten kohteen kalusto ja seuranta, sitten kirjaaminen. Hälytykset on
-// erikseen listan lopussa muttei viimeisenä — se on toiminto jota etsitään kiireessä,
-// joten se on omassa korostetussa ryhmässään alla.
-const TOIMINNOT: { id: Toiminto; nimi: string; ikoni: LucideIcon }[] = [
+type Painike = {
+  id: string;
+  nimi: string;
+  ikoni: LucideIcon;
+  tiivistelma: Tiivistelma;
+  onClick: () => void;
+};
+
+// Painikkeet on jaettu kahteen ryhmään (käyttäjän päätös 27.9.2026):
+//
+//   Kohteen ylläpito   vain ylläpidolle: kohteen muokkauksen osiot, pohjat, kooste ja
+//                      seuranta. Ylempänä, koska ylläpitonäkymä on esimiehen työkalu.
+//   Vuoron toiminnot   samat painikkeet jotka vartija näkee (ks. VartijanToiminnot.tsx),
+//                      joten esimies näkee yhdellä silmäyksellä mitä vartijalle näkyy.
+//
+// Vuoron toimintojen järjestys on työjärjestys: ensin se mitä vuorossa tehdään (tehtävät,
+// kierros), sitten kalusto ja tiedot, sitten kirjaaminen.
+const YLLAPIDON_TOIMINNOT: { id: Toiminto; nimi: string; ikoni: LucideIcon }[] = [
+  { id: 'kierrospohjat', nimi: 'Kierrospohjat', ikoni: QrCode },
+  { id: 'tiedot', nimi: 'Kohteen tiedot', ikoni: Info },
+  { id: 'mittaristo', nimi: 'Mittaristo', ikoni: BarChart3 },
+  { id: 'jaksoraportit', nimi: 'Jaksoraportit', ikoni: ClipboardList },
+];
+
+const VUORON_TOIMINNOT: { id: Toiminto; nimi: string; ikoni: LucideIcon }[] = [
   { id: 'tehtavat', nimi: 'Tehtävät', ikoni: ClipboardList },
   { id: 'kierros', nimi: 'Kierros', ikoni: Route },
   { id: 'kalusto', nimi: 'Kalusto', ikoni: KeyRound },
-  { id: 'mittaristo', nimi: 'Mittaristo', ikoni: BarChart3 },
-  { id: 'jaksoraportit', nimi: 'Jaksoraportit', ikoni: ClipboardList },
   { id: 'tiedotteet', nimi: 'Tiedotteet', ikoni: Megaphone },
-  { id: 'ohjeet', nimi: 'Ohjeet', ikoni: BookOpen },
+  { id: 'ohjeet', nimi: 'Ohjepankki', ikoni: BookOpen },
   { id: 'skenaariot', nimi: 'Skenaariot', ikoni: ListChecks },
-  { id: 'toimenpide', nimi: 'Toimenpide', ikoni: FileText },
-  { id: 'ilmoitus', nimi: 'Tapahtumailmoitus', ikoni: ShieldAlert },
+  { id: 'toimenpide', nimi: 'Vartijan toimenpide', ikoni: FileText },
+  { id: 'ilmoitus', nimi: 'Vartijan tapahtumailmoitus', ikoni: ShieldAlert },
   { id: 'anastus', nimi: 'Anastusilmoitus', ikoni: ShoppingBag },
 ];
 
-// Kohteen ylläpito: pohjien laatiminen, kooste ja perustietojen muokkaus. Erillään
-// vuoron toiminnoista, koska tätä tehdään valvomossa eikä kentällä.
-const HALLINTA: { id: Toiminto; nimi: string; ikoni: LucideIcon }[] = [
-  { id: 'kierrospohjat', nimi: 'Kierrospohjat', ikoni: QrCode },
-  { id: 'tiedot', nimi: 'Kohteen tiedot', ikoni: Info },
-];
+const lkm = (maara: number, yksikko: string, monikko: string) =>
+  `${maara} ${maara === 1 ? yksikko : monikko}`;
+
+// Kohteen muokkauksen osiot omina painikkeinaan. Tiivistelmä kertoo mitä osiossa jo on,
+// samaan tapaan kuin toimintojen painikkeissa.
+const muokkausosiot = (kohde: Kohde, tiedostoja: number) => {
+  const vuoroja = (kohde.vuorotyypit || []).filter((v) => !v.arkistoitu).length;
+  const perehdytyksia = (kohde.perehdytykset || []).length;
+  const tehtavia = (kohde.tehtavat || []).length;
+  const osiot: { id: KohteenOsio; nimi: string; ikoni: LucideIcon; teksti: string }[] = [
+    {
+      id: 'perustiedot', nimi: 'Perustiedot', ikoni: Building2,
+      teksti: 'Nimi, osoite, yhteystiedot ja kohteen asetukset',
+    },
+    {
+      id: 'tiedostot', nimi: 'Tiedostot', ikoni: FolderOpen,
+      teksti: tiedostoja > 0 ? lkm(tiedostoja, 'tiedosto', 'tiedostoa') : 'Ei tiedostoja',
+    },
+    {
+      id: 'vuorot', nimi: 'Vuorot', ikoni: CalendarClock,
+      teksti: vuoroja > 0 ? lkm(vuoroja, 'vuoro', 'vuoroa') : 'Ei vuoroja',
+    },
+    {
+      id: 'perehdytys', nimi: 'Perehdytykset', ikoni: GraduationCap,
+      teksti: perehdytyksia > 0 ? lkm(perehdytyksia, 'perehdytys', 'perehdytystä') : 'Ei perehdytyksiä',
+    },
+    {
+      id: 'tehtavat', nimi: 'Työvuoron tehtävät', ikoni: ClipboardCheck,
+      teksti: tehtavia > 0 ? lkm(tehtavia, 'tehtävä', 'tehtävää') : 'Ei tehtäviä',
+    },
+  ];
+  return osiot;
+};
 
 const HUOMION_TYYLI: Record<Kiireys, string> = {
   kriittinen: 'bg-danger-soft text-danger-ink border-danger/40',
@@ -64,12 +115,54 @@ const HUOMION_TYYLI: Record<Kiireys, string> = {
   rauhallinen: 'bg-sunken text-ink-body border-line',
 };
 
+const Ryhma = ({ otsikko, kuvaus, painikkeet }: { otsikko: string; kuvaus: string; painikkeet: Painike[] }) => {
+  if (painikkeet.length === 0) return null;
+  return (
+    <section className="mb-8">
+      <h3 className="text-sm font-bold text-ink-strong">{otsikko}</h3>
+      <p className="text-xs text-ink-muted mb-3">{kuvaus}</p>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {painikkeet.map(({ id, nimi, ikoni: Ikoni, tiivistelma, onClick }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={onClick}
+            className="text-left bg-surface border border-line hover:bg-sunken hover:border-line-strong rounded-xl p-4 transition-colors flex flex-col"
+          >
+            <span className="flex items-center gap-2 mb-1.5">
+              <Ikoni size={16} className="text-accent shrink-0" />
+              <span className="font-bold text-ink-strong flex-1">{nimi}</span>
+              {tiivistelma.huomio && (
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border shrink-0 ${HUOMION_TYYLI[tiivistelma.huomio.taso]}`}>
+                  {tiivistelma.huomio.teksti}
+                </span>
+              )}
+            </span>
+            <span className="text-xs text-ink-muted leading-relaxed">{tiivistelma.teksti}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+};
+
 export const Kohdenakyma = ({
-  kohde, tiivistelmat, sallitut, saaMuokata, onValitse, onHallitse, onPoista, onTakaisin,
+  kohde, tiivistelmat, sallitut, saaMuokata, tiedostoja, onValitse, onHallitse, onPoista, onTakaisin,
 }: Props) => {
   const halytys = tiivistelmat.halytykset;
-  const naytettavat = TOIMINNOT.filter((t) => sallitut[t.id]);
-  const hallinta = HALLINTA.filter((t) => sallitut[t.id]);
+  const toiminnoiksi = (lista: typeof VUORON_TOIMINNOT): Painike[] => lista
+    .filter((t) => sallitut[t.id])
+    .map((t) => ({ ...t, tiivistelma: tiivistelmat[t.id], onClick: () => onValitse(t.id) }));
+
+  const yllapito: Painike[] = [
+    ...(saaMuokata
+      ? muokkausosiot(kohde, tiedostoja).map(({ id, nimi, ikoni, teksti }) => ({
+        id: `osio-${id}`, nimi, ikoni, tiivistelma: { teksti, huomio: null }, onClick: () => onHallitse(id),
+      }))
+      : []),
+    ...toiminnoiksi(YLLAPIDON_TOIMINNOT),
+  ];
+  const vuoron = toiminnoiksi(VUORON_TOIMINNOT);
 
   return (
     <div>
@@ -100,7 +193,7 @@ export const Kohdenakyma = ({
         <button
           type="button"
           onClick={() => onValitse('halytykset')}
-          className={`w-full text-left flex items-center gap-4 border rounded-xl p-5 mb-4 transition-colors ${
+          className={`w-full text-left flex items-center gap-4 border rounded-xl p-5 mb-8 transition-colors ${
             halytys.huomio?.taso === 'kriittinen'
               ? 'bg-danger-soft border-danger/50 hover:brightness-95'
               : halytys.huomio
@@ -127,68 +220,22 @@ export const Kohdenakyma = ({
         </button>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {naytettavat.map(({ id, nimi, ikoni: Ikoni }) => {
-          const tiivistelma = tiivistelmat[id];
-          return (
-            <button
-              key={id}
-              type="button"
-              onClick={() => onValitse(id)}
-              className="text-left bg-surface border border-line hover:bg-sunken hover:border-line-strong rounded-xl p-4 transition-colors flex flex-col"
-            >
-              <span className="flex items-center gap-2 mb-1.5">
-                <Ikoni size={16} className="text-accent shrink-0" />
-                <span className="font-bold text-ink-strong flex-1">{nimi}</span>
-                {tiivistelma.huomio && (
-                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border shrink-0 ${HUOMION_TYYLI[tiivistelma.huomio.taso]}`}>
-                    {tiivistelma.huomio.teksti}
-                  </span>
-                )}
-              </span>
-              <span className="text-xs text-ink-muted leading-relaxed">{tiivistelma.teksti}</span>
-            </button>
-          );
-        })}
-      </div>
+      <Ryhma otsikko="Kohteen ylläpito" kuvaus="Näkyy vain ylläpidolle." painikkeet={yllapito} />
+      <Ryhma otsikko="Vuoron toiminnot" kuvaus="Näkyvät myös vartijoille." painikkeet={vuoron} />
 
-      {(hallinta.length > 0 || saaMuokata) && (
-        <div className="mt-8 pt-6 border-t border-line-soft">
-          <h3 className="text-sm font-bold text-ink-body mb-3">Kohteen hallinta</h3>
-          <div className="flex flex-wrap gap-2">
-            {hallinta.map(({ id, nimi, ikoni: Ikoni }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => onValitse(id)}
-                title={tiivistelmat[id].teksti}
-                className="inline-flex items-center gap-2 bg-surface hover:bg-sunken text-ink-body border border-line text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
-              >
-                <Ikoni size={16} />
-                {nimi}
-              </button>
-            ))}
-            {saaMuokata && (
-              <>
-                <button
-                  type="button"
-                  onClick={onHallitse}
-                  className="inline-flex items-center gap-2 bg-surface hover:bg-sunken text-ink-body border border-line text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
-                >
-                  <Pencil size={16} />
-                  Muokkaa perustietoja
-                </button>
-                <button
-                  type="button"
-                  onClick={onPoista}
-                  className="inline-flex items-center gap-2 text-ink-muted hover:text-danger hover:bg-danger-soft border border-line text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
-                >
-                  <Trash2 size={16} />
-                  Poista kohde
-                </button>
-              </>
-            )}
-          </div>
+      {/* Kohteen poisto on ainoa alareunaan jäävä toiminto: se ei ole työtä kohteessa
+          vaan koko kohteen hävittäminen, eikä sen pidä olla samannäköinen ruutu kuin
+          muut. */}
+      {saaMuokata && (
+        <div className="pt-6 border-t border-line-soft">
+          <button
+            type="button"
+            onClick={onPoista}
+            className="inline-flex items-center gap-2 text-ink-muted hover:text-danger hover:bg-danger-soft border border-line text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
+          >
+            <Trash2 size={16} />
+            Poista kohde
+          </button>
         </div>
       )}
     </div>

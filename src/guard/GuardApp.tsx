@@ -7,7 +7,7 @@ import { paikallinenPaiva } from '../shared/ajat';
 import { kaytaKorjatutTunnisteet } from '../shared/tunnisteet';
 import { Ylapalkki } from '../shared/komponentit/Ylapalkki';
 import { PttPainike } from './PttPainike';
-import { KohteenHallinta } from './KohteenHallinta';
+import { KohteenHallinta, type KohteenOsio } from './KohteenHallinta';
 import { Tehtavat } from './Tehtavat';
 import { Raportit } from './Raportit';
 import { KohteenTiedot } from './KohteenTiedot';
@@ -286,6 +286,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [tallentaa, setTallentaa] = useState(false);
   // null = lista näkyvissä, muuten muokattavana oleva kohde (uudella id === '').
   const [lomake, setLomake] = useState<Kohde | null>(null);
+  // Mikä kohteen muokkauksen osio on auki (ks. Kohdenakyma: onHallitse). Puuttuva =
+  // kaikki osiot välilehtinä, kuten uuden kohteen luonnissa.
+  const [hallintaOsio, setHallintaOsio] = useState<KohteenOsio | undefined>(undefined);
   const [poistettava, setPoistettava] = useState<Kohde | null>(null);
   // Työntekijäpankki perehdytysvalintaa varten. Jää tyhjäksi jos käyttäjällä ei ole
   // siihen lukuoikeutta — silloin perehdytettävän nimi kirjoitetaan käsin.
@@ -2492,6 +2495,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onPoistaTiedosto={poistaTiedosto}
           onLataaKartta={lataaKartta}
           saaMuokata={saaMuokata}
+          osio={lomake.id ? hallintaOsio : undefined}
         />
       ) : valittuKohde ? (
         <Kohdenakyma
@@ -2517,12 +2521,16 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             tiedot: saaNahdaTiedot,
           }}
           saaMuokata={saaMuokata}
+          tiedostoja={tiedostot.filter((t) => t.siteId === valittuKohde.id).length}
           onValitse={(toiminto) => avaaToiminto(toiminto, valittuKohde)}
-          onHallitse={() => setLomake({
-            ...valittuKohde,
-            perehdytykset: [...(valittuKohde.perehdytykset || [])],
-            tehtavat: (valittuKohde.tehtavat || []).map((t) => ({ ...t, kohdat: [...t.kohdat] })),
-          })}
+          onHallitse={(hallittava) => {
+            setHallintaOsio(hallittava);
+            setLomake({
+              ...valittuKohde,
+              perehdytykset: [...(valittuKohde.perehdytykset || [])],
+              tehtavat: (valittuKohde.tehtavat || []).map((t) => ({ ...t, kohdat: [...t.kohdat] })),
+            });
+          }}
           onPoista={() => setPoistettava(valittuKohde)}
           onTakaisin={() => setValittuKohde(null)}
         />
