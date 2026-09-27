@@ -10,7 +10,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  myohassaMinuutteina, onUnohtunutVuoro, UNOHTUNUT_VARTIJA_MIN, UNOHTUNUT_HALKE_MIN,
+  kaikkiKohteina, myohassaMinuutteina, onUnohtunutVuoro, voiAloittaa,
+  UNOHTUNUT_VARTIJA_MIN, UNOHTUNUT_HALKE_MIN,
   type KaynnissaVuoro,
 } from './vuorot.ts';
 
@@ -98,4 +99,22 @@ test('kellonajaton vuoro ei ole koskaan unohtunut', () => {
   // pituudesta: pitkä vuoro on eri asia kuin päättämättä jäänyt vuoro.
   assert.equal(onUnohtunutVuoro(vuoro(null), T(MAARAAIKA) + 600 * 60_000), false);
   assert.equal(onUnohtunutVuoro(vuoro(undefined), T(MAARAAIKA) + 600 * 60_000), false);
+});
+
+test('pääkäyttäjä: kaikki kohteet ja esteelliset vuorot ohitettavina', () => {
+  const omat = [{
+    siteId: 'k1', siteNimi: 'Oma',
+    vuorot: [{ id: 'a', nimi: 'A', kuvaus: '', alkaa: null, paattyy: null, perehdytetty: true, ikkunassa: true, tehtavia: 0, kierroksia: 0 }],
+  }];
+  const kaikki = [
+    { id: 'k1', name: 'Oma' },
+    { id: 'k2', name: 'Muu', vuorotyypit: [{ id: 'b', nimi: 'B' }, { id: 'c', nimi: 'C', arkistoitu: true }] },
+    { id: 'k3', name: 'Arkistoitu', archived: true },
+  ] as unknown as Parameters<typeof kaikkiKohteina>[0];
+  const tulos = kaikkiKohteina(kaikki, omat);
+  assert.deepEqual(tulos.map((k) => k.siteId), ['k1', 'k2']);
+  assert.equal(tulos[0].vuorot[0].ohitus, false);
+  assert.deepEqual(tulos[1].vuorot.map((v) => [v.id, v.ohitus]), [['b', true]]);
+  assert.equal(voiAloittaa(tulos[1].vuorot[0]), true);
+  assert.equal(voiAloittaa({ ...tulos[1].vuorot[0], ohitus: false }), false);
 });

@@ -21,7 +21,8 @@ import {
 } from 'lucide-react';
 
 import {
-  aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, kaikkiKohteina, paataVuoroPalvelimella,
+  PAAKAYTTAJAN_OHITUS, aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, kaikkiKohteina,
+  paataVuoroPalvelimella, voiAloittaa,
   type PalvelimenVuoro, type VuoroVaihtoehto, type Vuorokohde, type VuoronLaitteet,
 } from './vuorot';
 import type { Kohde } from './tyypit';
@@ -104,7 +105,7 @@ export const Vartijanakyma = ({ kohdeTiedot, kaikkiKohteet, sallitut, onToiminto
   const aloita = async (siteId: string, v: VuoroVaihtoehto) => {
     setVirhe(null);
     setKaynnissa(true);
-    const tulos = await aloitaVuoroPalvelimella(siteId, v.id, tapa).catch(() => null);
+    const tulos = await aloitaVuoroPalvelimella(siteId, v.id, tapa, v.ohitus ? PAAKAYTTAJAN_OHITUS : undefined).catch(() => null);
     setKaynnissa(false);
     if (!tulos || !tulos.ok) {
       setVirhe(tulos ? tulos.virhe : 'Vuoroa ei voitu aloittaa: palvelimeen ei saatu yhteyttä.');
@@ -279,25 +280,25 @@ export const Vartijanakyma = ({ kohdeTiedot, kaikkiKohteet, sallitut, onToiminto
                 {avattu && (
                   <div className="border-t border-line px-5 py-4 space-y-2">
                     {kohde.vuorot.map((v) => {
-                      const voiAloittaa = v.perehdytetty && v.ikkunassa;
+                      const aloitettava = voiAloittaa(v);
                       return (
                         <div key={v.id} className="flex items-center gap-4 rounded-lg border border-line px-4 py-3">
                           <div className="min-w-0 flex-1">
-                            <p className={`font-bold ${voiAloittaa ? 'text-ink-strong' : 'text-ink-muted'}`}>{v.nimi}</p>
+                            <p className={`font-bold ${aloitettava ? 'text-ink-strong' : 'text-ink-muted'}`}>{v.nimi}</p>
                             <p className="text-sm text-ink-muted">{aikavali(v)} · {sisalto(v)}</p>
                             {!v.perehdytetty ? (
                               <p className="mt-1 flex items-center gap-1.5 text-sm text-ink-muted">
                                 <GraduationCap size={14} className="shrink-0" />
-                                Ei perehdytystä tähän vuoroon
+                                Ei perehdytystä tähän vuoroon{v.ohitus ? ' · pääkäyttäjänä ohitat esteen' : ''}
                               </p>
                             ) : !v.ikkunassa ? (
                               <p className="mt-1 flex items-center gap-1.5 text-sm text-ink-muted">
                                 <Clock size={14} className="shrink-0" />
-                                Ei vielä auki — hälytyskeskus voi avata sen tarvittaessa
+                                Ei vielä auki — hälytyskeskus voi avata sen tarvittaessa{v.ohitus ? ' · pääkäyttäjänä ohitat esteen' : ''}
                               </p>
                             ) : null}
                           </div>
-                          {voiAloittaa && (
+                          {aloitettava && (
                             <button
                               type="button"
                               disabled={kaynnissa}

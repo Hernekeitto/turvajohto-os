@@ -57,7 +57,8 @@ import {
   aloitaHalytys, ilmoita, lopetaHalytys, pyydaIlmoituslupa, varmistaAani,
 } from '../shared/aani';
 import {
-  aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, haeVuoronKooste, kaikkiKohteina, lisaaVuoroon,
+  PAAKAYTTAJAN_OHITUS, aloitaVuoroPalvelimella, haeOmaVuoro, haeOmatVuorot, haeVuoronKooste,
+  kaikkiKohteina, lisaaVuoroon,
   paataVuoroPalvelimella, myohassaMinuutteina, UNOHTUNUT_VARTIJA_MIN,
   type PalvelimenVuoro, type VuoronKooste, type Vuorokohde, type VuoroVaihtoehto,
 } from './vuorot';
@@ -1592,7 +1593,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const aloitaVuoro = async (siteId: string, vaihtoehto: VuoroVaihtoehto) => {
     setVuoroVirhe(null);
     setVuoroaAloitetaan(true);
-    const tulos = await aloitaVuoroPalvelimella(siteId, vaihtoehto.id).catch(() => null);
+    const tulos = await aloitaVuoroPalvelimella(
+      siteId, vaihtoehto.id, undefined, vaihtoehto.ohitus ? PAAKAYTTAJAN_OHITUS : undefined,
+    ).catch(() => null);
     setVuoroaAloitetaan(false);
 
     if (!tulos || !tulos.ok) {

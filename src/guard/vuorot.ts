@@ -31,7 +31,16 @@ export type VuoroVaihtoehto = {
   ikkunassa: boolean;
   tehtavia: number;
   kierroksia: number;
+  // Pääkäyttäjä ohittaa perehdytyksen ja aikaikkunan (27.9.2026, käyttäjän päätös: ylläpitäjä
+  // katsoo tietoja yleisesti eikä kenenkään vartijan näkymästä). Ohitus on palvelimen
+  // olemassa oleva kertalupa, joten se jää vuoron tietueeseen ja auditlokiin.
+  ohitus?: boolean;
 };
+
+// Kertaluvan syy pääkäyttäjän ohitukselle. Palvelin vaatii syyn (vähintään 5 merkkiä).
+export const PAAKAYTTAJAN_OHITUS = 'Pääkäyttäjän ohitus ilman perehdytystä tai aikaikkunaa';
+
+export const voiAloittaa = (v: VuoroVaihtoehto) => (v.perehdytetty && v.ikkunassa) || v.ohitus === true;
 
 export type Vuorokohde = {
   siteId: string;
@@ -76,7 +85,7 @@ export async function haeOmatVuorot(): Promise<OmatVuorot> {
 export function kaikkiKohteina(kaikki: Kohde[], omat: Vuorokohde[]): Vuorokohde[] {
   return kaikki
     .filter((k) => !k.archived)
-    .map((k) => omat.find((o) => o.siteId === k.id) || {
+    .map((k): Vuorokohde => omat.find((o) => o.siteId === k.id) || {
       siteId: k.id,
       siteNimi: k.name,
       vuorot: (k.vuorotyypit || [])
@@ -92,7 +101,12 @@ export function kaikkiKohteina(kaikki: Kohde[], omat: Vuorokohde[]): Vuorokohde[
           tehtavia: (v.tehtavaIdt || []).length,
           kierroksia: (v.pohjaIdt || []).length,
         })),
-    });
+    })
+    // Pääkäyttäjä voi aloittaa minkä tahansa vuoron: este näytetään yhä, mutta ohitettavana.
+    .map((k) => ({
+      ...k,
+      vuorot: k.vuorot.map((v) => ({ ...v, ohitus: !(v.perehdytetty && v.ikkunassa) })),
+    }));
 }
 
 // --- Vuoron elinkaari (erä 17) ------------------------------------------------------
@@ -158,12 +172,17 @@ export async function aloitaVuoroPalvelimella(
   vuorotyyppiId: string,
   // Puuttuva = puhelimella aloitettu vuoro, kuten ennen tätä parametria.
   laitteet?: VuoronLaitteet,
+  // Kertaluvan syy (hälytyskeskus tai pääkäyttäjä). Palvelin hyväksyy sen vain
+  // valtuutetulta, joten tavallisen vartijan lähettämä syy ei avaa mitään.
+  poikkeusSyy?: string,
 ): Promise<AloitusTulos> {
   const vastaus = await fetch('/api/vuoro', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ siteId, vuorotyyppiId, ...(laitteet ? { laitteet } : {}) }),
+    body: JSON.stringify({
+      siteId, vuorotyyppiId, ...(laitteet ? { laitteet } : {}), ...(poikkeusSyy ? { poikkeusSyy } : {}),
+    }),
   });
   const data = await vastaus.json().catch(() => null);
   if (!vastaus.ok || !data?.ok) {

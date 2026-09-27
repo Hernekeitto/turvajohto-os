@@ -24,7 +24,7 @@ import { useState } from 'react';
 import { ArrowLeft, Building2, ChevronRight, Clock, GraduationCap } from 'lucide-react';
 
 import { LaiteSidonta } from '../../shared/komponentit/LaiteSidonta';
-import type { Vuorokohde, VuoroVaihtoehto } from '../vuorot';
+import { voiAloittaa, type Vuorokohde, type VuoroVaihtoehto } from '../vuorot';
 
 type Props = {
   kohteet: Vuorokohde[];
@@ -91,7 +91,7 @@ export const Vuorovalinta = ({
 
         <div className="space-y-2">
           {valittu.vuorot.map((v) => {
-            const auki = v.perehdytetty && v.ikkunassa;
+            const auki = voiAloittaa(v);
             return (
               <button
                 key={v.id}
@@ -118,12 +118,12 @@ export const Vuorovalinta = ({
                   {!v.perehdytetty ? (
                     <span className="mt-1.5 flex items-center gap-1.5 text-sm text-ink-muted">
                       <GraduationCap size={14} className="shrink-0" />
-                      Ei perehdytystä tähän vuoroon
+                      Ei perehdytystä tähän vuoroon{v.ohitus ? ' · pääkäyttäjänä ohitat esteen' : ''}
                     </span>
                   ) : !v.ikkunassa ? (
                     <span className="mt-1.5 flex items-center gap-1.5 text-sm text-ink-muted">
                       <Clock size={14} className="shrink-0" />
-                      Ei vielä auki — hälytyskeskus voi avata sen tarvittaessa
+                      Ei vielä auki — hälytyskeskus voi avata sen tarvittaessa{v.ohitus ? ' · pääkäyttäjänä ohitat esteen' : ''}
                     </span>
                   ) : null}
                 </span>
