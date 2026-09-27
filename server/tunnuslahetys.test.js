@@ -113,3 +113,14 @@ test('HTML-versio suojaa nimen', () => {
   assert.doesNotMatch(v.html, /<b>Ismo/);
   assert.match(v.html, /&lt;b&gt;Ismo/);
 });
+
+test('tervehdyksessä on ensimmäinen etunimi, ei koko nimimerkkiä', async () => {
+  let teksti = '';
+  await toimitaTunnustiedot({
+    kanavat: ['sahkoposti'], tyontekija: { ...tyontekija, firstName: 'Testi Heikki', lastName: 'Koppurainen' },
+    nimi: 'Koppurainen Testi Heikki', username: 'x', password: SALASANA,
+    lahetaSahkoposti: async (v) => { teksti = v.text; return { ok: true }; },
+    lahetaSms: async () => ({ ok: true }),
+  });
+  assert.match(teksti, /^Hei Testi,/);
+});

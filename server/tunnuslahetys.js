@@ -141,7 +141,10 @@ export async function toimitaTunnustiedot({
       tulos.sahkoposti = { tila: 'ei-yhteystietoa', viesti: 'Työntekijältä puuttuu kelvollinen sähköpostiosoite.' };
     } else {
       const viesti = rakennaSahkoposti({
-        nimi, username, osoite: kirjautumisosoite(puoli), syy, totp,
+        // Tervehdykseen ensimmäinen etunimi ("Hei Testi,"). Tunnuksen nimimerkki on
+        // muotoa "Sukunimi Etunimet", joka kuulostaisi tervehdyksessä rekisteriotteelta.
+        nimi: String(tyontekija?.firstName || '').trim().split(/\s+/)[0] || nimi,
+        username, osoite: kirjautumisosoite(puoli), syy, totp,
         // Mainitaan numero vain jos salasana todella lähtee sinne tekstiviestinä.
         numeroPeitetty: smsValittu ? peitaNumero(numero) : null,
       });
