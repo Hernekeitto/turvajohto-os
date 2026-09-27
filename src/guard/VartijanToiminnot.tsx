@@ -7,18 +7,19 @@
 // Järjestys on käyttäjän antama.
 import type { LucideIcon } from 'lucide-react';
 import {
-  BookOpen, FileText, KeyRound, ListChecks, Megaphone, Route, ShieldAlert, ShoppingBag,
+  BookOpen, ClipboardList, FileText, KeyRound, ListChecks, Megaphone, Route, ShieldAlert, ShoppingBag,
 } from 'lucide-react';
 
 import type { Toiminto } from './tilannekuva';
 
 export type VartijanToiminto = Extract<
   Toiminto,
-  'kierros' | 'kalusto' | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'toimenpide' | 'ilmoitus'
-  | 'anastus'
+  'tehtavat' | 'kierros' | 'kalusto' | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'toimenpide'
+  | 'ilmoitus' | 'anastus'
 >;
 
 const TOIMINNOT: { id: VartijanToiminto; nimi: string; ikoni: LucideIcon }[] = [
+  { id: 'tehtavat', nimi: 'Tehtävät', ikoni: ClipboardList },
   { id: 'kierros', nimi: 'Kierros', ikoni: Route },
   { id: 'kalusto', nimi: 'Kalusto', ikoni: KeyRound },
   { id: 'tiedotteet', nimi: 'Tiedotteet', ikoni: Megaphone },

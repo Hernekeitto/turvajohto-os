@@ -2013,7 +2013,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Vartijanäkymän toiminnot avaavat samat alanäkymät kuin ylläpidon kohdevalikko
   // (ks. VartijanToiminnot). Kun jokin niistä on auki, se renderöidään tavallisen
   // renderöintiketjun kautta; muuten näytetään Vartijanäkymän oma etusivu.
-  const vartijanAlanakyma = !!(raporttiKohde || kalustoKohde || tiedoteKohde || pohjaNakyma || kierrosKohde);
+  const vartijanAlanakyma = !!(
+    raporttiKohde || kalustoKohde || tiedoteKohde || pohjaNakyma || kierrosKohde || tehtavaKohde
+  );
   const nakymanNimi = vartijanPuolella && !vartijanAlanakyma ? 'Vartijanäkymä'
     : asetuksissa ? 'Sovellusasetukset'
     : avattu ? `${TEHTAVAN_LAJI[avattu.laji]} — ${avattu.siteNimi}`
@@ -2741,6 +2743,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
                 kohdeTiedot={kohteet}
                 kaikkiKohteet={isAdmin ? kohteet : undefined}
                 sallitut={{
+                  tehtavat: saaNahdaTehtavat,
                   kierros: saaNahdaKierrokset,
                   kalusto: saaNahdaKalustoa,
                   tiedotteet: saaNahdaTiedotteet,
