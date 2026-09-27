@@ -1532,7 +1532,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
   // Puolen vaihto EI nollaa ylläpidon näkymiä: esimies tekee muutoksen, käy katsomassa
   // miltä se näyttää vartijalle ja palaa samaan kohtaan jatkamaan.
+  //
+  // Alanäkymät (kierros, kalusto, raportit…) kuitenkin suljetaan: ne ovat yhteistä tilaa,
+  // ja ilman tätä vartijan puolelle avattu kalusto näkyisi ylläpidossa ja päinvastoin.
   const vaihdaPuoli = (uusi: Puoli) => {
+    nollaaAlanakymat();
     tallennaPuoli(uusi);
     setPuoli(uusi);
   };
@@ -1996,7 +2000,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
   // Näkymän nimi palkkiin. Sama järjestys kuin renderöintiketjussa alla — jos ne
   // eroaisivat, palkissa lukisi eri näkymä kuin ruudulla on.
-  const nakymanNimi = vartijanPuolella ? 'Vartijanäkymä'
+  // Vartijanäkymän toiminnot avaavat samat alanäkymät kuin ylläpidon kohdevalikko
+  // (ks. VartijanToiminnot). Kun jokin niistä on auki, se renderöidään tavallisen
+  // renderöintiketjun kautta; muuten näytetään Vartijanäkymän oma etusivu.
+  const vartijanAlanakyma = !!(raporttiKohde || kalustoKohde || tiedoteKohde || pohjaNakyma || kierrosKohde);
+  const nakymanNimi = vartijanPuolella && !vartijanAlanakyma ? 'Vartijanäkymä'
     : asetuksissa ? 'Sovellusasetukset'
     : avattu ? `${TEHTAVAN_LAJI[avattu.laji]} — ${avattu.siteNimi}`
     : osio === 'halytyskeskus' ? 'Hälytyskeskus'
@@ -2325,8 +2333,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
                 kalusto={pankki}
                 ladattu={pankkiLadattu}
                 omaTunnus={session?.username || ''}
-                saaHallita={saaHallitaPankkia}
-                saaPyytaa={saaNahdaPankin}
+                // Vartijanäkymässä ei siirretä eikä pyydetä kalustoa pankista (käyttäjän
+                // päätös 27.9.2026) — pääkäyttäjänkään esikatselussa.
+                saaHallita={!vartijanPuolella && saaHallitaPankkia}
+                saaPyytaa={!vartijanPuolella && saaNahdaPankin}
                 omaEmployeeId={session?.employeeId || null}
                 onMuuttui={paivitaPankki}
                 onAvaa={setKohteenEsine}
@@ -2351,7 +2361,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
                 .filter((e) => (e.laji === 'ajoneuvo' || e.laji === 'avainkaappi') && e.tila !== 'poistettu')
                 .map((e) => ({ id: e.id, nimi: `${e.nimi} (${e.tunnus})`, laji: e.laji as SijoitusLaji }))}
               kalusto={pankki}
-              saaHallita={saaHallitaPankkia}
+              saaHallita={!vartijanPuolella && saaHallitaPankkia}
               omaTunnus={session?.username || ''}
               onMuuttui={paivitaPankki}
               onSulje={() => setKohteenEsine(null)}
@@ -2400,7 +2410,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             ownerNimi={pohjaNakyma.kohde.name}
             pohjat={pohjat as unknown as Pohja[]}
             suoritukset={pohjaSuoritukset}
-            saaMuokata={pohjaNakyma.laji === 'guide' ? saaMuokataOhjeita : saaMuokataSkenaarioita}
+            // Vartijanäkymässä ei laadita uusia toimintakortteja eikä skenaarioita.
+            saaMuokata={!vartijanPuolella
+              && (pohjaNakyma.laji === 'guide' ? saaMuokataOhjeita : saaMuokataSkenaarioita)}
             onPohjatMuuttui={haePohjat}
             onSuoritusMuuttui={paivitaPohjaSuoritus}
           />
@@ -2699,10 +2711,23 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
       <main className="flex-1 p-6 md:p-10">
         <div className="max-w-5xl mx-auto">
-          {vartijanPuolella ? (
+          {vartijanPuolella && !vartijanAlanakyma ? (
             <>
               {vahdit}
-              <Vartijanakyma kaikkiKohteet={isAdmin ? kohteet : undefined} />
+              <Vartijanakyma
+                kohdeTiedot={kohteet}
+                kaikkiKohteet={isAdmin ? kohteet : undefined}
+                sallitut={{
+                  kierros: saaNahdaKierrokset,
+                  kalusto: saaNahdaKalustoa,
+                  tiedotteet: saaNahdaTiedotteet,
+                  ohjeet: saaNahdaOhjeet,
+                  skenaariot: saaNahdaSkenaariot,
+                  toimenpide: saaKirjataToimenpiteen,
+                  ilmoitus: saaKirjataIlmoituksen,
+                }}
+                onToiminto={avaaToiminto}
+              />
             </>
           ) : runko}
         </div>

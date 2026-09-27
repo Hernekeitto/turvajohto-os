@@ -25,6 +25,7 @@ import {
   type PalvelimenVuoro, type VuoroVaihtoehto, type Vuorokohde, type VuoronLaitteet,
 } from './vuorot';
 import type { Kohde } from './tyypit';
+import { VartijanToiminnot, type VartijanToiminto } from './VartijanToiminnot';
 
 type Aloitustapa = Exclude<VuoronLaitteet, 'sovellus'>;
 
@@ -59,8 +60,16 @@ const sisalto = (v: VuoroVaihtoehto) => {
   return osat.length > 0 ? osat.join(' · ') : 'ei tehtäviä eikä kierroksia';
 };
 
-// kaikkiKohteet annetaan vain pääkäyttäjälle (ks. vuorot.ts: kaikkiKohteina).
-export const Vartijanakyma = ({ kaikkiKohteet }: { kaikkiKohteet?: Kohde[] }) => {
+type Props = {
+  // Kohteiden tiedot, joihin toiminnot kohdistuvat (GuardAppin kohdelista).
+  kohdeTiedot: Kohde[];
+  // Annetaan vain pääkäyttäjälle (ks. vuorot.ts: kaikkiKohteina).
+  kaikkiKohteet?: Kohde[];
+  sallitut: Record<VartijanToiminto, boolean>;
+  onToiminto: (toiminto: VartijanToiminto, kohde: Kohde) => void;
+};
+
+export const Vartijanakyma = ({ kohdeTiedot, kaikkiKohteet, sallitut, onToiminto }: Props) => {
   // undefined = ei vielä haettu tai palvelinta ei tavoitettu, null = ei vuoroa.
   const [vuoro, setVuoro] = useState<PalvelimenVuoro | null | undefined>(undefined);
   const [omatKohteet, setKohteet] = useState<Vuorokohde[]>([]);
@@ -81,6 +90,14 @@ export const Vartijanakyma = ({ kaikkiKohteet }: { kaikkiKohteet?: Kohde[] }) =>
   }, []);
 
   useEffect(() => { void lataa(); }, [lataa]);
+
+  // Toiminnot tarvitsevat koko kohdetietueen. Jos sitä ei ole (kohde ei ole luettavissa),
+  // painikkeita ei näytetä — avattava näkymä olisi tyhjä.
+  const toiminnot = (siteId: string) => {
+    const kohde = kohdeTiedot.find((k) => k.id === siteId);
+    if (!kohde) return null;
+    return <VartijanToiminnot sallitut={sallitut} onValitse={(t) => onToiminto(t, kohde)} />;
+  };
 
   const kohteet = kaikkiKohteet ? kaikkiKohteina(kaikkiKohteet, omatKohteet) : omatKohteet;
 
@@ -176,6 +193,9 @@ export const Vartijanakyma = ({ kaikkiKohteet }: { kaikkiKohteet?: Kohde[] }) =>
             )}
           </div>
         </div>
+
+        <h3 className="font-bold text-ink-strong mt-8 mb-3">Vuoron toiminnot</h3>
+        {toiminnot(vuoro.siteId)}
       </div>
     );
   }
@@ -291,6 +311,12 @@ export const Vartijanakyma = ({ kaikkiKohteet }: { kaikkiKohteet?: Kohde[] }) =>
                         </div>
                       );
                     })}
+                    {toiminnot(kohde.siteId) && (
+                      <div className="pt-3">
+                        <h3 className="text-sm font-medium text-ink-strong mb-2">Kohteen toiminnot</h3>
+                        {toiminnot(kohde.siteId)}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
