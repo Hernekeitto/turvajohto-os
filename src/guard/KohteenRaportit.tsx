@@ -11,8 +11,8 @@
 // ei hae mitään itse — palvelin on jo rajannut mitä käyttäjä saa nähdä.
 import { useMemo, useState, type ReactNode } from 'react';
 import {
-  Check, ChevronDown, ChevronRight, ClipboardCheck, FileText, Paperclip, Route, ShieldAlert,
-  ShoppingBag, X,
+  Camera, Check, ChevronDown, ChevronRight, ClipboardCheck, FileText, MessageSquare, Paperclip,
+  Route, ShieldAlert, ShoppingBag, X,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
@@ -47,6 +47,8 @@ type Rivi = {
   yhteenveto: string;
   // Näkyvä merkki rivillä: esim. "Ei suoritettu" tai "Keskeytetty".
   poikkeama?: string;
+  // Onko vartija jättänyt kommentin (tehtävän tai kierroksen huomiot).
+  kommentti?: boolean;
   liitteet: Liite[];
   sisalto: ReactNode;
 };
@@ -56,6 +58,26 @@ const aikaTeksti = (iso: string) => {
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString('fi-FI', { dateStyle: 'short', timeStyle: 'short' });
 };
+
+// Rivin aika tiiviinä: "27.9. 14.32".
+const lyhytAikaTeksti = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${d.getDate()}.${d.getMonth() + 1}. ${d.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' })}`;
+};
+
+const Merkki = ({ taso, title, children }: { taso: 'varoitus' | 'huomio'; title: string; children: ReactNode }) => (
+  <span
+    title={title}
+    className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1.5 py-0.5 border ${
+      taso === 'varoitus'
+        ? 'text-warning-ink bg-warning-soft border-warning/30'
+        : 'text-accent-ink bg-accent-soft border-accent/30'
+    }`}
+  >
+    {children}
+  </span>
+);
 
 const kello = (iso?: string | null) => {
   if (!iso) return '';
@@ -167,8 +189,9 @@ const tehtavaRivi = (s: TehtavaSuoritus): Rivi => ({
   kuka: s.vartija,
   yhteenveto: s.kuitatut
     ? `${s.kuitatut.length} kohtaa kuitattu`
-    : s.suoritettu === false ? 'Ei suoritettu' : 'Suoritettu',
+    : s.suoritettu === false ? '' : 'Suoritettu',
   poikkeama: s.suoritettu === false ? 'Ei suoritettu' : undefined,
+  kommentti: !!s.huomiot?.trim(),
   liitteet: s.liitteet || [],
   sisalto: (
     <>
@@ -189,6 +212,7 @@ const kierrosRivi = (k: Kierros): Rivi => {
     kuka: k.vartija,
     yhteenveto: `${tila} · ${kuitatut}/${k.pisteet.length} pistettä`,
     poikkeama: k.tila === 'valmis' ? undefined : tila,
+    kommentti: !!k.huomiot?.trim() || k.pisteet.some((p) => p.huomio?.trim()),
     liitteet: k.liitteet || [],
     sisalto: (
       <>
@@ -229,6 +253,7 @@ export const KohteenRaportit = ({ kohde, raportit, suoritukset, kierrokset, onTa
   const maara = (laji: Laji) => jaksolla.filter((r) => r.laji === laji).length;
   const liitteita = jaksolla.reduce((s, r) => s + r.liitteet.length, 0);
   const poikkeamia = jaksolla.filter((r) => r.poikkeama).length;
+  const kommentteja = jaksolla.filter((r) => r.kommentti).length;
 
   const vaihdaLaji = (laji: Laji) => setValitut((v) => {
     const uusi = new Set(v);
@@ -271,7 +296,7 @@ export const KohteenRaportit = ({ kohde, raportit, suoritukset, kierrokset, onTa
               type="button"
               aria-pressed={valittu}
               onClick={() => vaihdaLaji(laji)}
-              className={`text-left rounded-xl border p-3 transition-colors ${
+              className={`text-left rounded-lg border px-3 py-2 transition-colors ${
                 valittu ? 'border-accent bg-accent/5' : 'border-line bg-surface hover:bg-sunken'
               }`}
             >
@@ -279,14 +304,14 @@ export const KohteenRaportit = ({ kohde, raportit, suoritukset, kierrokset, onTa
                 <Ikoni size={14} className={valittu ? 'text-accent' : 'text-ink-subtle'} />
                 {nimi}
               </span>
-              <span className="block text-2xl font-bold text-ink-strong mt-1">{maara(laji)}</span>
+              <span className="block text-lg font-bold text-ink-strong leading-tight">{maara(laji)}</span>
             </button>
           );
         })}
       </div>
       <p className="text-xs text-ink-muted mb-6">
         {jaksolla.length} kirjausta · {poikkeamia} poikkeamaa (ei suoritettu, keskeytetty tai kesken)
-        · {liitteita} liitettä
+        · {kommentteja} kommentoitua · {liitteita} liitettä
         {valitut.size > 0 && (
           <button type="button" onClick={() => setValitut(new Set())} className="ml-2 text-accent hover:underline">
             Näytä kaikki lajit
@@ -305,40 +330,46 @@ export const KohteenRaportit = ({ kohde, raportit, suoritukset, kierrokset, onTa
             const avattu = auki === r.id;
             return (
               <div key={r.id}>
+                {/* Yksi rivi per kirjaus: aika, laji, nimi, yhteenveto, merkit ja tekijä.
+                    Merkit kertovat ilman avaamista, kannattaako rivi avata: poikkeama,
+                    vartijan kommentti ja kuva. */}
                 <button
                   type="button"
                   aria-expanded={avattu}
                   onClick={() => setAuki(avattu ? null : r.id)}
-                  className="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-sunken transition-colors"
+                  className="w-full text-left px-3 py-2 flex items-center gap-2 text-sm hover:bg-sunken transition-colors"
                 >
-                  <Ikoni size={18} className="text-accent shrink-0 mt-0.5" />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex flex-wrap items-center gap-x-2">
-                      <span className="font-medium text-ink-strong">{r.otsikko}</span>
-                      {r.poikkeama ? (
-                        <span className="inline-flex items-center gap-1 text-xs font-bold text-warning-ink bg-warning-soft border border-warning/30 rounded px-1.5">
-                          <X size={11} />{r.poikkeama}
-                        </span>
-                      ) : r.laji === 'tehtava' || r.laji === 'kierros' ? (
-                        <Check size={14} className="text-success-ink" />
-                      ) : null}
-                      {r.liitteet.length > 0 && (
-                        <span className="inline-flex items-center gap-1 text-xs text-ink-muted">
-                          <Paperclip size={12} />{r.liitteet.length}
-                        </span>
-                      )}
-                    </span>
-                    <span className="block text-xs text-ink-muted mt-0.5">
-                      {aikaTeksti(r.aika)} · {r.kuka}
-                    </span>
-                    {r.yhteenveto && <span className="block text-sm text-ink-body mt-1">{r.yhteenveto}</span>}
+                  <span className="w-20 shrink-0 text-xs text-ink-muted tabular-nums">{lyhytAikaTeksti(r.aika)}</span>
+                  <Ikoni size={15} className="text-accent shrink-0" />
+                  <span className="font-medium text-ink-strong truncate max-w-[40%] sm:max-w-[16rem]">{r.otsikko}</span>
+                  <span className="hidden sm:block min-w-0 flex-1 truncate text-ink-muted">{r.yhteenveto}</span>
+                  <span className="flex-1 sm:hidden" />
+                  <span className="flex items-center gap-1 shrink-0">
+                    {r.poikkeama ? (
+                      <Merkki taso="varoitus" title={r.poikkeama}><X size={11} />{r.poikkeama}</Merkki>
+                    ) : r.laji === 'tehtava' || r.laji === 'kierros' ? (
+                      <Check size={14} className="text-success-ink" aria-label="Suoritettu" />
+                    ) : null}
+                    {r.kommentti && (
+                      <Merkki taso="huomio" title="Vartija jätti kommentin"><MessageSquare size={11} />Kommentti</Merkki>
+                    )}
+                    {r.liitteet.length > 0 && (
+                      <Merkki taso="huomio" title={`${r.liitteet.length} liitettä`}>
+                        {r.liitteet.some((l) => KUVAPAATTEET.test(l.id)) ? <Camera size={11} /> : <Paperclip size={11} />}
+                        {r.liitteet.length}
+                      </Merkki>
+                    )}
                   </span>
+                  <span className="hidden md:block w-28 shrink-0 truncate text-xs text-ink-muted text-right">{r.kuka}</span>
                   {avattu
-                    ? <ChevronDown size={18} className="text-ink-subtle shrink-0" />
-                    : <ChevronRight size={18} className="text-ink-subtle shrink-0" />}
+                    ? <ChevronDown size={16} className="text-ink-subtle shrink-0" />
+                    : <ChevronRight size={16} className="text-ink-subtle shrink-0" />}
                 </button>
                 {avattu && (
-                  <div className="px-4 pb-4 pl-11 space-y-3">
+                  <div className="px-3 pb-3 pl-24 space-y-3">
+                    <p className="text-xs text-ink-muted">
+                      {aikaTeksti(r.aika)} · {r.kuka}{r.yhteenveto ? ` · ${r.yhteenveto}` : ''}
+                    </p>
                     {r.sisalto}
                     <Liitteet liitteet={r.liitteet} />
                   </div>
