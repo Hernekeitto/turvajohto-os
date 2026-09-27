@@ -146,7 +146,7 @@ export function jakauma(rivit, avainFn, nimiFn = null) {
 // "suljeta", joten niitä ei saa laskea mukaan vasteaikaan eikä avoimien määrään.
 export const POIKKEAMATYYPIT = [
   'jvaction', 'jvreport', 'firstaid', 'threat', 'fence', 'damage',
-  'guard_action', 'guard_jvreport', 'public',
+  'guard_action', 'guard_jvreport', 'guard_theft', 'public',
 ];
 
 export const onPoikkeama = (tietue) => POIKKEAMATYYPIT.includes(tietue?.typeId);

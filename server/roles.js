@@ -81,7 +81,7 @@ const VARTIJA_KATSELU = ['guard_sites', 'guard_site_info', 'guard_reporting', 'g
 // Työvuoron tekeminen: tehtävien kuittaus ja omien raporttien kirjaaminen. Tapahtumailmoitus
 // on mukana, koska sen kirjaa se joka toimenpiteen teki — jos kirjaus kuuluu jossain
 // organisaatiossa vain esimiehelle, oikeus otetaan pois Sovellusasetuksista.
-const VARTIJA_MUOKKAUS = ['guard_tasks', 'guard_report_action', 'guard_report_jv'];
+const VARTIJA_MUOKKAUS = ['guard_tasks', 'guard_report_action', 'guard_report_jv', 'guard_report_theft'];
 // Se mitä Vartioesimiehellä on Vartijan lisäksi: kohteen hallinta. Yksi solmu kattaa
 // kohteen perustiedot, tiedostot, perehdytysmerkinnät ja tehtäväpohjat (ks.
 // server/permissions.js: guardSites ja guardFiles käyttävät samaa touch-solmua).

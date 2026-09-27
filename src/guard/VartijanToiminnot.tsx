@@ -4,8 +4,8 @@
 // mutta Vartijanäkymässä niistä on riisuttu hallinta: "Siirrä kalustoa pankista",
 // "Uusi toimintakortti" ja "Uusi skenaario" eivät näy (ks. GuardApp: vartijanPuolella).
 //
-// Järjestys on käyttäjän antama. Anastusilmoitus on paikkamerkki: lomaketta ei vielä
-// ole, ja painike kertoo sen eikä avaa mitään.
+// Järjestys on käyttäjän antama. Anastusilmoitus ei ole ylläpidon kohdevalikon toiminto
+// (Toiminto-tyyppi), vaan vain vartijan puolella oleva lomake, joten se on oma tunnisteensa.
 import type { LucideIcon } from 'lucide-react';
 import {
   BookOpen, FileText, KeyRound, ListChecks, Megaphone, Route, ShieldAlert, ShoppingBag,
@@ -16,9 +16,9 @@ import type { Toiminto } from './tilannekuva';
 export type VartijanToiminto = Extract<
   Toiminto,
   'kierros' | 'kalusto' | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'toimenpide' | 'ilmoitus'
->;
+> | 'anastus';
 
-const TOIMINNOT: { id: VartijanToiminto | 'anastus'; nimi: string; ikoni: LucideIcon }[] = [
+const TOIMINNOT: { id: VartijanToiminto; nimi: string; ikoni: LucideIcon }[] = [
   { id: 'kierros', nimi: 'Kierros', ikoni: Route },
   { id: 'kalusto', nimi: 'Kalusto', ikoni: KeyRound },
   { id: 'tiedotteet', nimi: 'Tiedotteet', ikoni: Megaphone },
@@ -37,19 +37,6 @@ type Props = {
 export const VartijanToiminnot = ({ sallitut, onValitse }: Props) => (
   <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
     {TOIMINNOT.map(({ id, nimi, ikoni: Ikoni }) => {
-      if (id === 'anastus') {
-        return (
-          <div
-            key={id}
-            aria-disabled="true"
-            className="rounded-xl border border-dashed border-line bg-sunken/50 p-4 flex flex-col gap-2"
-          >
-            <Ikoni size={20} className="text-ink-subtle" />
-            <span className="font-medium text-ink-muted">{nimi}</span>
-            <span className="text-xs text-ink-subtle">Tulossa</span>
-          </div>
-        );
-      }
       if (!sallitut[id]) return null;
       return (
         <button

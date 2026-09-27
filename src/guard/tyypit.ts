@@ -209,7 +209,8 @@ export type TehtavaSuoritus = {
 
 // Vartijan raportti (guardReports). Kentät vastaavat EVENT-puolen raportteja, koska sama
 // laki koskee molempia ja palvelimen kenttäsalaus on identtinen (store.js: ENCRYPTED_FIELDS).
-export type RaporttiTyyppi = 'guard_action' | 'guard_jvreport';
+// 'guard_theft' = anastusilmoitus (27.9.2026), oma lomakkeensa (Anastusilmoitus.tsx).
+export type RaporttiTyyppi = 'guard_action' | 'guard_jvreport' | 'guard_theft';
 
 export type GuardRaportti = {
   id: string;
@@ -240,6 +241,20 @@ export type GuardRaportti = {
   subjectAddress?: string;
   subjectFeatures?: string;
   subjectObservations?: string;
+  // Vain anastusilmoituksessa (guard_theft). Anastajan nimi ja henkilötunnus kirjataan
+  // yllä oleviin subject*-kenttiin, ja vartijan havainnot description-kenttään, jotta ne
+  // salataan samalla tavalla kuin tapahtumailmoituksessa. Yhteystiedot ja korvauksen
+  // vaatija salataan myös (store.js), koska niissä on yleensä henkilön nimi.
+  theftSiteContact?: string;
+  theftClaimant?: string;
+  // Suostuuko korvauksen vaatija rangaistusvaatimusmenettelyyn. null = ei vastattu.
+  theftPenaltyOrderConsent?: boolean | null;
+  // Anastuksen, kassalinjan ylityksen ja kiinnioton ajankohdat (datetime-local).
+  theftAt?: string;
+  theftCheckoutAt?: string;
+  theftDetainedAt?: string;
+  theftItems?: { id: string; nimi: string; hinta: number; alv: number }[];
+  theftOtherCosts?: { id: string; selite: string; summa: number }[];
   // Erässä 1 lisätyt kentät. Samat kuin EVENT-puolen raporteilla, koska molempia
   // koskee sama tilamalli ja sama muuttumattomuussääntö (ks. server/kirjaukset.js).
   status?: string | null;

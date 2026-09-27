@@ -261,6 +261,10 @@ const ENCRYPTED_FIELDS = {
   // arkaluonteisuus, sama suoja — lista on tarkoituksella identtinen reportsin kanssa,
   // jotta puolien välille ei synny eroa jota kukaan ei ole päättänyt.
   guardReports: [
+    // Anastusilmoituksen (guard_theft) omat henkilötietoa sisältävät kentät. Ainoa ero
+    // reports-listaan, ja tarkoituksellinen: EVENT-puolella anastusilmoitusta ei ole.
+    'theftSiteContact',
+    'theftClaimant',
     'summary',
     'description',
     'tikeComment',

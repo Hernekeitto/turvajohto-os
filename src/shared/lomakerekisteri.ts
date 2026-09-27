@@ -331,6 +331,11 @@ export const LOMAKKEET: Record<string, Lomake> = {
     tabId: 'guard_report_jv', pohjaVersio: '1.0', variantit: ['01'],
     lakiviite: 'LYTP 8 § ja VNA 874/2016 18 §',
   },
+  VAI: {
+    nimi: 'Anastusilmoitus',
+    tuote: 'guard', ryhma: 'guard',
+    tabId: 'guard_report_theft', pohjaVersio: '1.0', variantit: ['01'], lakiviite: null,
+  },
 };
 
 // Tulosteen alatunniste: "EA-02" tai "EA-02 v1.3". Varianttia ei oleteta vaan se
@@ -366,6 +371,7 @@ const TYYPPI_POIKKEUKSET: Record<string, string> = {
   jvreport: 'report_jv',
   guard_action: 'guard_report_action',
   guard_jvreport: 'guard_report_jv',
+  guard_theft: 'guard_report_theft',
   // Hyväksytty yleisöilmoitus syntyy moderointinäkymässä, ei TIKE-lomakkeella.
   // Sama poikkeus on server/permissions.js:n reports-säännössä.
   public: 'public_reports',

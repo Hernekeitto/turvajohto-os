@@ -23,7 +23,10 @@ import { uusiId, type Kohde, type GuardRaportti, type RaporttiTyyppi } from './t
 // koskee molempia, ja palvelimen kenttäsalaus (store.js: ENCRYPTED_FIELDS.guardReports)
 // on identtinen reportsin kanssa juuri siksi.
 
-const OTSIKOT: Record<RaporttiTyyppi, { otsikko: string; kuvaus: string; Ikoni: typeof FileText }> = {
+// Anastusilmoituksella on oma lomakkeensa (Anastusilmoitus.tsx).
+type TamanTyyppi = Exclude<RaporttiTyyppi, 'guard_theft'>;
+
+const OTSIKOT: Record<TamanTyyppi, { otsikko: string; kuvaus: string; Ikoni: typeof FileText }> = {
   guard_action: {
     otsikko: 'Vartijan toimenpide',
     kuvaus: 'Kirjaus vartijan tekemistä toimenpiteistä vuoron aikana.',
@@ -55,7 +58,7 @@ const VOIMAKEINOT = [
 
 type Props = {
   kohde: Kohde;
-  tyyppi: RaporttiTyyppi;
+  tyyppi: TamanTyyppi;
   vartija: string;
   onTallenna: (raportti: GuardRaportti) => Promise<boolean>;
   onTakaisin: () => void;

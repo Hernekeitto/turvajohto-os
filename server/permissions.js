@@ -143,7 +143,9 @@ const TIKE_FORM_NODES = [
 // `guard_assets` on mukana avaintyyppikartan tunnistuskuvien takia: kartan ylläpito on
 // sama oikeus kuin pankin ylläpito, eikä kuvan lähettäminen saa vaatia erikseen
 // kohde- tai raporttioikeutta. Ilman tätä kartta olisi käytännössä vain pääkäyttäjän.
-const GUARD_ATTACHMENT_NODES = ['guard_sites', 'guard_report_action', 'guard_report_jv', 'guard_assets'];
+const GUARD_ATTACHMENT_NODES = [
+  'guard_sites', 'guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_assets',
+];
 
 const REPORT_ATTACHMENT_NODES = [
   'tike_form_open', 'tike_form_firstaid', 'tike_form_threat', 'tike_form_fence', 'tike_form_damage',
@@ -302,8 +304,13 @@ const COLLECTIONS = {
   // Vartijan raportit: kirjaaminen on lomakesolmujen takana, lukeminen myös kohteen
   // tiedot -koosteessa. Sama jako kuin tapahtumapuolella (tike_form_* vs report_list).
   guardReports: {
-    view: ['guard_report_action', 'guard_report_jv', 'guard_site_info'],
-    touch: () => ['guard_report_action', 'guard_report_jv'],
+    view: ['guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_site_info'],
+    // Anastusilmoitus (27.9.2026) on OMAN solmunsa takana: siinä on anastajan
+    // henkilötunnus, eikä pelkkä toimenpidekirjausoikeus saa avata sen kirjoittamista.
+    // Samasta syystä anastusoikeus ei avaa kahta muuta tyyppiä.
+    touch: (item) => (item?.typeId === 'guard_theft'
+      ? ['guard_report_theft']
+      : ['guard_report_action', 'guard_report_jv']),
     eventScoped: true,
     eventIdOf: (item) => item?.siteId,
     tuote: 'guard',
@@ -950,7 +957,7 @@ export function canReadGuardAttachment(
   if (raportti) {
     if (!eventAllowed(eventAccess, raportti.siteId)) return false;
     return hasAnyView(permissions, raportti.siteId, [
-      'guard_report_action', 'guard_report_jv', 'guard_site_info',
+      'guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_site_info',
     ]);
   }
 

@@ -71,6 +71,7 @@ import { luePuoli, tallennaPuoli, type Puoli } from './nakymavalinta';
 import { PuoliValitsin } from './PuoliValitsin';
 import { Vartijanakyma } from './Vartijanakyma';
 import { LiitaPuhelin } from './mobiili/LiitaPuhelin';
+import { Anastusilmoitus } from './Anastusilmoitus';
 import { useKanava, type Sijainti } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
@@ -239,6 +240,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // ja voi olla eri joukolla ihmisiä kuin päivittäinen toimenpidekirjaus.
   const saaKirjataToimenpiteen = isAdmin || canEdit(perms, null, 'guard_report_action');
   const saaKirjataIlmoituksen = isAdmin || canEdit(perms, null, 'guard_report_jv');
+  const saaKirjataAnastuksen = isAdmin || canEdit(perms, null, 'guard_report_theft');
   // Sovellusasetukset on oma solmunsa (guard_settings), ei EVENTin 'settings': muuten
   // toisen puolen asetusoikeus avaisi myös tämän puolen asetukset.
   const saaNahdaAsetukset = isAdmin || canView(perms, null, 'guard_settings');
@@ -2284,6 +2286,13 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             : null}
           onTakaisin={paluuEtusivulle}
         />
+      ) : raporttiKohde?.tyyppi === 'guard_theft' ? (
+        <Anastusilmoitus
+          kohde={raporttiKohde.kohde}
+          vartija={session?.nickname || ''}
+          onTallenna={tallennaRaportti}
+          onTakaisin={() => setRaporttiKohde(null)}
+        />
       ) : raporttiKohde ? (
         <Raportit
           kohde={raporttiKohde.kohde}
@@ -2725,8 +2734,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
                   skenaariot: saaNahdaSkenaariot,
                   toimenpide: saaKirjataToimenpiteen,
                   ilmoitus: saaKirjataIlmoituksen,
+                  anastus: saaKirjataAnastuksen,
                 }}
-                onToiminto={avaaToiminto}
+                onToiminto={(toiminto, kohde) => (toiminto === 'anastus'
+                  ? setRaporttiKohde({ kohde, tyyppi: 'guard_theft' })
+                  : avaaToiminto(toiminto, kohde))}
               />
             </>
           ) : runko}

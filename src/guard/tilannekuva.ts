@@ -240,7 +240,7 @@ export function kentalla(lahteet: Lahteet, nyt = Date.now(), ikkunaMs = KENTALLA
   }
   for (const t of lahteet.tehtavat) merkitse(t.vartija, t.siteId, t.aika, `Tehtävä: ${t.tehtavaNimi}`);
   for (const r of lahteet.raportit) {
-    merkitse(r.author, r.siteId, raportinAika(r), r.typeId === 'guard_jvreport' ? 'Tapahtumailmoitus' : 'Toimenpidekirjaus');
+    merkitse(r.author, r.siteId, raportinAika(r), raportinNimi(r.typeId));
   }
   for (const s of lahteet.skenaariot) {
     merkitse(s.tekija, s.ownerId, s.paattyi || s.alkoi, `Skenaario: ${s.templateNimi}`);
@@ -438,8 +438,9 @@ export function tapahtumavirta(lahteet: Lahteet, raja = 40): Tapahtuma[] {
       // Tapahtumailmoitus on aina vähintään varoitus: se kirjoitetaan silloin kun
       // kohteessa on puututtu johonkin, ja päivystäjän on tiedettävä siitä samana iltana
       // eikä vasta kuukausiraportissa.
-      taso: r.typeId === 'guard_jvreport' ? 'varoitus' : 'rauhallinen',
-      otsikko: r.typeId === 'guard_jvreport' ? 'Tapahtumailmoitus' : 'Toimenpide kirjattu',
+      // Anastusilmoitus samasta syystä: siinä on otettu kiinni tai ainakin puututtu.
+      taso: r.typeId === 'guard_jvreport' || r.typeId === 'guard_theft' ? 'varoitus' : 'rauhallinen',
+      otsikko: r.typeId === 'guard_action' ? 'Toimenpide kirjattu' : raportinNimi(r.typeId),
       teksti: r.summary || r.type || '',
       kuka: r.author,
     });
@@ -521,6 +522,13 @@ export function tapahtumavirta(lahteet: Lahteet, raja = 40): Tapahtuma[] {
 //
 // Tyhjä kohde saa oman tekstinsä ("Ei vielä kierroksia") eikä nollaa: nolla näyttää
 // mittarilta, ja "0 kierrosta" luetaan helposti niin että jotain on mennyt pieleen.
+
+// Raporttityypin nimi tapahtumavirrassa ja vartijan viimeisimmässä toimessa.
+const raportinNimi = (typeId: string) => (
+  typeId === 'guard_jvreport' ? 'Tapahtumailmoitus'
+    : typeId === 'guard_theft' ? 'Anastusilmoitus'
+      : 'Toimenpidekirjaus'
+);
 
 export type Toiminto =
   | 'tehtavat' | 'kierros' | 'kierrospohjat' | 'kalusto' | 'mittaristo' | 'jaksoraportit'
