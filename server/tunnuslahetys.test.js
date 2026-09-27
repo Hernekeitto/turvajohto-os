@@ -79,3 +79,37 @@ test('sähköposti ei mainitse numeroa, jos tekstiviestiä ei lähetetä', async
   assert.doesNotMatch(teksti, /•••/);
   assert.match(teksti, /toimitetaan sinulle erikseen/);
 });
+
+const AVAIN = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+const totp = { secret: AVAIN, qrPng: Buffer.from('png'), otpauthUri: `otpauth://totp/T:x?secret=${AVAIN}` };
+
+test('Authenticator-avain menee sähköpostiin (teksti + QR-liite), ei koskaan tekstiviestiin', async () => {
+  const lahetetyt = { sahkoposti: [], sms: [] };
+  const tulos = await toimitaTunnustiedot({
+    kanavat: ['sahkoposti', 'sms'], tyontekija, username: 'x', password: SALASANA, puoli: 'guard', syy: 'luotu', totp,
+    lahetaSahkoposti: async (v) => { lahetetyt.sahkoposti.push(v); return { ok: true }; },
+    lahetaSms: async (v) => { lahetetyt.sms.push(v); return { ok: true }; },
+  });
+  const posti = lahetetyt.sahkoposti[0];
+  assert.match(posti.text, /JBSW Y3DP EHPK 3PXP/);
+  assert.match(posti.html, /cid:authenticator-qr/);
+  assert.ok(posti.html.includes('href="otpauth://totp/'));
+  assert.equal(posti.attachments[0].cid, 'authenticator-qr');
+  assert.doesNotMatch(posti.text + posti.html, new RegExp(SALASANA));
+  assert.doesNotMatch(lahetetyt.sms[0].body, /JBSW|Authenticator/);
+  // Tulos menee selaimeen ja auditlokiin: avain ei saa olla siinä.
+  assert.doesNotMatch(JSON.stringify(tulos), /JBSW/);
+  assert.equal(tulos.sahkoposti.authenticator, true);
+});
+
+test('ilman avainta sähköposti on pelkkää tekstiä eikä mainitse avainta', () => {
+  const v = rakennaSahkoposti({ username: 'x', osoite: 'o', syy: 'nollattu' });
+  assert.equal(v.html, undefined);
+  assert.doesNotMatch(v.text, /Authenticator-sovellus/);
+});
+
+test('HTML-versio suojaa nimen', () => {
+  const v = rakennaSahkoposti({ nimi: '<b>Ismo</b>', username: 'x', osoite: 'o', syy: 'luotu', totp });
+  assert.doesNotMatch(v.html, /<b>Ismo/);
+  assert.match(v.html, /&lt;b&gt;Ismo/);
+});

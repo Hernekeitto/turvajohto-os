@@ -1274,6 +1274,20 @@ app.post('/api/kirjaa/:name', requireAuth, (req, res) => {
 // tallenneta selväkielisenä eikä sitä voi myöhemmin hakea lähetettäväksi.
 async function toimitaTunnus({ req, kanavat, username, password, employeeId, nimi, puoli, syy }) {
   if (!kanavat) return null;
+  // Authenticator-avain sähköpostiin vain UUDELLE tunnukselle, jolta koodia vaaditaan.
+  // Salasanan nollaus ei muuta avainta; kadonnut puhelin hoidetaan Authenticatorin
+  // nollauksella käyttäjähallinnasta.
+  let totp = null;
+  const kohde = findUser(username);
+  if (syy === 'luotu' && kanavat.includes('sahkoposti') && kohde
+      && kohde.role !== 'admin' && kohde.totp_required !== false) {
+    const secret = getTotpSecret(username);
+    if (secret) {
+      const otpauthUri = buildOtpauthUri(secret, username);
+      const qrPng = await QRCode.toBuffer(otpauthUri, { width: 220, margin: 1 });
+      totp = { secret, qrPng, otpauthUri };
+    }
+  }
   const tyontekija = employeeId
     ? (readCollection('employees') || []).find((t) => t?.id === employeeId) || null
     : null;
@@ -1285,6 +1299,7 @@ async function toimitaTunnus({ req, kanavat, username, password, employeeId, nim
     password,
     puoli,
     syy,
+    totp,
     lahetaSahkoposti,
     lahetaSms: lahetaViestit,
   });

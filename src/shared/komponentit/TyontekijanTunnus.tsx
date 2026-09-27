@@ -34,7 +34,13 @@ type Tyontekija = {
   phone?: string;
 };
 
-type ToimitusTila = { tila: 'lahetetty' | 'kuivaharjoittelu' | 'ei-yhteystietoa' | 'virhe'; viesti?: string; numero?: string };
+type ToimitusTila = {
+  tila: 'lahetetty' | 'kuivaharjoittelu' | 'ei-yhteystietoa' | 'virhe';
+  viesti?: string;
+  numero?: string;
+  // Uuden tunnuksen sähköpostissa oli Authenticator-avain (server/tunnuslahetys.js).
+  authenticator?: boolean;
+};
 type Toimitus = { sahkoposti?: ToimitusTila; sms?: ToimitusTila };
 
 const TILATEKSTI: Record<ToimitusTila['tila'], string> = {
@@ -187,15 +193,22 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
         </span>
       </label>
       <p className="text-xs text-ink-muted leading-relaxed">
-        Tunnus ja salasana kulkevat eri kanavia: kumpikaan viesti ei yksin riitä kirjautumiseen.
+        Sähköpostiin tulee tunnus ja uudelle tunnukselle Authenticator-avain, tekstiviestiin
+        pelkkä salasana: kumpikaan viesti ei yksin riitä kirjautumiseen.
       </p>
+      {!olemassa && !(lahetaEmail && onEmail) && (
+        <p className="text-xs text-warning-ink bg-warning-soft border border-warning/30 rounded-lg px-3 py-2">
+          Ilman sähköpostia Authenticator-avain ei lähde, eikä käyttäjä pääse kirjautumaan
+          ennen kuin näytät hänelle QR-koodin käyttäjähallinnasta.
+        </p>
+      )}
     </div>
   );
 
   const toimitusRaportti = toimitus && (toimitus.sahkoposti || toimitus.sms) && (
     <div className="border border-line rounded-lg p-3 text-xs text-ink-body space-y-1">
       {toimitus.sahkoposti && (
-        <p><Mail size={13} className="inline mr-1" />Sähköposti: {TILATEKSTI[toimitus.sahkoposti.tila]}{toimitus.sahkoposti.viesti ? ` (${toimitus.sahkoposti.viesti})` : ''}</p>
+        <p><Mail size={13} className="inline mr-1" />Sähköposti{toimitus.sahkoposti.authenticator ? ' (tunnus ja Authenticator-avain)' : ''}: {TILATEKSTI[toimitus.sahkoposti.tila]}{toimitus.sahkoposti.viesti ? ` (${toimitus.sahkoposti.viesti})` : ''}</p>
       )}
       {toimitus.sms && (
         <p><MessageSquare size={13} className="inline mr-1" />Tekstiviesti: {TILATEKSTI[toimitus.sms.tila]}{toimitus.sms.viesti ? ` (${toimitus.sms.viesti})` : ''}</p>

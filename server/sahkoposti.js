@@ -56,7 +56,7 @@ async function haeKuljetin() {
   return kuljetin;
 }
 
-export async function lahetaSahkoposti({ to, subject, text }) {
+export async function lahetaSahkoposti({ to, subject, text, html, attachments }) {
   if (!kelpaaOsoitteeksi(to)) {
     return { ok: false, dryRun: !onkoKonfiguroitu(), virhe: 'Virheellinen sähköpostiosoite.' };
   }
@@ -71,6 +71,10 @@ export async function lahetaSahkoposti({ to, subject, text }) {
       to: to.trim(),
       subject,
       text,
+      ...(html ? { html } : {}),
+      // Liitteet ovat aina muistissa olevia puskureita (QR-kuva), eivät tiedostopolkuja
+      // eivätkä URL-osoitteita — disableFileAccess/disableUrlAccess estäisivät ne muutenkin.
+      ...(Array.isArray(attachments) && attachments.length ? { attachments } : {}),
     });
     return { ok: true, dryRun: false, id: tulos?.messageId || null };
   } catch (err) {
