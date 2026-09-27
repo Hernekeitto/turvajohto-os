@@ -14,7 +14,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   ClipboardList, Route, QrCode, KeyRound, BarChart3, FileText, Megaphone, BookOpen,
   ListChecks, Siren, ShieldAlert, ShoppingBag, Info, Trash2, MapPin, Phone, ChevronRight,
-  Building2, FolderOpen, CalendarClock, GraduationCap, ClipboardCheck,
+  Building2, FolderOpen, CalendarClock, GraduationCap, ClipboardCheck, FileStack,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
@@ -58,6 +58,7 @@ type Painike = {
 // kierros), sitten kalusto ja tiedot, sitten kirjaaminen.
 const YLLAPIDON_TOIMINNOT: { id: Toiminto; nimi: string; ikoni: LucideIcon }[] = [
   { id: 'kierrospohjat', nimi: 'Kierrospohjat', ikoni: QrCode },
+  { id: 'raportit', nimi: 'Kohteen raportit', ikoni: FileStack },
   { id: 'tiedot', nimi: 'Kohteen tiedot', ikoni: Info },
   { id: 'mittaristo', nimi: 'Mittaristo', ikoni: BarChart3 },
   { id: 'jaksoraportit', nimi: 'Jaksoraportit', ikoni: ClipboardList },

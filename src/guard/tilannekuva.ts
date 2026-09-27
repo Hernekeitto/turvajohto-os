@@ -533,7 +533,7 @@ const raportinNimi = (typeId: string) => (
 export type Toiminto =
   | 'tehtavat' | 'kierros' | 'kierrospohjat' | 'kalusto' | 'mittaristo' | 'jaksoraportit'
   | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'halytykset' | 'toimenpide' | 'ilmoitus'
-  | 'anastus' | 'tiedot';
+  | 'anastus' | 'tiedot' | 'raportit';
 
 export type Tiivistelma = {
   // Painikkeen alle tuleva rivi: mitä kohteessa on tämän toiminnon osalta tehty.
@@ -720,5 +720,19 @@ export function kohteenToiminnot(
       teksti: 'Kooste kohteen tapahtumista ja tiedostoista',
       huomio: null,
     },
+    // Kohteen raportit (27.9.2026): kaikki kohteelta palautettu työ yhdessä paikassa.
+    raportit: (() => {
+      const kaikki = [
+        ...lahteet.raportit.filter((r) => r.siteId === kohdeId).map((r) => r.luotu || r.date),
+        ...tehtavat.map((t) => t.aika),
+        ...kierrokset.filter((k) => k.tila !== 'kesken').map((k) => k.paattyi || k.alkoi),
+      ];
+      return {
+        teksti: kaikki.length === 0
+          ? 'Ei palautettuja raportteja'
+          : `${monikko(kaikki.length, 'kirjaus', 'kirjausta')} · viimeisin ${lyhytAika(uusinAika(kaikki), nyt)}`,
+        huomio: null,
+      };
+    })(),
   };
 }

@@ -73,6 +73,7 @@ import { PuoliValitsin } from './PuoliValitsin';
 import { Vartijanakyma } from './Vartijanakyma';
 import { LiitaPuhelin } from './mobiili/LiitaPuhelin';
 import { Anastusilmoitus } from './Anastusilmoitus';
+import { KohteenRaportit } from './KohteenRaportit';
 import { useKanava, type Sijainti } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
@@ -256,7 +257,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const saaNahdaRaportit = isAdmin
     || canView(perms, null, 'guard_site_info')
     || canView(perms, null, 'guard_report_action')
-    || canView(perms, null, 'guard_report_jv');
+    || canView(perms, null, 'guard_report_jv')
+    || canView(perms, null, 'guard_report_theft');
 
   // Avoinna oleva osio. Etusivulta mennään joko kohteisiin tai hälytyskeskukseen; kaikki
   // muut näkymät avautuvat näiden sisältä.
@@ -319,6 +321,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [kierrosKohde, setKierrosKohde] = useState<Kohde | null>(null);
   // Vartijanäkymän yhdistetty tehtävät + kierrokset -näkymä (27.9.2026).
   const [kohteenTehtavatKohde, setKohteenTehtavatKohde] = useState<Kohde | null>(null);
+  // Kohteen raportit (27.9.2026): ylläpidon kooste kohteelta palautetusta työstä.
+  const [raportitKohde, setRaportitKohde] = useState<Kohde | null>(null);
   // Hälytykset (erä 7). Palvelimen ylläpitämä kokoelma: tänne tulee vain luettua tilaa,
   // ja jokainen muutos tehdään /api/halytys-reiteillä.
   const [halytykset, setHalytykset] = useState<Halytys[]>([]);
@@ -1453,6 +1457,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     setPohjaKohde(null);
     setKierrosKohde(null);
     setKohteenTehtavatKohde(null);
+    setRaportitKohde(null);
     setHalytysKohde(null);
     setPohjaNakyma(null);
     setTiedoteKohde(null);
@@ -1488,6 +1493,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       : tiedoteKohde ? 'tiedotteet'
       : pohjaNakyma ? 'pohjat'
       : halytysKohde ? 'halytykset'
+      : raportitKohde ? 'kohteen-raportit'
       : kohteenTehtavatKohde ? 'kohteen-tehtavat'
       : kierrosKohde ? 'kierrokset'
       : pohjaKohde ? 'kierrospohjat'
@@ -1568,6 +1574,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     else if (toiminto === 'ilmoitus') setRaporttiKohde({ kohde, tyyppi: 'guard_jvreport' });
     else if (toiminto === 'anastus') setRaporttiKohde({ kohde, tyyppi: 'guard_theft' });
     else if (toiminto === 'tiedot') setTietoKohde(kohde);
+    else if (toiminto === 'raportit') setRaportitKohde(kohde);
   };
 
   // Kaikki kokoelmat yhtenä oliona tilannekuvan laskentaa varten (ks. tilannekuva.ts).
@@ -2036,6 +2043,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     : kalustoKohde ? 'Kalusto'
     : mittariKohde ? 'Mittaristo'
     : jaksoKohde ? 'Jaksoraportit'
+    : raportitKohde ? 'Kohteen raportit'
     : kohteenTehtavatKohde ? 'Kohteen tehtävät'
     : kierrosKohde ? 'Kierrokset'
     : pohjaKohde ? 'Kierrospohjat'
@@ -2455,6 +2463,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onMuutos={paivitaHalytys}
           onTakaisin={() => setHalytysKohde(null)}
         />
+      ) : raportitKohde ? (
+        <KohteenRaportit
+          kohde={raportitKohde}
+          raportit={raportit}
+          suoritukset={suoritukset}
+          kierrokset={kierrokset}
+          onTakaisin={() => setRaportitKohde(null)}
+        />
       ) : kohteenTehtavatKohde ? (
         /* Vartijanäkymän "Kohteen tehtävät" (27.9.2026, käyttäjän päätös): työvuoron
            tehtävät ja kierrokset saman otsikon alla. Molemmat ovat samaa työtä — asioita
@@ -2564,6 +2580,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             ilmoitus: saaKirjataIlmoituksen,
             anastus: saaKirjataAnastuksen,
             tiedot: saaNahdaTiedot,
+            raportit: saaNahdaRaportit,
           }}
           saaMuokata={saaMuokata}
           tiedostoja={tiedostot.filter((t) => t.siteId === valittuKohde.id).length}

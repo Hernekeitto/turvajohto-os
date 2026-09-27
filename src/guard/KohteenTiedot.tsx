@@ -28,7 +28,7 @@ const muotoileAika = (iso?: string) => {
 // suora tunniste ei saa näkyä sivusilmällä silloin kun raporttia selataan muiden läsnä
 // ollessa tai ruutu on jaettuna. Arvo on jo haettu palvelimelta, joten tämä on
 // näkyvyyssuoja eikä pääsynhallintaa.
-const Peitetty = ({ arvo }: { arvo: string }) => {
+export const Peitetty = ({ arvo }: { arvo: string }) => {
   const [nakyy, setNakyy] = useState(false);
   return (
     <span className="inline-flex items-center gap-2">
