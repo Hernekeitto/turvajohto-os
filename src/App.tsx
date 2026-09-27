@@ -29,8 +29,7 @@ import { ArkistoidutTapahtumat, ArkistoidunTapahtumanTiedot } from './event/naky
 import { HataviestiLoki } from './event/nakymat/HataviestiLoki';
 import { TyontekijaLista } from './shared/komponentit/TyontekijaLista';
 import { TyontekijanMuokkaus } from './shared/komponentit/TyontekijanMuokkaus';
-import { KayttajaLista, UusiKayttaja, KayttajanOikeudet } from './event/nakymat/KayttajaHallinta';
-import { useKayttajanOikeudet } from './event/useKayttajanOikeudet';
+import { KayttajaLista } from './event/nakymat/KayttajaHallinta';
 import { riskipisteet, riskitaso, RISKISAVYT, RISKITASOT } from './event/riskiarvio';
 import { yhdistaPaivaJaAika, muotoileLaskuri, muotoileKirjautumisaika, muotoileAikaleima } from './shared/ajat';
 import { isValidPasswordClient } from './shared/muotoilu';
@@ -39,7 +38,7 @@ import { QrKoodi, haeQrKoodi } from './shared/komponentit/QrKoodi';
 import { Liitteet } from './shared/komponentit/Liitteet';
 import type { Liite } from './shared/liitteet';
 import { jaotteleSailytysajan, tapahtumanPoistoaikataulu } from './shared/sailytysaika';
-import { DEFAULT_BUCKET, canView, canEdit, sitemapIdForTab } from './shared/oikeudet';
+import { canView, canEdit, sitemapIdForTab } from './shared/oikeudet';
 import { TILAT, VAKAVUUDET, tila as kirjauksenTila, onLukittu, onPoikkeama, uusiKorjausmerkinta, type Korjausmerkinta } from './shared/kirjaukset';
 import { lomakeRaportille, lomakeTunnus } from './shared/lomakerekisteri';
 import { TilaMerkki, VakavuusMerkki, LukkoMerkki } from './shared/komponentit/TilaMerkki';
@@ -65,7 +64,6 @@ import { avaaJono, kaynnistaAutomatiikka, kuunteleLahetyksia, lisaaJonoon } from
 import type {
   AuditMerkinta, Ilmoitus, JaettuKohde, Jakolinkki, KayttajaRivi, LuotuLinkki,
   Kirjaus, LomakeRivi, Tapahtuma, TapahtumanLomake, TapahtumanTiedosto,
-  UusiSalasana,
 } from './event/tyypit';
 import { haeAvaimet, haePoikkeamat, type Avain, type Poikkeama } from './shared/kalusto';
 import { Mittaristo } from './shared/komponentit/Mittaristo';
@@ -398,17 +396,10 @@ export default function App() {
   const [auditError, setAuditError] = useState('');
   const [auditHasMore, setAuditHasMore] = useState(false);
   const [auditFilters, setAuditFilters] = useState({ user: '', action: '', collection: '' });
-  const [newUserUsername, setNewUserUsername] = useState('');
-  const [newUserNickname, setNewUserNickname] = useState('');
-
-  const [newUserError, setNewUserError] = useState('');
-  const [newUserSubmitting, setNewUserSubmitting] = useState(false);
   // Käyttäjätasot (server/roles.js). Taso määrää sivukartta-oikeudet — käyttäjäkohtaista
   // sivukarttaa ei enää muokata, joten "Muokkaa oikeuksia" -näkymässä valitaan vain taso.
   const [roles, setRoles] = useState<any[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
-  // Palvelimen arvoma salasana näytetään kertaalleen luonnin/nollauksen jälkeen.
-  const [uusiSalasanaNaytto, setUusiSalasanaNaytto] = useState<UusiSalasana | null>(null);
 
   // Ilmoituskello. Palvelin koostaa listan (/api/notifications), joten uusia
   // ilmoituslajeja voi lisätä ilman frontin muutoksia.
@@ -1873,49 +1864,6 @@ export default function App() {
       .finally(() => setUserAdminLoading(false));
   };
 
-  const resetNewUserForm = () => {
-    setNewUserUsername('');
-    setNewUserNickname('');
-    setNewUserError('');
-  };
-
-  const handleCreateUser = async () => {
-    setNewUserError('');
-    if (!newUserUsername.trim()) {
-      setNewUserError('Käyttäjätunnus vaaditaan.');
-      return;
-    }
-    setNewUserSubmitting(true);
-    try {
-      const res = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          username: newUserUsername.trim(),
-          // Palvelin vaatii nimimerkin. Tätä kautta luodulle tunnukselle sellaista ei
-          // enää kysytä, joten se johdetaan tunnuksesta — varsinainen näyttönimi on
-          // tapahtumakohtainen nimimerkki (ks. kirjaajanTunniste).
-          nickname: newUserNickname.trim() || newUserUsername.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        // Jäädään lomakkeelle näyttämään arvottu salasana: se on ainoa kerta kun sen
-        // näkee. Lista aukeaa vasta kun pääkäyttäjä sulkee näkymän itse.
-        setUusiSalasanaNaytto({ username: newUserUsername.trim(), password: data.password });
-        setNewUserUsername('');
-        setNewUserNickname('');
-      } else {
-        setNewUserError(data.error || 'Käyttäjän luonti epäonnistui.');
-      }
-    } catch {
-      setNewUserError('Yhteysvirhe. Yritä uudelleen.');
-    } finally {
-      setNewUserSubmitting(false);
-    }
-  };
-
   // Yläpalkin "Turvajohto EVENT" vie etusivulle mistä tahansa näkymästä. Kaikki päällä
   // olevat näkymätilat on nollattava yhdessä: ne ovat toisistaan riippumattomia lippuja,
   // ja yksikin päälle jäänyt (esim. viewingSettings) pitäisi käyttäjän edelleen siinä
@@ -1928,7 +1876,6 @@ export default function App() {
     setArchivedEventDetailId(null);
     setViewingEmployeeBank(null);
     setViewingUserAdmin(null);
-    kayttajanOikeudet.nollaa();
     setViewingAuditLog(false);
     setViewingSettings(false);
     setViewingSharedWithMe(false);
@@ -2009,31 +1956,6 @@ export default function App() {
       .catch(() => { /* virhe näkyy tyhjänä listana */ })
       .finally(() => setRolesLoading(false));
   };
-
-  // Mille puolille käyttäjätaso antaa sivuja. Tuotepääsy (Puolet) on käyttäjäkohtainen ja
-  // taso on kaikille yhteinen, joten ne voivat olla ristiriidassa: Vartija-tason käyttäjä
-  // jolla on vain EVENT-pääsy näkee tason nimen mutta ei pääse kirjautumaan GUARDiin.
-  // Palvelin ei voi päätellä tätä puolestaan — sama taso voi hyvin olla tarkoitettu
-  // molemmille puolille — joten ristiriita nostetaan tässä näkyviin.
-  const tasonPuolet = (roleId: string): string[] => {
-    const bucket = roles.find((r) => r.id === roleId)?.permissions?.[DEFAULT_BUCKET] || {};
-    const solmut = Object.keys(bucket).filter((id) => bucket[id]?.view || bucket[id]?.edit);
-    if (solmut.includes('*')) return ['event', 'guard'];
-    const puolet = [];
-    if (solmut.some((id) => !id.startsWith('guard_'))) puolet.push('event');
-    if (solmut.some((id) => id.startsWith('guard_'))) puolet.push('guard');
-    return puolet;
-  };
-
-  // Käyttäjän oikeusnäkymän tila ja palvelinoperaatiot. Hook omistaa oman
-  // muokkausistuntonsa; tasolista, salasananäyttö ja näkymänvaihdot jäävät tänne, koska
-  // ne palvelevat myös muita näkymiä (ks. useKayttajanOikeudet.ts: RAJAUS).
-  const kayttajanOikeudet = useKayttajanOikeudet({
-    onUusiSalasana: setUusiSalasanaNaytto,
-    onAvattu: () => setViewingUserAdmin('permissions'),
-    onSuljettu: () => setViewingUserAdmin('list'),
-    onHaeTasot: fetchRoles,
-  });
 
   // ---- Täytettävien lomakkeiden lisäys ja poisto ----
   const LOMAKE_TUNNISTEET = ['Sisäinen', 'Ulkoinen', 'Viranomaislomake', 'Muu'];
@@ -9372,7 +9294,7 @@ export default function App() {
       onClick={() => setEmpUserModalOpen(false)}
     >
       <div
-        className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto"
+        className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-start p-5 border-b border-slate-100 gap-3">
@@ -9393,6 +9315,7 @@ export default function App() {
             tyontekija={empTunnusKohde}
             puoli="event"
             onMuuttui={fetchUserAdminList}
+            onSulje={() => setEmpUserModalOpen(false)}
           />
         </div>
       </div>
@@ -9944,11 +9867,7 @@ export default function App() {
   // ====================== MUOKKAA KÄYTTÄJIÄ (vain admin) ======================
   if (viewingUserAdmin) {
     const isAdmin = session?.role === 'admin';
-    const takaisinListaan = () => {
-      setViewingUserAdmin('list');
-      resetNewUserForm();
-      kayttajanOikeudet.nollaa();
-    };
+    const takaisinListaan = () => setViewingUserAdmin('list');
 
     return (
       <div className="min-h-screen bg-canvas font-sans flex flex-col">
@@ -9968,46 +9887,31 @@ export default function App() {
                 <h2 className="text-lg font-bold text-slate-800 mb-1">Ei käyttöoikeutta</h2>
                 <p className="text-sm text-slate-500">Käyttäjähallinta on vain pääkäyttäjille.</p>
               </div>
-            ) : viewingUserAdmin === 'new' ? (
-              <UusiKayttaja
-                tunnus={newUserUsername}
-                onTunnus={setNewUserUsername}
-                virhe={newUserError}
-                kesken={newUserSubmitting}
-                onLuo={handleCreateUser}
-                onPeruuta={() => { setViewingUserAdmin('list'); resetNewUserForm(); }}
-                uusiSalasana={uusiSalasanaNaytto}
-              />
-            ) : viewingUserAdmin === 'permissions' && kayttajanOikeudet.muokattava ? (
-              <KayttajanOikeudet
-                muokattava={kayttajanOikeudet.muokattava}
-                nimimerkki={kayttajanOikeudet.nimimerkki}
-                onNimimerkki={kayttajanOikeudet.setNimimerkki}
-                taso={kayttajanOikeudet.taso}
-                onTaso={kayttajanOikeudet.setTaso}
-                tasot={roles}
-                tasotLatautuu={rolesLoading}
-                tasonPuolet={tasonPuolet}
-                tuotteet={kayttajanOikeudet.tuotteet}
-                onTuote={kayttajanOikeudet.vaihdaTuote}
-                onLisaaPuolet={kayttajanOikeudet.lisaaPuolet}
-                tapahtumaPaasy={kayttajanOikeudet.tapahtumaPaasy}
-                onTapahtumaPaasy={kayttajanOikeudet.vaihdaTapahtumaPaasy}
-                tapahtumat={events}
-                totp={kayttajanOikeudet.totp}
-                salasana={{ naytto: uusiSalasanaNaytto, onNollaa: kayttajanOikeudet.nollaaSalasana }}
-                uloskirjaus={kayttajanOikeudet.uloskirjaus}
-                tallennus={kayttajanOikeudet.tallennus}
-                onPeruuta={kayttajanOikeudet.sulje}
-              />
             ) : (
               <KayttajaLista
                 kayttajat={userAdminList}
                 lataa={userAdminLoading}
                 virhe={userAdminError}
                 tasot={roles}
-                onUusi={() => { resetNewUserForm(); setViewingUserAdmin('new'); }}
-                onOikeudet={kayttajanOikeudet.avaa}
+                onAvaa={(u) => {
+                  // Tunnusten ainoa hallintapaikka on työntekijäpankin osio 10.
+                  const emp = employees.find((e) => e.id === u.employeeId);
+                  if (!emp) return;
+                  setViewingUserAdmin(null);
+                  setEditingEmp(emp);
+                  setEmpForm(employeeToFormState(emp));
+                  setViewingEmployeeBank('form');
+                  setEmpUserModalOpen(true);
+                }}
+                onLuoHenkilo={async (u) => {
+                  const r = await fetch(`/api/users/${encodeURIComponent(u.username)}/tyontekija`, {
+                    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}',
+                  });
+                  const data = await r.json().catch(() => null);
+                  if (!r.ok || !data?.ok) { setUserAdminError(data?.error || 'Pankkitietueen luonti epäonnistui.'); return; }
+                  fetchUserAdminList();
+                  paivitaKokoelma('employees');
+                }}
               />
             )}
           </div>

@@ -256,6 +256,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Irrotettu hälytyskeskusikkuna avautuu suoraan omaan paneeliinsa (erä 24): sen
   // etusivu olisi ylimääräinen klikkaus joka kerta kun valvomon kone käynnistetään.
   const [osio, setOsio] = useState<Osio>(HALKE_OSOITE.paneeli ? 'halytyskeskus' : 'etusivu');
+  // Asetusten käyttäjälistalta avattava henkilö: pankki avaa sen ja tunnusosion kerran.
+  const [avattavaTyontekija, setAvattavaTyontekija] = useState<string | null>(null);
   // Kohde jonka valikko on auki. Kohdelistan ja yksittäisten näkymien VÄLISSÄ oleva taso:
   // täältä valitaan mitä kohteessa tehdään, ja tänne palataan kun näkymä suljetaan.
   // Erillinen kaikista `*Kohde`-tiloista, koska ne kertovat MIKÄ näkymä on auki — tämä
@@ -2133,6 +2135,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           raportit={raportit}
           isAdmin={!!isAdmin}
           onHavita={havitaVanhentuneet}
+          onAvaaHenkilo={(id) => { setAvattavaTyontekija(id); setAsetuksissa(false); setOsio('tyontekijat'); }}
           onTakaisin={() => setAsetuksissa(false)}
         />
       ) : avattu ? (
@@ -2175,6 +2178,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           ladattu={tyontekijatLadattu}
           saaMuokata={saaMuokataTyontekijoita}
           isAdmin={isAdmin}
+          avaaTyontekijaId={avattavaTyontekija}
+          onAvattu={() => setAvattavaTyontekija(null)}
           onTallenna={tallennaTyontekijat}
           onTakaisin={() => setOsio('etusivu')}
         />

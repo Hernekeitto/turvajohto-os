@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle, KeyRound, Mail, MessageSquare, UserPlus } from 'lucide-react';
+import { Mail, MessageSquare, UserPlus } from 'lucide-react';
 
 import { buildFullName, kayttajatunnusNimesta } from '../nimet';
 import { muotoileTunniste } from '../tunnisteet';
 import type { KayttajaRivi, Tuote } from '../asetukset/Kayttajat';
 import { KertaSalasana, type SalasanaNaytto } from './KertaSalasana';
+import { TunnuksenHallinta } from './TunnuksenHallinta';
+import type { KayttajaRivi as EventKayttajaRivi } from '../../event/tyypit';
 
 // Työntekijän käyttäjätunnus työntekijäpankin lomakkeelta. Jaettu EVENT- ja
 // GUARD-puolen kesken: rekisteri on yhteinen, joten tunnuksenkin on synnyttävä samalla
@@ -21,6 +23,9 @@ import { KertaSalasana, type SalasanaNaytto } from './KertaSalasana';
 // TOIMITUS TYÖNTEKIJÄLLE (server/tunnuslahetys.js): tunnus sähköpostiin, väliaikainen
 // salasana tekstiviestinä. Osoite ja numero luetaan palvelimella työntekijätietueesta —
 // tässä ne näytetään vain, jotta pääkäyttäjä näkee mihin viesti on lähdössä.
+//
+// Olemassa olevan tunnuksen hallinta (oikeudet, nollaukset, poisto) on
+// TunnuksenHallinta-komponentissa: tämä osio on tunnusten AINOA hallintapaikka.
 //
 // Komponentti hakee itse tunnukset ja tasot. Molemmat reitit ovat pääkäyttäjärajattuja,
 // joten kutsujan on näytettävä tämä vain pääkäyttäjälle.
@@ -57,6 +62,8 @@ type Props = {
   // Kummalta puolelta avattiin: ratkaisee oletuspuolen, kuten käyttäjähallinnassa.
   puoli: Tuote;
   onMuuttui?: () => void;
+  // Oikeuksien tallennus tai peruutus: kutsuja sulkee ikkunan.
+  onSulje?: () => void;
 };
 
 const pyynto = async (polku: string, asetukset: RequestInit = {}) => {
@@ -66,7 +73,7 @@ const pyynto = async (polku: string, asetukset: RequestInit = {}) => {
   return data;
 };
 
-export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
+export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui, onSulje }: Props) => {
   const [kayttajat, setKayttajat] = useState<KayttajaRivi[]>([]);
   const [roles, setRoles] = useState<{ id: string; name: string }[]>([]);
   const [ladattu, setLadattu] = useState(false);
@@ -149,27 +156,6 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
     }
   };
 
-  const nollaa = async (username: string) => {
-    if (!window.confirm(`Nollataanko käyttäjän ${username} salasana? Vanha lakkaa toimimasta heti.`)) return;
-    setVirhe('');
-    setKesken(true);
-    try {
-      const data = await pyynto(`/api/users/${encodeURIComponent(username)}/password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lahetys: lahetys(), puoli }),
-      });
-      setSalasana({ username, password: data.password, syy: 'nollattu' });
-      setToimitus(data.toimitus || null);
-      await hae();
-      onMuuttui?.();
-    } catch (e) {
-      setVirhe(e instanceof Error ? e.message : 'Nollaus epäonnistui.');
-    } finally {
-      setKesken(false);
-    }
-  };
-
   const vaihdaTuote = (t: Tuote) =>
     setTuotteet((ed) => (ed.includes(t) ? ed.filter((x) => x !== t) : [...ed, t]));
 
@@ -242,36 +228,25 @@ export const TyontekijanTunnus = ({ tyontekija, puoli, onMuuttui }: Props) => {
       {!ladattu ? (
         <p className="text-sm text-ink-muted">Haetaan tunnuksia…</p>
       ) : olemassa ? (
-        <div className="space-y-3">
-          <div className="bg-success-soft border border-success/30 rounded-lg p-3 flex gap-2.5">
-            <CheckCircle size={16} className="text-success-ink shrink-0 mt-0.5" />
-            <div className="text-xs text-success-ink leading-relaxed space-y-0.5">
-              <p className="font-medium">Tunnus on olemassa.</p>
-              <p>Taso: {olemassa.roleName || roles.find((r) => r.id === olemassa.roleId)?.name || 'ei tasoa'}</p>
-              <p>Puolet: {(olemassa.tuotteet || []).map((t) => t.toUpperCase()).join(', ') || '—'}</p>
-              <p>
-                {olemassa.last_login_at
-                  ? `Viimeksi kirjautunut ${new Date(olemassa.last_login_at).toLocaleString('fi-FI')}`
-                  : 'Ei ole vielä kirjautunut.'}
-              </p>
-              <p className="pt-1 text-ink-muted">Tason, puolet ja Authenticatorin voi muuttaa Sovellusasetukset → Käyttäjätunnukset.</p>
-            </div>
-          </div>
-          {/* Valinnat vain uutta nollausta varten. Heti luonnin tai nollauksen jälkeen ne
-              on juuri valittu, ja toimitusraportti kertoo lopputuloksen. */}
-          {!toimitus && valinnat}
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={() => nollaa(olemassa.username)}
-              disabled={kesken}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-ink-body bg-surface border border-line hover:bg-sunken disabled:opacity-60 rounded-lg transition-colors"
-            >
-              <KeyRound size={16} />
-              {kesken ? 'Nollataan…' : 'Nollaa salasana'}
-            </button>
-          </div>
-        </div>
+        <TunnuksenHallinta
+          kayttaja={olemassa as unknown as EventKayttajaRivi}
+          valinnat={valinnat}
+          lahetys={lahetys}
+          onEmail={onEmail}
+          puoli={puoli}
+          onSalasanaNollattu={(password, t) => {
+            setSalasana({ username: olemassa.username, password, syy: 'nollattu' });
+            setToimitus((t as Toimitus) || null);
+          }}
+          onAvainNollattu={(t) => setToimitus((t as Toimitus) || null)}
+          onPoistettu={async () => {
+            setSalasana(null);
+            setToimitus(null);
+            await hae();
+            onMuuttui?.();
+          }}
+          onValmis={() => { onMuuttui?.(); onSulje?.(); }}
+        />
       ) : !tyontekija.id ? (
         <p className="text-sm text-ink-muted">
           Tallenna työntekijä ensin. Tunnus kytketään tallennettuun työntekijään ja hänen

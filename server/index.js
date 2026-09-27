@@ -1081,6 +1081,16 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
   let korjatutTunnisteet = null;
   let uusiKorkein = null;
   if (name === 'employees') {
+    // Henkilöä jolla on tunnus ei poisteta pankista: tunnus jäisi hallinnan ulkopuolelle.
+    const jaavat = new Set(verdict.data.map((t) => t?.id));
+    const tunnukselliset = listUsers().filter((u) => u.employeeId && !jaavat.has(u.employeeId)
+      && current.some((t) => t?.id === u.employeeId));
+    if (tunnukselliset.length) {
+      return res.status(409).json({
+        ok: false,
+        error: `Henkilöllä on käyttäjätunnus (${tunnukselliset.map((u) => u.username).join(', ')}). Poista tunnus ensin osiosta 10.`,
+      });
+    }
     const tulos = vahvistaTyontekijoidenNumerot({
       nykyiset: current,
       uudet: verdict.data,
@@ -1328,6 +1338,18 @@ app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
   if (typeof nickname !== 'string' || !nickname.trim()) {
     return res.status(400).json({ ok: false, error: 'Nimimerkki vaaditaan.' });
   }
+  // JOKAINEN TUNNUS KUULUU HENKILÖLLE työntekijäpankissa (päätös 27.9.2026): tunnuksia
+  // hallitaan pankin osiosta 10, eikä pankin ulkopuolisia tunnuksia synny. Myös
+  // järjestelmä- ja testitunnukset saavat pankkitietueen.
+  if (typeof employeeId !== 'string' || !employeeId) {
+    return res.status(400).json({ ok: false, error: 'Tunnus luodaan työntekijäpankista: valitse henkilö.' });
+  }
+  {
+    const henkilo = (readCollection('employees') || []).find((t) => t?.id === employeeId);
+    if (!henkilo) return res.status(404).json({ ok: false, error: 'Työntekijää ei löytynyt työntekijäpankista.' });
+    const varattu = listUsers().find((u) => u.employeeId === employeeId);
+    if (varattu) return res.status(409).json({ ok: false, error: `Henkilöllä on jo tunnus ${varattu.username}.` });
+  }
   // Tunnistenumero: kytketyn työntekijän oma, tai kytkemättömälle tunnukselle uusi
   // numero joka ei ole koskaan ollut kenelläkään (tunnistenumerot.js). Toisen henkilön
   // numeroa ei hyväksytä.
@@ -1396,7 +1418,12 @@ app.put('/api/users/:username', requireAuth, requireAdmin, (req, res) => {
   // 2. YKSI TIETUE, YKSI TUNNUS. Kaksi tunnusta samaan työntekijään tarkoittaisi että
   //    kaksi ihmistä näkee samat varusteet omanaan — ja luovutusvastuu on yhden
   //    henkilön asia. Sama sääntö kuin tunnistenumerolla (POST /api/users).
-  if (employeeId !== undefined && employeeId !== null && employeeId !== '') {
+  // Kytkentää ei voi katkaista: tunnus ilman henkilöä olisi hallinnan ulkopuolella
+  // (ks. POST /api/users). Henkilön vaihto toiseen on sallittu.
+  if (employeeId === '' || employeeId === null) {
+    return res.status(400).json({ ok: false, error: 'Tunnus on aina kytketty henkilöön. Poista tunnus, jos sitä ei tarvita.' });
+  }
+  if (employeeId !== undefined) {
     if (typeof employeeId !== 'string') {
       return res.status(400).json({ ok: false, error: 'Virheellinen työntekijäviite.' });
     }
@@ -1518,6 +1545,48 @@ app.post('/api/users/:username/totp/reset', requireAuth, requireAdmin, async (re
     ok: true, secret, otpauthUri, qrDataUri, totpRequired: user.totp_required !== false,
     ...(toimitus ? { toimitus } : {}),
   });
+});
+
+// Pankkitietue tunnukselle jolla sitä ei ole (siirtymä 27.9.2026: ennen päätöstä
+// "jokainen tunnus kuuluu henkilölle" syntyneet tunnukset). Tietue saa TUNNUKSEN
+// numeron, koska raporttien kirjaajatieto viittaa siihen — sama henkilö, sama numero.
+// Nimi tulee rungosta tai nimimerkistä; sen voi korjata pankissa.
+app.post('/api/users/:username/tyontekija', requireAuth, requireAdmin, (req, res) => {
+  const { username } = req.params;
+  const user = findUser(username);
+  if (!user) return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
+  const tyontekijat = readCollection('employees') || [];
+  if (user.employeeId && tyontekijat.some((t) => t?.id === user.employeeId)) {
+    return res.status(409).json({ ok: false, error: 'Tunnus on jo kytketty henkilöön.' });
+  }
+  const numero = Number.isInteger(user.displayId) ? user.displayId : null;
+  if (numero !== null && tyontekijat.some((t) => Number(t?.displayId) === numero)) {
+    return res.status(409).json({ ok: false, error: `Numero #${numero} on jo pankissa toisella henkilöllä.` });
+  }
+  const etunimi = typeof req.body?.firstName === 'string' ? req.body.firstName.trim() : '';
+  const sukunimi = (typeof req.body?.lastName === 'string' && req.body.lastName.trim()) || user.nickname || username;
+  const id = `emp-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const tietue = {
+    id,
+    firstName: etunimi,
+    lastName: sukunimi,
+    name: `${sukunimi} ${etunimi}`.trim(),
+    ...(numero !== null ? { displayId: numero } : {}),
+  };
+  const uusi = [...tyontekijat, tietue];
+  const tulos = vahvistaTyontekijoidenNumerot({
+    nykyiset: tyontekijat, uudet: uusi, kayttajat: listUsers(), korkein: lueKorkeinTunniste(),
+  });
+  // Numeron vartija antaisi uudelle tietueelle uuden numeron; tämä on ainoa hallittu
+  // poikkeus, joten tunnuksen numero palautetaan tietueeseen ennen kirjoitusta.
+  const lopullinen = numero !== null
+    ? tulos.data.map((t) => (t?.id === id ? { ...t, displayId: numero } : t))
+    : tulos.data;
+  writeCollection('employees', lopullinen);
+  updateUser(username, { employeeId: id });
+  logAudit({ user: req.username, action: 'create', collection: 'employees', recordId: id, targetUser: username });
+  lahetaKanavalle('employees', [{ action: 'create', id }], { lahettaja: req.username, saaNahda: () => true });
+  res.json({ ok: true, id, displayId: lopullinen.find((t) => t?.id === id)?.displayId ?? null });
 });
 
 // Tunnuksen poisto (vain pääkäyttäjä). Omaa tunnusta ja viimeistä pääkäyttäjää ei voi

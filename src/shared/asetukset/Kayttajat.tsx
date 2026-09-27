@@ -1,19 +1,18 @@
 import { useState } from 'react';
-import { UserPlus, KeyRound, Smartphone, LogOut, Users, Trash2 } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Users } from 'lucide-react';
 import { muotoileTunniste } from '../tunnisteet';
-import { KertaSalasana, type SalasanaNaytto } from '../komponentit/KertaSalasana';
 
-// Käyttäjätunnusten hallinta: kuka pääsee sisään, millä tasolla ja kummalle puolelle.
-// Jaettu molemmille tuotteille samasta syystä kuin käyttäjätasot — tunnukset ovat koko
-// sovelluksen yhteisiä, eikä GUARD-puolen pääkäyttäjän kuulu joutua kirjautumaan
-// tapahtumapuolelle luodakseen vartijalle tunnuksen.
+// Käyttäjätunnusten YLEISKATSAUS. Tunnuksia ei hallita täällä.
 //
-// EI SIVUKARTTA-OIKEUKSIA. Ne tulevat yksinomaan käyttäjätasolta (server/roles.js:
-// "TASO MÄÄRÄÄ KAIKEN"), joten tässä valitaan taso eikä yksittäisiä sivuja. Tasojen
-// sisältöä muokataan Käyttäjätasot-osiossa.
+// YKSI PAIKKA (päätös 27.9.2026): jokainen tunnus kuuluu henkilölle työntekijäpankissa,
+// ja tunnus luodaan, sen oikeuksia muutetaan, salasana ja Authenticator nollataan ja
+// tunnus poistetaan pankin osiosta 10 (shared/komponentit/TyontekijanTunnus.tsx). Tämä
+// lista näyttää kaikki tunnukset kerralla ja vie henkilön tietoihin. Aiemmin sama asia
+// oli hallittavissa kolmesta paikasta, ja tunnukset ja pankin henkilöt erkanivat
+// toisistaan (esim. Johto1 oli sekä tunnuksena #1000 että pankissa #1006).
 //
-// Komponentti hakee itse kaikki muutoksensa palvelimelle (kuten Kayttajatasot) ja
-// kertoo kutsujalle `onMuuttui`-takaisinkutsulla, että lista kannattaa hakea uudelleen.
+// Tunnus jolla ei ole henkilöä (ennen päätöstä syntynyt) näytetään varoituksena, ja sille
+// voi luoda pankkitietueen samalla numerolla (POST /api/users/:username/tyontekija).
 
 export type Tuote = 'event' | 'guard';
 
@@ -38,243 +37,35 @@ export type KayttajaRivi = {
 type Props = {
   kayttajat: KayttajaRivi[];
   roles: { id: string; name: string }[];
-  // Palvelin rajaa kaikki tämän osion reitit pääkäyttäjään. Muille näytetään selitys
-  // eikä nappeja, jotka johtaisivat 403-virheeseen.
+  // Palvelin rajaa tunnuslistan pääkäyttäjään. Muille näytetään selitys.
   isAdmin: boolean;
-  // Kummalta puolelta osio avattiin. Ratkaisee vain uuden käyttäjän oletustuotteen:
-  // GUARDista luodaan käytännössä aina vartija, EVENTistä tapahtumaväkeä.
-  puoli: Tuote;
+  // Avaa henkilön työntekijäpankissa tunnusosio auki.
+  onAvaaHenkilo: (employeeId: string) => void;
   onMuuttui: () => void;
 };
 
-export const Kayttajat = ({ kayttajat, roles, isAdmin, puoli, onMuuttui }: Props) => {
-  const [lomakeAuki, setLomakeAuki] = useState(false);
-  const [tunnus, setTunnus] = useState('');
-  const [nimimerkki, setNimimerkki] = useState('');
-  const [taso, setTaso] = useState('');
-  const [tuotteet, setTuotteet] = useState<Tuote[]>([puoli]);
-  const [virhe, setVirhe] = useState('');
-  const [tallentaa, setTallentaa] = useState(false);
-  const [salasana, setSalasana] = useState<SalasanaNaytto | null>(null);
-  const [ilmoitus, setIlmoitus] = useState('');
-  // Authenticatorin nollaus avaa rivin alle vahvistuksen, jossa voi valita uuden avaimen
-  // lähetyksen sähköpostiin. Arvo on sen tunnuksen nimi jolle vahvistus on auki.
-  const [totpAuki, setTotpAuki] = useState<string | null>(null);
-  const [totpLahetys, setTotpLahetys] = useState(true);
-  // Käynnissä oleva toimenpide muodossa "<tunnus>:<toiminto>", jotta vain se yksi nappi
-  // näyttää odotustilan eikä koko lista lukkiudu.
+export const Kayttajat = ({ kayttajat, roles, isAdmin, onAvaaHenkilo, onMuuttui }: Props) => {
   const [kesken, setKesken] = useState<string | null>(null);
+  const [virhe, setVirhe] = useState('');
 
-  const nollaaLomake = () => {
-    setTunnus('');
-    setNimimerkki('');
-    setTaso('');
-    setTuotteet([puoli]);
+  const luoHenkilo = async (username: string) => {
+    setKesken(username);
     setVirhe('');
-  };
-
-  const pyynto = async (polku: string, asetukset: RequestInit) => {
-    const r = await fetch(polku, { credentials: 'include', ...asetukset });
-    const data = await r.json().catch(() => null);
-    if (!r.ok || !data?.ok) throw new Error(data?.error || 'Toiminto epäonnistui.');
-    return data;
-  };
-
-  const luo = async () => {
-    setVirhe('');
-    if (!tunnus.trim()) return setVirhe('Käyttäjätunnus vaaditaan.');
-    // Palvelin vaatii nimimerkin eikä hyväksy tyhjää. Täytetään tunnuksella, jotta
-    // luonti ei kaadu pelkän valinnaiselta näyttävän kentän takia.
-    const nimi = nimimerkki.trim() || tunnus.trim();
-    // Talteen ennen lomakkeen nollausta: nollaus tyhjentää nämä tilat, mutta tason
-    // asetus tarvitsee arvot vielä sen jälkeen.
-    const luotavaTunnus = tunnus.trim();
-    const valittuTaso = taso;
-    const valitutTuotteet = tuotteet;
-    setTallentaa(true);
     try {
-      const data = await pyynto('/api/users', {
+      const r = await fetch(`/api/users/${encodeURIComponent(username)}/tyontekija`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: luotavaTunnus, nickname: nimi }),
+        body: '{}',
       });
-      // Salasana näkyviin HETI kun tunnus on luotu, ennen tason asetusta. Luonti on
-      // peruuttamaton ja arvottu salasana näkyy vain kerran: jos se näytettäisiin vasta
-      // koko ketjun jälkeen, epäonnistunut tasonasetus jättäisi pääkäyttäjälle tunnuksen
-      // jonka salasanaa hän ei koskaan nähnyt.
-      setSalasana({ username: luotavaTunnus, password: data.password, syy: 'luotu' });
-
-      // Lomake nollataan ENNEN tason asetusta, koska nollaus tyhjentää myös
-      // virheilmoituksen — muuten se pyyhkisi juuri asetetun varoituksen alta.
-      nollaaLomake();
-      setLomakeAuki(false);
-
-      // Taso ja tuotteet asetetaan omalla kutsullaan: POST /api/users ei ota niitä
-      // vastaan, ja uusi tunnus jäisi muuten ilman oikeuksia ja ilman puolta.
-      if (valittuTaso || valitutTuotteet.length > 0) {
-        try {
-          await pyynto(`/api/users/${encodeURIComponent(luotavaTunnus)}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ...(valittuTaso ? { roleId: valittuTaso } : {}),
-              ...(valitutTuotteet.length > 0 ? { tuotteet: valitutTuotteet } : {}),
-            }),
-          });
-        } catch (e) {
-          // Tunnus on olemassa, vain taso jäi asettamatta. Kerrotaan se täsmällisesti:
-          // korjaus on yksi valinta listasta, ei uusi käyttäjä.
-          setVirhe(
-            `Tunnus ${luotavaTunnus} luotiin, mutta tason tai puolten asetus epäonnistui `
-            + `(${e instanceof Error ? e.message : 'tuntematon virhe'}). Aseta ne listasta.`,
-          );
-        }
-      }
-
+      const data = await r.json().catch(() => null);
+      if (!r.ok || !data?.ok) throw new Error(data?.error || 'Pankkitietueen luonti epäonnistui.');
       onMuuttui();
     } catch (e) {
-      setVirhe(e instanceof Error ? e.message : 'Käyttäjän luonti epäonnistui.');
-    } finally {
-      setTallentaa(false);
-    }
-  };
-
-  const muuta = async (username: string, muutos: Record<string, unknown>, toiminto: string) => {
-    setKesken(`${username}:${toiminto}`);
-    setVirhe('');
-    try {
-      await pyynto(`/api/users/${encodeURIComponent(username)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(muutos),
-      });
-      onMuuttui();
-    } catch (e) {
-      setVirhe(e instanceof Error ? e.message : 'Muutos epäonnistui.');
+      setVirhe(e instanceof Error ? e.message : 'Pankkitietueen luonti epäonnistui.');
     } finally {
       setKesken(null);
     }
-  };
-
-  const nollaaSalasana = async (username: string) => {
-    if (!window.confirm(`Nollataanko käyttäjän ${username} salasana? Vanha lakkaa toimimasta heti.`)) return;
-    setKesken(`${username}:salasana`);
-    setVirhe('');
-    try {
-      const data = await pyynto(`/api/users/${encodeURIComponent(username)}/password`, { method: 'POST' });
-      setSalasana({ username, password: data.password, syy: 'nollattu' });
-      onMuuttui();
-    } catch (e) {
-      setVirhe(e instanceof Error ? e.message : 'Nollaus epäonnistui.');
-    } finally {
-      setKesken(null);
-    }
-  };
-
-  // Nollaus vaihtaa avaimen heti: vanha lakkaa toimimasta. Uusi avain voidaan lähettää
-  // tunnukseen kytketyn työntekijän sähköpostiin (server/index.js: totp/reset). Salasana
-  // ei muutu, joten viesti yksin ei anna pääsyä.
-  const nollaaTotp = async (username: string, lahetaSahkoposti: boolean) => {
-    setKesken(`${username}:totp`);
-    setVirhe('');
-    setIlmoitus('');
-    try {
-      const data = await pyynto(`/api/users/${encodeURIComponent(username)}/totp/reset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lahetys: { sahkoposti: lahetaSahkoposti }, puoli }),
-      });
-      const posti = data.toimitus?.sahkoposti;
-      setIlmoitus(
-        !lahetaSahkoposti
-          ? `Authenticator nollattu: ${username}. Uutta avainta ei lähetetty.`
-          : posti?.tila === 'lahetetty'
-            ? `Authenticator nollattu: ${username}. Uusi avain lähetettiin sähköpostiin.`
-            : posti?.tila === 'kuivaharjoittelu'
-              ? `Authenticator nollattu: ${username}. Sähköpostia ei lähtenyt (lähetysasetukset puuttuvat).`
-              : `Authenticator nollattu: ${username}, mutta avainta ei saatu lähetettyä${posti?.viesti ? `: ${posti.viesti}` : '.'}`,
-      );
-      setTotpAuki(null);
-      onMuuttui();
-    } catch (e) {
-      setVirhe(e instanceof Error ? e.message : 'Nollaus epäonnistui.');
-    } finally {
-      setKesken(null);
-    }
-  };
-
-  // Authenticator-vaatimuksen kytkeminen pois. Tarpeen kahdessa tilanteessa: tunnus
-  // jota käytetään ilman puhelinta (esim. sovelluskaupan arvioija, joka ei voi syöttää
-  // kertakoodia), ja tilapäinen apu kun käyttäjän puhelin on rikki.
-  //
-  // POISKYTKENTÄ HEIKENTÄÄ TUNNUKSEN SUOJAA olennaisesti: sen jälkeen pelkkä salasana
-  // riittää sisäänpääsyyn. Siksi siitä kysytään erikseen ja päälle kytkeminen menee
-  // läpi ilman kysymystä.
-  const vaihdaTotpVaatimus = async (k: KayttajaRivi) => {
-    const vaaditaanNyt = k.totp_required !== false;
-    if (vaaditaanNyt && !window.confirm(
-      `Poistetaanko Authenticator-vaatimus käyttäjältä ${k.username}?\n\n`
-      + 'Sen jälkeen tunnukselle pääsee sisään pelkällä salasanalla. Käytä vain '
-      + 'tunnuksiin joiden on toimittava ilman puhelinta.',
-    )) return;
-    setKesken(`${k.username}:vaatimus`);
-    setVirhe('');
-    try {
-      await pyynto(`/api/users/${encodeURIComponent(k.username)}/totp`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ required: !vaaditaanNyt }),
-      });
-      onMuuttui();
-    } catch (e) {
-      setVirhe(e instanceof Error ? e.message : 'Muutos epäonnistui.');
-    } finally {
-      setKesken(null);
-    }
-  };
-
-  // Tunnuksen poisto. Työntekijätietue jää pankkiin, ja tunnistenumero ei palaa kiertoon.
-  const poista = async (username: string) => {
-    if (!window.confirm(
-      `Poistetaanko tunnus ${username} pysyvästi?
-
-`
-      + 'Kirjautuminen lakkaa heti. Työntekijän tiedot säilyvät työntekijäpankissa, ja jo '
-      + 'tehdyt kirjaukset säilyvät ennallaan.',
-    )) return;
-    setKesken(`${username}:poisto`);
-    setVirhe('');
-    setIlmoitus('');
-    try {
-      await pyynto(`/api/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
-      setIlmoitus(`Tunnus ${username} poistettu.`);
-      onMuuttui();
-    } catch (e) {
-      setVirhe(e instanceof Error ? e.message : 'Poisto epäonnistui.');
-    } finally {
-      setKesken(null);
-    }
-  };
-
-  // Pakkouloskirjaus. Sama koneisto jolla kadonneen laitteen istunto katkaistaan
-  // (server/index.js: session_invalidated_at) — ja se on syy sille, että asennetussa
-  // sovelluksessa istuntoa ei tarvitse rajoittaa ajallisesti.
-  const kirjaaUlos = async (username: string) => {
-    if (!window.confirm(`Kirjataanko ${username} ulos kaikilta laitteilta heti?`)) return;
-    setKesken(`${username}:ulos`);
-    setVirhe('');
-    try {
-      await pyynto(`/api/users/${encodeURIComponent(username)}/logout`, { method: 'POST' });
-    } catch (e) {
-      setVirhe(e instanceof Error ? e.message : 'Uloskirjaus epäonnistui.');
-    } finally {
-      setKesken(null);
-    }
-  };
-
-  const vaihdaTuote = (tuote: Tuote) => {
-    setTuotteet((edelliset) =>
-      edelliset.includes(tuote) ? edelliset.filter((t) => t !== tuote) : [...edelliset, tuote]);
   };
 
   const otsikko = (
@@ -288,251 +79,73 @@ export const Kayttajat = ({ kayttajat, roles, isAdmin, puoli, onMuuttui }: Props
     return (
       <div className="bg-surface rounded-xl border border-line shadow-sm p-6 mb-6">
         {otsikko}
-        <p className="text-sm text-ink-muted mt-3">
-          Käyttäjätunnusten hallinta on vain pääkäyttäjille.
-        </p>
+        <p className="text-sm text-ink-muted mt-3">Käyttäjätunnusten tiedot ovat vain pääkäyttäjille.</p>
       </div>
     );
   }
+
+  const ilmanHenkiloa = kayttajat.filter((k) => !k.employeeId).length;
 
   return (
     <div className="bg-surface rounded-xl border border-line shadow-sm p-6 mb-6 space-y-4">
       {otsikko}
       <p className="text-sm text-ink-muted">
-        Kuka pääsee sisään, millä tasolla ja kummalle puolelle. Sivukohtaiset oikeudet
-        tulevat käyttäjätasolta, ei tästä.
+        Kaikki tunnukset yhdellä silmäyksellä. Tunnuksia luodaan ja hallitaan
+        <span className="font-medium text-ink-body"> työntekijäpankista</span> henkilön
+        kohdasta 10. Valitse rivi avataksesi henkilön.
       </p>
       {virhe && (
-        <p className="text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">
-          {virhe}
-        </p>
+        <p className="text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-4 py-3">{virhe}</p>
       )}
-
-      {ilmoitus && (
-        <p className="text-sm text-success-ink bg-success-soft border border-success/30 rounded-lg px-4 py-3">
-          {ilmoitus}
+      {ilmanHenkiloa > 0 && (
+        <p className="text-sm text-warning-ink bg-warning-soft border border-warning/30 rounded-lg px-4 py-3 flex gap-2">
+          <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+          {ilmanHenkiloa === 1 ? '1 tunnus ei kuulu' : `${ilmanHenkiloa} tunnusta ei kuulu`} kenellekään
+          työntekijäpankissa, joten sitä ei voi hallita. Luo sille pankkitietue.
         </p>
-      )}
-      {salasana && <KertaSalasana key={salasana.password} {...salasana} onSulje={() => setSalasana(null)} />}
-
-      <div className="flex items-center justify-between gap-4">
-        <p className="text-sm text-ink-muted">
-          {kayttajat.length} {kayttajat.length === 1 ? 'tunnus' : 'tunnusta'}
-        </p>
-        <button
-          type="button"
-          onClick={() => { nollaaLomake(); setLomakeAuki((auki) => !auki); }}
-          className="inline-flex items-center gap-2 px-3 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors"
-        >
-          <UserPlus size={16} />
-          {lomakeAuki ? 'Peruuta' : 'Uusi käyttäjä'}
-        </button>
-      </div>
-
-      {lomakeAuki && (
-        <div className="border border-line rounded-lg p-4 bg-sunken space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="block text-sm font-medium text-ink-body mb-1">Käyttäjätunnus</span>
-              <input
-                type="text"
-                autoComplete="off"
-                value={tunnus}
-                onChange={(e) => setTunnus(e.target.value)}
-                placeholder="esim. vartija1"
-                className="w-full rounded-lg border border-line bg-surface p-2.5 text-sm"
-              />
-            </label>
-            <label className="block">
-              <span className="block text-sm font-medium text-ink-body mb-1">
-                Nimimerkki <span className="text-ink-subtle font-normal">(näkyy raporteissa)</span>
-              </span>
-              <input
-                type="text"
-                autoComplete="off"
-                value={nimimerkki}
-                onChange={(e) => setNimimerkki(e.target.value)}
-                placeholder="esim. Vartija 1"
-                className="w-full rounded-lg border border-line bg-surface p-2.5 text-sm"
-              />
-            </label>
-          </div>
-
-          <label className="block">
-            <span className="block text-sm font-medium text-ink-body mb-1">Käyttäjätaso</span>
-            <select
-              value={taso}
-              onChange={(e) => setTaso(e.target.value)}
-              className="w-full rounded-lg border border-line bg-surface p-2.5 text-sm"
-            >
-              <option value="">Valitse taso…</option>
-              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
-            <span className="block text-xs text-ink-subtle mt-1">
-              Taso ratkaisee mitä sivuja käyttäjä näkee. Ilman tasoa tunnus pääsee
-              kirjautumaan mutta ei näe mitään.
-            </span>
-          </label>
-
-          <div>
-            <span className="block text-sm font-medium text-ink-body mb-1">Puolet</span>
-            <div className="flex gap-4">
-              {(['guard', 'event'] as Tuote[]).map((t) => (
-                <label key={t} className="inline-flex items-center gap-2 text-sm text-ink-body">
-                  <input
-                    type="checkbox"
-                    checked={tuotteet.includes(t)}
-                    onChange={() => vaihdaTuote(t)}
-                  />
-                  {t === 'guard' ? 'GUARD (vartiointi)' : 'EVENT (tapahtumat)'}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={luo}
-              disabled={tallentaa}
-              className="px-4 py-2 bg-action hover:bg-action-hover disabled:opacity-60 text-white text-sm font-bold rounded-lg transition-colors"
-            >
-              {tallentaa ? 'Luodaan…' : 'Luo käyttäjä'}
-            </button>
-          </div>
-        </div>
       )}
 
       <div className="border border-line rounded-lg divide-y divide-line-soft overflow-hidden">
         {kayttajat.length === 0 ? (
           <p className="text-sm text-ink-muted p-4">Ei käyttäjiä.</p>
         ) : kayttajat.map((k) => {
-          const admin = k.role === 'admin';
-          return (
-            <div key={k.username} className="p-4 bg-surface">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-ink truncate">
-                    {k.nickname || k.username}
-                    {k.displayId ? (
-                      <span className="text-ink-subtle font-normal"> {muotoileTunniste(k.displayId)}</span>
-                    ) : null}
-                  </p>
-                  <p className="text-xs text-ink-muted">
-                    {k.username}
-                    {k.must_change_password && ' · salasana vaihdettava'}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <select
-                    value={k.roleId || ''}
-                    disabled={kesken === `${k.username}:taso`}
-                    onChange={(e) => muuta(k.username, { roleId: e.target.value }, 'taso')}
-                    className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs"
-                  >
-                    <option value="">Ei tasoa</option>
-                    {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => nollaaSalasana(k.username)}
-                    disabled={kesken === `${k.username}:salasana`}
-                    title="Nollaa salasana"
-                    className="p-2 rounded-lg border border-line text-ink-muted hover:text-accent hover:border-line-strong transition-colors"
-                  >
-                    <KeyRound size={15} />
-                  </button>
-                  {/* Authenticator ja pakkouloskirjaus eivät koske pääkäyttäjää:
-                      palvelin torjuu molemmat 400:lla, joten nappeja ei näytetä. */}
-                  {!admin && (
-                    <>
-                      {/* Authenticator-vaatimus tekstinä eikä ikonina: tila on
-                          turvallisuuden kannalta merkittävä, eikä sitä saa joutua
-                          arvaamaan ikonin väristä. */}
-                      <button
-                        type="button"
-                        onClick={() => vaihdaTotpVaatimus(k)}
-                        disabled={kesken === `${k.username}:vaatimus`}
-                        title="Vaaditaanko Authenticator-koodi kirjautumisessa"
-                        className={`px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                          k.totp_required === false
-                            ? 'border-warning/40 bg-warning-soft text-warning-ink'
-                            : 'border-line text-ink-muted hover:border-line-strong'
-                        }`}
-                      >
-                        {k.totp_required === false ? 'Authenticator pois' : 'Authenticator'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setTotpAuki((a) => (a === k.username ? null : k.username)); setTotpLahetys(Boolean(k.employeeId)); }}
-                        disabled={kesken === `${k.username}:totp`}
-                        title="Nollaa Authenticator"
-                        className="p-2 rounded-lg border border-line text-ink-muted hover:text-accent hover:border-line-strong transition-colors"
-                      >
-                        <Smartphone size={15} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => kirjaaUlos(k.username)}
-                        disabled={kesken === `${k.username}:ulos`}
-                        title="Kirjaa ulos kaikilta laitteilta"
-                        className="p-2 rounded-lg border border-line text-ink-muted hover:text-danger-ink hover:border-danger/40 transition-colors"
-                      >
-                        <LogOut size={15} />
-                      </button>
-                    </>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => poista(k.username)}
-                    disabled={kesken === `${k.username}:poisto`}
-                    title="Poista tunnus"
-                    className="p-2 rounded-lg border border-line text-ink-muted hover:text-danger-ink hover:border-danger/40 transition-colors"
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              </div>
-              {totpAuki === k.username && (
-                <div className="mt-3 border border-warning/40 bg-warning-soft rounded-lg p-3 space-y-2">
-                  <p className="text-sm text-warning-ink">
-                    Nollataanko käyttäjän <span className="font-medium">{k.username}</span> Authenticator?
-                    Vanha avain lakkaa toimimasta heti.
-                  </p>
-                  <label className="flex items-start gap-2 text-sm text-ink-body">
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={totpLahetys && Boolean(k.employeeId)}
-                      disabled={!k.employeeId}
-                      onChange={(e) => setTotpLahetys(e.target.checked)}
-                    />
-                    <span>
-                      Lähetä uusi avain sähköpostiin
-                      {!k.employeeId && (
-                        <span className="text-ink-muted"> (tunnusta ei ole kytketty työntekijään, joten osoitetta ei ole)</span>
-                      )}
-                    </span>
-                  </label>
-                  <div className="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setTotpAuki(null)}
-                      className="px-3 py-1.5 text-xs font-medium text-ink-body bg-surface border border-line rounded-lg"
-                    >
-                      Peruuta
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => nollaaTotp(k.username, totpLahetys && Boolean(k.employeeId))}
-                      disabled={kesken === `${k.username}:totp`}
-                      className="px-3 py-1.5 text-xs font-bold text-white bg-action hover:bg-action-hover disabled:opacity-60 rounded-lg"
-                    >
-                      {kesken === `${k.username}:totp` ? 'Nollataan…' : 'Nollaa Authenticator'}
-                    </button>
-                  </div>
-                </div>
-              )}
+          const taso = k.roleName || roles.find((r) => r.id === k.roleId)?.name || k.roleId || 'ei tasoa';
+          const sisalto = (
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-ink truncate">
+                {k.nickname || k.username}
+                {k.displayId ? <span className="text-ink-subtle font-normal"> {muotoileTunniste(k.displayId)}</span> : null}
+              </p>
+              <p className="text-xs text-ink-muted truncate">
+                <span className="font-mono">{k.username}</span>
+                {' · '}{taso}
+                {' · '}{(k.tuotteet || []).map((t) => t.toUpperCase()).join(', ') || '—'}
+                {k.role !== 'admin' && k.totp_required === false && ' · Authenticator pois'}
+                {' · '}{k.last_login_at ? `kirjautunut ${new Date(k.last_login_at).toLocaleDateString('fi-FI')}` : 'ei kirjautunut'}
+              </p>
+            </div>
+          );
+          return k.employeeId ? (
+            <button
+              key={k.username}
+              type="button"
+              onClick={() => onAvaaHenkilo(k.employeeId as string)}
+              className="w-full text-left p-4 bg-surface hover:bg-sunken flex items-center gap-3 transition-colors"
+            >
+              {sisalto}
+              <ChevronRight size={16} className="text-ink-subtle shrink-0" />
+            </button>
+          ) : (
+            <div key={k.username} className="p-4 bg-warning-soft/40 flex flex-col sm:flex-row sm:items-center gap-3">
+              {sisalto}
+              <button
+                type="button"
+                onClick={() => luoHenkilo(k.username)}
+                disabled={kesken === k.username}
+                className="shrink-0 px-3 py-1.5 text-xs font-medium rounded-lg border border-warning/40 text-warning-ink hover:bg-warning-soft disabled:opacity-60"
+              >
+                {kesken === k.username ? 'Luodaan…' : 'Luo pankkitietue'}
+              </button>
             </div>
           );
         })}

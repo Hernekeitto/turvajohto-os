@@ -21,10 +21,12 @@ type Props = {
   raportit: GuardRaportti[];
   isAdmin: boolean;
   onHavita: () => void;
+  // Käyttäjälistan rivi avaa henkilön työntekijäpankissa (tunnusten ainoa hallintapaikka).
+  onAvaaHenkilo: (employeeId: string) => void;
   onTakaisin: () => void;
 };
 
-export const Asetukset = ({ raportit, isAdmin, onHavita, onTakaisin }: Props) => {
+export const Asetukset = ({ raportit, isAdmin, onHavita, onAvaaHenkilo, onTakaisin }: Props) => {
   const [roles, setRoles] = useState<any[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [kayttajat, setKayttajat] = useState<any[]>([]);
@@ -76,7 +78,7 @@ export const Asetukset = ({ raportit, isAdmin, onHavita, onTakaisin }: Props) =>
         kayttajat={kayttajat}
         roles={roles}
         isAdmin={isAdmin}
-        puoli="guard"
+        onAvaaHenkilo={onAvaaHenkilo}
         onMuuttui={haeKayttajat}
       />
 

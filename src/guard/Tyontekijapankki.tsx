@@ -35,6 +35,9 @@ type Props = {
   // Tunnusten luonti ja salasanan nollaus ovat palvelimella pääkäyttäjärajattuja
   // (/api/users), joten osion 10 painike näytetään vain pääkäyttäjälle.
   isAdmin: boolean;
+  // Asetusten käyttäjälistalta avattu henkilö: lomake ja tunnusosio auki heti.
+  avaaTyontekijaId?: string | null;
+  onAvattu?: () => void;
   // Tallentaa koko kokoelman. Palauttaa false jos tallennus epäonnistui, jolloin
   // näkymä jää lomakkeelle eikä muutos katoa käyttäjän silmistä.
   onTallenna: (lista: Tyontekija[]) => Promise<boolean>;
@@ -42,7 +45,7 @@ type Props = {
 };
 
 export const Tyontekijapankki = ({
-  tyontekijat, ladattu, saaMuokata, isAdmin, onTallenna, onTakaisin,
+  tyontekijat, ladattu, saaMuokata, isAdmin, avaaTyontekijaId, onAvattu, onTallenna, onTakaisin,
 }: Props) => {
   const [nakyma, setNakyma] = useState<'lista' | 'lomake'>('lista');
   const [haku, setHaku] = useState('');
@@ -64,6 +67,19 @@ export const Tyontekijapankki = ({
   };
 
   useEffect(haeKayttajat, [isAdmin]);
+
+  useEffect(() => {
+    if (!avaaTyontekijaId || !ladattu) return;
+    const kohde = tyontekijat.find((t) => t.id === avaaTyontekijaId);
+    if (kohde) {
+      setMuokattava(kohde);
+      setLomake(employeeToFormState(kohde));
+      setNakyma('lomake');
+      if (isAdmin) setTunnusAuki(true);
+    }
+    onAvattu?.();
+    // Avataan kerran; onAvattu nollaa pyynnön kutsujassa.
+  }, [avaaTyontekijaId, ladattu]);
 
   // Takaisin-este vanhemmassa eikä modaalissa, StrictModen vuoksi (ks. KalustoKortti.tsx).
   useTakaisinEste(tunnusAuki, () => setTunnusAuki(false));
@@ -186,7 +202,7 @@ export const Tyontekijapankki = ({
           onClick={() => setTunnusAuki(false)}
         >
           <div
-            className="bg-surface rounded-xl shadow-xl border border-line w-full max-w-lg my-auto"
+            className="bg-surface rounded-xl shadow-xl border border-line w-full max-w-3xl my-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4 p-5 border-b border-line-soft">
@@ -204,7 +220,12 @@ export const Tyontekijapankki = ({
               </button>
             </div>
             <div className="p-5">
-              <TyontekijanTunnus tyontekija={tallennettu} puoli="guard" onMuuttui={haeKayttajat} />
+              <TyontekijanTunnus
+                tyontekija={tallennettu}
+                puoli="guard"
+                onMuuttui={haeKayttajat}
+                onSulje={() => setTunnusAuki(false)}
+              />
             </div>
           </div>
         </div>

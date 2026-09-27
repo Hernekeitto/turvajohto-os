@@ -1,4 +1,6 @@
-// Käyttäjähallinta: käyttäjälista, uuden tunnuksen luonti ja käyttäjän oikeudet.
+// Käyttäjähallinta: käyttäjälista (yleiskatsaus) ja käyttäjän oikeusnäkymä, jonka
+// työntekijäpankin osio 10 upottaa (shared/komponentit/TunnuksenHallinta.tsx). Tunnuksia
+// ei enää luoda täältä: jokainen tunnus luodaan pankin henkilölle (päätös 27.9.2026).
 //
 // Irrotettu App.tsx:stä. Kolme näkymää samassa tiedostossa, koska ne ovat saman
 // hallintasivun tilat (viewingUserAdmin: 'list' | 'new' | 'permissions') eivätkä
@@ -10,8 +12,8 @@
 // propsiksi: ryhmä kertoo mitkä tilat kuuluvat yhteen, ja jos operaatio joskus
 // poistuu, poistuu yksi propsi eikä kolme.
 
-import { AlertTriangle, CheckCircle, IdCard, Info, KeyRound, Layers, LogOut, QrCode,
-  RefreshCw, ShieldCheck, Smartphone, UserPlus } from 'lucide-react';
+import { AlertTriangle, CheckCircle, IdCard, KeyRound, Layers, LogOut, QrCode,
+  RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
 
 import { muotoileTunniste } from '../../shared/tunnisteet';
 import type { KayttajaRivi, Tapahtuma, TotpTiedot, UusiSalasana } from '../tyypit';
@@ -32,24 +34,20 @@ type ListaProps = {
   lataa: boolean;
   virhe: string;
   tasot: Taso[];
-  onUusi: () => void;
-  onOikeudet: (kayttaja: KayttajaRivi) => void;
+  // Tunnuksia hallitaan työntekijäpankin osiosta 10 (päätös 27.9.2026): rivi avaa henkilön.
+  onAvaa: (kayttaja: KayttajaRivi) => void;
+  // Ennen päätöstä syntynyt tunnus ilman henkilöä saa pankkitietueen samalla numerolla.
+  onLuoHenkilo: (kayttaja: KayttajaRivi) => void;
 };
 
-export const KayttajaLista = ({ kayttajat, lataa, virhe, tasot, onUusi, onOikeudet }: ListaProps) => (
+export const KayttajaLista = ({ kayttajat, lataa, virhe, tasot, onAvaa, onLuoHenkilo }: ListaProps) => (
   <>
-    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-800">Muokkaa käyttäjiä</h2>
-        <p className="text-sm text-slate-500 mt-1">Kaikki sovelluksen käyttäjätunnukset ja niiden sivukartta-oikeudet.</p>
-      </div>
-      <button
-        onClick={() => onUusi()}
-        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors shadow-sm shrink-0"
-      >
-        <UserPlus size={16} />
-        Uusi käyttäjä
-      </button>
+    <div className="mb-6">
+      <h2 className="text-2xl font-bold text-slate-800">Käyttäjätunnukset</h2>
+      <p className="text-sm text-slate-500 mt-1">
+        Kaikki tunnukset yhdellä silmäyksellä. Tunnuksia luodaan ja hallitaan
+        työntekijäpankista henkilön kohdasta 10 — avaa henkilö rivin painikkeesta.
+      </p>
     </div>
 
     {virhe && <p className="text-sm text-rose-600 mb-4">{virhe}</p>}
@@ -85,12 +83,22 @@ export const KayttajaLista = ({ kayttajat, lataa, virhe, tasot, onUusi, onOikeud
               <td className="p-4 font-mono text-xs text-slate-600">{u.username}</td>
               <td className="p-4 text-slate-500 text-xs">{u.created_at ? new Date(u.created_at).toLocaleDateString('fi-FI') : '—'}</td>
               <td className="p-4 text-right">
-                <button
-                  onClick={() => onOikeudet(u)}
-                  className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
-                >
-                  Muokkaa oikeuksia
-                </button>
+                {u.employeeId ? (
+                  <button
+                    onClick={() => onAvaa(u)}
+                    className="text-indigo-600 hover:text-indigo-900 font-medium text-xs bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-md transition-colors"
+                  >
+                    Avaa henkilö
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => onLuoHenkilo(u)}
+                    title="Tunnus ei kuulu kenellekään työntekijäpankissa"
+                    className="text-amber-800 font-medium text-xs bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded-md transition-colors"
+                  >
+                    Luo pankkitietue
+                  </button>
+                )}
               </td>
             </tr>
           ))}
@@ -98,97 +106,6 @@ export const KayttajaLista = ({ kayttajat, lataa, virhe, tasot, onUusi, onOikeud
       </table>
     </div>
   </>
-);
-
-type UusiProps = {
-  tunnus: string;
-  onTunnus: (teksti: string) => void;
-  virhe: string;
-  kesken: boolean;
-  onLuo: () => void;
-  onPeruuta: () => void;
-  // Luonnin jälkeen näytettävä väliaikainen salasana. Näkyy vain kerran.
-  uusiSalasana: UusiSalasana | null;
-};
-
-export const UusiKayttaja = ({
-  tunnus, onTunnus, virhe, kesken, onLuo, onPeruuta, uusiSalasana,
-}: UusiProps) => (
-  <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8">
-    <div className="mb-6 border-b border-slate-100 pb-4">
-      <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-        <UserPlus className="text-emerald-500" size={24} />
-        Uusi käyttäjä
-      </h2>
-      <p className="text-sm text-slate-500 mt-1">
-        Uudella käyttäjällä ei ole oletuksena mitään sivukartta-oikeuksia, ja hän tarvitsee Authenticator-sovelluksen kirjautuakseen — hoida molemmat luonnin jälkeen "Muokkaa oikeuksia" -kohdasta.
-      </p>
-    </div>
-    <form className="space-y-4 text-left max-w-md" onSubmit={(e) => e.preventDefault()}>
-      <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Käyttäjä</label>
-        <input
-          type="text"
-          autoComplete="username"
-          value={tunnus}
-          onChange={(e) => onTunnus(e.target.value)}
-          className="w-full rounded-lg border-slate-300 border p-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
-          placeholder="esim. tikepvst"
-        />
-      </div>
-      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex gap-2.5">
-        <Info size={16} className="text-slate-400 shrink-0 mt-0.5" />
-        <p className="text-xs text-slate-600 leading-relaxed">
-          Nimimerkkiä ei enää aseteta tässä. Raporttien "Laatija"-kenttä muodostuu
-          tapahtumakohtaisesta nimimerkistä ja henkilön tunnistenumerosta (esim.
-          "Ensiapu 1 #1028") — nimimerkki annetaan kun henkilö lisätään tapahtumaan.
-          Tunnukset kannattaa luoda työntekijäpankista, jolloin nimi, tunnus ja
-          tunnistenumero täyttyvät automaattisesti.
-        </p>
-      </div>
-      {/* Salasanaa ei syötetä: palvelin arpoo sen ja näyttää kerran alla. */}
-      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex gap-2.5">
-        <KeyRound size={16} className="text-slate-400 shrink-0 mt-0.5" />
-        <p className="text-xs text-slate-600 leading-relaxed">
-          Salasanaa ei aseteta käsin. Palvelin arpoo väliaikaisen salasanan, joka
-          näytetään sinulle kerran luonnin jälkeen. Käyttäjä kirjautuu sillä ja joutuu
-          heti vaihtamaan sen omakseen.
-        </p>
-      </div>
-      {uusiSalasana && (
-        <div className="bg-emerald-50 border-2 border-emerald-300 rounded-lg p-4">
-          <p className="text-xs font-bold text-emerald-900 uppercase tracking-wide mb-1">
-            Tunnus {uusiSalasana.username} luotu — väliaikainen salasana
-          </p>
-          <code className="block bg-white border border-emerald-200 rounded-lg px-3 py-2.5 text-base font-mono font-bold tracking-wider break-all text-slate-900">
-            {uusiSalasana.password}
-          </code>
-          <p className="text-xs text-emerald-800 mt-2">
-            Välitä tämä käyttäjälle. Salasanaa ei voi hakea myöhemmin uudelleen.
-          </p>
-        </div>
-      )}
-      {virhe && <p className="text-sm text-rose-600">{virhe}</p>}
-      <div className="pt-2 flex justify-end gap-3">
-        <button
-          type="button"
-          onClick={() => onPeruuta()}
-          className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-        >
-          Peruuta
-        </button>
-        <button
-          type="button"
-          disabled={kesken}
-          onClick={onLuo}
-          className="px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 rounded-lg transition-colors flex items-center gap-2 shadow-sm"
-        >
-          <CheckCircle size={18} />
-          {kesken ? 'Luodaan…' : 'Luo käyttäjä'}
-        </button>
-      </div>
-    </form>
-  </div>
 );
 
 // Yhden palvelinoperaation tila ja käynnistys. Neljä tällaista ryhmää alla; ne ovat
@@ -199,7 +116,9 @@ type TotpRyhma = {
   lataa: boolean;
   nollataan: boolean;
   vaihdetaan: boolean;
-  onNollaa: () => void;
+  // Puuttuva = nollausnappia ei näytetä (työntekijäpankin osio 10 nollaa omalla
+  // painikkeellaan, jossa on uuden avaimen lähetys sähköpostiin).
+  onNollaa?: () => void;
   onVaihda: () => void;
 };
 
@@ -222,7 +141,11 @@ type OikeusProps = {
   onTapahtumaPaasy: (eventId: string) => void;
   tapahtumat: Tapahtuma[];
   totp: TotpRyhma;
-  salasana: { naytto: UusiSalasana | null; onNollaa: () => void };
+  // Puuttuva = salasanaosiota ei näytetä (osio 10 nollaa salasanan omalla lohkollaan,
+  // jossa on toimitus tekstiviestinä).
+  salasana?: { naytto: UusiSalasana | null; onNollaa: () => void };
+  // Upotettuna (osio 10) otsikko ja kehys jätetään pois: ympäröivä ikkuna antaa ne.
+  upotettu?: boolean;
   uloskirjaus: { viesti: string; kesken: boolean; onPakota: () => void };
   tallennus: { kesken: boolean; virhe: string; onTallenna: () => void };
   onPeruuta: () => void;
@@ -231,14 +154,14 @@ type OikeusProps = {
 export const KayttajanOikeudet = ({
   muokattava, nimimerkki, onNimimerkki, taso, onTaso, tasot, tasotLatautuu, tasonPuolet,
   tuotteet, onTuote, onLisaaPuolet, tapahtumaPaasy, onTapahtumaPaasy, tapahtumat,
-  totp, salasana, uloskirjaus, tallennus, onPeruuta,
+  totp, salasana, uloskirjaus, tallennus, onPeruuta, upotettu = false,
 }: OikeusProps) => (
-  <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8">
+  <div className={upotettu ? '' : 'bg-white rounded-xl shadow-sm border border-slate-100 p-6 md:p-8'}>
     <div className="mb-6 border-b border-slate-100 pb-4 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
       <div>
-        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-          <IdCard className="text-indigo-500" size={24} />
-          Käyttöoikeudet: {muokattava.username}
+        <h2 className={`${upotettu ? 'text-base' : 'text-xl'} font-bold text-slate-800 flex items-center gap-2`}>
+          <IdCard className="text-indigo-500" size={upotettu ? 18 : 24} />
+          Käyttöoikeudet{upotettu ? '' : `: ${muokattava.username}`}
         </h2>
         <p className="text-sm text-slate-500 mt-1">Valitse mitkä sivut käyttäjä näkee ja voi muokata.</p>
       </div>
@@ -306,7 +229,7 @@ export const KayttajanOikeudet = ({
                 </code>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button
+                {totp.onNollaa && <button
                   type="button"
                   disabled={totp.nollataan}
                   onClick={totp.onNollaa}
@@ -314,7 +237,7 @@ export const KayttajanOikeudet = ({
                 >
                   <RefreshCw size={14} />
                   {totp.nollataan ? 'Nollataan…' : 'Nollaa Authenticator (esim. puhelin kadonnut)'}
-                </button>
+                </button>}
                 <button
                   type="button"
                   disabled={totp.vaihdetaan}
@@ -426,7 +349,7 @@ export const KayttajanOikeudet = ({
     </div>
 
     {/* Salasanan nollaus: käyttäjä ei muista omaansa */}
-    <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5">
+    {salasana && <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5">
       <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
         <KeyRound className="text-indigo-500" size={16} />
         Salasana
@@ -458,7 +381,7 @@ export const KayttajanOikeudet = ({
           Nollaa salasana
         </button>
       )}
-    </div>
+    </div>}
 
     {/* Tuotepääsy. Uusi koodi käyttää teematokeneita (ks. src/TEEMA.md) — värit ovat
         EVENT-puolella samat kuin viereisissä slate-luokissa, mutta lohko siirtyy
