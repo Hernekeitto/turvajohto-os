@@ -271,7 +271,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Vartijanäkymä koskee vain pääkäyttäjää työpöydällä. Irrotettu hälytyskeskusikkuna
   // pysyy aina ylläpidossa: valvomon kone ei saa avautua tyhjään näkymään sen takia,
   // että samalla selaimella on joskus katsottu vartijan puolta.
-  const vartijanPuolella = isAdmin && !mobiili && !HALKE_OSOITE.paneeli && puoli === 'vartija';
+  //
+  // Vartija-tason käyttäjälle (28.9.2026) Vartijanäkymä on AINOA työpöytänäkymä, ilman
+  // valitsinta: tason oikeudet vastaavat Vartijanäkymän toimintoja (server/roles.js), eikä
+  // ylläpidon kohdevalikko kuulu hänelle. Muut tasot (esimies, päivystäjä) pysyvät
+  // ylläpidon näkymässä, kunnes niistä päätetään erikseen.
+  const onVartijataso = !isAdmin && session?.roleId === 'vartija';
+  const vartijanPuolella = !mobiili && !HALKE_OSOITE.paneeli
+    && (onVartijataso || (isAdmin && puoli === 'vartija'));
   // Asetusten käyttäjälistalta avattava henkilö: pankki avaa sen ja tunnusosion kerran.
   const [avattavaTyontekija, setAvattavaTyontekija] = useState<string | null>(null);
   // Kohde jonka valikko on auki. Kohdelistan ja yksittäisten näkymien VÄLISSÄ oleva taso:

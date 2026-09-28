@@ -77,11 +77,44 @@ const KATSELU_NAKYVA = [
 // `guard_ptt` on tässä samasta syystä kuin guard_site_assets: se on vain näkyvyysportti,
 // eikä sen antaminen oletuksena avaa mitään kohdetta joka ei muutenkin olisi vartijan
 // omassa vuorossa (server/kanavat.js).
-const VARTIJA_KATSELU = ['guard_sites', 'guard_site_info', 'guard_reporting', 'guard_site_assets', 'guard_ptt'];
+// Tiedotteet, ohjepankki ja skenaariot (28.9.2026): Vartijanäkymän toiminnot. Katseluoikeus
+// riittää niiden käyttöön — tiedotteen kuittaus ja skenaarion läpivienti ovat lukemista,
+// uusien laatiminen vaatii muokkausoikeuden eikä kuulu vartijalle.
+const VARTIJA_KATSELU = [
+  'guard_sites', 'guard_site_info', 'guard_reporting', 'guard_site_assets', 'guard_ptt',
+  'guard_broadcast', 'guard_guides', 'guard_plays',
+];
 // Työvuoron tekeminen: tehtävien kuittaus ja omien raporttien kirjaaminen. Tapahtumailmoitus
 // on mukana, koska sen kirjaa se joka toimenpiteen teki — jos kirjaus kuuluu jossain
 // organisaatiossa vain esimiehelle, oikeus otetaan pois Sovellusasetuksista.
-const VARTIJA_MUOKKAUS = ['guard_tasks', 'guard_report_action', 'guard_report_jv', 'guard_report_theft'];
+// Kierros (guard_patrols) lisättiin 28.9.2026: Vartijanäkymän "Kohteen tehtävät" sisältää
+// kierrokset, ja kierroksen kulkeminen on muokkausoikeus.
+const VARTIJA_MUOKKAUS = ['guard_tasks', 'guard_patrols', 'guard_report_action', 'guard_report_jv', 'guard_report_theft'];
+
+// Sisäänrakennettujen GUARD-tasojen oikeusversio. withBuiltins luo PUUTTUVAN tason mutta
+// ei päivitä olemassa olevaa, joten ennen tätä tasolle myöhemmin lisätyt solmut (esim.
+// guard_report_theft) jäivät tuotannosta puuttumaan. Versiomigraatio lisää puuttuvat
+// solmut KERRAN: sen jälkeen pääkäyttäjän asetuksista tekemät rajaukset pysyvät, eikä
+// palvelimen uudelleenkäynnistys palauta niitä.
+const GUARD_OIKEUSVERSIO = 2;
+
+export function paivitaGuardTaso(taso) {
+  if (![ROLE_GUARD, ROLE_GUARD_LEAD].includes(taso?.id)) return taso;
+  if ((taso.oikeusversio || 1) >= GUARD_OIKEUSVERSIO) return taso;
+  const nykyiset = taso.permissions?.[DEFAULT_BUCKET] || {};
+  const lisattavat = {
+    ...bucketista(VARTIJA_KATSELU, { view: true, edit: false }),
+    ...bucketista(VARTIJA_MUOKKAUS, { view: true, edit: true }),
+  };
+  // Vain puuttuvat solmut: olemassa olevaan merkintään ei kosketa, jottei esimiehen
+  // guard_sites-muokkausoikeus tai pääkäyttäjän tekemä rajaus muutu.
+  const lisaa = Object.fromEntries(Object.entries(lisattavat).filter(([id]) => !(id in nykyiset)));
+  return {
+    ...taso,
+    oikeusversio: GUARD_OIKEUSVERSIO,
+    permissions: { ...taso.permissions, [DEFAULT_BUCKET]: { ...nykyiset, ...lisaa } },
+  };
+}
 // Se mitä Vartioesimiehellä on Vartijan lisäksi: kohteen hallinta. Yksi solmu kattaa
 // kohteen perustiedot, tiedostot, perehdytysmerkinnät ja tehtäväpohjat (ks.
 // server/permissions.js: guardSites ja guardFiles käyttävät samaa touch-solmua).
@@ -195,7 +228,8 @@ function withBuiltins(roles) {
   // Puuttuvat lisätään loppuun oletusTasot():n järjestyksessä. Loppuun eikä alkuun, jotta
   // myöhemmin lisätty sisäänrakennettu taso (esim. Vartija) ei hyppää olemassa olevan
   // asennuksen listassa Pääkäyttäjän edelle.
-  const tulos = [...roles, ...oletusTasot().filter((oletus) => !olemassa.has(oletus.id))];
+  const tulos = [...roles, ...oletusTasot().filter((oletus) => !olemassa.has(oletus.id))]
+    .map(paivitaGuardTaso);
   // Pääkäyttäjän oikeuksia ei voi rajata: '*' palautetaan aina.
   return tulos.map((r) =>
     r.id === ROLE_ADMIN
