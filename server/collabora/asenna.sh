@@ -20,8 +20,10 @@ DOMAIN=turvajohto-os.fi
 SIVUSTO=/etc/nginx/sites-available/sivusto
 SNIPPET=/etc/nginx/snippets/turvajohto-collabora.conf
 ENV_TIEDOSTO=/etc/turvajohto-api/env
-# Palvelimessa on 1,85 Gt muistia, josta ~1,1 Gt vapaana ennen Collaboraa.
-MUISTI=800m
+# Palvelin kasvatettiin 28.9.2026 4 Gt:uun (oli 2 Gt, jolloin raja oli 800m ja
+# Collabora käytti siitä tyhjäkäynnillä ~715 MiB). Muu järjestelmä vie noin 0,7 Gt,
+# joten tällä rajalla backendille ja hälytysjärjestelmälle jää yli 1,5 Gt.
+MUISTI=1500m
 
 echo "== 1/4 Docker"
 if ! command -v docker >/dev/null; then
