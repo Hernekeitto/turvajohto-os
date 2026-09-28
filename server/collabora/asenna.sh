@@ -60,7 +60,9 @@ if ! curl -sf -o /dev/null http://127.0.0.1:9980/hosting/discovery; then
   exit 1
 fi
 echo "discovery vastaa:"
-curl -s http://127.0.0.1:9980/hosting/discovery | grep -o 'urlsrc="[^"]*"' | head -1
+# `|| true`: head sulkee putken ensimmäisen rivin jälkeen, jolloin grep saa SIGPIPEn ja
+# pipefail kaataisi koko skriptin — pelkkä tulostusrivi ei saa tehdä sitä.
+curl -s http://127.0.0.1:9980/hosting/discovery | grep -o 'urlsrc="[^"]*"' | head -1 || true
 
 echo "== 3/4 nginx"
 install -m 644 "$HAKEMISTO/nginx.conf" "$SNIPPET"
