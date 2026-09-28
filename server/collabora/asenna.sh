@@ -33,9 +33,9 @@ docker --version
 
 echo "== 2/4 Collabora-kontti"
 docker pull -q collabora/code
-if docker ps -a --format '{{.Names}}' | grep -qx collabora; then
-  docker rm -f collabora >/dev/null
-fi
+# Vanha kontti pois (uudelleenajo). Ei putkea grepiin: pipefailin kanssa grep -q voi
+# katkaista putken ja tulkita olemassa olevan kontin puuttuvaksi.
+docker rm -f collabora >/dev/null 2>&1 || true
 # aliasgroup1 = WOPI-isäntä jolta Collabora suostuu hakemaan tiedostoja (vain tämä).
 # ssl.termination: nginx hoitaa TLS:n, kontti puhuu pelkkää HTTP:tä localhostiin.
 docker run -d --name collabora --restart unless-stopped \
@@ -97,5 +97,5 @@ echo "== Tarkistus"
 echo "editori julkisesti: $(curl -s -o /dev/null -w '%{http_code}' "https://$DOMAIN/browser/")"
 echo "hallintakonsoli (pitää olla 403): $(curl -s -o /dev/null -w '%{http_code}' "https://$DOMAIN/browser/dist/admin/admin.html")"
 docker stats --no-stream --format 'muisti: {{.MemUsage}}' collabora
-free -m | head -2
+free -m | head -2 || true
 echo "VALMIS"
