@@ -13,6 +13,10 @@ import {
   jasennaDiscovery,
   editorinOsoite,
   TOKEN_KESTO_MS,
+  jakoTunniste,
+  jaonIdTunnisteesta,
+  jaonEditoriTila,
+  jakoVoimassaEditorissa,
 } from './editori.js';
 
 const SALAISUUS = 'x'.repeat(64);
@@ -150,4 +154,29 @@ test('editorin osoite: WOPISrc koodattuna, paikanpitäjät pois', () => {
     url,
     'https://turvajohto-os.fi/browser/abc/cool.html?WOPISrc=https%3A%2F%2Fturvajohto-os.fi%2Fapi%2Fwopi%2Ffiles%2Fe.odt&lang=fi&closebutton=1'
   );
+});
+
+test('jakotunniste: etuliite ja takaisinmuunnos', () => {
+  assert.equal(jakoTunniste('abc'), 'jako:abc');
+  assert.equal(jaonIdTunnisteesta('jako:abc'), 'abc');
+  assert.equal(jaonIdTunnisteesta('matti'), null);
+  assert.equal(jaonIdTunnisteesta(undefined), null);
+});
+
+test('jaon editoritila: vanha jako on katselujako', () => {
+  assert.equal(jaonEditoriTila({}), 'katselu');
+  assert.equal(jaonEditoriTila({ editori: 'katselu' }), 'katselu');
+  assert.equal(jaonEditoriTila({ editori: 'muokkaus' }), 'muokkaus');
+  assert.equal(jaonEditoriTila({ editori: 'jotain' }), 'katselu');
+});
+
+test('jako editorissa: peruutus, hylkäys ja vanheneminen katkaisevat, latausraja ei', () => {
+  const nyt = new Date('2026-09-28T12:00:00Z');
+  assert.equal(jakoVoimassaEditorissa({}, nyt), true);
+  assert.equal(jakoVoimassaEditorissa({ maxDownloads: 1, downloadCount: 1 }, nyt), true);
+  assert.equal(jakoVoimassaEditorissa({ revokedAt: '2026-09-28T11:00:00Z' }, nyt), false);
+  assert.equal(jakoVoimassaEditorissa({ approvalStatus: 'rejected' }, nyt), false);
+  assert.equal(jakoVoimassaEditorissa({ expiresAt: '2026-09-28T11:59:59Z' }, nyt), false);
+  assert.equal(jakoVoimassaEditorissa({ expiresAt: '2026-09-28T12:00:01Z' }, nyt), true);
+  assert.equal(jakoVoimassaEditorissa(null, nyt), false);
 });

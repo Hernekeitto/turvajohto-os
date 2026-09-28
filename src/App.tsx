@@ -30,6 +30,8 @@ import { HataviestiLoki } from './event/nakymat/HataviestiLoki';
 import { TyontekijaLista } from './shared/komponentit/TyontekijaLista';
 import { AvaaEditorissa, Esikatsele, UusiTekstitiedosto } from './shared/komponentit/Dokumenttieditori';
 import { NykyisetJaot } from './shared/komponentit/NykyisetJaot';
+import { EditoriOikeusValinta } from './shared/komponentit/EditoriOikeusValinta';
+import type { EditoriOikeus } from './shared/editori';
 import { TyontekijanMuokkaus } from './shared/komponentit/TyontekijanMuokkaus';
 import { KayttajaLista } from './event/nakymat/KayttajaHallinta';
 import { riskipisteet, riskitaso, RISKISAVYT, RISKITASOT } from './event/riskiarvio';
@@ -462,6 +464,7 @@ export default function App() {
   const [shareOmaPvm, setShareOmaPvm] = useState('');
   const [shareOmaKlo, setShareOmaKlo] = useState('12:00');
   const [shareMaxDownloads, setShareMaxDownloads] = useState('');
+  const [shareEditori, setShareEditori] = useState<EditoriOikeus>('katselu');
   const [shareError, setShareError] = useState('');
   const [shareSubmitting, setShareSubmitting] = useState(false);
   const [luotuLinkki, setLuotuLinkki] = useState<LuotuLinkki | null>(null);
@@ -2165,6 +2168,7 @@ export default function App() {
     setShareOmaPvm('');
     setShareOmaKlo('12:00');
     setShareMaxDownloads('');
+    setShareEditori('katselu');
     setShareError('');
     setLuotuLinkki(null);
     if (userAdminList.length === 0) fetchUserAdminList();
@@ -2203,6 +2207,7 @@ export default function App() {
           expiresAt,
           ikuinen,
           maxDownloads: shareMaxDownloads ? Number(shareMaxDownloads) : undefined,
+          editori: shareEditori,
         }),
       });
       const data = await res.json();
@@ -9600,6 +9605,13 @@ export default function App() {
                   />
                 </div>
               )}
+
+              <EditoriOikeusValinta
+                nimi={shareTarget.name}
+                kansio={shareTarget.type === 'folder'}
+                arvo={shareEditori}
+                onMuutos={setShareEditori}
+              />
 
               {shareError && <p className="text-sm text-rose-600">{shareError}</p>}
             </div>

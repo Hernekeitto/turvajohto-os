@@ -24,6 +24,7 @@ type Jako = {
   downloadCount?: number;
   createdBy?: string;
   createdAt?: string;
+  editori?: string;
 };
 
 type Props = {
@@ -121,7 +122,10 @@ export const NykyisetJaot = ({ lahde, targetId, paivitys, onMuuttui }: Props) =>
             <li key={j.id} className="bg-surface border border-line rounded-lg p-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-ink-strong">{tapa}</p>
+                  <p className="text-xs font-medium text-ink-strong">
+                    {tapa}
+                    {j.editori === 'muokkaus' && <span className="ml-1.5 text-warning-ink">· saa muokata</span>}
+                  </p>
                   <p className="text-xs text-ink-muted">
                     {voimassa}
                     {' · '}ladattu {j.downloadCount || 0} kertaa{j.maxDownloads ? ` / ${j.maxDownloads}` : ''}

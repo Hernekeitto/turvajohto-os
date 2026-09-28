@@ -48,6 +48,34 @@ async function lataa(fileId, nimi) {
   URL.revokeObjectURL(url);
 }
 
+// Dokumenttieditori (esikatselu tai muokkaus). Palvelin tarkistaa saman kuin latauksessa
+// (voimassaolo, salasana, kuuluuko tiedosto jakoon) ja lisäksi sen, salliiko jako
+// muokkauksen. Editori avautuu tämän sivun päälle; Sulje palauttaa tiedostolistaan.
+async function avaaEditori(fileId, tila) {
+  const salasanaKentta = document.getElementById('salasana');
+  const virheP = document.getElementById('virhe');
+  if (virheP) virheP.textContent = '';
+  let d;
+  try {
+    const res = await fetch('/api/share/' + encodeURIComponent(token) + '/editori', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileId, tila, password: salasanaKentta ? salasanaKentta.value : undefined }),
+    });
+    d = await res.json().catch(() => null);
+    if (!res.ok || !d || !d.ok) throw new Error((d && d.error) || 'Dokumentin avaus epäonnistui.');
+  } catch (e) {
+    if (virheP) virheP.textContent = e.message || 'Dokumentin avaus epäonnistui.';
+    return;
+  }
+  const otsikko = document.title;
+  document.title = d.nimi + (d.kirjoitus ? '' : ' (vain luku)') + ' – Turvajohto OS';
+  window.TurvajohtoEditori.kaynnista(d, (kehys) => {
+    kehys.remove();
+    document.title = otsikko;
+  });
+}
+
 async function alusta() {
   if (!token) return virhe('Linkistä puuttuu tunniste.');
   let tiedot;
@@ -61,7 +89,7 @@ async function alusta() {
 
   const tiedostot = tiedot.type === 'folder'
     ? (tiedot.contents || []).filter((f) => f.type === 'file')
-    : [{ id: null, name: tiedot.name }];
+    : [{ id: null, name: tiedot.name, esikatseltava: tiedot.esikatseltava, muokattava: tiedot.muokattava }];
 
   const vanhenee = tiedot.expiresAt
     ? '<p class="vaimea">Linkki on voimassa ' + esc(new Date(tiedot.expiresAt).toLocaleString('fi-FI')) + ' asti.</p>'
@@ -88,10 +116,27 @@ async function alusta() {
     const nimi = document.createElement('span');
     nimi.className = 'nimi';
     nimi.textContent = f.name;
+    const napit = document.createElement('span');
+    napit.className = 'napit';
+    // Muokkaus kattaa esikatselun, joten muokattavalle näytetään vain Muokkaa.
+    if (f.muokattava) {
+      const muokkaa = document.createElement('button');
+      muokkaa.textContent = 'Muokkaa';
+      muokkaa.addEventListener('click', () => avaaEditori(f.id, 'muokkaus'));
+      napit.append(muokkaa);
+    } else if (f.esikatseltava) {
+      const esikatsele = document.createElement('button');
+      esikatsele.textContent = 'Esikatsele';
+      esikatsele.addEventListener('click', () => avaaEditori(f.id, 'katselu'));
+      napit.append(esikatsele);
+    }
     const nappi = document.createElement('button');
     nappi.textContent = 'Lataa';
+    // Toissijainen, kun rivillä on editoripainike — muuten ensisijainen kuten ennen.
+    if (f.muokattava || f.esikatseltava) nappi.className = 'toissijainen';
     nappi.addEventListener('click', () => lataa(f.id, f.name));
-    rivi.append(nimi, nappi);
+    napit.append(nappi);
+    rivi.append(nimi, napit);
     lista.append(rivi);
   });
 }

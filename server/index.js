@@ -28,6 +28,7 @@ import { isAllowedFile, saveUpload, getUploadPath, korvaaUpload, deleteUpload, c
 import {
   EDITOITAVAT, ESIKATSELTAVAT, onEditoitava, onEsikatseltava, wopiAvain, luoWopiToken, tarkistaWopiToken, etsiTiedosto, saaKirjoittaa,
   checkFileInfo, versio, jasennaDiscovery, editorinOsoite,
+  jakoTunniste, jaonIdTunnisteesta, jaonEditoriTila, jakoVoimassaEditorissa,
 } from './editori.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
 import { istunnonKesto, SOVELLUS_VUOROKAUDET } from './istunto.js';
@@ -6791,11 +6792,21 @@ app.get('/api/share/:token', shareLimiter, (req, res) => {
   const kohde = tiedostot.find((f) => f.id === share.targetId);
   if (!kohde) return res.status(404).json({ ok: false, error: TILAN_SELITE.not_found });
 
+  // Mitä tiedostolle voi tehdä editorissa tämän jaon kautta. Kertoo vain käyttöliittymälle
+  // mitkä painikkeet näytetään — itse raja tarkistetaan editorireitillä ja WOPI-portissa.
+  const editoriTila = jaonEditoriTila(share);
+  const editoriOikeudet = (f) => (f.type === 'file' && EDITORI_URL
+    ? {
+        esikatseltava: onEsikatseltava(f.name),
+        muokattava: editoriTila === 'muokkaus' && onEditoitava(f.name),
+      }
+    : {});
+
   // Kansiojaossa listataan sisältö, jotta vastaanottaja näkee mitä on tarjolla.
   const sisalto = kohde.type === 'folder'
     ? tiedostot
         .filter((f) => kuuluuJakoon(share.targetId, f.id, tiedostot) && f.id !== kohde.id)
-        .map((f) => ({ id: f.id, name: f.name, type: f.type, parentId: f.parentId, size: f.size }))
+        .map((f) => ({ id: f.id, name: f.name, type: f.type, parentId: f.parentId, size: f.size, ...editoriOikeudet(f) }))
     : [];
 
   res.json({
@@ -6805,6 +6816,7 @@ app.get('/api/share/:token', shareLimiter, (req, res) => {
     requiresPassword: !!share.passwordHash,
     expiresAt: share.expiresAt,
     contents: sisalto,
+    ...editoriOikeudet(kohde),
   });
 });
 
@@ -6853,6 +6865,71 @@ app.post('/api/share/:token/download', shareLimiter, (req, res) => {
   res.download(polku, kohde.name);
 });
 
+// Jaetun tiedoston avaus dokumenttieditoriin (esikatselu tai muokkaus). Samat
+// tarkistukset kuin latauksessa (voimassaolo, salasana, kuuluuko tiedosto jakoon), ja
+// avaus lasketaan lataukseksi: esikatselu antaa saman sisällön kuin lataus, joten
+// latausraja ei saa olla ohitettavissa sen kautta.
+app.post('/api/share/:token/editori', shareLimiter, async (req, res) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  if (!EDITORI_URL) return res.status(503).json({ ok: false, error: 'Dokumenttieditori ei ole käytössä.' });
+  const { password, fileId } = req.body || {};
+  const muokkaus = req.body?.tila === 'muokkaus';
+  const share = etsiJako(req.params.token);
+  const tila = jaonTila(share);
+  if (!tila.ok) {
+    return res.status(404).json({ ok: false, error: TILAN_SELITE[tila.syy] || TILAN_SELITE.not_found });
+  }
+  if (!salasanaTasmaa(password, share.passwordHash)) {
+    logAudit({ user: 'share:' + share.id, action: 'share_bad_password', ip: req.ip });
+    return res.status(401).json({ ok: false, error: 'Väärä salasana.' });
+  }
+  const tiedostot = jaettavatTiedostot(jaonLahde(share));
+  const haettuId = fileId || share.targetId;
+  const kohde = tiedostot.find((f) => f.id === haettuId);
+  if (!kohde || kohde.type !== 'file' || !kuuluuJakoon(share.targetId, haettuId, tiedostot)
+    || !getUploadPath(kohde.uploadId)) {
+    return res.status(404).json({ ok: false, error: TILAN_SELITE.not_found });
+  }
+  if (muokkaus ? !onEditoitava(kohde.name) : !onEsikatseltava(kohde.name)) {
+    return res.status(400).json({ ok: false, error: 'Tätä tiedostotyyppiä ei voi avata editorissa.' });
+  }
+  if (muokkaus && jaonEditoriTila(share) !== 'muokkaus') {
+    return res.status(403).json({ ok: false, error: 'Tämä jako sallii vain esikatselun.' });
+  }
+
+  let discovery;
+  try {
+    discovery = await haeDiscovery();
+  } catch (err) {
+    console.error('Collaboran discovery epäonnistui:', err.message);
+    return res.status(503).json({ ok: false, error: 'Dokumenttieditori ei vastaa. Yritä hetken päästä uudelleen.' });
+  }
+  const urlsrc = discovery[path.extname(kohde.name).slice(1).toLowerCase()]?.urlsrc;
+  if (!urlsrc) return res.status(503).json({ ok: false, error: 'Editori ei tue tätä tiedostotyyppiä.' });
+
+  try {
+    const shares = readCollection('fileShares') || [];
+    writeCollection('fileShares', shares.map((sh) => (sh.id === share.id
+      ? { ...sh, downloadCount: (sh.downloadCount || 0) + 1, lastDownloadAt: new Date().toISOString(), lastDownloadIp: req.ip }
+      : sh)));
+  } catch (err) {
+    console.error('Jakolinkin latauslaskurin päivitys epäonnistui:', err.message);
+  }
+  const { token, ttl } = luoWopiToken({ username: jakoTunniste(share.id), uploadId: kohde.uploadId, muokkaus }, WOPI_AVAIN);
+  logAudit({
+    user: 'share:' + share.id, action: muokkaus ? 'share_editori_muokkaus' : 'share_editori_esikatselu',
+    recordId: kohde.id, ip: req.ip,
+  });
+  res.json({
+    ok: true,
+    url: editorinOsoite(urlsrc, `${EDITORI_URL}/api/wopi/files/${encodeURIComponent(kohde.uploadId)}`),
+    token,
+    ttl,
+    kirjoitus: muokkaus,
+    nimi: kohde.name,
+  });
+});
+
 // Pääkäyttäjän hyväksyntä pysyvälle linkille.
 app.post('/api/shares/:id/approval', requireAuth, requireAdmin, (req, res) => {
   const { approve } = req.body || {};
@@ -6877,6 +6954,9 @@ app.post('/api/shares/:id/approval', requireAuth, requireAdmin, (req, res) => {
 app.post('/api/shares', requireAuth, (req, res) => {
   const { targetId, mode, password, expiresAt, ikuinen, maxDownloads, allowedUsernames } = req.body || {};
   const lahde = req.body?.lahde === 'guardFiles' ? 'guardFiles' : 'eventFiles';
+  // Saako saaja muokata jaettuja dokumentteja editorissa (vain .odt/.odp), vai vain
+  // esikatsella. Oletus on katselu: muokkausoikeus on aina erikseen valittava.
+  const editori = req.body?.editori === 'muokkaus' ? 'muokkaus' : 'katselu';
   const tiedostot = jaettavatTiedostot(lahde);
   const kohde = tiedostot.find((f) => f.id === targetId);
   if (!kohde) return res.status(404).json({ ok: false, error: 'Jaettavaa kohdetta ei löytynyt.' });
@@ -6933,6 +7013,7 @@ app.post('/api/shares', requireAuth, (req, res) => {
     expiresAt: voimassaolo.expiresAt,
     approvalStatus: voimassaolo.approvalStatus,
     maxDownloads: Number.isFinite(maxDownloads) && maxDownloads > 0 ? maxDownloads : null,
+    editori,
     downloadCount: 0,
     lastDownloadAt: null,
     lastDownloadIp: null,
@@ -7221,7 +7302,7 @@ app.post('/api/editori/avaa', requireAuth, async (req, res) => {
   const urlsrc = discovery[paate]?.urlsrc;
   if (!urlsrc) return res.status(503).json({ ok: false, error: 'Editori ei tue tätä tiedostotyyppiä.' });
 
-  const kirjoitus = muokkaus && saaKirjoittaa(k, loyto);
+  const kirjoitus = muokkaus && (saaKirjoittaa(k, loyto) || jaettuMuokattavaksi(k.username, loyto));
   const { token, ttl } = luoWopiToken({ username: k.username, uploadId, muokkaus }, WOPI_AVAIN);
   logAudit({
     user: k.username, action: muokkaus ? 'editori_avaus' : 'editori_esikatselu', recordId: loyto.tietue.id,
@@ -7243,17 +7324,56 @@ function wopiPortti(req, res, next) {
   if (!EDITORI_URL) return res.status(404).end();
   const uploadId = req.params.id;
   const tokeni = tarkistaWopiToken(req.query.access_token, uploadId, WOPI_AVAIN);
-  const k = tokeni && editorinKayttaja(tokeni.username);
+  if (!tokeni) return res.status(401).end();
+
+  // Jakolinkin kautta avattu editori: pääsy tulee jaosta, ei käyttäjästä. Jako luetaan
+  // joka kutsulla uudelleen, joten peruutus tai vanheneminen katkaisee istunnon heti.
+  const jaonId = jaonIdTunnisteesta(tokeni.username);
+  if (jaonId) {
+    const share = (readCollection('fileShares') || []).find((sh) => sh.id === jaonId);
+    if (!jakoVoimassaEditorissa(share)) return res.status(401).end();
+    const lahde = jaonLahde(share);
+    const tiedostot = jaettavatTiedostot(lahde);
+    const tietue = tiedostot.find((f) => f.type === 'file' && f.uploadId === uploadId);
+    const polku = tietue && getUploadPath(uploadId);
+    if (!polku || !onEsikatseltava(tietue.name) || !kuuluuJakoon(share.targetId, tietue.id, tiedostot)) {
+      return res.status(404).end();
+    }
+    req.wopi = {
+      k: { username: tokeni.username, nimimerkki: 'Vieras (jakolinkki)' },
+      loyto: { lahde, tietue, kohdeId: share.eventId },
+      polku,
+      kirjoitus: tokeni.muokkaus && onEditoitava(tietue.name) && jaonEditoriTila(share) === 'muokkaus',
+    };
+    return next();
+  }
+
+  const k = editorinKayttaja(tokeni.username);
   if (!k) return res.status(401).end();
   const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || []);
   const polku = loyto && getUploadPath(uploadId);
   if (!polku || !onEsikatseltava(loyto.tietue.name)) return res.status(404).end();
   if (!saaLukeaLiitteen(k, uploadId)) return res.status(401).end();
   // Kirjoitus vaatii kolme asiaa: muokkaukseen avatun tokenin, muokattavan tiedostotyypin
-  // ja tuoreen muokkausoikeuden. Esikatseltu docx ei tallennu, vaikka Collabora yrittäisi.
-  const kirjoitus = tokeni.muokkaus && onEditoitava(loyto.tietue.name) && saaKirjoittaa(k, loyto);
+  // ja tuoreen muokkausoikeuden (tai muokkausjaon). Esikatseltu docx ei tallennu, vaikka
+  // Collabora yrittäisi.
+  const kirjoitus = tokeni.muokkaus && onEditoitava(loyto.tietue.name)
+    && (saaKirjoittaa(k, loyto) || jaettuMuokattavaksi(k.username, loyto));
   req.wopi = { k, loyto, polku, kirjoitus };
   next();
+}
+
+// Onko tiedosto jaettu tälle käyttäjälle nimellä (mode 'users') muokkausoikeudella.
+// Vastine linkkijaon muokkausoikeudelle kirjautuneille saajille: ilman tätä nimetty
+// saaja voisi vain esikatsella, vaikka jakaja valitsi muokkauksen.
+function jaettuMuokattavaksi(username, loyto) {
+  const tiedostot = jaettavatTiedostot(loyto.lahde);
+  return (readCollection('fileShares') || []).some((sh) => sh.mode === 'users'
+    && jaonLahde(sh) === loyto.lahde
+    && jaonEditoriTila(sh) === 'muokkaus'
+    && jakoVoimassaEditorissa(sh)
+    && (sh.allowedUsernames || []).includes(username)
+    && kuuluuJakoon(sh.targetId, loyto.tietue.id, tiedostot));
 }
 
 // CheckFileInfo

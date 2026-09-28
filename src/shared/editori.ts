@@ -56,3 +56,7 @@ export function esikatselunOsoite(tila: EditorinTila | null, uploadId: string | 
   if (tila?.kaytossa && tila.esikatseltavat.includes(p)) return editorinOsoite(uploadId, 'katselu');
   return null;
 }
+
+// Jakolinkin editorioikeus: saako saaja vain esikatsella vai myös muokata jaettuja
+// dokumentteja (server/editori.js: jaonEditoriTila).
+export type EditoriOikeus = 'katselu' | 'muokkaus';

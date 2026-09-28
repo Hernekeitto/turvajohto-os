@@ -70,7 +70,7 @@ const ERILLISET_SIVUT = new Set([
   '/jako.html', '/jako.js',
   '/ilmoitus.html', '/ilmoitus.js',
   '/tietosuoja.html',
-  '/editori.html', '/editori.js',
+  '/editori.html', '/editori.js', '/editorikehys.js',
 ]);
 
 const onHtmlPyynto = (pyynto) =>

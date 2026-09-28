@@ -80,6 +80,35 @@ export function tarkistaWopiToken(token, uploadId, avain) {
   }
 }
 
+// --- Jakolinkin kautta avattu editori (28.9.2026) ---
+//
+// Jakolinkin avaaja ei ole kirjautunut, joten WOPI-token sidotaan jakoon eikä
+// käyttäjään: sub = 'jako:<jaon id>'. WOPI-portti (index.js) tunnistaa etuliitteen
+// ENNEN käyttäjärekisterin hakua, joten jakotokenia ei voi koskaan tulkita käyttäjäksi.
+export const JAKO_ETULIITE = 'jako:';
+
+export const jakoTunniste = (shareId) => `${JAKO_ETULIITE}${shareId}`;
+
+export function jaonIdTunnisteesta(sub) {
+  return typeof sub === 'string' && sub.startsWith(JAKO_ETULIITE) ? sub.slice(JAKO_ETULIITE.length) : null;
+}
+
+// Mitä jaon saaja saa tehdä editorissa. Vanhoilla jaoilla kenttää ei ole: ne ovat
+// katselujakoja, koska esikatselu ei anna mitään mitä lataus ei jo antaisi.
+export function jaonEditoriTila(share) {
+  return share?.editori === 'muokkaus' ? 'muokkaus' : 'katselu';
+}
+
+// Onko jako yhä voimassa jo avatulle editori-istunnolle. EI sama kuin jaonTila
+// (shares.js): latausraja jätetään tässä huomiotta, koska editorin avaus lasketaan
+// yhdeksi lataukseksi — muuten juuri rajan täyttänyt avaus katkaisisi oman istuntonsa
+// heti seuraavassa WOPI-kutsussa. Peruutus, hylkäys ja vanheneminen katkaisevat heti.
+export function jakoVoimassaEditorissa(share, nyt = new Date()) {
+  if (!share || share.revokedAt || share.approvalStatus === 'rejected') return false;
+  if (share.expiresAt && new Date(share.expiresAt) <= nyt) return false;
+  return true;
+}
+
 // Mistä kokoelmasta tiedosto löytyy. Editori avautuu vain tiedostolistojen tiedostoille
 // (tapahtuman tiedostot, kohteen tiedostot) — ei raporttien liitteille, pohjakartoille
 // tai muille uploads-hakemiston tiedostoille, joilla on oma omistajansa ja oma

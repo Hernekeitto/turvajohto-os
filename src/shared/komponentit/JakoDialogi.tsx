@@ -10,6 +10,8 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Info, Share2, ShieldAlert, X } from 'lucide-react';
 import { NykyisetJaot } from './NykyisetJaot';
+import { EditoriOikeusValinta } from './EditoriOikeusValinta';
+import type { EditoriOikeus } from '../editori';
 
 export type JaonLahde = 'eventFiles' | 'guardFiles';
 
@@ -24,6 +26,7 @@ type Props = {
 };
 
 type Tapa = 'link' | 'password' | 'users';
+
 
 const VOIMASSA = [
   { arvo: '0.5', label: '12 h', tunnit: 12 },
@@ -47,6 +50,7 @@ export const JakoDialogi = ({ kohde, lahde, saaValitaKayttajia, onSulje, onJaett
   const [omaPvm, setOmaPvm] = useState('');
   const [omaKlo, setOmaKlo] = useState('12:00');
   const [maxLataukset, setMaxLataukset] = useState('');
+  const [editori, setEditori] = useState<EditoriOikeus>('katselu');
   const [virhe, setVirhe] = useState('');
   const [lahettaa, setLahettaa] = useState(false);
   const [tulos, setTulos] = useState<{ url?: string; approvalStatus?: string } | null>(null);
@@ -88,6 +92,7 @@ export const JakoDialogi = ({ kohde, lahde, saaValitaKayttajia, onSulje, onJaett
           expiresAt,
           ikuinen,
           maxDownloads: maxLataukset ? Number(maxLataukset) : undefined,
+          editori,
         }),
       });
       const data = await vastaus.json().catch(() => null);
@@ -316,6 +321,8 @@ export const JakoDialogi = ({ kohde, lahde, saaValitaKayttajia, onSulje, onJaett
                 </label>
               </div>
             )}
+
+            <EditoriOikeusValinta nimi={kohde.name} arvo={editori} onMuutos={setEditori} />
 
             {virhe && (
               <p className="text-sm text-danger-ink bg-danger-soft border border-danger/30 rounded-lg px-3 py-2">{virhe}</p>

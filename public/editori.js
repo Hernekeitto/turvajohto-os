@@ -67,46 +67,9 @@
   function kaynnista(d) {
     document.title = d.nimi + (d.kirjoitus ? '' : ' (vain luku)') + ' – Turvajohto OS';
 
-    var nimi = 'editori-' + Math.random().toString(36).slice(2);
-    var kehys = document.createElement('iframe');
-    kehys.name = nimi;
-    kehys.title = 'Dokumenttieditori: ' + d.nimi;
-    kehys.allow = 'clipboard-read; clipboard-write; fullscreen';
-
-    var lomake = document.createElement('form');
-    lomake.action = d.url;
-    lomake.method = 'post';
-    lomake.target = nimi;
-    lomake.style.display = 'none';
-    [['access_token', d.token], ['access_token_ttl', String(d.ttl)]].forEach(function (kentta) {
-      var input = document.createElement('input');
-      input.type = 'hidden';
-      input.name = kentta[0];
-      input.value = kentta[1];
-      lomake.appendChild(input);
-    });
-
-    document.body.appendChild(kehys);
-    document.body.appendChild(lomake);
     viesti.style.display = 'none';
-    lomake.submit();
-
-    // Collaboran viestit tulevat iframesta samasta originista. Frame_Ready-viestiin
-    // vastataan Host_PostmessageReady, jotta Collabora tietää isäntäsivun kuuntelevan;
-    // editorin Sulje-painike lähettää sen jälkeen UI_Close.
-    window.addEventListener('message', function (e) {
-      if (e.origin !== window.location.origin || e.source !== kehys.contentWindow) return;
-      var m;
-      try { m = typeof e.data === 'string' ? JSON.parse(e.data) : e.data; } catch { return; }
-      if (!m) return;
-      if (m.MessageId === 'App_LoadingStatus' && m.Values && m.Values.Status === 'Frame_Ready') {
-        kehys.contentWindow.postMessage(
-          JSON.stringify({ MessageId: 'Host_PostmessageReady', SendTime: Date.now(), Values: {} }),
-          window.location.origin
-        );
-      }
-      if (m.MessageId === 'UI_Close') sulje(kehys);
-    });
+    // Iframe ja viestinvälitys: editorikehys.js (yhteinen jakosivun kanssa).
+    window.TurvajohtoEditori.kaynnista(d, sulje);
   }
 
   // Selain sallii window.close()in vain ikkunalle jonka skripti tai linkki avasi. Jos
