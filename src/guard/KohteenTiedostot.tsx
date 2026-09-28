@@ -112,6 +112,17 @@ export const KohteenTiedostot = ({
     return uusi?.uploadId;
   };
 
+  // Poisto kysyy vahvistuksen, kuten tapahtuman tiedostoissa (App.tsx:
+  // poistaTiedostoTaiKansio): tiedosto ja sen jakolinkit katoavat pysyvästi.
+  const poista = (t: KohteenTiedosto) => {
+    const voimassa = jaot.filter((j) => j.targetId === t.id).length;
+    const jakoVaroitus = voimassa > 0
+      ? `\n\nHUOM: tiedostolla on ${voimassa} voimassa olevaa jakoa, jotka lakkaavat toimimasta.`
+      : '';
+    if (!window.confirm(`Poistetaanko "${t.name}"? Tätä ei voi perua.${jakoVaroitus}`)) return;
+    onPoista(t.id);
+  };
+
   const muuta = async (id: string, muutos: Partial<KohteenTiedosto>) => {
     setVirhe(null);
     try {
@@ -289,7 +300,7 @@ export const KohteenTiedostot = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => onPoista(t.id)}
+                        onClick={() => poista(t)}
                         className="text-ink-subtle hover:text-danger transition-colors p-1"
                         title="Poista tiedosto"
                       >
