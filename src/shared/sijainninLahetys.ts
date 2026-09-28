@@ -30,9 +30,12 @@ type Args = {
   // silloin henkilö näkyisi kartalla eri paikassa kuin missä vyöhykehälytys väittää
   // hänen olleen.
   muunnos?: ((gps: { lat: number; lon: number }) => { x: number; y: number } | null) | null;
+  // Työpöydän selain ilmoittaa itsensä: palvelin antaa puhelimen sijainnille etusijan
+  // (server/sijainti.js: MOBIILIN_ETUSIJA_MS).
+  tietokone?: boolean;
 };
 
-export function useSijainninLahetys({ kaytossa, eventId, laheta, muunnos = null }: Args) {
+export function useSijainninLahetys({ kaytossa, eventId, laheta, muunnos = null, tietokone = false }: Args) {
   // Viimeisin lähetys refissä, jotta toiminnon yhteydessä tehtävä päivitys ei ammu
   // paikannusta uudestaan sekunnin välein jos käyttäjä tallentaa monta kirjausta putkeen.
   const viimeksi = useRef(0);
@@ -67,7 +70,7 @@ export function useSijainninLahetys({ kaytossa, eventId, laheta, muunnos = null 
             suunta: sijainti.coords.heading,
           };
           const img = muunnosRef.current ? muunnosRef.current(gps) : null;
-          laheta({ tyyppi: 'sijainti', eventId, gps, ...(img ? { img } : {}) });
+          laheta({ tyyppi: 'sijainti', eventId, gps, ...(img ? { img } : {}), ...(tietokone ? { lahde: 'tietokone' } : {}) });
         },
         () => {
           // Lupa evätty tai paikannus epäonnistui. Ei virheilmoitusta: sijainnin

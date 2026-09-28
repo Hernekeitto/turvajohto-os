@@ -69,7 +69,10 @@ export function lueSijainti(syote) {
   // kenttä ei avaa mitään — se vastaa vain kysymykseen "miksi tämä piste on kymmenen
   // minuuttia vanha". Selain paikantaa vain näkyvissä ollessaan ja laite koko vuoron ajan,
   // ja ilman tätä eroa vanha piste näyttää samalta vialta kummassakin tapauksessa.
-  const lahde = syote.lahde === 'laite' ? 'laite' : 'selain';
+  //
+  // 'tietokone' (28.9.2026) = työpöydän selain. Erotetaan puhelimen selaimesta, koska
+  // mobiililla on etusija (ks. paivita): puhelin kulkee vartijan mukana, tietokone ei.
+  const lahde = ['laite', 'tietokone'].includes(syote.lahde) ? syote.lahde : 'selain';
 
   const imgOk = img && img.x !== null && img.y !== null;
   const gpsOk = gps && gps.lat !== null && gps.lon !== null;
@@ -80,11 +83,26 @@ export function lueSijainti(syote) {
 // Palauttaa tallennetun sijainnin tai nullin jos syöte oli kelvoton. Aikaleima tulee
 // PALVELIMELTA eikä selaimelta: laitteen kello voi olla väärässä, ja sijainnin ikä on
 // se tieto jonka perusteella TIKE päättää luottaako siihen.
+// Mobiilin etusija (28.9.2026, käyttäjän päätös). Sijainti on YKSI per käyttäjä, joten
+// kun sama tunnus on kirjautuneena sekä tietokoneella että puhelimella, päivitykset
+// ylikirjoittivat toisiaan ja piste hyppi toimiston ja kentän väliä. Puhelin kulkee
+// vartijan mukana ja kertoo todellisen sijainnin, joten tietokoneen päivitys ohitetaan
+// niin kauan kuin puhelimelta on tuore sijainti. Jos puhelin vaikenee (sammunut, ei
+// verkkoa), tietokone saa kertoa sijainnin — vain tietokoneella työskentelevän vartijan
+// sijainti on silloin ainoa tieto joka on olemassa.
+export const MOBIILIN_ETUSIJA_MS = 10 * 60 * 1000;
+export const onMobiilinSijainti = (tietue) => tietue?.lahde === 'laite' || tietue?.lahde === 'selain';
+
 export function paivita(username, eventId, syote, nyt = Date.now()) {
   if (!seurantaKaytossa()) return null;
   if (!username) return null;
   const sijainti = lueSijainti(syote);
   if (!sijainti) return null;
+  const edellinen = viimeisin.get(username);
+  if (sijainti.lahde === 'tietokone' && onMobiilinSijainti(edellinen)
+    && nyt - edellinen.at < MOBIILIN_ETUSIJA_MS) {
+    return null;
+  }
   const tietue = { username, eventId: eventId || null, ...sijainti, at: nyt };
   viimeisin.set(username, tietue);
   return tietue;

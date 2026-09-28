@@ -33,7 +33,7 @@ export type Sijainti = {
   // Tuliko päivitys selaimesta vai natiivisovelluksesta. Vastaa käyttöliittymässä
   // kysymykseen "miksi tämä piste on vanha": selain paikantaa vain näkyvissä ollessaan.
   // Valinnainen, koska vanhemmat palvelinversiot eivät lähetä kenttää.
-  lahde?: 'selain' | 'laite';
+  lahde?: 'selain' | 'laite' | 'tietokone';
 };
 
 // PTT floor control (erä 26, vaihe 1b). `kayttaja` puuttuu hylkäyksestä jos kanava oli

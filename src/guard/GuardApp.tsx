@@ -197,7 +197,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // PTT-painike yläpalkissa (erä 26, jatko 23.9.2026). Sama oikeus jota palvelin jo
   // vaatii kaikilta PTT-reiteiltä (server/index.js: pttPortti) — painike joka avautuisi
   // mutta jonka jokainen toiminto 403:ttaisi olisi pahempi kuin puuttuva painike.
-  const saaNahdaPtt = isAdmin || canView(perms, null, 'guard_ptt');
+  // PTT on Vartija-tasolla VAIN mobiilissa (käyttäjän päätös 28.9.2026): puheyhteys
+  // kulkee puhelimessa vartijan mukana. Oikeus (guard_ptt) on sama, rajaus on laite.
+  const saaNahdaPtt = (isAdmin || canView(perms, null, 'guard_ptt'))
+    && !(!isAdmin && session?.roleId === 'vartija' && !mobiili);
   // Ohjepankki ja skenaariot (erä 8). Näkeminen riittää käyttöön: ohjekortin lukeminen ja
   // skenaarion käynnistäminen ovat saman tietueen lukemista. Muokkausoikeus ratkaisee kuka
   // laatii pohjat — se on esimiehen työtä samalla tavalla kuin kierrospohjat.
@@ -916,6 +919,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     eventId: aktiivinenKohde?.id || null,
     laheta: lahetaKanavalle,
     muunnos: luoMuunnos((aktiivinenKohde as { mapRef?: never[] } | null)?.mapRef),
+    tietokone: !mobiili,
   });
 
   // Puhelinsovelluksen tila. Kysytään vain kun sillä on merkitystä eli man-down on
@@ -2375,6 +2379,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           raportit={raportit}
           kierrokset={kierrokset}
           onTakaisin={() => setTietoKohde(null)}
+          muokattava={!mobiili}
         />
       ) : kalustoKohde ? (
         <div className="max-w-3xl">

@@ -571,7 +571,7 @@ export const VartijanPaneeli = ({
             </p>
             <p className="text-xs text-ink-muted">
               Tiedetty {ikaTekstina(sijainti.ikaMs)}
-              {sijainti.lahde ? ` · ${sijainti.lahde === 'laite' ? 'sovelluksesta' : 'selaimesta'}` : ''}
+              {sijainti.lahde ? ` · ${sijainti.lahde === 'laite' ? 'sovelluksesta' : sijainti.lahde === 'tietokone' ? 'tietokoneelta' : 'selaimesta'}` : ''}
             </p>
             {/* Kartta koordinaattien ALLA eikä tilalla. Koordinaatti on se mikä
                 luetaan puhelimeen ja sanotaan radiossa; kartta vastaa kysymykseen

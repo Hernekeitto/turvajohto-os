@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import {
   seurantaKaytossa, paivita, kaikki, unohda, tyhjenna, lueSijainti, VANHENEE,
   saaNahdaSijainteja, saaNahdaSijaintirivin,
-  kirjataankoKatselu, tyhjennaKatselut, KATSELU_IKKUNA,
+  kirjataankoKatselu, tyhjennaKatselut, KATSELU_IKKUNA, MOBIILIN_ETUSIJA_MS,
 } from './sijainti.js';
 
 const alkuperainenLippu = process.env.SIJAINTISEURANTA;
@@ -232,4 +232,27 @@ test('katselujakso ei riipu sijaintien vanhenemisesta', () => {
   // Kaksi eri ikkunaa (30 min vs 15 min) eivät saa sekoittua: sijainti vanhenee
   // puolessa tunnissa, katselujakso umpeutuu vartissa.
   assert.notEqual(KATSELU_IKKUNA, VANHENEE);
+});
+
+// --- Mobiilin etusija (28.9.2026) ---------------------------------------------------
+
+test('tietokoneen sijainti ei ylikirjoita tuoretta puhelimen sijaintia', () => {
+  const T = 1_000_000;
+  const puhelin = paivita('v1', 'k1', { gps: { lat: 61.5, lon: 23.8 }, lahde: 'laite' }, T);
+  assert.equal(puhelin.lahde, 'laite');
+  assert.equal(paivita('v1', 'k1', { gps: { lat: 60.1, lon: 24.9 }, lahde: 'tietokone' }, T + 60_000), null);
+  assert.equal(kaikki({ nyt: T + 60_000 })[0].gps.lat, 61.5);
+  // Puhelimen selain on myös mobiili.
+  paivita('v2', 'k1', { gps: { lat: 61.5, lon: 23.8 } }, T);
+  assert.equal(paivita('v2', 'k1', { gps: { lat: 60.1, lon: 24.9 }, lahde: 'tietokone' }, T + 1000), null);
+});
+
+test('vaiennut puhelin: tietokone saa kertoa sijainnin', () => {
+  const T = 1_000_000;
+  paivita('v1', 'k1', { gps: { lat: 61.5, lon: 23.8 }, lahde: 'laite' }, T);
+  const kone = paivita('v1', 'k1', { gps: { lat: 60.1, lon: 24.9 }, lahde: 'tietokone' }, T + MOBIILIN_ETUSIJA_MS + 1);
+  assert.equal(kone.lahde, 'tietokone');
+  // Pelkällä tietokoneella työskentelevän sijainti päivittyy normaalisti, ja puhelin
+  // ohittaa tietokoneen heti.
+  assert.equal(paivita('v1', 'k1', { gps: { lat: 61.5, lon: 23.8 }, lahde: 'laite' }, T + MOBIILIN_ETUSIJA_MS + 2).lahde, 'laite');
 });

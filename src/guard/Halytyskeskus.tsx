@@ -2016,7 +2016,7 @@ export const Halytyskeskus = ({
                       {/* Selain paikantaa vain näkyvissä ollessaan. Tämä on se selitys
                           jonka päivystäjä tarvitsee kun ikä kasvaa: laitteella vanha
                           sijainti on vika, selaimella se on normaalia. */}
-                      {s.lahde === 'selain' && s.ikaMs > 10 * 60_000 && (
+                      {s.lahde !== 'laite' && s.ikaMs > 10 * 60_000 && (
                         <span>{' · '}selain taustalla</span>
                       )}
                     </p>

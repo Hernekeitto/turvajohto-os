@@ -55,9 +55,14 @@ type Props = {
   // kysymys johon kierroslokilla vastataan: kuka kavi, milloin ja kaytiinko kaikki pisteet.
   kierrokset: Kierros[];
   onTakaisin: () => void;
+  // Mobiilissa tekstitiedostoja ei muokata (käyttäjän päätös 28.9.2026): puhelimen
+  // näytöllä editori ei ole käytännöllinen. Esikatselu ja lataus toimivat.
+  muokattava?: boolean;
 };
 
-export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, kierrokset, onTakaisin }: Props) => {
+export const KohteenTiedot = ({
+  kohde, tiedostot, suoritukset, raportit, kierrokset, onTakaisin, muokattava = true,
+}: Props) => {
   const [avattu, setAvattu] = useState<string | null>(null);
   const [karttaVyohyke, setKarttaVyohyke] = useState<string | null>(null);
 
@@ -208,7 +213,7 @@ export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, kierrok
                     <span className="text-xs text-ink-subtle shrink-0">{muotoileTavut(t.size)}</span>
                   )}
                   <Esikatsele uploadId={t.uploadId} nimi={t.name} />
-                  <AvaaEditorissa uploadId={t.uploadId} nimi={t.name} />
+                  {muokattava && <AvaaEditorissa uploadId={t.uploadId} nimi={t.name} />}
                   <Download size={13} className="text-ink-subtle shrink-0" />
                 </li>
               ))}
