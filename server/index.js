@@ -7239,11 +7239,13 @@ const COLLABORA_SISAINEN_URL = (process.env.COLLABORA_SISAINEN_URL || 'http://12
 const WOPI_AVAIN = wopiAvain(JWT_SECRET);
 
 // Discovery kertoo editorin osoitteen, ja osoitteessa on Collaboran versiotiiviste
-// (/browser/<tiiviste>/cool.html). Välimuisti tunnin: Collaboran päivitys vaihtaa
-// tiivisteen, ja vanha osoite lakkaisi toimimasta.
+// (/browser/<tiiviste>/cool.html). Välimuisti on lyhyt (5 min), koska viikoittainen
+// automaattipäivitys (asenna.sh --paivitys) vaihtaa tiivisteen ilman API:n
+// uudelleenkäynnistystä, ja vanha osoite lakkaa silloin toimimasta. Haku on
+// localhost-kutsu, joten tiheäkään haku ei maksa mitään.
 let discoveryVali = { haettu: 0, data: null };
 async function haeDiscovery() {
-  if (discoveryVali.data && Date.now() - discoveryVali.haettu < 60 * 60 * 1000) return discoveryVali.data;
+  if (discoveryVali.data && Date.now() - discoveryVali.haettu < 5 * 60 * 1000) return discoveryVali.data;
   const vastaus = await fetch(`${COLLABORA_SISAINEN_URL}/hosting/discovery`, { signal: AbortSignal.timeout(5000) });
   if (!vastaus.ok) throw new Error(`discovery ${vastaus.status}`);
   const data = jasennaDiscovery(await vastaus.text());

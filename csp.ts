@@ -75,6 +75,14 @@ const DIREKTIIVIT = {
   // tämä rivi on ensimmäinen tarkistettava — lisäys olisi silloin 'wss://turvajohto-os.fi'.
   'connect-src': ["'self'"],
 
+  // Toimisto (dokumenttieditori, Collabora) on omassa aliverkkotunnuksessaan
+  // (29.9.2026, server/collabora/toimisto.conf). Editori avataan iframeen, ja
+  // kertakäyttöinen token lähetetään sinne POST-lomakkeella — siksi Toimisto on
+  // sallittava sekä kehyksenä että lomakkeen kohteena. Mikään muu ulkopuolinen osoite
+  // ei ole sallittu kummassakaan. HUOM: sijainti ennen object-srciä on tarkoituksellinen:
+  // asennusskripti lisää tämän nginxiin samaan kohtaan, ja merkkijonojen on vastattava.
+  'frame-src': ["'self'", 'https://toimisto.turvajohto-os.fi'],
+
   // HUOM: worker-src ei ole tässä, vaikka palvelutyöntekijä (erä 6) sitä koskee. Se
   // periytyy ketjussa worker-src -> child-src -> default-src, joten 'self' kattaa sen
   // jo. Direktiivi on jätetty pois tarkoituksella, jotta TÄMÄ MERKKIJONO ON TÄSMÄLLEEN
@@ -106,8 +114,9 @@ const DIREKTIIVIT = {
   // Estää <base>-tagilla tehtävän polkujen kaappauksen.
   'base-uri': ["'self'"],
 
-  // Lomake ei saa lähettää tietoja ulos sovelluksesta.
-  'form-action': ["'self'"],
+  // Lomake ei saa lähettää tietoja ulos sovelluksesta — ainoa poikkeus on Toimisto
+  // (editorin token-lomake, ks. frame-src).
+  'form-action': ["'self'", 'https://toimisto.turvajohto-os.fi'],
 
   // Clickjacking-suoja. Sama asia kuin X-Frame-Options, joka on myös asetettu —
   // vanhempien selainten takia molemmat.
