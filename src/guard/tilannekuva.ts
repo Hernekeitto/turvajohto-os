@@ -536,7 +536,7 @@ const raportinNimi = (typeId: string) => (
 export type Toiminto =
   | 'tehtavat' | 'kierros' | 'kierrospohjat' | 'kalusto' | 'mittaristo' | 'jaksoraportit'
   | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'halytykset' | 'toimenpide' | 'ilmoitus'
-  | 'anastus' | 'tiedot' | 'raportit';
+  | 'anastus' | 'tiedot' | 'raportit' | 'tiedostot';
 
 export type Tiivistelma = {
   // Painikkeen alle tuleva rivi: mitä kohteessa on tämän toiminnon osalta tehty.
@@ -571,13 +571,15 @@ type Konteksti = {
   // kokoelmassa, joten ne annetaan erikseen.
   tehtaviaMaaritelty: number;
   kayttaja: string;
+  // Kohteen tiedostot (guardFiles) eivät ole Lahteet-oliossa, joten määrä annetaan erikseen.
+  tiedostoja?: number;
   nyt?: number;
 };
 
 export function kohteenToiminnot(
   kohdeId: string,
   lahteet: Lahteet,
-  { tehtaviaMaaritelty, kayttaja, nyt = Date.now() }: Konteksti
+  { tehtaviaMaaritelty, kayttaja, tiedostoja = 0, nyt = Date.now() }: Konteksti
 ): Record<Toiminto, Tiivistelma> {
   const kierrokset = lahteet.kierrokset.filter((k) => k.siteId === kohdeId);
   const valmiit = kierrokset.filter((k) => k.tila === 'valmis');
@@ -721,6 +723,10 @@ export function kohteenToiminnot(
     },
     tiedot: {
       teksti: 'Kooste kohteen tapahtumista ja tiedostoista',
+      huomio: null,
+    },
+    tiedostot: {
+      teksti: tiedostoja === 0 ? 'Ei vartijoille näkyviä tiedostoja' : monikko(tiedostoja, 'tiedosto', 'tiedostoa'),
       huomio: null,
     },
     // Kohteen raportit (27.9.2026): kaikki kohteelta palautettu työ yhdessä paikassa.

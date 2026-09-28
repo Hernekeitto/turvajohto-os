@@ -9,14 +9,14 @@
 // kohdevalikon Toiminto, joten sillä on oma tunnisteensa.
 import type { LucideIcon } from 'lucide-react';
 import {
-  BookOpen, ClipboardList, FileText, KeyRound, ListChecks, Megaphone, ShieldAlert, ShoppingBag,
+  BookOpen, ClipboardList, FileText, FolderOpen, KeyRound, ListChecks, Megaphone, ShieldAlert, ShoppingBag,
 } from 'lucide-react';
 
 import type { Toiminto } from './tilannekuva';
 
 export type VartijanToiminto = Extract<
   Toiminto,
-  'kalusto' | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'toimenpide' | 'ilmoitus' | 'anastus'
+  'kalusto' | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'toimenpide' | 'ilmoitus' | 'anastus' | 'tiedostot'
 > | 'kohteen_tehtavat';
 
 const TOIMINNOT: { id: VartijanToiminto; nimi: string; ikoni: LucideIcon }[] = [
@@ -28,6 +28,7 @@ const TOIMINNOT: { id: VartijanToiminto; nimi: string; ikoni: LucideIcon }[] = [
   { id: 'toimenpide', nimi: 'Vartijan toimenpide', ikoni: FileText },
   { id: 'ilmoitus', nimi: 'Vartijan tapahtumailmoitus', ikoni: ShieldAlert },
   { id: 'anastus', nimi: 'Anastusilmoitus', ikoni: ShoppingBag },
+  { id: 'tiedostot', nimi: 'Kohteen tiedostot', ikoni: FolderOpen },
 ];
 
 type Props = {

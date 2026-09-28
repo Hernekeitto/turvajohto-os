@@ -67,6 +67,9 @@ type Props = {
   tiedostot: KohteenTiedosto[];
   onLisaaTiedosto: (tiedosto: File) => Promise<void>;
   onPoistaTiedosto: (id: string) => Promise<void>;
+  onMuutaTiedosto: (id: string, muutos: Partial<KohteenTiedosto>) => Promise<void>;
+  // Pysyvien jakolinkkien hyväksyntä ja nimetyille käyttäjille jakaminen.
+  onAdmin: boolean;
   // Pohjakartan lähetys. EI ENÄÄ KÄYTÖSSÄ: pohjakartta ja vyöhykkeet siirtyivät kohteen
   // tiedostokansioon 27.9.2026. Valinnainen vain siksi, että GuardApp välittää sen yhä;
   // poistetaan sieltä seuraavan GuardApp-muutoksen yhteydessä.
@@ -102,6 +105,8 @@ export const KohteenHallinta = ({
   tiedostot,
   onLisaaTiedosto,
   onPoistaTiedosto,
+  onMuutaTiedosto,
+  onAdmin,
   saaMuokata,
   osio,
 }: Props) => {
@@ -602,6 +607,8 @@ export const KohteenHallinta = ({
           saaMuokata={saaMuokata}
           onLisaa={onLisaaTiedosto}
           onPoista={onPoistaTiedosto}
+          onMuuta={onMuutaTiedosto}
+          onAdmin={onAdmin}
           kohdeTallennettu={!!kohde.id}
         />
       )}

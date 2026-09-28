@@ -88,6 +88,7 @@ import {
   // ei-pääkäyttäjälle ja vain GUARD-liitteessä: pohjakartta, kohteen tiedosto tai
   // raportin kuva vastasi 500:lla.
   canReadGuardAttachment,
+  jaettuKohteenTiedostoMinulle,
   canUploadAttachment,
   canEdit,
   canView,
@@ -6737,6 +6738,32 @@ app.post('/api/qr', requireAuth, async (req, res) => {
   }
 });
 
+// Jaon lähde (28.9.2026): tapahtuman tiedostot (eventFiles, kansiorakenne) tai
+// vartiointikohteen tiedostot (guardFiles, litteä lista). Kohteen tiedostot muunnetaan
+// samaan muotoon kuin tapahtuman tiedostot, jotta jakologiikka (kansion alipuu,
+// henkilötietolippu, julkinen lataussivu) on yksi eikä kaksi. eventId = kohteen id.
+const jaonLahde = (share) => (share?.lahde === 'guardFiles' ? 'guardFiles' : 'eventFiles');
+function jaettavatTiedostot(lahde) {
+  if (lahde === 'guardFiles') {
+    return (readCollection('guardFiles') || []).map((t) => ({
+      ...t, type: 'file', parentId: null, eventId: t.siteId,
+    }));
+  }
+  return readCollection('eventFiles') || [];
+}
+
+// Saako käyttäjä luoda, näyttää ja peruuttaa jakoja. Jakaminen vaatii MUOKKAUSoikeuden:
+// se laajentaa pääsyn sovelluksen ulkopuolelle.
+function saaHallitaJakoja(req, lahde, omistajaId) {
+  if (req.role === 'admin') return true;
+  if (lahde === 'guardFiles') {
+    return (req.tuotteet || []).includes('guard')
+      && eventAllowed(req.eventAccess, omistajaId)
+      && canEdit(req.permissions, omistajaId, 'guard_sites');
+  }
+  return canEdit(req.permissions, omistajaId, 'eventfiles');
+}
+
 // Etsii jakolinkin tokenilla. Vakioaikainen vertailu jokaista vastaan, jottei
 // vastausaika kerro kuinka moni merkki osui.
 function etsiJako(token) {
@@ -6754,7 +6781,7 @@ app.get('/api/share/:token', shareLimiter, (req, res) => {
     // Kaikki estot palautetaan 404:llä: 403 kertoisi että token on olemassa.
     return res.status(404).json({ ok: false, error: TILAN_SELITE[tila.syy] || TILAN_SELITE.not_found });
   }
-  const tiedostot = readCollection('eventFiles') || [];
+  const tiedostot = jaettavatTiedostot(jaonLahde(share));
   const kohde = tiedostot.find((f) => f.id === share.targetId);
   if (!kohde) return res.status(404).json({ ok: false, error: TILAN_SELITE.not_found });
 
@@ -6790,7 +6817,7 @@ app.post('/api/share/:token/download', shareLimiter, (req, res) => {
     return res.status(401).json({ ok: false, error: 'Väärä salasana.' });
   }
 
-  const tiedostot = readCollection('eventFiles') || [];
+  const tiedostot = jaettavatTiedostot(jaonLahde(share));
   // Kansiojaossa kutsuja kertoo minkä tiedoston haluaa; se on tarkistettava kuuluvaksi
   // jaettuun alipuuhun JOKA latauksella — kansion sisältö muuttuu jaon luonnin jälkeen.
   const haettuId = fileId || share.targetId;
@@ -6843,14 +6870,16 @@ app.post('/api/shares/:id/approval', requireAuth, requireAdmin, (req, res) => {
 // ja salasana hashattava palvelimella — kumpaakaan ei voi tehdä selaimessa.
 app.post('/api/shares', requireAuth, (req, res) => {
   const { targetId, mode, password, expiresAt, ikuinen, maxDownloads, allowedUsernames } = req.body || {};
-  const tiedostot = readCollection('eventFiles') || [];
+  const lahde = req.body?.lahde === 'guardFiles' ? 'guardFiles' : 'eventFiles';
+  const tiedostot = jaettavatTiedostot(lahde);
   const kohde = tiedostot.find((f) => f.id === targetId);
   if (!kohde) return res.status(404).json({ ok: false, error: 'Jaettavaa kohdetta ei löytynyt.' });
 
-  // Jakaminen vaatii muokkausoikeuden tiedostosivulle SIINÄ tapahtumassa johon kohde
-  // kuuluu — lukuoikeus ei riitä, koska jakaminen laajentaa pääsyn sovelluksen ulkopuolelle.
-  if (req.role !== 'admin' && !canEdit(req.permissions, kohde.eventId, 'eventfiles')) {
-    return res.status(403).json({ ok: false, error: 'Ei oikeutta jakaa tämän tapahtuman tiedostoja.' });
+  // Jakaminen vaatii muokkausoikeuden tiedostosivulle SIINÄ tapahtumassa (tai kohteessa)
+  // johon kohde kuuluu — lukuoikeus ei riitä, koska jakaminen laajentaa pääsyn
+  // sovelluksen ulkopuolelle.
+  if (!saaHallitaJakoja(req, lahde, kohde.eventId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta jakaa näitä tiedostoja.' });
   }
   if (!['link', 'password', 'users'].includes(mode)) {
     return res.status(400).json({ ok: false, error: 'Tuntematon jakotapa.' });
@@ -6889,6 +6918,7 @@ app.post('/api/shares', requireAuth, (req, res) => {
   const share = {
     id: crypto.randomUUID(),
     eventId: kohde.eventId,
+    ...(lahde === 'guardFiles' ? { lahde } : {}),
     targetId,
     mode,
     token: onTokenJako ? luoToken() : null,
@@ -6918,7 +6948,7 @@ app.get('/api/shares/:id/token', requireAuth, (req, res) => {
   const shares = readCollection('fileShares') || [];
   const share = shares.find((sh) => sh.id === req.params.id);
   if (!share) return res.status(404).json({ ok: false, error: 'Jakolinkkiä ei löytynyt.' });
-  if (req.role !== 'admin' && !canEdit(req.permissions, share.eventId, 'eventfiles')) {
+  if (!saaHallitaJakoja(req, jaonLahde(share), share.eventId)) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta tähän jakolinkkiin.' });
   }
   res.json({ ok: true, token: share.token });
@@ -6930,7 +6960,7 @@ app.delete('/api/shares/:id', requireAuth, (req, res) => {
   const shares = readCollection('fileShares') || [];
   const share = shares.find((sh) => sh.id === req.params.id);
   if (!share) return res.status(404).json({ ok: false, error: 'Jakolinkkiä ei löytynyt.' });
-  if (req.role !== 'admin' && !canEdit(req.permissions, share.eventId, 'eventfiles')) {
+  if (!saaHallitaJakoja(req, jaonLahde(share), share.eventId)) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta peruuttaa tätä jakolinkkiä.' });
   }
   writeCollection('fileShares', shares.map((sh) => (sh.id === share.id
@@ -6949,7 +6979,7 @@ app.delete('/api/shares/:id', requireAuth, (req, res) => {
 // tiedostot, ei koko jakotietuetta.
 app.get('/api/shares/for-me', requireAuth, (req, res) => {
   const shares = readCollection('fileShares') || [];
-  const tiedostot = readCollection('eventFiles') || [];
+  const lahteet = { eventFiles: jaettavatTiedostot('eventFiles'), guardFiles: jaettavatTiedostot('guardFiles') };
   const nyt = new Date();
 
   const omat = shares.filter((sh) => {
@@ -6960,6 +6990,7 @@ app.get('/api/shares/for-me', requireAuth, (req, res) => {
   });
 
   const tulos = omat.map((sh) => {
+    const tiedostot = lahteet[jaonLahde(sh)];
     const kohde = tiedostot.find((f) => f.id === sh.targetId);
     if (!kohde) return null;
     // Kansiojaossa listataan koko alipuun tiedostot, kuten julkisessakin jaossa.
@@ -6973,6 +7004,7 @@ app.get('/api/shares/for-me', requireAuth, (req, res) => {
       name: kohde.name,
       type: kohde.type,
       eventId: kohde.eventId,
+      lahde: jaonLahde(sh),
       sharedBy: sh.createdBy,
       sharedAt: sh.createdAt,
       expiresAt: sh.expiresAt,
@@ -6991,10 +7023,10 @@ app.get('/api/notifications', requireAuth, (req, res) => {
 
   if (req.role === 'admin') {
     const shares = readCollection('fileShares') || [];
-    const tiedostot = readCollection('eventFiles') || [];
+    const lahteet = { eventFiles: jaettavatTiedostot('eventFiles'), guardFiles: jaettavatTiedostot('guardFiles') };
     for (const sh of shares) {
       if (sh.approvalStatus !== 'pending' || sh.revokedAt) continue;
-      const kohde = tiedostot.find((f) => f.id === sh.targetId);
+      const kohde = lahteet[jaonLahde(sh)].find((f) => f.id === sh.targetId);
       ilmoitukset.push({
         id: `share-approval-${sh.id}`,
         tyyppi: 'share_approval',
@@ -7074,7 +7106,11 @@ app.get('/api/uploads/:id', requireAuth, (req, res) => {
   // GUARD-liitteet tarkistetaan erikseen, ja vain jos käyttäjällä on pääsy sille puolelle:
   // pelkkä liitteen id ei saa avata vartiointipuolen tiedostoa tunnukselle joka ei pääse
   // sinne lainkaan. Sama portti kuin /api/data-reiteillä (tuoteEstaa).
-  const guardPuoli = !tapahtumaPuoli
+  // Nimellä jaettu kohteen tiedosto avautuu ilman kohteen oikeuksia ja GUARD-tuotetta.
+  const jaettuMinulle = !tapahtumaPuoli && jaettuKohteenTiedostoMinulle(
+    req.username, req.params.id, readCollection('guardFiles') || [], sharesArr
+  );
+  const guardPuoli = !tapahtumaPuoli && !jaettuMinulle
     && (req.tuotteet || []).includes('guard')
     && canReadGuardAttachment(
       req.role, req.permissions, req.eventAccess, req.params.id,
@@ -7082,7 +7118,7 @@ app.get('/api/uploads/:id', requireAuth, (req, res) => {
       readCollection('guardSites') || [], readCollection('keyTypes') || [],
       readCollection('guardTaskRuns') || [], readCollection('patrolRuns') || []
     );
-  if (!tapahtumaPuoli && !guardPuoli) {
+  if (!tapahtumaPuoli && !guardPuoli && !jaettuMinulle) {
     return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän liitteen lataamiseen.' });
   }
   res.sendFile(filePath);

@@ -202,9 +202,13 @@ const COLLECTIONS = {
     eventScoped: true,
     eventIdOf: legacyEventId,
   },
+  // Jaot kattavat myös GUARD-kohteen tiedostot (lahde: 'guardFiles', 28.9.2026). Silloin
+  // eventId on kohteen id ja oikeus tulee kohteen hallinnasta, ei tapahtuman tiedostoista.
   fileShares: {
-    view: ['eventfiles'],
-    touch: () => ['eventfiles'],
+    view: ['eventfiles', 'guard_sites'],
+    viewOf: (item) => (item?.lahde === 'guardFiles' ? ['guard_sites'] : ['eventfiles']),
+    vaatiiMuokkauksen: (item) => item?.lahde === 'guardFiles',
+    touch: (item) => (item?.lahde === 'guardFiles' ? ['guard_sites'] : ['eventfiles']),
     eventScoped: true,
     eventIdOf: legacyEventId,
   },
@@ -298,6 +302,10 @@ const COLLECTIONS = {
   // tapahtuman tiedostoihin. Kohteen tiedot -näkymä näyttää ne mutta ei muokkaa.
   guardFiles: {
     view: ['guard_sites', 'guard_site_info'],
+    // "Vain ylläpidolle" (28.9.2026): tiedosto näkyy vain kohteen muokkausoikeudella.
+    // Vartijalla on guard_sites-KATSELUoikeus, joten pelkkä solmuvalinta ei erottaisi
+    // ylläpitoa vartijasta — raja on muokkausoikeus (ks. readableData: vaatiiMuokkauksen).
+    vaatiiMuokkauksen: (item) => item?.vainYllapito === true,
     touch: () => ['guard_sites'],
     eventScoped: true,
     eventIdOf: (item) => item?.siteId,
@@ -702,7 +710,9 @@ export function readableData(role, permissions, eventAccess, name, data) {
     // näyttää toista. Ilman tätä `view` toimisi unionina — pelkän ohjepankkioikeuden
     // saanut näkisi myös vartiointikohteiden tarkistuspisteet.
     const solmut = rule.viewOf ? rule.viewOf(item) : rule.view;
-    return eventAllowed(eventAccess, eventId) && hasAnyView(permissions, eventId, solmut);
+    if (!eventAllowed(eventAccess, eventId)) return false;
+    if (rule.vaatiiMuokkauksen?.(item)) return hasAnyEdit(permissions, eventId, rule.touch(item));
+    return hasAnyView(permissions, eventId, solmut);
   });
   return { ok: true, data: filtered };
 }
@@ -920,6 +930,22 @@ export function canUploadAttachment(role, permissions) {
 // GUARD-puolen liitteillä on eri omistajat (guardFiles, guardReports) ja eri solmut —
 // yhdistäminen olisi tehnyt jo ennestään pitkästä funktiosta vaikeasti luettavan, eikä
 // tapahtumapuolen liitelogiikkaan ole tarpeen koskea.
+// Kohteen tiedosto joka on jaettu tälle käyttäjälle nimellä (fileShares, lahde guardFiles).
+// Avautuu ilman kohteen oikeuksia ja ilman GUARD-tuotetta, samoin kuin tapahtuman
+// tiedoston nimijako (canReadAttachment: jaettuMinulle): jakaminen on juuri se mekanismi
+// joka antaa pääsyn tähän yhteen tiedostoon.
+export function jaettuKohteenTiedostoMinulle(username, attachmentId, guardFilesArr = [], sharesArr = []) {
+  if (!username) return false;
+  const tiedosto = (Array.isArray(guardFilesArr) ? guardFilesArr : []).find((f) => f?.uploadId === attachmentId);
+  if (!tiedosto) return false;
+  return (Array.isArray(sharesArr) ? sharesArr : []).some((sh) => sh?.lahde === 'guardFiles'
+    && sh.mode === 'users'
+    && !sh.revokedAt
+    && sh.targetId === tiedosto.id
+    && (sh.allowedUsernames || []).includes(username)
+    && !(sh.expiresAt && new Date(sh.expiresAt) <= new Date()));
+}
+
 export function canReadGuardAttachment(
   role, permissions, eventAccess, attachmentId, guardFilesArr = [], guardReportsArr = [],
   guardSitesArr = [], keyTypesArr = [], guardTaskRunsArr = [], patrolRunsArr = []
@@ -950,6 +976,7 @@ export function canReadGuardAttachment(
   );
   if (tiedosto) {
     if (!eventAllowed(eventAccess, tiedosto.siteId)) return false;
+    if (tiedosto.vainYllapito === true) return hasAnyEdit(permissions, tiedosto.siteId, ['guard_sites']);
     return hasAnyView(permissions, tiedosto.siteId, ['guard_sites', 'guard_site_info']);
   }
 

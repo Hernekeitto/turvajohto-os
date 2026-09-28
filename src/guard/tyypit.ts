@@ -190,6 +190,10 @@ export type KohteenTiedosto = {
   size?: number;
   lisatty: string;
   lisaaja?: string;
+  // Näkyvyys (28.9.2026): true = vain kohteen muokkausoikeudella, ei vartijoille.
+  vainYllapito?: boolean;
+  // Rajoittaa jakamista kuten tapahtuman tiedostoissa (ei pelkkää linkkiä, max 7 vrk).
+  containsPersonalData?: boolean;
 };
 
 // Tehtävän suoritus. Oma kokoelmansa (guardTaskRuns), koska suoritus on tapahtuma ajassa

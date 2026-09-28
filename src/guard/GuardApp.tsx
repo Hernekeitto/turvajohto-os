@@ -78,6 +78,7 @@ import { useKanava, type Sijainti } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
 import { Pohjanakyma } from '../shared/komponentit/Pohjanakyma';
+import { VartijanTiedostot, vartijalleNakyvat } from './VartijanTiedostot';
 import { haeSuoritukset, type Pohja, type Suoritus } from '../shared/pohjat';
 import { Tiedotteet, TiedoteKehote } from '../shared/komponentit/Tiedotteet';
 import { haeTiedotteet, type Tiedote } from '../shared/tiedotteet';
@@ -323,6 +324,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [kohteenTehtavatKohde, setKohteenTehtavatKohde] = useState<Kohde | null>(null);
   // Kohteen raportit (27.9.2026): ylläpidon kooste kohteelta palautetusta työstä.
   const [raportitKohde, setRaportitKohde] = useState<Kohde | null>(null);
+  // Kohteen tiedostokansio vartijalle (28.9.2026): vain luku, ks. VartijanTiedostot.
+  const [tiedostoKohde, setTiedostoKohde] = useState<Kohde | null>(null);
   // Hälytykset (erä 7). Palvelimen ylläpitämä kokoelma: tänne tulee vain luettua tilaa,
   // ja jokainen muutos tehdään /api/halytys-reiteillä.
   const [halytykset, setHalytykset] = useState<Halytys[]>([]);
@@ -1319,6 +1322,21 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     );
   };
 
+  // Näkyvyys- ja henkilötietolippu (28.9.2026). Koko kokoelma kirjoitetaan kuten
+  // lisäyksessä ja poistossa; muutos näkyy heti vasta kun palvelin on hyväksynyt sen.
+  const muutaTiedostoa = async (id: string, muutos: Partial<KohteenTiedosto>) => {
+    const uudet = tiedostot.map((t) => (t.id === id ? { ...t, ...muutos } : t));
+    const r = await fetch('/api/data/guardFiles', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(uudet),
+    });
+    const res = await r.json().catch(() => null);
+    if (!r.ok || !res?.ok) throw new Error(res?.error || 'Muutoksen tallennus epäonnistui.');
+    setTiedostot(uudet);
+  };
+
   const poistaTiedosto = async (id: string) => {
     const jaljelle = tiedostot.filter((t) => t.id !== id);
     const r = await fetch(`/api/data/guardFiles${jaljelle.length === 0 ? '?allowEmpty=1' : ''}`, {
@@ -1460,6 +1478,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     setKierrosKohde(null);
     setKohteenTehtavatKohde(null);
     setRaportitKohde(null);
+    setTiedostoKohde(null);
     setHalytysKohde(null);
     setPohjaNakyma(null);
     setTiedoteKohde(null);
@@ -1577,6 +1596,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     else if (toiminto === 'anastus') setRaporttiKohde({ kohde, tyyppi: 'guard_theft' });
     else if (toiminto === 'tiedot') setTietoKohde(kohde);
     else if (toiminto === 'raportit') setRaportitKohde(kohde);
+    else if (toiminto === 'tiedostot') setTiedostoKohde(kohde);
   };
 
   // Kaikki kokoelmat yhtenä oliona tilannekuvan laskentaa varten (ks. tilannekuva.ts).
@@ -1854,6 +1874,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       ...(saaKirjataIlmoituksen ? [{ id: 'ilmoitus', label: 'Tapahtumailmoitus' }] : []),
       ...(saaKirjataAnastuksen ? [{ id: 'anastus', label: 'Anastusilmoitus' }] : []),
       ...(saaNahdaTiedot ? [{ id: 'tiedot', label: 'Kohteen tiedot' }] : []),
+      ...(saaNahda ? [{ id: 'tiedostot', label: 'Kohteen tiedostot' }] : []),
       // 'Vaihda kohdetta' päätti ennen vain laitteen tilan. Erässä 17 se päättää vuoron
       // myös palvelimella, joten nimi kertoo sen: vuoron päättyminen on kirjaus, ja
       // painike joka aliarvioi tekonsa on pahempi kuin pitkä nimi.
@@ -2028,7 +2049,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // renderöintiketjun kautta; muuten näytetään Vartijanäkymän oma etusivu.
   const vartijanAlanakyma = !!(
     raporttiKohde || kalustoKohde || tiedoteKohde || pohjaNakyma || kierrosKohde || tehtavaKohde
-    || kohteenTehtavatKohde
+    || kohteenTehtavatKohde || tiedostoKohde
   );
   const nakymanNimi = vartijanPuolella && !vartijanAlanakyma ? 'Vartijanäkymä'
     : asetuksissa ? 'Sovellusasetukset'
@@ -2047,6 +2068,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     : jaksoKohde ? 'Jaksoraportit'
     : raportitKohde ? 'Kohteen raportit'
     : kohteenTehtavatKohde ? 'Kohteen tehtävät'
+    : tiedostoKohde ? 'Kohteen tiedostot'
     : kierrosKohde ? 'Kierrokset'
     : pohjaKohde ? 'Kierrospohjat'
     : tehtavaKohde ? 'Työvuoron tehtävät'
@@ -2476,6 +2498,12 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           skenaariot={pohjaSuoritukset}
           onTakaisin={() => setRaportitKohde(null)}
         />
+      ) : tiedostoKohde ? (
+        <VartijanTiedostot
+          kohde={tiedostoKohde}
+          tiedostot={tiedostot}
+          onTakaisin={() => setTiedostoKohde(null)}
+        />
       ) : kohteenTehtavatKohde ? (
         /* Vartijanäkymän "Kohteen tehtävät" (27.9.2026, käyttäjän päätös): työvuoron
            tehtävät ja kierrokset saman otsikon alla. Molemmat ovat samaa työtä — asioita
@@ -2559,6 +2587,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           tiedostot={tiedostot.filter((t) => t.siteId === lomake.id)}
           onLisaaTiedosto={lisaaTiedosto}
           onPoistaTiedosto={poistaTiedosto}
+          onMuutaTiedosto={muutaTiedostoa}
+          onAdmin={isAdmin}
           onLataaKartta={lataaKartta}
           saaMuokata={saaMuokata}
           osio={lomake.id ? hallintaOsio : undefined}
@@ -2569,6 +2599,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           tiivistelmat={kohteenToiminnot(valittuKohde.id, lahteet, {
             tehtaviaMaaritelty: valittuKohde.tehtavat?.length || 0,
             kayttaja: session?.username || '',
+            tiedostoja: vartijalleNakyvat(tiedostot, valittuKohde.id).length,
           })}
           sallitut={{
             tehtavat: saaNahdaTehtavat && (valittuKohde.tehtavat?.length || 0) > 0,
@@ -2586,6 +2617,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             anastus: saaKirjataAnastuksen,
             tiedot: saaNahdaTiedot,
             raportit: saaNahdaRaportit,
+            tiedostot: saaNahda,
           }}
           saaMuokata={saaMuokata}
           tiedostoja={tiedostot.filter((t) => t.siteId === valittuKohde.id).length}
@@ -2816,6 +2848,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
                   toimenpide: saaKirjataToimenpiteen,
                   ilmoitus: saaKirjataIlmoituksen,
                   anastus: saaKirjataAnastuksen,
+                  tiedostot: saaNahda,
                 }}
                 onToiminto={(toiminto, kohde) => (toiminto === 'kohteen_tehtavat'
                   ? setKohteenTehtavatKohde(kohde)

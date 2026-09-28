@@ -74,6 +74,7 @@ const VUORON_TOIMINNOT: { id: Toiminto; nimi: string; ikoni: LucideIcon }[] = [
   { id: 'toimenpide', nimi: 'Vartijan toimenpide', ikoni: FileText },
   { id: 'ilmoitus', nimi: 'Vartijan tapahtumailmoitus', ikoni: ShieldAlert },
   { id: 'anastus', nimi: 'Anastusilmoitus', ikoni: ShoppingBag },
+  { id: 'tiedostot', nimi: 'Kohteen tiedostot', ikoni: FolderOpen },
 ];
 
 const lkm = (maara: number, yksikko: string, monikko: string) =>
