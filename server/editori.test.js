@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import jwt from 'jsonwebtoken';
 import {
   onEditoitava,
+  onEsikatseltava,
   wopiAvain,
   luoWopiToken,
   tarkistaWopiToken,
@@ -25,10 +26,24 @@ test('editoitavat päätteet: odt ja odp, kirjainkoosta riippumatta', () => {
   assert.equal(onEditoitava(null), false);
 });
 
+test('esikatseltavat: editoitavat sekä Word ja Excel, ei PDF:ää eikä kuvia', () => {
+  assert.equal(onEsikatseltava('Ohje.odt'), true);
+  assert.equal(onEsikatseltava('Sopimus.DOCX'), true);
+  assert.equal(onEsikatseltava('vanha.doc'), true);
+  assert.equal(onEsikatseltava('taulukko.xlsx'), true);
+  assert.equal(onEsikatseltava('ohje.pdf'), false);
+  assert.equal(onEsikatseltava('kuva.jpg'), false);
+});
+
 test('token kelpaa vain samalle tiedostolle', () => {
   const { token } = luoWopiToken({ username: 'matti', uploadId: 'a.odt' }, AVAIN);
-  assert.equal(tarkistaWopiToken(token, 'a.odt', AVAIN), 'matti');
+  assert.deepEqual(tarkistaWopiToken(token, 'a.odt', AVAIN), { username: 'matti', muokkaus: true });
   assert.equal(tarkistaWopiToken(token, 'b.odt', AVAIN), null);
+});
+
+test('esikatseluna avattu token ei ole muokkaustoken', () => {
+  const { token } = luoWopiToken({ username: 'matti', uploadId: 'a.docx', muokkaus: false }, AVAIN);
+  assert.deepEqual(tarkistaWopiToken(token, 'a.docx', AVAIN), { username: 'matti', muokkaus: false });
 });
 
 test('token ei kelpaa toisella avaimella eikä vanhentuneena', () => {

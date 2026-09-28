@@ -26,7 +26,7 @@ import { readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage, lu
 import { vahvistaTyontekijoidenNumerot, tunnuksenNumero } from './tunnistenumerot.js';
 import { isAllowedFile, saveUpload, getUploadPath, korvaaUpload, deleteUpload, collectGarbage } from './uploads.js';
 import {
-  EDITOITAVAT, onEditoitava, wopiAvain, luoWopiToken, tarkistaWopiToken, etsiTiedosto, saaKirjoittaa,
+  EDITOITAVAT, ESIKATSELTAVAT, onEditoitava, onEsikatseltava, wopiAvain, luoWopiToken, tarkistaWopiToken, etsiTiedosto, saaKirjoittaa,
   checkFileInfo, versio, jasennaDiscovery, editorinOsoite,
 } from './editori.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
@@ -7187,15 +7187,23 @@ function editorinKayttaja(username) {
 }
 
 app.get('/api/editori/tila', requireAuth, (req, res) => {
-  res.json({ ok: true, kaytossa: Boolean(EDITORI_URL), paatteet: [...EDITOITAVAT] });
+  res.json({
+    ok: true,
+    kaytossa: Boolean(EDITORI_URL),
+    muokattavat: [...EDITOITAVAT],
+    esikatseltavat: [...ESIKATSELTAVAT],
+  });
 });
 
+// tila = 'muokkaus' (oletus) tai 'katselu'. Katselu avaa editorin aina vain luku
+// -tilaan, myös käyttäjälle jolla on muokkausoikeus.
 app.post('/api/editori/avaa', requireAuth, async (req, res) => {
   if (!EDITORI_URL) return res.status(503).json({ ok: false, error: 'Dokumenttieditori ei ole käytössä.' });
   const uploadId = String(req.body?.uploadId || '');
+  const muokkaus = req.body?.tila !== 'katselu';
   const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || []);
   if (!loyto || !getUploadPath(uploadId)) return res.status(404).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
-  if (!onEditoitava(loyto.tietue.name)) {
+  if (muokkaus ? !onEditoitava(loyto.tietue.name) : !onEsikatseltava(loyto.tietue.name)) {
     return res.status(400).json({ ok: false, error: 'Tätä tiedostotyyppiä ei voi avata editorissa.' });
   }
   const k = editorinKayttaja(req.username);
@@ -7213,10 +7221,10 @@ app.post('/api/editori/avaa', requireAuth, async (req, res) => {
   const urlsrc = discovery[paate]?.urlsrc;
   if (!urlsrc) return res.status(503).json({ ok: false, error: 'Editori ei tue tätä tiedostotyyppiä.' });
 
-  const kirjoitus = saaKirjoittaa(k, loyto);
-  const { token, ttl } = luoWopiToken({ username: k.username, uploadId }, WOPI_AVAIN);
+  const kirjoitus = muokkaus && saaKirjoittaa(k, loyto);
+  const { token, ttl } = luoWopiToken({ username: k.username, uploadId, muokkaus }, WOPI_AVAIN);
   logAudit({
-    user: k.username, action: 'editori_avaus', recordId: loyto.tietue.id,
+    user: k.username, action: muokkaus ? 'editori_avaus' : 'editori_esikatselu', recordId: loyto.tietue.id,
     collection: loyto.lahde, eventId: loyto.kohdeId, kirjoitus,
   });
   res.json({
@@ -7234,14 +7242,17 @@ app.post('/api/editori/avaa', requireAuth, async (req, res) => {
 function wopiPortti(req, res, next) {
   if (!EDITORI_URL) return res.status(404).end();
   const uploadId = req.params.id;
-  const username = tarkistaWopiToken(req.query.access_token, uploadId, WOPI_AVAIN);
-  const k = username && editorinKayttaja(username);
+  const tokeni = tarkistaWopiToken(req.query.access_token, uploadId, WOPI_AVAIN);
+  const k = tokeni && editorinKayttaja(tokeni.username);
   if (!k) return res.status(401).end();
   const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || []);
   const polku = loyto && getUploadPath(uploadId);
-  if (!polku || !onEditoitava(loyto.tietue.name)) return res.status(404).end();
+  if (!polku || !onEsikatseltava(loyto.tietue.name)) return res.status(404).end();
   if (!saaLukeaLiitteen(k, uploadId)) return res.status(401).end();
-  req.wopi = { k, loyto, polku, kirjoitus: saaKirjoittaa(k, loyto) };
+  // Kirjoitus vaatii kolme asiaa: muokkaukseen avatun tokenin, muokattavan tiedostotyypin
+  // ja tuoreen muokkausoikeuden. Esikatseltu docx ei tallennu, vaikka Collabora yrittäisi.
+  const kirjoitus = tokeni.muokkaus && onEditoitava(loyto.tietue.name) && saaKirjoittaa(k, loyto);
+  req.wopi = { k, loyto, polku, kirjoitus };
   next();
 }
 

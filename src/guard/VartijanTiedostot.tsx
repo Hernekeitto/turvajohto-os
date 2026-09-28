@@ -4,9 +4,10 @@
 // (KohteenTiedostot). "Vain ylläpidolle" -tiedostot eivät tule vartijalle palvelimelta
 // lainkaan; ne suodatetaan tässä myös, jotta pääkäyttäjän esikatselu vartijanäkymässä
 // näyttää saman kuin vartija näkee.
-import { Download, FileText, FolderOpen, ShieldAlert } from 'lucide-react';
+import { Download, Eye, FileText, FolderOpen, ShieldAlert } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
+import { esikatselunOsoite, useEditorinTila } from '../shared/editori';
 import { muotoileTavut } from '../shared/muotoilu';
 import type { Kohde, KohteenTiedosto } from './tyypit';
 
@@ -23,6 +24,9 @@ export const vartijalleNakyvat = (tiedostot: KohteenTiedosto[], kohdeId: string)
 
 export const VartijanTiedostot = ({ kohde, tiedostot, onTakaisin }: Props) => {
   const lista = vartijalleNakyvat(tiedostot, kohde.id);
+  // Rivi avaa esikatselun kun tyyppi sen sallii (Word ja OpenDocument editoriin vain luku
+  // -tilaan, PDF ja kuvat selaimeen), muuten tiedosto ladataan.
+  const editori = useEditorinTila();
   return (
     <div className="max-w-3xl">
       <TakaisinLinkki onClick={onTakaisin}>Takaisin</TakaisinLinkki>
@@ -41,7 +45,7 @@ export const VartijanTiedostot = ({ kohde, tiedostot, onTakaisin }: Props) => {
           {lista.map((t) => (
             <li key={t.id}>
               <a
-                href={`/api/uploads/${t.uploadId}`}
+                href={esikatselunOsoite(editori, t.uploadId, t.name) || `/api/uploads/${t.uploadId}`}
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-3 px-4 py-3 hover:bg-sunken transition-colors"
@@ -60,7 +64,9 @@ export const VartijanTiedostot = ({ kohde, tiedostot, onTakaisin }: Props) => {
                     Henkilötietoa
                   </span>
                 )}
-                <Download size={16} className="text-ink-muted shrink-0" />
+                {esikatselunOsoite(editori, t.uploadId, t.name)
+                  ? <Eye size={16} className="text-ink-muted shrink-0" />
+                  : <Download size={16} className="text-ink-muted shrink-0" />}
               </a>
             </li>
           ))}

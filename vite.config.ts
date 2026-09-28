@@ -22,9 +22,10 @@ function palvelutyontekija(): Plugin {
     generateBundle(_asetukset, nippu) {
       const tiedostot = ['/index.html', ...Object.keys(nippu).map((nimi) => `/${nimi}`)]
         // jako.html, ilmoitus.html ja tietosuoja.html ovat julkisia sivuja jotka
-        // avataan linkistä tai QR-koodista, eivätkä ne kuulu sovellusrunkoon.
-        // Kuvakkeet kuuluvat.
-        .filter((polku) => !['jako.html', 'ilmoitus.html', 'tietosuoja.html']
+        // avataan linkistä tai QR-koodista, eivätkä ne kuulu sovellusrunkoon. Samoin
+        // editori.html (oma ikkunansa). Kuvakkeet kuuluvat. Sama lista: sw-pohja.js
+        // ERILLISET_SIVUT.
+        .filter((polku) => !['jako.html', 'ilmoitus.html', 'tietosuoja.html', 'editori.html']
           .some((sivu) => polku.endsWith(sivu)))
         .sort()
 

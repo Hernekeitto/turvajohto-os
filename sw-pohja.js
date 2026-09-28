@@ -64,6 +64,15 @@ self.addEventListener('message', (tapahtuma) => {
   if (tapahtuma.data === 'ota-kayttoon') self.skipWaiting();
 });
 
+// public/-hakemiston itsenäiset sivut ja niiden skriptit. Pidettävä synkassa
+// vite.config.ts:n suodattimen kanssa.
+const ERILLISET_SIVUT = new Set([
+  '/jako.html', '/jako.js',
+  '/ilmoitus.html', '/ilmoitus.js',
+  '/tietosuoja.html',
+  '/editori.html', '/editori.js',
+]);
+
 const onHtmlPyynto = (pyynto) =>
   pyynto.mode === 'navigate'
   || (pyynto.headers.get('accept') || '').includes('text/html');
@@ -105,6 +114,15 @@ self.addEventListener('fetch', (tapahtuma) => {
   if (osoite.origin !== self.location.origin) return;
   // Sääntö 1: API ei koskaan välimuistiin. Myös kanava (WebSocket) ohitetaan.
   if (osoite.pathname.startsWith('/api/')) return;
+  // Collabora (dokumenttieditori) hoitaa oman välimuistinsa, ja /cool/-poluilla kulkee
+  // dokumenttien sisältöä (lataus, tulostus) jota ei saa jäädä selaimen varastoon.
+  if (osoite.pathname.startsWith('/browser/') || osoite.pathname.startsWith('/cool/')) return;
+  // Erilliset sivut eivät kuulu sovellusrunkoon. Ilman tätä (korjattu 28.9.2026):
+  // (1) HTML-haara tallensi minkä tahansa avatun sivun rungoksi /index.html:ksi, jolloin
+  // jakolinkin tai editorin avaaminen korvasi sovelluksen offline-rungon sillä sivulla, ja
+  // (2) niiden skriptit (ilman tiivistettä nimessä) jäivät välimuistiin pysyvästi eivätkä
+  // päivittyneet koskaan.
+  if (ERILLISET_SIVUT.has(osoite.pathname)) return;
 
   if (onHtmlPyynto(pyynto)) {
     tapahtuma.respondWith(verkostaTaiVarastosta(pyynto));

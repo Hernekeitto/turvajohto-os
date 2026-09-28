@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Dokumenttieditori – Turvajohto OS</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        color: #1e293b; background: #f8fafc;
+      }
+      iframe { display: block; width: 100%; height: 100%; border: 0; }
+      .viesti {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        padding: 1rem; text-align: center; font-size: .9375rem;
+      }
+      .viesti p { max-width: 28rem; margin: 0; }
+      .viesti a { color: #4f46e5; }
+      .virhe { color: #e11d48; }
+    </style>
+  </head>
+  <body>
+    <!-- Sisältö rakennetaan editori.js:ssä. Skripti on erillisessä tiedostossa, koska
+         tuotannon CSP (script-src 'self') ei salli sivun sisäistä skriptiä. -->
+    <div class="viesti" id="viesti"><p>Avataan dokumenttia…</p></div>
+    <script src="/editori.js"></script>
+  </body>
+</html>

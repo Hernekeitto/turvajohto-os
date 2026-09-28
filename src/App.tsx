@@ -28,7 +28,7 @@ import { TallennetutRaportit } from './event/nakymat/TallennetutRaportit';
 import { ArkistoidutTapahtumat, ArkistoidunTapahtumanTiedot } from './event/nakymat/ArkistoidutTapahtumat';
 import { HataviestiLoki } from './event/nakymat/HataviestiLoki';
 import { TyontekijaLista } from './shared/komponentit/TyontekijaLista';
-import { AvaaEditorissa } from './shared/komponentit/Dokumenttieditori';
+import { AvaaEditorissa, Esikatsele, UusiTekstitiedosto } from './shared/komponentit/Dokumenttieditori';
 import { TyontekijanMuokkaus } from './shared/komponentit/TyontekijanMuokkaus';
 import { KayttajaLista } from './event/nakymat/KayttajaHallinta';
 import { riskipisteet, riskitaso, RISKISAVYT, RISKITASOT } from './event/riskiarvio';
@@ -2063,8 +2063,12 @@ export default function App() {
     setNewFolderName('');
   };
 
-  const lataaTiedosto = async (tiedosto?: File) => {
-    if (!tiedosto) return;
+  // Palauttaa latauksen id:n onnistuessa, jotta juuri luotu dokumentti voidaan avata
+  // editoriin (UusiTekstitiedosto). Tiedostolista tallentuu palvelimelle useEffectillä
+  // hetken viiveellä — editorisivu yrittää siksi avausta uudelleen jos tiedostoa ei
+  // vielä löydy (public/editori.js).
+  const lataaTiedosto = async (tiedosto?: File): Promise<string | undefined> => {
+    if (!tiedosto) return undefined;
     setTiedostoUploading(true);
     try {
       const formData = new FormData();
@@ -2073,7 +2077,7 @@ export default function App() {
       const data = await res.json();
       if (!res.ok || !data.ok) {
         alert(data.error || 'Tiedoston lähetys epäonnistui.');
-        return;
+        return undefined;
       }
       setEventFiles((prev) => [
         ...prev,
@@ -2090,8 +2094,10 @@ export default function App() {
           createdAt: new Date().toISOString(),
         },
       ]);
+      return data.id as string;
     } catch {
       alert('Tiedoston lähetys epäonnistui (yhteysvirhe).');
+      return undefined;
     } finally {
       setTiedostoUploading(false);
       if (tiedostoInputRef.current) tiedostoInputRef.current.value = '';
@@ -3945,6 +3951,7 @@ export default function App() {
                 </button>
               </div>
             )}
+            {saaMuokata && <UusiTekstitiedosto onLuo={lataaTiedosto} />}
 
             {/* Sisältö */}
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
@@ -3992,6 +3999,7 @@ export default function App() {
                           )}
                         </div>
                         <div className="flex gap-2 items-center shrink-0">
+                          {kohde.type !== 'folder' && <Esikatsele uploadId={kohde.uploadId} nimi={kohde.name} />}
                           {kohde.type !== 'folder' && <AvaaEditorissa uploadId={kohde.uploadId} nimi={kohde.name} />}
                           {saaMuokata && (
                             <>

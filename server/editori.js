@@ -24,6 +24,16 @@ export function onEditoitava(nimi) {
   return EDITOITAVAT.has(path.extname(String(nimi || '')).toLowerCase());
 }
 
+// Tiedostotyypit jotka voi esikatsella editorissa vain luku -tilassa. Nämä ovat ne
+// sallituista latauksista (uploads.js) joita selain ei osaa näyttää itse: Word- ja
+// Excel-tiedostot sekä OpenDocument. PDF, kuvat ja teksti avautuvat selaimeen suoraan
+// eikä niitä kannata kierrättää Collaboran kautta.
+export const ESIKATSELTAVAT = new Set([...EDITOITAVAT, '.doc', '.docx', '.xls', '.xlsx']);
+
+export function onEsikatseltava(nimi) {
+  return ESIKATSELTAVAT.has(path.extname(String(nimi || '')).toLowerCase());
+}
+
 // WOPI-tokenin kesto. Collabora käyttää samaa tokenia koko editointi-istunnon ajan,
 // myös jokaisessa tallennuksessa, joten liian lyhyt kesto katkaisisi pitkän työn
 // tallennusvirheeseen. Kesto EI ole oikeuksien raja: jokainen WOPI-kutsu tarkistaa
@@ -40,10 +50,16 @@ export function wopiAvain(jwtSecret) {
   return crypto.createHmac('sha256', String(jwtSecret)).update('turvajohto-wopi-v1').digest();
 }
 
-export function luoWopiToken({ username, uploadId }, avain, nyt = Date.now()) {
+// muokkaus = avattiinko editori muokkaamaan vai esikatselemaan. Tieto kulkee tokenissa,
+// koska Collabora kutsuu WOPI-reittejä ilman muuta kontekstia: esikatseluna avattu
+// istunto ei saa tallentaa, vaikka käyttäjällä olisi muokkausoikeus.
+export function luoWopiToken({ username, uploadId, muokkaus = true }, avain, nyt = Date.now()) {
   const vanhenee = nyt + TOKEN_KESTO_MS;
   const token = jwt.sign(
-    { sub: username, tiedosto: uploadId, aud: 'wopi', iat: Math.floor(nyt / 1000), exp: Math.floor(vanhenee / 1000) },
+    {
+      sub: username, tiedosto: uploadId, muokkaus: muokkaus === true, aud: 'wopi',
+      iat: Math.floor(nyt / 1000), exp: Math.floor(vanhenee / 1000),
+    },
     avain,
     { algorithm: 'HS256', noTimestamp: true }
   );
@@ -51,14 +67,14 @@ export function luoWopiToken({ username, uploadId }, avain, nyt = Date.now()) {
   return { token, ttl: vanhenee };
 }
 
-// Palauttaa tokenin käyttäjätunnuksen, tai null. Token on sidottu yhteen tiedostoon:
-// saman tokenin käyttö toisen tiedoston osoitteessa hylätään.
+// Palauttaa { username, muokkaus } tai null. Token on sidottu yhteen tiedostoon: saman
+// tokenin käyttö toisen tiedoston osoitteessa hylätään.
 export function tarkistaWopiToken(token, uploadId, avain) {
   if (!token || !uploadId) return null;
   try {
     const p = jwt.verify(String(token), avain, { algorithms: ['HS256'], audience: 'wopi' });
     if (p.tiedosto !== uploadId || typeof p.sub !== 'string') return null;
-    return p.sub;
+    return { username: p.sub, muokkaus: p.muokkaus === true };
   } catch {
     return null;
   }

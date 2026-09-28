@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { muotoileTavut } from '../shared/muotoilu';
 import { JakoDialogi, jakolinkinOsoite } from '../shared/komponentit/JakoDialogi';
-import { AvaaEditorissa } from '../shared/komponentit/Dokumenttieditori';
+import { AvaaEditorissa, Esikatsele, UusiTekstitiedosto } from '../shared/komponentit/Dokumenttieditori';
 import type { KohteenTiedosto } from './tyypit';
 
 // Kohteen tiedostot: toimeksiantosopimus, pohjapiirros, vartio-ohje ja vastaavat.
@@ -95,6 +95,21 @@ export const KohteenTiedostot = ({
       // epäonnistui — muuten change-tapahtuma ei laukea toista kertaa.
       if (inputRef.current) inputRef.current.value = '';
     }
+  };
+
+  // Uusi tyhjä dokumentti: lisätään samaa reittiä kuin ladattu tiedosto (onLisaa), ja
+  // editoria varten tarvittava latauksen id luetaan palvelimelta tallennuksen jälkeen.
+  // onLisaa ei palauta tietuetta, joten uusi tunnistetaan siitä ettei sen id ollut
+  // listassa ennen lisäystä. onLisaa odottaa palvelimen hyväksynnän, joten tietue on
+  // haettaessa varmasti jo tallessa.
+  const luoDokumentti = async (tiedosto: File) => {
+    const ennen = new Set(tiedostot.map((t) => t.id));
+    await onLisaa(tiedosto);
+    const r = await fetch('/api/data/guardFiles', { credentials: 'include' });
+    const res = await r.json().catch(() => null);
+    const uusi = (Array.isArray(res?.data) ? (res.data as KohteenTiedosto[]) : [])
+      .find((t) => !ennen.has(t.id) && t.name === tiedosto.name);
+    return uusi?.uploadId;
   };
 
   const muuta = async (id: string, muutos: Partial<KohteenTiedosto>) => {
@@ -230,16 +245,16 @@ export const KohteenTiedostot = ({
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <Esikatsele uploadId={t.uploadId} nimi={t.name} />
+                  <AvaaEditorissa uploadId={t.uploadId} nimi={t.name} />
                   <a
                     href={`/api/uploads/${t.uploadId}`}
-                    target="_blank"
-                    rel="noreferrer"
+                    download={t.name}
                     className="text-ink-body hover:text-accent transition-colors p-1"
-                    title="Avaa tiedosto"
+                    title="Lataa tiedosto"
                   >
                     <Download size={16} />
                   </a>
-                  <AvaaEditorissa uploadId={t.uploadId} nimi={t.name} />
                   {saaMuokata && (
                     <>
                       <button
@@ -353,15 +368,18 @@ export const KohteenTiedostot = ({
             className="hidden"
             onChange={(e) => valitse(e.target.files?.[0])}
           />
-          <button
-            type="button"
-            disabled={lataa}
-            onClick={() => inputRef.current?.click()}
-            className="inline-flex items-center gap-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors disabled:opacity-60"
-          >
-            <Upload size={16} />
-            {lataa ? 'Lähetetään…' : 'Lisää tiedosto'}
-          </button>
+          <div className="flex flex-wrap items-start gap-2">
+            <button
+              type="button"
+              disabled={lataa}
+              onClick={() => inputRef.current?.click()}
+              className="inline-flex items-center gap-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors disabled:opacity-60"
+            >
+              <Upload size={16} />
+              {lataa ? 'Lähetetään…' : 'Lisää tiedosto'}
+            </button>
+            <UusiTekstitiedosto onLuo={luoDokumentti} />
+          </div>
           <p className="text-xs text-ink-subtle mt-2">
             Enintään 15 Mt. Tuetut tiedostotyypit: kuvat, PDF ja tavalliset asiakirjamuodot.
           </p>

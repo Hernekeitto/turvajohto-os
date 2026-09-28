@@ -4,7 +4,7 @@ import {
   Check, X, Eye, EyeOff, ShieldAlert, Route,
 } from 'lucide-react';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
-import { AvaaEditorissa } from '../shared/komponentit/Dokumenttieditori';
+import { AvaaEditorissa, Esikatsele } from '../shared/komponentit/Dokumenttieditori';
 import { Kartta } from '../shared/komponentit/Kartta';
 import { Vyohykekirjaukset, type AlueKirjaus } from '../shared/komponentit/Vyohykekirjaukset';
 import { tila as kirjauksenTila } from '../shared/kirjaukset';
@@ -207,6 +207,7 @@ export const KohteenTiedot = ({ kohde, tiedostot, suoritukset, raportit, kierrok
                   {typeof t.size === 'number' && (
                     <span className="text-xs text-ink-subtle shrink-0">{muotoileTavut(t.size)}</span>
                   )}
+                  <Esikatsele uploadId={t.uploadId} nimi={t.name} />
                   <AvaaEditorissa uploadId={t.uploadId} nimi={t.name} />
                   <Download size={13} className="text-ink-subtle shrink-0" />
                 </li>
