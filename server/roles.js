@@ -80,10 +80,17 @@ const KATSELU_NAKYVA = [
 // Tiedotteet, ohjepankki ja skenaariot (28.9.2026): Vartijanäkymän toiminnot. Katseluoikeus
 // riittää niiden käyttöön — tiedotteen kuittaus ja skenaarion läpivienti ovat lukemista,
 // uusien laatiminen vaatii muokkausoikeuden eikä kuulu vartijalle.
+//
+// Vartija-tason oikeuslista vastaa TÄSMÄLLEEN Vartijanäkymää (käyttäjän päätös 28.9.2026).
+// Kohteen tiedot (guard_site_info) ja Raportointi-otsikko (guard_reporting) siirtyivät
+// esimiehelle: Vartijanäkymä ei käytä kumpaakaan, eikä kumpikaan avannut vartijalle mitään
+// mitä muut solmut eivät jo avaa.
 const VARTIJA_KATSELU = [
-  'guard_sites', 'guard_site_info', 'guard_reporting', 'guard_site_assets', 'guard_ptt',
+  'guard_sites', 'guard_site_assets', 'guard_ptt',
   'guard_broadcast', 'guard_guides', 'guard_plays',
 ];
+// Vartija-tasolta kerran poistettavat solmut (oikeusversio 3).
+const POISTETTU_VARTIJALTA = ['guard_site_info', 'guard_reporting'];
 // Työvuoron tekeminen: tehtävien kuittaus ja omien raporttien kirjaaminen. Tapahtumailmoitus
 // on mukana, koska sen kirjaa se joka toimenpiteen teki — jos kirjaus kuuluu jossain
 // organisaatiossa vain esimiehelle, oikeus otetaan pois Sovellusasetuksista.
@@ -96,23 +103,33 @@ const VARTIJA_MUOKKAUS = ['guard_tasks', 'guard_patrols', 'guard_report_action',
 // guard_report_theft) jäivät tuotannosta puuttumaan. Versiomigraatio lisää puuttuvat
 // solmut KERRAN: sen jälkeen pääkäyttäjän asetuksista tekemät rajaukset pysyvät, eikä
 // palvelimen uudelleenkäynnistys palauta niitä.
-const GUARD_OIKEUSVERSIO = 2;
+//
+// Versiot: 2 = Vartijanäkymän toimintojen solmut lisätään, 3 = Vartija-tasolta poistetaan
+// solmut joita Vartijanäkymä ei käytä (POISTETTU_VARTIJALTA).
+const GUARD_OIKEUSVERSIO = 3;
 
 export function paivitaGuardTaso(taso) {
   if (![ROLE_GUARD, ROLE_GUARD_LEAD].includes(taso?.id)) return taso;
-  if ((taso.oikeusversio || 1) >= GUARD_OIKEUSVERSIO) return taso;
-  const nykyiset = taso.permissions?.[DEFAULT_BUCKET] || {};
-  const lisattavat = {
-    ...bucketista(VARTIJA_KATSELU, { view: true, edit: false }),
-    ...bucketista(VARTIJA_MUOKKAUS, { view: true, edit: true }),
-  };
-  // Vain puuttuvat solmut: olemassa olevaan merkintään ei kosketa, jottei esimiehen
-  // guard_sites-muokkausoikeus tai pääkäyttäjän tekemä rajaus muutu.
-  const lisaa = Object.fromEntries(Object.entries(lisattavat).filter(([id]) => !(id in nykyiset)));
+  const versio = taso.oikeusversio || 1;
+  if (versio >= GUARD_OIKEUSVERSIO) return taso;
+  let bucket = { ...(taso.permissions?.[DEFAULT_BUCKET] || {}) };
+
+  if (versio < 2) {
+    const lisattavat = {
+      ...bucketista(VARTIJA_KATSELU, { view: true, edit: false }),
+      ...bucketista(VARTIJA_MUOKKAUS, { view: true, edit: true }),
+    };
+    // Vain puuttuvat solmut: olemassa olevaan merkintään ei kosketa, jottei esimiehen
+    // guard_sites-muokkausoikeus tai pääkäyttäjän tekemä rajaus muutu.
+    for (const [id, arvo] of Object.entries(lisattavat)) if (!(id in bucket)) bucket[id] = arvo;
+  }
+  if (versio < 3 && taso.id === ROLE_GUARD) {
+    bucket = Object.fromEntries(Object.entries(bucket).filter(([id]) => !POISTETTU_VARTIJALTA.includes(id)));
+  }
   return {
     ...taso,
     oikeusversio: GUARD_OIKEUSVERSIO,
-    permissions: { ...taso.permissions, [DEFAULT_BUCKET]: { ...nykyiset, ...lisaa } },
+    permissions: { ...taso.permissions, [DEFAULT_BUCKET]: bucket },
   };
 }
 // Se mitä Vartioesimiehellä on Vartijan lisäksi: kohteen hallinta. Yksi solmu kattaa
@@ -133,7 +150,9 @@ const ESIMIES_MUOKKAUS = ['guard_sites'];
 // Vartija ei saa solmua lainkaan: pankki on kohteiden yli menevä rekisteri (GLOBAL_NODES),
 // joten sen näkeminen kertoisi mitä kalustoa on missäkin kohteessa ja kenen vartijan
 // hallussa — myös niissä kohteissa joihin vartijan eventAccess ei ulotu.
-const ESIMIES_KATSELU = ['guard_assets'];
+// Kohteen tiedot ja Raportointi-otsikko ovat esimiehen katseluoikeuksia (siirretty
+// Vartija-tasolta 28.9.2026): kohteen koosteen lukeminen on ylläpidon työtä.
+const ESIMIES_KATSELU = ['guard_assets', 'guard_site_info', 'guard_reporting'];
 
 function bucketista(nodeIds, { view, edit }) {
   return Object.fromEntries(nodeIds.map((id) => [id, { view, edit }]));
