@@ -6,6 +6,8 @@ import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import QRCode from 'qrcode';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   findUser,
   listUsers,
@@ -22,7 +24,11 @@ import {
 } from './db.js';
 import { readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage, lueKorkeinTunniste, kirjaaKorkeinTunniste } from './store.js';
 import { vahvistaTyontekijoidenNumerot, tunnuksenNumero } from './tunnistenumerot.js';
-import { isAllowedFile, saveUpload, getUploadPath, deleteUpload, collectGarbage } from './uploads.js';
+import { isAllowedFile, saveUpload, getUploadPath, korvaaUpload, deleteUpload, collectGarbage } from './uploads.js';
+import {
+  EDITOITAVAT, onEditoitava, wopiAvain, luoWopiToken, tarkistaWopiToken, etsiTiedosto, saaKirjoittaa,
+  checkFileInfo, versio, jasennaDiscovery, editorinOsoite,
+} from './editori.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
 import { istunnonKesto, SOVELLUS_VUOROKAUDET } from './istunto.js';
 import {
@@ -7088,9 +7094,11 @@ app.post('/api/uploads', requireAuth, uploadLimiter, (req, res) => {
   });
 });
 
-app.get('/api/uploads/:id', requireAuth, (req, res) => {
-  const filePath = getUploadPath(req.params.id);
-  if (!filePath) return res.status(404).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
+// Saako käyttäjä ladata liitteen. Oma funktionsa, koska sama raja koskee sekä latausta
+// (alla) että dokumenttieditoria (WOPI-reitit): editori ei saa avata mitään mitä
+// käyttäjä ei saisi myös ladata. k = { username, role, permissions, eventAccess,
+// tuotteet } — samat kentät kuin requireAuthin req:ssä.
+function saaLukeaLiitteen(k, uploadId) {
   // Liite itsessään ei tiedä oikeuksia — omistava raportti (ja sen typeId) etsitään
   // reports-kokoelmasta ja tarkistetaan sen lukuoikeus, ks. permissions.js.
   const reportsArr = readCollection('reports') || [];
@@ -7100,28 +7108,186 @@ app.get('/api/uploads/:id', requireAuth, (req, res) => {
   const filesArr = readCollection('eventFiles') || [];
   const sharesArr = readCollection('fileShares') || [];
   const tapahtumaPuoli = canReadAttachment(
-    req.role, req.permissions, req.eventAccess, req.params.id,
-    reportsArr, eventsArr, filesArr, sharesArr, req.username
+    k.role, k.permissions, k.eventAccess, uploadId,
+    reportsArr, eventsArr, filesArr, sharesArr, k.username
   );
+  if (tapahtumaPuoli) return true;
+  // Nimellä jaettu kohteen tiedosto avautuu ilman kohteen oikeuksia ja GUARD-tuotetta.
+  if (jaettuKohteenTiedostoMinulle(k.username, uploadId, readCollection('guardFiles') || [], sharesArr)) {
+    return true;
+  }
   // GUARD-liitteet tarkistetaan erikseen, ja vain jos käyttäjällä on pääsy sille puolelle:
   // pelkkä liitteen id ei saa avata vartiointipuolen tiedostoa tunnukselle joka ei pääse
   // sinne lainkaan. Sama portti kuin /api/data-reiteillä (tuoteEstaa).
-  // Nimellä jaettu kohteen tiedosto avautuu ilman kohteen oikeuksia ja GUARD-tuotetta.
-  const jaettuMinulle = !tapahtumaPuoli && jaettuKohteenTiedostoMinulle(
-    req.username, req.params.id, readCollection('guardFiles') || [], sharesArr
-  );
-  const guardPuoli = !tapahtumaPuoli && !jaettuMinulle
-    && (req.tuotteet || []).includes('guard')
+  return (k.tuotteet || []).includes('guard')
     && canReadGuardAttachment(
-      req.role, req.permissions, req.eventAccess, req.params.id,
+      k.role, k.permissions, k.eventAccess, uploadId,
       readCollection('guardFiles') || [], readCollection('guardReports') || [],
       readCollection('guardSites') || [], readCollection('keyTypes') || [],
       readCollection('guardTaskRuns') || [], readCollection('patrolRuns') || []
     );
-  if (!tapahtumaPuoli && !guardPuoli && !jaettuMinulle) {
+}
+
+app.get('/api/uploads/:id', requireAuth, (req, res) => {
+  const filePath = getUploadPath(req.params.id);
+  if (!filePath) return res.status(404).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
+  const k = {
+    username: req.username, role: req.role, permissions: req.permissions,
+    eventAccess: req.eventAccess, tuotteet: req.tuotteet,
+  };
+  if (!saaLukeaLiitteen(k, req.params.id)) {
     return res.status(403).json({ ok: false, error: 'Ei oikeuksia tämän liitteen lataamiseen.' });
   }
   res.sendFile(filePath);
+});
+
+// ====================== DOKUMENTTIEDITORI (Collabora Online) ======================
+//
+// Collabora ajetaan omana konttinaan samassa domainissa (nginx ohjaa /browser-,
+// /hosting- ja /cool-polut sille). Selain avaa editorin iframeen, ja Collabora-palvelin
+// hakee ja tallentaa tiedoston näiden WOPI-reittien kautta. Puhdas logiikka ja
+// perustelut: editori.js.
+//
+// EDITORI_URL = sivuston julkinen origin (esim. https://turvajohto-os.fi). Se on sekä
+// osoite josta Collabora kutsuu WOPI-reittejä että iframen isäntäsivun origin. Ilman
+// sitä editori on pois käytöstä, eikä Muokkaa-painiketta näytetä.
+// COLLABORA_SISAINEN_URL = mistä tämä palvelin hakee discoveryn (Collaboran kontti
+// localhostissa), oletus http://127.0.0.1:9980.
+const EDITORI_URL = (process.env.EDITORI_URL || '').replace(/\/+$/, '');
+const COLLABORA_SISAINEN_URL = (process.env.COLLABORA_SISAINEN_URL || 'http://127.0.0.1:9980').replace(/\/+$/, '');
+const WOPI_AVAIN = wopiAvain(JWT_SECRET);
+
+// Discovery kertoo editorin osoitteen, ja osoitteessa on Collaboran versiotiiviste
+// (/browser/<tiiviste>/cool.html). Välimuisti tunnin: Collaboran päivitys vaihtaa
+// tiivisteen, ja vanha osoite lakkaisi toimimasta.
+let discoveryVali = { haettu: 0, data: null };
+async function haeDiscovery() {
+  if (discoveryVali.data && Date.now() - discoveryVali.haettu < 60 * 60 * 1000) return discoveryVali.data;
+  const vastaus = await fetch(`${COLLABORA_SISAINEN_URL}/hosting/discovery`, { signal: AbortSignal.timeout(5000) });
+  if (!vastaus.ok) throw new Error(`discovery ${vastaus.status}`);
+  const data = jasennaDiscovery(await vastaus.text());
+  discoveryVali = { haettu: Date.now(), data };
+  return data;
+}
+
+// Käyttäjän oikeudet WOPI-kutsuun luetaan JOKA KERTA tuoreesta tietueesta, samoin kuin
+// requireAuth tekee. Token todistaa vain kuka avasi editorin; poistettu tunnus,
+// pakkovaihdossa oleva tunnus tai poistettu oikeus katkaisee pääsyn heti.
+function editorinKayttaja(username) {
+  const user = findUser(username);
+  if (!user || user.must_change_password) return null;
+  return {
+    username: user.username,
+    nimimerkki: user.nickname,
+    role: user.role,
+    permissions: rolePermissions(user.roleId),
+    eventAccess: user.eventAccess,
+    tuotteet: paaseeTuotteisiin(user),
+  };
+}
+
+app.get('/api/editori/tila', requireAuth, (req, res) => {
+  res.json({ ok: true, kaytossa: Boolean(EDITORI_URL), paatteet: [...EDITOITAVAT] });
+});
+
+app.post('/api/editori/avaa', requireAuth, async (req, res) => {
+  if (!EDITORI_URL) return res.status(503).json({ ok: false, error: 'Dokumenttieditori ei ole käytössä.' });
+  const uploadId = String(req.body?.uploadId || '');
+  const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || []);
+  if (!loyto || !getUploadPath(uploadId)) return res.status(404).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
+  if (!onEditoitava(loyto.tietue.name)) {
+    return res.status(400).json({ ok: false, error: 'Tätä tiedostotyyppiä ei voi avata editorissa.' });
+  }
+  const k = editorinKayttaja(req.username);
+  if (!k || !saaLukeaLiitteen(k, uploadId)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeuksia tähän tiedostoon.' });
+  }
+  let discovery;
+  try {
+    discovery = await haeDiscovery();
+  } catch (err) {
+    console.error('Collaboran discovery epäonnistui:', err.message);
+    return res.status(503).json({ ok: false, error: 'Dokumenttieditori ei vastaa. Yritä hetken päästä uudelleen.' });
+  }
+  const paate = path.extname(loyto.tietue.name).slice(1).toLowerCase();
+  const urlsrc = discovery[paate]?.urlsrc;
+  if (!urlsrc) return res.status(503).json({ ok: false, error: 'Editori ei tue tätä tiedostotyyppiä.' });
+
+  const kirjoitus = saaKirjoittaa(k, loyto);
+  const { token, ttl } = luoWopiToken({ username: k.username, uploadId }, WOPI_AVAIN);
+  logAudit({
+    user: k.username, action: 'editori_avaus', recordId: loyto.tietue.id,
+    collection: loyto.lahde, eventId: loyto.kohdeId, kirjoitus,
+  });
+  res.json({
+    ok: true,
+    url: editorinOsoite(urlsrc, `${EDITORI_URL}/api/wopi/files/${encodeURIComponent(uploadId)}`),
+    token,
+    ttl,
+    kirjoitus,
+    nimi: loyto.tietue.name,
+  });
+});
+
+// WOPI-kutsujen yhteinen portti. Virhekoodit WOPI-määrittelyn mukaan: 401 = token ei
+// kelpaa, 404 = tiedostoa ei ole. Vastauksessa ei kerrota kumpi tarkistus kaatui.
+function wopiPortti(req, res, next) {
+  if (!EDITORI_URL) return res.status(404).end();
+  const uploadId = req.params.id;
+  const username = tarkistaWopiToken(req.query.access_token, uploadId, WOPI_AVAIN);
+  const k = username && editorinKayttaja(username);
+  if (!k) return res.status(401).end();
+  const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || []);
+  const polku = loyto && getUploadPath(uploadId);
+  if (!polku || !onEditoitava(loyto.tietue.name)) return res.status(404).end();
+  if (!saaLukeaLiitteen(k, uploadId)) return res.status(401).end();
+  req.wopi = { k, loyto, polku, kirjoitus: saaKirjoittaa(k, loyto) };
+  next();
+}
+
+// CheckFileInfo
+app.get('/api/wopi/files/:id', wopiPortti, (req, res) => {
+  const { k, loyto, polku, kirjoitus } = req.wopi;
+  res.json(checkFileInfo({
+    loyto, stat: fs.statSync(polku), kayttaja: k, nimimerkki: k.nimimerkki,
+    kirjoitus, avain: WOPI_AVAIN, origin: EDITORI_URL,
+  }));
+});
+
+// GetFile
+app.get('/api/wopi/files/:id/contents', wopiPortti, (req, res) => {
+  res.sendFile(req.wopi.polku);
+});
+
+// PutFile. Runko on dokumentti sellaisenaan (ei JSON eikä multipart). Raja on väljempi
+// kuin latauksessa (15 Mt), koska kuvia sisältävä esitys kasvaa editoidessa — mutta
+// sama kuin nginxin /api/-lohkon client_max_body_size (20m). Suurempi raja tässä ei
+// auttaisi, koska nginx torjuisi pyynnön ennen Nodea.
+app.post('/api/wopi/files/:id/contents', wopiPortti, express.raw({ type: () => true, limit: '20mb' }), (req, res) => {
+  const { k, loyto, polku, kirjoitus } = req.wopi;
+  if (!kirjoitus) return res.status(401).end();
+  if (!Buffer.isBuffer(req.body)) return res.status(400).end();
+  // Ristiriitatarkistus: Collabora kertoo minkä version päälle se luulee tallentavansa.
+  // Jos tiedosto on muuttunut sillä välin, Collabora kysyy käyttäjältä mitä tehdään.
+  const odotettu = req.get('X-COOL-WOPI-Timestamp');
+  if (odotettu && odotettu !== versio(fs.statSync(polku))) {
+    return res.status(409).json({ COOLStatusCode: 1010 });
+  }
+  korvaaUpload(req.params.id, req.body);
+  const stat = fs.statSync(polku);
+
+  // Tietueen koko ja muokkaustieto ajan tasalle. Luetaan kokoelma uudelleen juuri ennen
+  // kirjoitusta, jottei vanha kopio pyyhi välissä tulleita muutoksia.
+  const tiedostot = readCollection(loyto.lahde) || [];
+  const muokattu = new Date().toISOString();
+  writeCollection(loyto.lahde, tiedostot.map((t) => (t?.id === loyto.tietue.id
+    ? { ...t, size: stat.size, muokattu, muokkaaja: k.username }
+    : t)));
+  logAudit({
+    user: k.username, action: 'editori_tallennus', recordId: loyto.tietue.id,
+    collection: loyto.lahde, eventId: loyto.kohdeId, koko: stat.size,
+  });
+  res.json({ LastModifiedTime: versio(stat) });
 });
 
 // ====================== HÄTÄTEKSTIVIESTIT (BulkSMS) ======================

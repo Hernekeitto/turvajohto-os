@@ -11,7 +11,9 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 // lomakkeilta voi "Ota kuva" / "Liitä tiedosto" -painikkeilla tallentaa palvelimelle.
 const ALLOWED_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif',
-  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt'
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt',
+  // OpenDocument-teksti ja -esitys: avautuvat dokumenttieditoriin (editori.js).
+  '.odt', '.odp'
 ]);
 
 export function isAllowedFile(originalName) {
@@ -32,6 +34,23 @@ export function getUploadPath(id) {
   if (!safe) return null;
   const p = path.join(UPLOAD_DIR, safe);
   return fs.existsSync(p) ? p : null;
+}
+
+// Olemassa olevan tiedoston sisällön korvaus (dokumenttieditorin tallennus). Kirjoitetaan
+// ensin väliaikaistiedostoon ja nimetään päälle, jotta kesken katkennut kirjoitus (levy
+// täynnä, prosessi kaatuu) ei jätä puolikasta dokumenttia: rename on saman
+// tiedostojärjestelmän sisällä atominen, joten lukija näkee aina joko vanhan tai uuden.
+export function korvaaUpload(id, buffer) {
+  const p = getUploadPath(id);
+  if (!p) throw new Error('Tiedostoa ei löytynyt.');
+  const valiaikainen = `${p}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(valiaikainen, buffer);
+    fs.renameSync(valiaikainen, p);
+  } catch (err) {
+    try { fs.unlinkSync(valiaikainen); } catch { /* ei jäänyt */ }
+    throw err;
+  }
 }
 
 // --- Liitetiedostojen poisto ---

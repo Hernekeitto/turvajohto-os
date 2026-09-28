@@ -28,6 +28,7 @@ import { TallennetutRaportit } from './event/nakymat/TallennetutRaportit';
 import { ArkistoidutTapahtumat, ArkistoidunTapahtumanTiedot } from './event/nakymat/ArkistoidutTapahtumat';
 import { HataviestiLoki } from './event/nakymat/HataviestiLoki';
 import { TyontekijaLista } from './shared/komponentit/TyontekijaLista';
+import { AvaaEditorissa } from './shared/komponentit/Dokumenttieditori';
 import { TyontekijanMuokkaus } from './shared/komponentit/TyontekijanMuokkaus';
 import { KayttajaLista } from './event/nakymat/KayttajaHallinta';
 import { riskipisteet, riskitaso, RISKISAVYT, RISKITASOT } from './event/riskiarvio';
@@ -3991,6 +3992,7 @@ export default function App() {
                           )}
                         </div>
                         <div className="flex gap-2 items-center shrink-0">
+                          {kohde.type !== 'folder' && <AvaaEditorissa uploadId={kohde.uploadId} nimi={kohde.name} />}
                           {saaMuokata && (
                             <>
                               <button

@@ -157,7 +157,7 @@ const REPORT_ATTACHMENT_NODES = [
 
 // Legacy-data (tallennettu ennen eventId-kenttää) lasketaan kuuluvaksi FestivaaliXään —
 // sama oletus kuin src/App.tsx:n currentEventCheckedIn/currentEventReports-suodatuksissa.
-const legacyEventId = (item) => item?.eventId || 'fesx';
+export const legacyEventId = (item) => item?.eventId || 'fesx';
 
 // Kokoelmakohtaiset oikeussäännöt.
 //

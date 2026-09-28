@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { muotoileTavut } from '../shared/muotoilu';
 import { JakoDialogi, jakolinkinOsoite } from '../shared/komponentit/JakoDialogi';
+import { AvaaEditorissa } from '../shared/komponentit/Dokumenttieditori';
 import type { KohteenTiedosto } from './tyypit';
 
 // Kohteen tiedostot: toimeksiantosopimus, pohjapiirros, vartio-ohje ja vastaavat.
@@ -238,6 +239,7 @@ export const KohteenTiedostot = ({
                   >
                     <Download size={16} />
                   </a>
+                  <AvaaEditorissa uploadId={t.uploadId} nimi={t.name} />
                   {saaMuokata && (
                     <>
                       <button

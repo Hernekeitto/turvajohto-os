@@ -6,6 +6,7 @@
 import { FileText, Layers, Paperclip } from 'lucide-react';
 
 import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
+import { AvaaEditorissa } from '../../shared/komponentit/Dokumenttieditori';
 import { findEventName } from '../tapahtumat';
 import type { JaettuKohde, Tapahtuma } from '../tyypit';
 
@@ -70,7 +71,8 @@ export const MinulleJaetut = ({ jaot, lataa, onTakaisin, tapahtumat }: Props) =>
                 <div className="border border-slate-100 rounded-lg divide-y divide-slate-100">
                   {jako.files.map((f) => (
                     <div key={f.id} className="p-3 flex items-center justify-between gap-3">
-                      <span className="text-sm text-slate-700 truncate">{f.name}</span>
+                      <span className="text-sm text-slate-700 truncate flex-1">{f.name}</span>
+                      <AvaaEditorissa uploadId={f.uploadId} nimi={f.name} />
                       <a
                         href={`/api/uploads/${f.uploadId}`}
                         target="_blank"
