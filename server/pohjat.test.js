@@ -330,3 +330,29 @@ test('koodin vaihtaminen ei kasvata versiota, pisteen lisääminen kasvattaa', (
   const lisatty = tarkistaPisteet([{ id: vanhat[0].id, nimi: 'Pääovi' }, { nimi: 'Takaovi' }], vanhat).pisteet;
   assert.equal(sisaltoMuuttui({ pisteet: vanhat }, { pisteet: lisatty }), true);
 });
+
+test('skenaarion valintakohta ja haarat tarkistetaan', () => {
+  const ok = tarkistaKohdat([
+    { teksti: 'Onko tulipalo?', tyyppi: 'valinta', vaihtoehdot: [{ id: 'on', teksti: 'On' }, { id: 'ei', teksti: 'Ei' }] },
+    { teksti: 'Evakuoi', haara: 'on' },
+    { teksti: 'Raportoi' },
+  ], 'play');
+  assert.equal(ok.ok, true);
+  assert.equal(ok.kohdat[0].tyyppi, 'valinta');
+  assert.equal(ok.kohdat[1].haara, 'on');
+  assert.equal(ok.kohdat[2].haara, undefined);
+
+  // Haara ennen valintaa tai tuntematon haara torjutaan: rakenne ei saa muodostaa kehää.
+  assert.equal(tarkistaKohdat([
+    { teksti: 'Evakuoi', haara: 'on' },
+    { teksti: 'Onko?', tyyppi: 'valinta', vaihtoehdot: [{ id: 'on', teksti: 'On' }, { id: 'ei', teksti: 'Ei' }] },
+  ], 'play').ok, false);
+  // Yksi vaihtoehto ei ole valinta.
+  assert.equal(tarkistaKohdat([
+    { teksti: 'Onko?', tyyppi: 'valinta', vaihtoehdot: [{ id: 'on', teksti: 'On' }] },
+  ], 'play').ok, false);
+  // Muissa lajeissa haaroja ei tallenneta.
+  const runsheet = tarkistaKohdat([{ teksti: 'Ovet auki', haara: 'on', tyyppi: 'valinta' }], 'runsheet');
+  assert.equal(runsheet.kohdat[0].haara, undefined);
+  assert.equal(runsheet.kohdat[0].tyyppi, undefined);
+});

@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 
 import {
   aloitaSuoritus, kuittaaKohta, paataSuoritus, kuittaamattomat, kriittisetKuittaamatta,
-  onPaattynyt, kooste,
+  onPaattynyt, kooste, aktiivisetKohdat, valitsePolku, lisaaKommentti,
 } from './suoritus.js';
 
 const POHJA = {
@@ -154,4 +154,79 @@ test('kooste kertoo edistymisen', () => {
   s = kuittaaKohta({ suoritus: s, kohtaId: 'k1', tekija: 'a', nyt: T0 }).suoritus;
   assert.equal(kooste(s).kuitattu, 1);
   assert.equal(kooste(s).valmisAste, 33);
+});
+
+// --- Haarautuva skenaario ja tilanneloki (28.9.2026) -------------------------------
+
+const PALO = {
+  id: 'palo',
+  kind: 'play',
+  nimi: 'Palohälytys',
+  versio: 1,
+  kohdat: [
+    { id: 'a', teksti: 'Mene paloilmoitinkeskukselle', jarjestys: 0, kriittinen: true },
+    {
+      id: 'v', teksti: 'Onko kohteessa tulipalo?', jarjestys: 1, kriittinen: true, tyyppi: 'valinta',
+      vaihtoehdot: [{ id: 'on', teksti: 'On tulipalo' }, { id: 'ei', teksti: 'Ei tulipaloa' }],
+    },
+    { id: 'on1', teksti: 'Evakuoi', jarjestys: 2, kriittinen: true, haara: 'on' },
+    { id: 'ei1', teksti: 'Selvitä aiheuttaja', jarjestys: 3, kriittinen: true, haara: 'ei' },
+    { id: 'loppu', teksti: 'Raportoi HÄLKEen', jarjestys: 4, kriittinen: false },
+  ],
+};
+
+const aloitaPalo = () => aloitaSuoritus({ pohja: PALO, ownerId: 'k1', tekija: 'v1', id: 'p', nyt: T0 }).suoritus;
+
+test('valitsematon polku ei ole aktiivinen eikä vaadi kuittausta', () => {
+  let s = aloitaPalo();
+  assert.deepEqual(aktiivisetKohdat(s.kohdat).map((k) => k.kohtaId), ['a', 'v', 'loppu']);
+  assert.equal(kuittaaKohta({ suoritus: s, kohtaId: 'on1', tekija: 'v1' }).ok, false);
+  assert.equal(kuittaaKohta({ suoritus: s, kohtaId: 'v', tekija: 'v1' }).ok, false);
+
+  s = valitsePolku({ suoritus: s, kohtaId: 'v', vaihtoehtoId: 'ei', tekija: 'v1', nyt: T0 }).suoritus;
+  assert.deepEqual(aktiivisetKohdat(s.kohdat).map((k) => k.kohtaId), ['a', 'v', 'ei1', 'loppu']);
+  s = kuittaaKohta({ suoritus: s, kohtaId: 'a', tekija: 'v1', nyt: T0 }).suoritus;
+  s = kuittaaKohta({ suoritus: s, kohtaId: 'ei1', tekija: 'v1', nyt: T0 }).suoritus;
+  // "Evakuoi" on kriittinen mutta toisella polulla: ei estä sulkemista.
+  assert.equal(kriittisetKuittaamatta(s).length, 0);
+  assert.equal(paataSuoritus({ suoritus: s, tila: 'valmis', nyt: T0 }).ok, true);
+});
+
+test('valitsematta jätetty kriittinen valinta estää sulkemisen', () => {
+  let s = aloitaPalo();
+  s = kuittaaKohta({ suoritus: s, kohtaId: 'a', tekija: 'v1', nyt: T0 }).suoritus;
+  assert.equal(paataSuoritus({ suoritus: s, tila: 'valmis', nyt: T0 }).ok, false);
+});
+
+test('polun vaihto kirjataan lokiin eikä pyyhi vanhan polun kuittauksia', () => {
+  let s = aloitaPalo();
+  s = valitsePolku({ suoritus: s, kohtaId: 'v', vaihtoehtoId: 'ei', tekija: 'v1', nyt: T0 }).suoritus;
+  s = kuittaaKohta({ suoritus: s, kohtaId: 'ei1', tekija: 'v1', nyt: T0 }).suoritus;
+  const vaihto = valitsePolku({ suoritus: s, kohtaId: 'v', vaihtoehtoId: 'on', tekija: 'v2', nyt: T0 });
+  assert.equal(vaihto.ok, true);
+  s = vaihto.suoritus;
+  assert.equal(s.kohdat.find((k) => k.kohtaId === 'ei1').kuittaaja, 'v1');
+  assert.deepEqual(aktiivisetKohdat(s.kohdat).map((k) => k.kohtaId), ['a', 'v', 'on1', 'loppu']);
+  assert.equal(s.kommentit.length, 2);
+  assert.equal(s.kommentit[1].jarjestelma, true);
+  assert.match(s.kommentit[1].teksti, /Ei tulipaloa.*On tulipalo/);
+  // Sama valinta uudelleen on virhe, jonosta toistona ei.
+  assert.equal(valitsePolku({ suoritus: s, kohtaId: 'v', vaihtoehtoId: 'on' }).ok, false);
+  assert.equal(valitsePolku({ suoritus: s, kohtaId: 'v', vaihtoehtoId: 'on', toisto: true }).duplikaatti, true);
+});
+
+test('tilanneloki: merkintä lisätään, tyhjää ei hyväksytä, päättyneeseen ei kirjoiteta', () => {
+  let s = aloitaPalo();
+  assert.equal(lisaaKommentti({ suoritus: s, teksti: '   ', tekija: 'v1' }).ok, false);
+  s = lisaaKommentti({ suoritus: s, teksti: 'Savua 2. kerroksessa', tekija: 'halke', nyt: T0 }).suoritus;
+  assert.equal(s.kommentit[0].teksti, 'Savua 2. kerroksessa');
+  assert.equal(s.kommentit[0].tekija, 'halke');
+  s = paataSuoritus({ suoritus: s, tila: 'keskeytetty', syy: 'Palokunta otti johdon', nyt: T0 }).suoritus;
+  assert.equal(lisaaKommentti({ suoritus: s, teksti: 'Myöhästynyt', tekija: 'v1' }).ok, false);
+});
+
+test('HÄLKE-seuranta kopioituu pohjasta, puuttuva tarkoittaa kyllä', () => {
+  assert.equal(aloitaPalo().halke, true);
+  const ilman = aloitaSuoritus({ pohja: { ...PALO, halke: false }, ownerId: 'k1', id: 'x', nyt: T0 }).suoritus;
+  assert.equal(ilman.halke, false);
 });

@@ -22,7 +22,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Siren, Timer, MapPin, Phone, Check, Users, Route, KeyRound, Megaphone,
   TriangleAlert, Activity, Volume2, VolumeX, Building2, ShieldCheck, MessageSquare,
-  History, Wifi, WifiOff, BellRing, Search, X, ShieldAlert, Square, Radio, RefreshCw,
+  History, Wifi, WifiOff, GitBranch, BellRing, Search, X, ShieldAlert, Square, Radio, RefreshCw,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
@@ -58,6 +58,8 @@ import { PttYhteenveto } from './halke/PttYhteenveto';
 import { KohdeKeskustelu } from './halke/KohdeKeskustelu';
 import { KeskuksenTehtavat } from './KeskuksenTehtavat';
 import { LAJIN_NIMI, type Halytystehtava } from './halytystehtavat';
+import { SkenaariotKaynnissa, kaynnissaHalkessa } from './halke/SkenaariotKaynnissa';
+import type { Suoritus } from '../shared/pohjat';
 
 // Osioiden lukuoikeudet. Hälytyskeskus ei myönnä yhtään uutta lukuoikeutta: se näyttää
 // saman datan jonka käyttäjä näkee muutenkin, kootusti. Lipuilla osio osaa sanoa eron
@@ -73,6 +75,8 @@ type Oikeudet = {
   // näyttäisi hiljaiselta vuorolta silloinkin kun se on oikeuden puute — ja juuri se on
   // tämän näkymän ykkössääntö.
   raportit: boolean;
+  // Käynnissä olevat skenaariot (guard_plays). Vain pohjat joihin on valittu HÄLKE-seuranta.
+  skenaariot: boolean;
 };
 
 type Props = {
@@ -115,6 +119,9 @@ type Props = {
   // kohderivi ei ole painike, eikä käyttöliittymä lupaa siirtymää jota ei tapahdu.
   onAvaaKohde: ((kohde: Kohde) => void) | null;
   onTakaisin: () => void;
+  // Skenaarion tilannelokiin kirjoitettu merkintä: GuardApp päivittää tietueen heti eikä
+  // odota kanavaa.
+  onSkenaarioMuuttui: (suoritus: Suoritus) => void;
 };
 
 // Ajastin joka on tämän lähempänä määräaikaansa nostetaan varoitusväreihin. Kaksi
@@ -382,7 +389,7 @@ const VarmistusMerkki = ({ seuraava }: { seuraava: number }) => {
 export const Halytyskeskus = ({
   kohteet, lahteet, kayttaja, saaKuitata, oikeudet, yhteys, paivitetty, sijaintiseuranta,
   tehtavat, saaMuokataTehtavia, onTehtavaMuutos, sijainnit, paneeli, taulu, vartijaIkkuna,
-  onMuutos, onVirkista, onAvaaKohde, onTakaisin,
+  onMuutos, onVirkista, onAvaaKohde, onTakaisin, onSkenaarioMuuttui,
 }: Props) => {
   const [nyt, setNyt] = useState(Date.now());
   const [virhe, setVirhe] = useState<string | null>(null);
@@ -1583,6 +1590,22 @@ export const Halytyskeskus = ({
               );
             })}
           </div>
+        )}
+      </Osio>
+
+      {/* --- Skenaariot käynnissä (28.9.2026) ------------------------------------
+          Vain pohjat joihin ylläpitäjä on valinnut HÄLKE-seurannan. Päivystäjä näkee
+          saman tilannekuvan kuin kentän vartijat ja kirjoittaa samaan tilannelokiin. */}
+      <Osio
+        otsikko="Skenaariot käynnissä"
+        ikoni={GitBranch}
+        maara={oikeudet.skenaariot ? kaynnissaHalkessa(lahteet.skenaariot).length : null}
+        huomio={oikeudet.skenaariot && kaynnissaHalkessa(lahteet.skenaariot).length > 0 ? 'käynnissä' : null}
+      >
+        {!oikeudet.skenaariot ? (
+          <EiOikeutta mita="skenaarioihin" />
+        ) : (
+          <SkenaariotKaynnissa skenaariot={lahteet.skenaariot} kohteet={kohteet} onMuuttui={onSkenaarioMuuttui} />
         )}
       </Osio>
       </>)}

@@ -108,7 +108,10 @@ export const onTunnettuLaji = (kind) => Object.prototype.hasOwnProperty.call(LAJ
 // Pohjan ja tarkistuspisteen tekstikenttien rajat. Sama peruste kuin julkisella
 // ilmoituksella: ilman rajaa yksi pyyntö voi kirjoittaa megatavuja levylle, ja kokoelma
 // kirjoitetaan kokonaan joka kerta.
-export const RAJAT = { nimi: 120, kuvaus: 2000, pisteita: 100, teksti: 200, kohtia: 200, vastuu: 80 };
+export const RAJAT = {
+  nimi: 120, kuvaus: 2000, pisteita: 100, teksti: 200, kohtia: 200, vastuu: 80,
+  vaihtoehtoja: 6, vaihtoehto: 80,
+};
 
 // Tarkistuspisteen token. Sama pituus kuin jakolinkin ja julisteen tokenilla, mutta eri
 // uhkakuva: tämä on tarrassa seinässä eikä salaisuus. Tokenin tehtävä on sitoa skannaus
@@ -324,10 +327,14 @@ export function sisaltoMuuttui(vanha, uusi) {
     }
     const kohdat = Array.isArray(pohja?.kohdat) ? pohja.kohdat : [];
     return JSON.stringify(
-      kohdat.map((k) => [k.id, k.teksti, k.kuvaus, k.jarjestys, k.aika, k.vastuu, k.kriittinen])
+      kohdat.map((k) => [
+        k.id, k.teksti, k.kuvaus, k.jarjestys, k.aika, k.vastuu, k.kriittinen,
+        k.tyyppi, k.haara, (k.vaihtoehdot || []).map((v) => [v.id, v.teksti]),
+      ])
     );
   };
-  return olennainen(vanha) !== olennainen(uusi);
+  // HÄLKE-seuranta muuttaa sitä mitä tilanteesta tapahtuu, joten sekin kasvattaa versiota.
+  return olennainen(vanha) !== olennainen(uusi) || (vanha?.halke !== false) !== (uusi?.halke !== false);
 }
 
 // Kellonaika run sheetin kohdalle. Hyväksyy sekä 14.00 että 14:00 ja normalisoi pisteeksi;
@@ -364,6 +371,8 @@ export function tarkistaKohdat(syote, kind) {
   }
 
   const nahdyt = new Set();
+  // Skenaarion valintakohtien vaihtoehtojen id:t siinä järjestyksessä kuin ne tulevat vastaan.
+  const vaihtoehdot = new Set();
   const kohdat = [];
   for (const [i, k] of syote.entries()) {
     const teksti = siivoa(k?.teksti, RAJAT.teksti);
@@ -390,6 +399,36 @@ export function tarkistaKohdat(syote, kind) {
       // jokaista tilannetta ("jos uhri on tajuton"), ja niiden pakottaminen tekisi
       // sulkemisesta valheellisen.
       kohta.kriittinen = k?.kriittinen === true;
+
+      // Haarautuva skenaario (ks. suoritus.js: aktiivisetKohdat). Haaran on viitattava
+      // vaihtoehtoon joka on määritelty AIEMMIN listassa: silloin rakenne ei voi muodostaa
+      // kehää, ja suorituksessa valinta näkyy aina ennen omia jatkokohtiaan.
+      const haara = String(k?.haara ?? '');
+      if (haara) {
+        if (!vaihtoehdot.has(haara)) {
+          return { ok: false, error: `Kohta "${teksti}" kuuluu vaihtoehtoon jota ei ole sitä ennen. Tallenna uudelleen.` };
+        }
+        kohta.haara = haara;
+      }
+      if (k?.tyyppi === 'valinta') {
+        const syotetyt = Array.isArray(k?.vaihtoehdot) ? k.vaihtoehdot : [];
+        if (syotetyt.length < 2 || syotetyt.length > RAJAT.vaihtoehtoja) {
+          return { ok: false, error: `Valinnalla "${teksti}" on oltava 2–${RAJAT.vaihtoehtoja} vaihtoehtoa.` };
+        }
+        const omat = [];
+        for (const v of syotetyt) {
+          const vTeksti = siivoa(v?.teksti, RAJAT.vaihtoehto);
+          if (!vTeksti) return { ok: false, error: `Valinnan "${teksti}" vaihtoehdolta puuttuu teksti.` };
+          const vId = String(v?.id ?? '') || crypto.randomUUID();
+          if (vaihtoehdot.has(vId) || nahdyt.has(vId)) {
+            return { ok: false, error: 'Sama vaihtoehto esiintyy kahdesti.' };
+          }
+          vaihtoehdot.add(vId);
+          omat.push({ id: vId, teksti: vTeksti });
+        }
+        kohta.tyyppi = 'valinta';
+        kohta.vaihtoehdot = omat;
+      }
     }
     kohdat.push(kohta);
   }

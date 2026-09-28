@@ -15,7 +15,7 @@ import { onAvoin, type Halytys } from '../shared/halytykset.ts';
 import type { Avain, Poikkeama } from '../shared/kalusto';
 import type { KalustoTietue } from './kalusto/tyypit';
 import { onKuitannut, onVoimassa, type Tiedote } from '../shared/tiedotteet.ts';
-import type { Pohja, Suoritus } from '../shared/pohjat';
+import { naytetaanHalkessa, type Pohja, type Suoritus } from '../shared/pohjat.ts';
 import type { Jalkiraportti } from '../shared/jalkiraportit';
 import type { GuardRaportti, Kierros, TehtavaSuoritus } from './tyypit';
 // Ajonaikainen tuonti, siksi .ts-pääte (vrt. pelkät tyyppituonnit yllä): node --test
@@ -121,7 +121,10 @@ export function kohteenTilanne(
   const lauenneet = halytykset.filter((h) => h.tila === 'lauennut');
   const ajastimet = halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa');
   const kierroksetKesken = lahteet.kierrokset.filter((k) => k.siteId === kohdeId && k.tila === 'kesken');
-  const skenaariotKesken = lahteet.skenaariot.filter((s) => s.ownerId === kohdeId && s.tila === 'kesken');
+  // Hälytyskeskuksen kohderivi: vain skenaariot joiden pohja on merkitty HÄLKE-seurantaan.
+  const skenaariotKesken = lahteet.skenaariot.filter(
+    (s) => s.ownerId === kohdeId && s.tila === 'kesken' && naytetaanHalkessa(s)
+  );
   const kadonneet = lahteet.avaimet.filter((a) => a.ownerId === kohdeId && a.tila === 'kadonnut');
   const avoimet = lahteet.poikkeamat.filter((p) => p.ownerId === kohdeId && p.tila === 'avoin');
   const tiedotteet = lahteet.tiedotteet.filter((t) => t.ownerId === kohdeId && onVoimassa(t));

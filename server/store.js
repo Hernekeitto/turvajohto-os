@@ -342,7 +342,7 @@ const ENCRYPTED_FIELDS = {
   //
   // Pohjan (templates) kohdat EIVÄT ole salattuja: ne ovat menettelyohjeita
   // ("sulje portit"), eivät tietoa kenestäkään.
-  templateRuns: ['kuvaus', 'huomiot', 'keskeytysSyy', 'kohdat[].huomio'],
+  templateRuns: ['kuvaus', 'huomiot', 'keskeytysSyy', 'kohdat[].huomio', 'kommentit[].teksti'],
   // Tiedotteen runko on vapaata tekstiä jonka laatija kirjoittaa kentälle, ja siinä
   // mainitaan usein ihmisiä nimeltä ("Virtanen jää portille 2"). Otsikko jää
   // selväkieliseksi: se on listan rivi eikä sisältö.

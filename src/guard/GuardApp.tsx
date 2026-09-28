@@ -717,7 +717,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     paivitaHalytykset();
     haeRaportit();
     haeTehtavasuoritukset();
-  }, [paivitaHalytykset, haeRaportit, haeTehtavasuoritukset]);
+    // Skenaariot mukaan (28.9.2026): HÄLKE seuraa niiden tilannelokia.
+    paivitaPohjaSuoritukset();
+  }, [paivitaHalytykset, haeRaportit, haeTehtavasuoritukset, paivitaPohjaSuoritukset]);
 
   // Hälytystehtävät. Oma reittinsä eikä kokoelmahaku, koska kohdennus (vuoro, piirivuoro,
   // etäisyys) lasketaan palvelimella pyyntökohtaisesti — kokoelmahaku rajaisi vartijan
@@ -2289,6 +2291,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             tiedotteet: saaNahdaTiedotteet,
             sijainnit: saaNahdaSijainnit,
             raportit: saaNahdaRaportit,
+            skenaariot: saaNahdaSkenaariot,
           }}
           sijainnit={sijainnit}
           paneeli={HALKE_OSOITE.paneeli}
@@ -2309,6 +2312,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             ? (kohde) => { setOsio('kohteet'); setValittuKohde(kohde); }
             : null}
           onTakaisin={paluuEtusivulle}
+          onSkenaarioMuuttui={paivitaPohjaSuoritus}
         />
       ) : raporttiKohde?.tyyppi === 'guard_theft' ? (
         <Anastusilmoitus
@@ -2469,6 +2473,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           raportit={raportit}
           suoritukset={suoritukset}
           kierrokset={kierrokset}
+          skenaariot={pohjaSuoritukset}
           onTakaisin={() => setRaportitKohde(null)}
         />
       ) : kohteenTehtavatKohde ? (

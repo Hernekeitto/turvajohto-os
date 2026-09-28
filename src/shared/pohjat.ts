@@ -22,7 +22,15 @@ export type Kohta = {
   aika?: string;
   // Vain skenaariossa: kriittistä kohtaa ei voi ohittaa suoritusta suljettaessa.
   kriittinen?: boolean;
+  // Vain skenaariossa: valintakohta ("Onko tulipalo?") ja sen vaihtoehdot. Kohdan `haara`
+  // on sen vaihtoehdon id jonka alle kohta kuuluu; ilman haaraa kohta on pääpolulla.
+  // Ks. server/suoritus.js: aktiivisetKohdat.
+  tyyppi?: 'valinta';
+  vaihtoehdot?: Vaihtoehto[];
+  haara?: string;
 };
+
+export type Vaihtoehto = { id: string; teksti: string };
 
 export type Pohja = {
   id: string;
@@ -37,6 +45,8 @@ export type Pohja = {
   luoja?: string;
   muokattu?: string;
   arkistoitu?: string | null;
+  // Vain skenaariossa: näkyykö käynnistetty tilanne HÄLKE:ssä. Puuttuva = kyllä.
+  halke?: boolean;
 };
 
 export type SuoritusKohta = {
@@ -49,6 +59,20 @@ export type SuoritusKohta = {
   kuitattu: string | null;
   kuittaaja: string | null;
   huomio: string;
+  tyyppi?: 'valinta';
+  vaihtoehdot?: Vaihtoehto[];
+  haara?: string;
+  // Valintakohdan valittu vaihtoehto.
+  valittu?: string | null;
+};
+
+// Tilannelokin merkintä. `jarjestelma` = palvelimen kirjaama polun valinta.
+export type Kommentti = {
+  id: string;
+  aika: string;
+  tekija: string | null;
+  teksti: string;
+  jarjestelma?: boolean;
 };
 
 export type Suoritus = {
@@ -67,6 +91,8 @@ export type Suoritus = {
   keskeytysSyy: string;
   huomiot: string;
   kohdat: SuoritusKohta[];
+  kommentit?: Kommentti[];
+  halke?: boolean;
 };
 
 // Lajien käyttöliittymätekstit. Palvelin tuntee samat lajit (server/pohjat.js: LAJIT);
@@ -120,9 +146,76 @@ export const kellonaika = (iso: string | null) => {
     : `${String(d.getHours()).padStart(2, '0')}.${String(d.getMinutes()).padStart(2, '0')}`;
 };
 
-export const kuittaamatta = (s: Suoritus) => (s.kohdat || []).filter((k) => !k.kuitattu).length;
+// Haarautuvan skenaarion aktiiviset kohdat: pääpolku ja valittujen vaihtoehtojen kohdat.
+// Sama sääntö kuin palvelimella (server/suoritus.js: aktiivisetKohdat); valitsematta jääneen
+// polun kohtia ei näytetä, lasketa eikä vaadita.
+type Haarautuva = { haara?: string; tyyppi?: 'valinta'; vaihtoehdot?: Vaihtoehto[]; valittu?: string | null };
+
+export function aktiivisetKohdat<K extends Haarautuva>(kohdat: K[] | undefined): K[] {
+  const lista = kohdat || [];
+  const valintaVaihtoehdolle = new Map<string, K>();
+  for (const k of lista) {
+    if (k.tyyppi !== 'valinta') continue;
+    for (const v of k.vaihtoehdot || []) valintaVaihtoehdolle.set(v.id, k);
+  }
+  const aktiivinen = (kohta: K, syvyys: number): boolean => {
+    if (!kohta.haara) return true;
+    const valinta = valintaVaihtoehdolle.get(kohta.haara);
+    if (!valinta || syvyys > 50) return false;
+    return valinta.valittu === kohta.haara && aktiivinen(valinta, syvyys + 1);
+  };
+  return lista.filter((k) => aktiivinen(k, 0));
+}
+
+export const aktiivisia = (s: Suoritus) => aktiivisetKohdat(s.kohdat).length;
+export const kuittaamatta = (s: Suoritus) => aktiivisetKohdat(s.kohdat).filter((k) => !k.kuitattu).length;
 export const kriittisetKuittaamatta = (s: Suoritus) =>
-  (s.kohdat || []).filter((k) => k.kriittinen && !k.kuitattu).length;
+  aktiivisetKohdat(s.kohdat).filter((k) => k.kriittinen && !k.kuitattu).length;
+
+// Näkyykö suoritus HÄLKE:ssä. Ennen asetusta käynnistetyt näkyvät.
+export const naytetaanHalkessa = (s: Suoritus) => s.halke !== false;
+
+// Tilannekuvan valitut polut: "Onko tulipalo?" → "On tulipalo".
+export const valitutPolut = (s: Suoritus) => aktiivisetKohdat(s.kohdat)
+  .filter((k) => k.tyyppi === 'valinta' && k.valittu)
+  .map((k) => ({
+    kysymys: k.teksti,
+    vastaus: (k.vaihtoehdot || []).find((v) => v.id === k.valittu)?.teksti || '',
+  }));
+
+// Tilanneloki aikajärjestyksessä: aloitus, kuittaukset, kommentit ja päättyminen. Polun
+// valinnat tulevat kommentteina, koska palvelin kirjaa jokaisen valinnan ja vaihdon sinne.
+export type LokiRivi = {
+  id: string;
+  aika: string;
+  tekija: string | null;
+  teksti: string;
+  laji: 'tila' | 'kuittaus' | 'kommentti' | 'valinta';
+};
+
+export function tilanneloki(s: Suoritus): LokiRivi[] {
+  const rivit: LokiRivi[] = [{
+    id: `${s.id}:alku`, aika: s.alkoi, tekija: s.tekija, laji: 'tila',
+    teksti: s.kuvaus ? `Skenaario käynnistetty: ${s.kuvaus}` : 'Skenaario käynnistetty',
+  }];
+  for (const k of s.kohdat || []) {
+    if (!k.kuitattu || k.tyyppi === 'valinta') continue;
+    rivit.push({
+      id: `${s.id}:${k.kohtaId}`, aika: k.kuitattu, tekija: k.kuittaaja, laji: 'kuittaus',
+      teksti: k.huomio ? `${k.teksti} – ${k.huomio}` : k.teksti,
+    });
+  }
+  for (const c of s.kommentit || []) {
+    rivit.push({ id: c.id, aika: c.aika, tekija: c.tekija, teksti: c.teksti, laji: c.jarjestelma ? 'valinta' : 'kommentti' });
+  }
+  if (s.paattyi) {
+    rivit.push({
+      id: `${s.id}:loppu`, aika: s.paattyi, tekija: null, laji: 'tila',
+      teksti: s.tila === 'keskeytetty' ? `Keskeytetty: ${s.keskeytysSyy}` : 'Merkitty hoidetuksi',
+    });
+  }
+  return rivit.sort((a, b) => String(a.aika).localeCompare(String(b.aika)));
+}
 
 export type Vastaus = {
   ok: boolean;
@@ -130,6 +223,8 @@ export type Vastaus = {
   pohja?: Pohja;
   suoritus?: Suoritus;
   duplikaatti?: boolean;
+  // Käynnistys liitti käyttäjän samasta pohjasta jo käynnissä olevaan suoritukseen.
+  liittyi?: boolean;
 };
 
 // Yksi kutsupaikka kaikille pohjareiteille. Verkkovirhe palautetaan samassa muodossa kuin
@@ -153,10 +248,12 @@ async function kutsu(polku: string, metodi: 'POST' | 'PUT' | 'DELETE', runko?: u
 }
 
 export const luoPohja = (runko: {
-  kind: PohjaLaji; ownerId: string; nimi: string; kuvaus?: string; kohdat: Partial<Kohta>[];
+  kind: PohjaLaji; ownerId: string; nimi: string; kuvaus?: string; kohdat: Partial<Kohta>[]; halke?: boolean;
 }) => kutsu('/api/pohjat', 'POST', runko);
 
-export const paivitaPohja = (id: string, runko: { nimi?: string; kuvaus?: string; kohdat?: Partial<Kohta>[] }) =>
+export const paivitaPohja = (id: string, runko: {
+  nimi?: string; kuvaus?: string; kohdat?: Partial<Kohta>[]; halke?: boolean;
+}) =>
   kutsu(`/api/pohjat/${encodeURIComponent(id)}`, 'PUT', runko);
 
 export const arkistoiPohja = (id: string) => kutsu(`/api/pohjat/${encodeURIComponent(id)}`, 'DELETE');
@@ -167,7 +264,13 @@ export const aloitaSuoritus = (templateId: string, kuvaus?: string) =>
 export const kuittaaKohta = (id: string, kohtaId: string, huomio?: string) =>
   kutsu(`/api/suoritus/${encodeURIComponent(id)}/kohta`, 'POST', { kohtaId, huomio });
 
-export const paataSuoritus = (id: string, runko: { tila: 'valmis' | 'keskeytetty'; syy?: string; huomiot?: string }) =>
+export const valitsePolku = (id: string, kohtaId: string, vaihtoehtoId: string) =>
+  kutsu(`/api/suoritus/${encodeURIComponent(id)}/valinta`, 'POST', { kohtaId, vaihtoehtoId });
+
+export const lisaaKommentti = (id: string, teksti: string) =>
+  kutsu(`/api/suoritus/${encodeURIComponent(id)}/kommentti`, 'POST', { teksti });
+
+export const paataSuoritus =(id: string, runko: { tila: 'valmis' | 'keskeytetty'; syy?: string; huomiot?: string }) =>
   kutsu(`/api/suoritus/${encodeURIComponent(id)}/paata`, 'POST', runko);
 
 async function hae<T>(polku: string): Promise<T[] | null> {

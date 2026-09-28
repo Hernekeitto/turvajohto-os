@@ -128,7 +128,9 @@ import {
   tarkistaKohdat, lajinSolmu, LAJIT,
 } from './pohjat.js';
 import { aloitaKierros, kuittaaPiste, paataKierros, etaisyysMetreina, OLETUS_SIETORAJA_M } from './kierros.js';
-import { aloitaSuoritus, kuittaaKohta, paataSuoritus } from './suoritus.js';
+import {
+  aloitaSuoritus, kuittaaKohta, paataSuoritus, valitsePolku, lisaaKommentti,
+} from './suoritus.js';
 import { luoTiedote, kuittaa as kuittaaTiedote, peru as peruTiedote, onVoimassa, kuittaamatta } from './broadcast.js';
 import {
   luoAvain, luovuta, palauta, merkitseKadonneeksi, merkitseLoytyneeksi, poistaKaytosta,
@@ -4531,7 +4533,7 @@ const puhdasKesto = (arvo) => {
 app.post('/api/pohjat', requireAuth, (req, res) => {
   const {
     kind, ownerId, nimi, kuvaus, pisteet, kohdat, sijaintiPakotus, sietorajaM, suoritusaika,
-    suunniteltuKestoMin,
+    suunniteltuKestoMin, halke,
   } = req.body || {};
   if (!onTunnettuLaji(kind)) {
     return res.status(400).json({ ok: false, error: 'Tuntematon pohjalaji.' });
@@ -4593,6 +4595,8 @@ app.post('/api/pohjat', requireAuth, (req, res) => {
     const kohtaTulos = tarkistaKohdat(kohdat, kind);
     if (!kohtaTulos.ok) return res.status(400).json({ ok: false, error: kohtaTulos.error });
     pohja.kohdat = kohtaTulos.kohdat;
+    // Skenaarion HÄLKE-seuranta: näkyykö käynnistetty tilanne päivystäjälle. Oletus kyllä.
+    if (kind === 'play') pohja.halke = halke !== false;
   }
 
   writeCollection('templates', [...(readCollection('templates') || []), pohja]);
@@ -4646,6 +4650,9 @@ app.put('/api/pohjat/:id', requireAuth, (req, res) => {
     const kohtaTulos = tarkistaKohdat(req.body?.kohdat ?? vanha.kohdat, vanha.kind);
     if (!kohtaTulos.ok) return res.status(400).json({ ok: false, error: kohtaTulos.error });
     paivitetty.kohdat = kohtaTulos.kohdat;
+    if (vanha.kind === 'play') {
+      paivitetty.halke = req.body?.halke === undefined ? vanha.halke !== false : req.body.halke !== false;
+    }
   }
 
   // Versio kasvaa vain jos sisältö muuttui: nimen korjaaminen ei tee pohjasta toista
@@ -4706,6 +4713,15 @@ app.post('/api/suoritus', requireAuth, (req, res) => {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta käyttää tätä pohjaa.' });
   }
 
+  // Yksi tilanne, yksi suoritus (28.9.2026). Jos samasta skenaariosta on jo käynnissä
+  // suoritus samassa kohteessa, käynnistäjä liitetään siihen eikä luoda rinnakkaista:
+  // kaksi vartijaa samassa palohälytyksessä kuittaa samaa listaa ja näkee toistensa
+  // merkinnät. Run sheetille sama sääntö, koska päivän ajolista on yksi.
+  const kaynnissa = (readCollection('templateRuns') || []).find(
+    (s) => s.templateId === pohja.id && s.ownerId === pohja.ownerId && s.tila === 'kesken'
+  );
+  if (kaynnissa) return res.json({ ok: true, suoritus: kaynnissa, liittyi: true });
+
   const tulos = aloitaSuoritus({
     pohja,
     ownerId: pohja.ownerId,
@@ -4761,6 +4777,50 @@ app.post('/api/suoritus/:id/kohta', requireAuth, (req, res) => {
   writeCollection('templateRuns', suoritukset.map((s) => (s.id === suoritus.id ? tulos.suoritus : s)));
   logAudit({
     user: req.username, action: 'run_step', collection: 'templateRuns',
+    recordId: suoritus.id, eventId: suoritus.ownerId,
+  });
+  kerroSuorituksesta(tulos.suoritus, 'update');
+  res.json({ ok: true, suoritus: tulos.suoritus });
+});
+
+// Polun valinta haarautuvassa skenaariossa ("onko tulipalo?").
+app.post('/api/suoritus/:id/valinta', requireAuth, (req, res) => {
+  const haku = haeSuoritus(req, res);
+  if (!haku) return;
+  const { suoritukset, suoritus } = haku;
+
+  const tulos = valitsePolku({
+    suoritus,
+    kohtaId: req.body?.kohtaId,
+    vaihtoehtoId: req.body?.vaihtoehtoId,
+    tekija: req.username,
+    toisto: req.body?.toisto === true,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  if (tulos.duplikaatti) return res.json({ ok: true, suoritus: tulos.suoritus, duplikaatti: true });
+
+  writeCollection('templateRuns', suoritukset.map((s) => (s.id === suoritus.id ? tulos.suoritus : s)));
+  logAudit({
+    user: req.username, action: 'run_branch', collection: 'templateRuns',
+    recordId: suoritus.id, eventId: suoritus.ownerId,
+  });
+  kerroSuorituksesta(tulos.suoritus, 'update');
+  res.json({ ok: true, suoritus: tulos.suoritus });
+});
+
+// Merkintä tilannelokiin. Sama oikeus kuin kuittauksella: HÄLKE kirjoittaa samaan lokiin
+// kuin kentällä olevat vartijat, jotta tilannekuva on yksi eikä kaksi.
+app.post('/api/suoritus/:id/kommentti', requireAuth, (req, res) => {
+  const haku = haeSuoritus(req, res);
+  if (!haku) return;
+  const { suoritukset, suoritus } = haku;
+
+  const tulos = lisaaKommentti({ suoritus, teksti: req.body?.teksti, tekija: req.username });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+
+  writeCollection('templateRuns', suoritukset.map((s) => (s.id === suoritus.id ? tulos.suoritus : s)));
+  logAudit({
+    user: req.username, action: 'run_comment', collection: 'templateRuns',
     recordId: suoritus.id, eventId: suoritus.ownerId,
   });
   kerroSuorituksesta(tulos.suoritus, 'update');

@@ -9,13 +9,16 @@
 // Sama komponentti palvelee molempia puolia: EVENT antaa omistajaksi tapahtuman, GUARD
 // kohteen. Oikeudet ratkaistaan kutsuvassa näkymässä, koska solmut ovat eri.
 import { useState } from 'react';
-import { Plus, Trash2, Pencil, ArrowUp, ArrowDown, Check, Play, Flag, Ban, ChevronRight, ChevronDown, Archive, Clock, User } from 'lucide-react';
+import { Plus, Trash2, Pencil, ArrowUp, ArrowDown, Check, Play, ChevronRight, ChevronDown, Archive, Clock, User, GitBranch, RadioTower } from 'lucide-react';
 
 import {
-  LAJIT, TILA_LABEL, kellonaika, kriittisetKuittaamatta, kuittaamatta,
-  luoPohja, paivitaPohja, arkistoiPohja, aloitaSuoritus, kuittaaKohta, paataSuoritus,
+  LAJIT, TILA_LABEL, kellonaika, valitutPolut,
+  luoPohja, paivitaPohja, arkistoiPohja, aloitaSuoritus,
   type Kohta, type Pohja, type Suoritus, type Vastaus,
 } from '../pohjat';
+import { puujarjestys, syvyys } from '../skenaariopuu';
+import { SkenaarioEditori } from './SkenaarioEditori';
+import { SkenaarioSuoritus } from './SkenaarioSuoritus';
 
 type Laji = 'guide' | 'play' | 'runsheet';
 
@@ -37,9 +40,11 @@ type Luonnos = {
   nimi: string;
   kuvaus: string;
   kohdat: Partial<Kohta>[];
+  // Vain skenaariossa: näkyykö käynnistetty tilanne HÄLKE:ssä.
+  halke: boolean;
 };
 
-const tyhjaLuonnos = (): Luonnos => ({ id: null, nimi: '', kuvaus: '', kohdat: [] });
+const tyhjaLuonnos = (): Luonnos => ({ id: null, nimi: '', kuvaus: '', kohdat: [], halke: true });
 
 const luonnosPohjasta = (pohja: Pohja): Luonnos => ({
   id: pohja.id,
@@ -47,6 +52,7 @@ const luonnosPohjasta = (pohja: Pohja): Luonnos => ({
   kuvaus: pohja.kuvaus || '',
   // Kopio, jotta peruutus ei jätä muokattua listaa näkyviin.
   kohdat: (pohja.kohdat || []).map((k) => ({ ...k })),
+  halke: pohja.halke !== false,
 });
 
 export const Pohjanakyma = ({
@@ -58,8 +64,7 @@ export const Pohjanakyma = ({
   const [tyoskentelee, setTyoskentelee] = useState(false);
   const [avattu, setAvattu] = useState<string | null>(null);
   const [aloitusKuvaus, setAloitusKuvaus] = useState<Record<string, string>>({});
-  const [kohtaHuomiot, setKohtaHuomiot] = useState<Record<string, string>>({});
-  const [paatos, setPaatos] = useState<{ id: string; syy: string; huomiot: string } | null>(null);
+  const [ilmoitus, setIlmoitus] = useState<string | null>(null);
 
   const omat = pohjat.filter((p) => p.ownerId === ownerId && p.kind === laji);
   const kaytossa = omat.filter((p) => !p.arkistoitu);
@@ -101,12 +106,16 @@ export const Pohjanakyma = ({
 
   const tallenna = async () => {
     if (!luonnos) return;
+    // Skenaarion puu tallennetaan syvyysjärjestyksessä: palvelin vaatii että valinta on
+    // ennen oman polkunsa kohtia.
+    const jarjestetyt = laji === 'play' ? puujarjestys(luonnos.kohdat) : luonnos.kohdat;
     const runko = {
       nimi: luonnos.nimi,
       kuvaus: luonnos.kuvaus,
       // Järjestys tulee listan järjestyksestä: palvelin numeroi kohdat uudelleen, joten
       // sitä ei tarvitse pitää kirjaa täällä.
-      kohdat: luonnos.kohdat.map((k, i) => ({ ...k, jarjestys: i })),
+      kohdat: jarjestetyt.map((k, i) => ({ ...k, jarjestys: i })),
+      ...(laji === 'play' ? { halke: luonnos.halke } : {}),
     };
     const tulos = luonnos.id
       ? await kutsu(() => paivitaPohja(luonnos.id as string, runko))
@@ -119,30 +128,14 @@ export const Pohjanakyma = ({
 
   // --- Suoritus -------------------------------------------------------------------
 
+  // Palvelin liittää käynnistäjän samasta pohjasta jo käynnissä olevaan suoritukseen
+  // (yksi tilanne, yksi suoritus kohteessa), ja siitä kerrotaan käyttäjälle.
   const kaynnista = async (pohja: Pohja) => {
+    setIlmoitus(null);
     const tulos = await kutsu(() => aloitaSuoritus(pohja.id, aloitusKuvaus[pohja.id] || ''));
     if (tulos.ok && tulos.suoritus) {
       setAloitusKuvaus((edellinen) => ({ ...edellinen, [pohja.id]: '' }));
-      onSuoritusMuuttui(tulos.suoritus);
-    }
-  };
-
-  const kuittaa = async (suoritus: Suoritus, kohtaId: string) => {
-    const avain = `${suoritus.id}:${kohtaId}`;
-    const tulos = await kutsu(() => kuittaaKohta(suoritus.id, kohtaId, kohtaHuomiot[avain] || ''));
-    if (tulos.ok && tulos.suoritus) {
-      setKohtaHuomiot((edellinen) => ({ ...edellinen, [avain]: '' }));
-      onSuoritusMuuttui(tulos.suoritus);
-    }
-  };
-
-  const paata = async (suoritus: Suoritus, tila: 'valmis' | 'keskeytetty') => {
-    const tiedot = paatos?.id === suoritus.id ? paatos : { syy: '', huomiot: '' };
-    const tulos = await kutsu(() => paataSuoritus(suoritus.id, {
-      tila, syy: tiedot.syy, huomiot: tiedot.huomiot,
-    }));
-    if (tulos.ok && tulos.suoritus) {
-      setPaatos(null);
+      if (tulos.liittyi) setIlmoitus(`${pohja.nimi} oli jo käynnissä. Liityit samaan tilanteeseen.`);
       onSuoritusMuuttui(tulos.suoritus);
     }
   };
@@ -187,18 +180,26 @@ export const Pohjanakyma = ({
 
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-ink-body">{meta.kohdanNimi}: {luonnos.kohdat.length}</span>
-            <button
+            <span className="text-sm font-medium text-ink-body">
+              {laji === 'play' ? 'Kohdat ja valinnat' : `${meta.kohdanNimi}: ${luonnos.kohdat.length}`}
+            </span>
+            {/* Skenaariossa kohdat lisätään puun omista painikkeista, jotta ne osuvat oikeaan polkuun. */}
+            {laji !== 'play' && <button
               type="button"
               onClick={() => setLuonnos({ ...luonnos, kohdat: [...luonnos.kohdat, { teksti: '' }] })}
               className="inline-flex items-center gap-1.5 text-xs font-bold text-accent hover:text-accent-hover"
             >
               <Plus size={14} />
               Lisää kohta
-            </button>
+            </button>}
           </div>
 
-          {luonnos.kohdat.length === 0 ? (
+          {laji === 'play' ? (
+            <SkenaarioEditori
+              kohdat={luonnos.kohdat}
+              onMuutos={(kohdat) => setLuonnos({ ...luonnos, kohdat })}
+            />
+          ) : luonnos.kohdat.length === 0 ? (
             <p className="text-sm text-ink-muted bg-sunken border border-line-soft rounded-lg p-4">
               Lisää vähintään yksi kohta. Tyhjää pohjaa ei voi tallentaa.
             </p>
@@ -223,18 +224,16 @@ export const Pohjanakyma = ({
                         placeholder="Tarkennus (valinnainen)"
                         className="w-full bg-surface border border-line-soft rounded-lg px-3 py-2 text-xs text-ink-body"
                       />
-                      {(laji === 'play' || laji === 'runsheet') && (
+                      {laji === 'runsheet' && (
                         <div className="flex flex-wrap gap-2">
-                          {laji === 'runsheet' && (
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              value={kohta.aika || ''}
-                              onChange={(e) => muutaKohta(i, { aika: e.target.value })}
-                              placeholder="14.00"
-                              className="w-24 bg-surface border border-line-soft rounded-lg px-3 py-2 text-xs text-ink-body"
-                            />
-                          )}
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={kohta.aika || ''}
+                            onChange={(e) => muutaKohta(i, { aika: e.target.value })}
+                            placeholder="14.00"
+                            className="w-24 bg-surface border border-line-soft rounded-lg px-3 py-2 text-xs text-ink-body"
+                          />
                           <input
                             type="text"
                             value={kohta.vastuu || ''}
@@ -242,16 +241,6 @@ export const Pohjanakyma = ({
                             placeholder="Vastuu, esim. Turva 1"
                             className="flex-1 min-w-[120px] bg-surface border border-line-soft rounded-lg px-3 py-2 text-xs text-ink-body"
                           />
-                          {laji === 'play' && (
-                            <label className="inline-flex items-center gap-2 text-xs text-ink-body px-2">
-                              <input
-                                type="checkbox"
-                                checked={kohta.kriittinen === true}
-                                onChange={(e) => muutaKohta(i, { kriittinen: e.target.checked })}
-                              />
-                              Kriittinen
-                            </label>
-                          )}
                         </div>
                       )}
                     </div>
@@ -279,10 +268,29 @@ export const Pohjanakyma = ({
         </div>
 
         {laji === 'play' && (
+          <label className="flex items-start gap-3 mb-4 bg-sunken border border-line-soft rounded-lg p-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={luonnos.halke}
+              onChange={(e) => setLuonnos({ ...luonnos, halke: e.target.checked })}
+              className="mt-1"
+            />
+            <span>
+              <span className="block text-sm font-bold text-ink-strong">Ilmoita käyttöönotosta HÄLKE:en</span>
+              <span className="block text-xs text-ink-muted">
+                Käynnistetty skenaario, valitut polut ja tilanneloki näkyvät hälytyskeskuksessa.
+                Poista valinta skenaarioista, joiden seurantaa HÄLKE ei tarvitse.
+              </span>
+            </span>
+          </label>
+        )}
+
+        {laji === 'play' && (
           <p className="text-xs text-ink-muted mb-4">
             Kriittistä kohtaa ei voi ohittaa: skenaarion voi merkitä hoidetuksi vasta kun jokainen
             kriittinen kohta on kuitattu. Muut kohdat saavat jäädä — pohjassa on tarkoituksella
-            kohtia jotka eivät koske jokaista tilannetta.
+            kohtia jotka eivät koske jokaista tilannetta. Valinnalla skenaario haarautuu: vartija
+            valitsee tilanteen mukaan polun, ja vain sen kohdat vaaditaan.
           </p>
         )}
 
@@ -335,127 +343,22 @@ export const Pohjanakyma = ({
         </p>
       )}
 
-      {/* --- Käynnissä olevat suoritukset --- */}
+      {ilmoitus && (
+        <p className="mb-4 text-sm text-ink-body bg-accent-soft border border-accent/30 rounded-lg px-4 py-3">
+          {ilmoitus}
+        </p>
+      )}
+
+      {/* --- Käynnissä olevat suoritukset: yksi pohjaa kohden kohteessa, yhteinen kaikille vuorossa oleville --- */}
       {meta.suoritetaan && kesken.length > 0 && (
         <div className="mb-6 space-y-4">
           {kesken.map((suoritus) => (
-            <div key={suoritus.id} className="bg-surface border-2 border-accent/40 rounded-xl p-4 md:p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                <div className="min-w-0">
-                  <h4 className="font-bold text-ink-strong">{suoritus.templateNimi}</h4>
-                  <p className="text-xs text-ink-muted mt-0.5">
-                    Aloitettu {kellonaika(suoritus.alkoi)} · {suoritus.tekija} ·{' '}
-                    {suoritus.kohdat.length - kuittaamatta(suoritus)}/{suoritus.kohdat.length} kuitattu
-                  </p>
-                  {suoritus.kuvaus && <p className="text-sm text-ink-body mt-1">{suoritus.kuvaus}</p>}
-                </div>
-                <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-warning-soft text-warning-ink border border-warning/30 shrink-0">
-                  Kesken
-                </span>
-              </div>
-
-              <ol className="space-y-2">
-                {suoritus.kohdat.map((kohta, i) => {
-                  const avain = `${suoritus.id}:${kohta.kohtaId}`;
-                  return (
-                    <li
-                      key={kohta.kohtaId}
-                      className={`rounded-lg px-3 py-2.5 border ${kohta.kuitattu ? 'bg-success-soft border-success/30' : 'bg-sunken border-line-soft'}`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <span className="text-xs font-mono text-ink-subtle w-5 shrink-0 mt-0.5">{i + 1}.</span>
-                        <div className="min-w-0 flex-1">
-                          <p className={`text-sm font-medium ${kohta.kuitattu ? 'text-success-ink' : 'text-ink-strong'}`}>
-                            {kohta.aika && <span className="font-mono mr-2">{kohta.aika}</span>}
-                            {kohta.teksti}
-                            {kohta.kriittinen && !kohta.kuitattu && (
-                              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-danger-soft text-danger-ink border border-danger/30">
-                                kriittinen
-                              </span>
-                            )}
-                          </p>
-                          {kohta.kuvaus && <p className="text-xs text-ink-muted mt-0.5">{kohta.kuvaus}</p>}
-                          <p className="text-xs text-ink-subtle mt-0.5 flex flex-wrap gap-x-3">
-                            {kohta.vastuu && <span className="inline-flex items-center gap-1"><User size={11} />{kohta.vastuu}</span>}
-                            {kohta.kuitattu && (
-                              <span className="inline-flex items-center gap-1">
-                                <Check size={11} />
-                                {kellonaika(kohta.kuitattu)} {kohta.kuittaaja}
-                              </span>
-                            )}
-                          </p>
-                          {kohta.huomio && <p className="text-xs text-ink-body mt-1">{kohta.huomio}</p>}
-                        </div>
-                        {!kohta.kuitattu && (
-                          <div className="flex flex-col sm:flex-row gap-2 shrink-0">
-                            <input
-                              type="text"
-                              value={kohtaHuomiot[avain] || ''}
-                              onChange={(e) => setKohtaHuomiot((edellinen) => ({ ...edellinen, [avain]: e.target.value }))}
-                              placeholder="Huomio"
-                              className="w-28 sm:w-32 bg-surface border border-line-soft rounded-lg px-2 py-1.5 text-xs text-ink-body"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => kuittaa(suoritus, kohta.kohtaId)}
-                              disabled={tyoskentelee}
-                              className="inline-flex items-center gap-1.5 bg-accent hover:bg-accent-hover disabled:opacity-60 text-white text-xs font-bold rounded-lg px-3 py-2 transition-colors"
-                            >
-                              <Check size={14} />
-                              Kuittaa
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
-
-              <div className="pt-4 mt-4 border-t border-line-soft space-y-3">
-                {kriittisetKuittaamatta(suoritus) > 0 && (
-                  <p className="text-sm text-warning-ink">
-                    {kriittisetKuittaamatta(suoritus) === 1
-                      ? 'Yksi kriittinen kohta on kuittaamatta. Sitä ei voi ohittaa merkitsemällä valmiiksi.'
-                      : `${kriittisetKuittaamatta(suoritus)} kriittistä kohtaa on kuittaamatta.`}
-                  </p>
-                )}
-                <input
-                  type="text"
-                  value={paatos?.id === suoritus.id ? paatos.huomiot : ''}
-                  onChange={(e) => setPaatos({ id: suoritus.id, syy: paatos?.id === suoritus.id ? paatos.syy : '', huomiot: e.target.value })}
-                  placeholder="Huomiot (valinnainen)"
-                  className="w-full bg-sunken border border-line-soft rounded-lg px-3 py-2 text-sm text-ink-body"
-                />
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => paata(suoritus, 'valmis')}
-                    disabled={tyoskentelee}
-                    className="inline-flex items-center gap-2 bg-accent hover:bg-accent-hover disabled:opacity-60 text-white text-sm font-bold rounded-lg px-4 py-2.5 transition-colors"
-                  >
-                    <Flag size={16} />
-                    Merkitse hoidetuksi
-                  </button>
-                  <input
-                    type="text"
-                    value={paatos?.id === suoritus.id ? paatos.syy : ''}
-                    onChange={(e) => setPaatos({ id: suoritus.id, huomiot: paatos?.id === suoritus.id ? paatos.huomiot : '', syy: e.target.value })}
-                    placeholder="Keskeytyksen syy"
-                    className="flex-1 min-w-[160px] bg-sunken border border-line-soft rounded-lg px-3 py-2 text-sm text-ink-body"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => paata(suoritus, 'keskeytetty')}
-                    disabled={tyoskentelee}
-                    className="inline-flex items-center gap-2 border border-line-strong hover:bg-sunken disabled:opacity-60 text-ink-body text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
-                  >
-                    <Ban size={16} />
-                    Keskeytä
-                  </button>
-                </div>
-              </div>
-            </div>
+            <SkenaarioSuoritus
+              key={suoritus.id}
+              suoritus={suoritus}
+              rooli="toimija"
+              onMuuttui={onSuoritusMuuttui}
+            />
           ))}
         </div>
       )}
@@ -469,6 +372,8 @@ export const Pohjanakyma = ({
         <ul className="space-y-3">
           {kaytossa.map((pohja) => {
             const auki = avattu === pohja.id;
+            const kaynnissa = kesken.find((k) => k.templateId === pohja.id);
+            const esikatselu = laji === 'play' ? puujarjestys(pohja.kohdat || []) : (pohja.kohdat || []);
             return (
               <li key={pohja.id} className="bg-surface border border-line rounded-xl overflow-hidden">
                 <button
@@ -478,7 +383,20 @@ export const Pohjanakyma = ({
                 >
                   {auki ? <ChevronDown size={18} className="text-ink-muted shrink-0 mt-0.5" /> : <ChevronRight size={18} className="text-ink-muted shrink-0 mt-0.5" />}
                   <div className="min-w-0 flex-1">
-                    <p className="font-bold text-ink-strong">{pohja.nimi}</p>
+                    <p className="font-bold text-ink-strong flex flex-wrap items-center gap-2">
+                      {pohja.nimi}
+                      {kaynnissa && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-soft text-warning-ink border border-warning/30">
+                          käynnissä
+                        </span>
+                      )}
+                      {laji === 'play' && pohja.halke !== false && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-sunken text-ink-body border border-line">
+                          <RadioTower size={10} />
+                          HÄLKE
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-ink-muted mt-0.5">
                       {(pohja.kohdat || []).length} {meta.kohdanNimi.toLowerCase()}
                       {pohja.versio > 1 ? ` · versio ${pohja.versio}` : ''}
@@ -490,10 +408,21 @@ export const Pohjanakyma = ({
                 {auki && (
                   <div className="px-4 pb-4 border-t border-line-soft">
                     <ol className="space-y-2 my-3">
-                      {(pohja.kohdat || []).map((kohta, i) => (
-                        <li key={kohta.id} className="flex items-start gap-3 text-sm">
-                          <span className="text-xs font-mono text-ink-subtle w-5 shrink-0 mt-0.5">{i + 1}.</span>
+                      {esikatselu.map((kohta, i) => (
+                        <li
+                          key={kohta.id}
+                          className="flex items-start gap-3 text-sm"
+                          style={{ marginLeft: syvyys(esikatselu, kohta) * 20 }}
+                        >
+                          {kohta.tyyppi === 'valinta'
+                            ? <GitBranch size={14} className="text-accent w-5 shrink-0 mt-0.5" />
+                            : <span className="text-xs font-mono text-ink-subtle w-5 shrink-0 mt-0.5">{kohta.haara ? '–' : `${esikatselu.slice(0, i + 1).filter((k) => !k.haara && k.tyyppi !== 'valinta').length}.`}</span>}
                           <div className="min-w-0">
+                            {kohta.haara && (
+                              <p className="text-[11px] font-bold text-accent">
+                                Jos: {esikatselu.flatMap((k) => k.vaihtoehdot || []).find((v) => v.id === kohta.haara)?.teksti}
+                              </p>
+                            )}
                             <p className="text-ink-strong">
                               {kohta.aika && <span className="font-mono mr-2">{kohta.aika}</span>}
                               {kohta.teksti}
@@ -503,6 +432,11 @@ export const Pohjanakyma = ({
                                 </span>
                               )}
                             </p>
+                            {kohta.tyyppi === 'valinta' && (
+                              <p className="text-xs text-ink-muted mt-0.5">
+                                Vaihtoehdot: {(kohta.vaihtoehdot || []).map((v) => v.teksti).join(' / ')}
+                              </p>
+                            )}
                             {kohta.kuvaus && <p className="text-xs text-ink-muted mt-0.5">{kohta.kuvaus}</p>}
                             {kohta.vastuu && (
                               <p className="text-xs text-ink-subtle mt-0.5 inline-flex items-center gap-1">
@@ -515,7 +449,13 @@ export const Pohjanakyma = ({
                     </ol>
 
                     <div className="flex flex-wrap gap-2 items-center">
-                      {meta.suoritetaan && (
+                      {meta.suoritetaan && kaynnissa && (
+                        <p className="flex-1 text-sm text-ink-muted">
+                          Käynnissä {kellonaika(kaynnissa.alkoi)} alkaen ({kaynnissa.tekija}). Tilanne näkyy yllä
+                          kaikille kohteen vuorossa oleville.
+                        </p>
+                      )}
+                      {meta.suoritetaan && !kaynnissa && (
                         <>
                           <input
                             type="text"
@@ -580,6 +520,9 @@ export const Pohjanakyma = ({
                   </span>
                 </div>
                 {s.kuvaus && <p className="text-xs text-ink-muted mt-0.5">{s.kuvaus}</p>}
+                {valitutPolut(s).map((p) => (
+                  <p key={p.kysymys} className="text-xs text-ink-body mt-0.5">{p.kysymys} → {p.vastaus}</p>
+                ))}
                 {s.keskeytysSyy && <p className="text-xs text-warning-ink mt-0.5">Keskeytetty: {s.keskeytysSyy}</p>}
                 {s.huomiot && <p className="text-xs text-ink-body mt-0.5">{s.huomiot}</p>}
               </li>

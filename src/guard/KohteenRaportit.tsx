@@ -11,7 +11,7 @@
 // ei hae mitään itse — palvelin on jo rajannut mitä käyttäjä saa nähdä.
 import { useMemo, useState, type ReactNode } from 'react';
 import {
-  Camera, Check, ChevronDown, ChevronRight, ClipboardCheck, FileText, MessageSquare, Paperclip,
+  Camera, Check, ChevronDown, ChevronRight, ClipboardCheck, FileText, GitBranch, MessageSquare, Paperclip,
   Route, ShieldAlert, ShoppingBag, X,
 } from 'lucide-react';
 
@@ -19,8 +19,11 @@ import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { AnastuksenYhteenveto } from './Anastusilmoitus';
 import { Peitetty } from './KohteenTiedot';
 import type { GuardRaportti, Kierros, Kohde, TehtavaSuoritus } from './tyypit';
+import {
+  aktiivisia, kuittaamatta, tilanneloki, valitutPolut, type Suoritus,
+} from '../shared/pohjat';
 
-type Laji = 'toimenpide' | 'ilmoitus' | 'anastus' | 'tehtava' | 'kierros';
+type Laji = 'toimenpide' | 'ilmoitus' | 'anastus' | 'tehtava' | 'kierros' | 'skenaario';
 
 const LAJIT: Record<Laji, { nimi: string; Ikoni: typeof FileText }> = {
   toimenpide: { nimi: 'Toimenpiteet', Ikoni: FileText },
@@ -28,6 +31,7 @@ const LAJIT: Record<Laji, { nimi: string; Ikoni: typeof FileText }> = {
   anastus: { nimi: 'Anastusilmoitukset', Ikoni: ShoppingBag },
   tehtava: { nimi: 'Tehtävät', Ikoni: ClipboardCheck },
   kierros: { nimi: 'Kierrokset', Ikoni: Route },
+  skenaario: { nimi: 'Skenaariot', Ikoni: GitBranch },
 };
 
 const JAKSOT = [
@@ -227,15 +231,51 @@ const kierrosRivi = (k: Kierros): Rivi => {
   };
 };
 
+// Skenaarion suoritus tilannelokeineen (28.9.2026): tilannekuva säilyy kohteella myös
+// tilanteen päätyttyä.
+const skenaarioRivi = (s: Suoritus): Rivi => {
+  const tila = s.tila === 'valmis' ? 'Hoidettu' : s.tila === 'keskeytetty' ? 'Keskeytetty' : 'Käynnissä';
+  const polut = valitutPolut(s);
+  return {
+    id: `s-${s.id}`,
+    laji: 'skenaario',
+    aika: s.paattyi || s.alkoi,
+    otsikko: s.templateNimi,
+    kuka: s.tekija,
+    yhteenveto: [
+      `${tila} · ${aktiivisia(s) - kuittaamatta(s)}/${aktiivisia(s)} tehty`,
+      ...polut.map((p) => `${p.kysymys} ${p.vastaus}`),
+    ].join(' · '),
+    poikkeama: s.tila === 'valmis' ? undefined : tila,
+    kommentti: (s.kommentit || []).some((c) => !c.jarjestelma) || !!s.huomiot?.trim(),
+    liitteet: [],
+    sisalto: (
+      <>
+        <Tieto otsikko="Aika">{kello(s.alkoi)}{s.paattyi ? `–${kello(s.paattyi)}` : ' (käynnissä)'}</Tieto>
+        {s.kuvaus && <Tieto otsikko="Tilanne">{s.kuvaus}</Tieto>}
+        {polut.length > 0 && (
+          <Tieto otsikko="Valitut polut">{polut.map((p) => `${p.kysymys} → ${p.vastaus}`).join('\n')}</Tieto>
+        )}
+        {s.keskeytysSyy && <Tieto otsikko="Keskeytyksen syy">{s.keskeytysSyy}</Tieto>}
+        {s.huomiot && <Tieto otsikko="Loppuhuomiot">{s.huomiot}</Tieto>}
+        <Tieto otsikko="Tilanneloki">
+          {tilanneloki(s).map((r) => `${kello(r.aika)} ${r.teksti}${r.tekija ? ` (${r.tekija})` : ''}`).join('\n')}
+        </Tieto>
+      </>
+    ),
+  };
+};
+
 type Props = {
   kohde: Kohde;
   raportit: GuardRaportti[];
   suoritukset: TehtavaSuoritus[];
   kierrokset: Kierros[];
+  skenaariot: Suoritus[];
   onTakaisin: () => void;
 };
 
-export const KohteenRaportit = ({ kohde, raportit, suoritukset, kierrokset, onTakaisin }: Props) => {
+export const KohteenRaportit = ({ kohde, raportit, suoritukset, kierrokset, skenaariot, onTakaisin }: Props) => {
   const [valitut, setValitut] = useState<Set<Laji>>(new Set());
   const [jakso, setJakso] = useState<(typeof JAKSOT)[number]['id']>('30');
   const [auki, setAuki] = useState<string | null>(null);
@@ -244,7 +284,8 @@ export const KohteenRaportit = ({ kohde, raportit, suoritukset, kierrokset, onTa
     ...raportit.filter((r) => r.siteId === kohde.id).map(raporttiRivi),
     ...suoritukset.filter((s) => s.siteId === kohde.id).map(tehtavaRivi),
     ...kierrokset.filter((k) => k.siteId === kohde.id).map(kierrosRivi),
-  ].sort((a, b) => (a.aika < b.aika ? 1 : -1)), [raportit, suoritukset, kierrokset, kohde.id]);
+    ...skenaariot.filter((s) => s.ownerId === kohde.id && s.kind === 'play').map(skenaarioRivi),
+  ].sort((a, b) => (a.aika < b.aika ? 1 : -1)), [raportit, suoritukset, kierrokset, skenaariot, kohde.id]);
 
   const paivia = JAKSOT.find((j) => j.id === jakso)?.paivia ?? null;
   const raja = paivia === null ? null : Date.now() - paivia * 24 * 60 * 60 * 1000;
@@ -266,7 +307,7 @@ export const KohteenRaportit = ({ kohde, raportit, suoritukset, kierrokset, onTa
       <TakaisinLinkki onClick={onTakaisin}>Takaisin kohteeseen</TakaisinLinkki>
       <h2 className="text-2xl font-bold text-ink-strong mb-1">Kohteen raportit</h2>
       <p className="text-sm text-ink-muted mb-6">
-        {kohde.name} · kaikki kohteelta palautetut raportit, tehtävät ja kierrokset liitteineen.
+        {kohde.name} · kaikki kohteelta palautetut raportit, tehtävät, kierrokset ja skenaariot liitteineen.
       </p>
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -286,7 +327,7 @@ export const KohteenRaportit = ({ kohde, raportit, suoritukset, kierrokset, onTa
       </div>
 
       {/* Yhteenveto: lajikohtaiset määrät valitulla jaksolla. Kortti on samalla suodatin. */}
-      <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 mb-3">
+      <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 mb-3">
         {(Object.keys(LAJIT) as Laji[]).map((laji) => {
           const { nimi, Ikoni } = LAJIT[laji];
           const valittu = valitut.has(laji);
