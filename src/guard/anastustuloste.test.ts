@@ -31,3 +31,20 @@ test('summat ja käyttäjän tekstin escapetus', () => {
   assert.ok(html.includes('Kauppa &lt;Itä&gt;'));
   assert.ok(!html.includes('Kauppa <Itä>'));
 });
+
+test('paperipohjan kentät: kappaleet, tila, menettelyt ja ei korvausvaatimusta', () => {
+  const html = anastustulosteHtml({
+    ...raportti,
+    theftItems: [{ id: '1', nimi: 'Terät', hinta: 12.55, alv: 25.5, kpl: 2, tila: 'turmeltunut' }],
+    theftWrittenProcedureConsent: false,
+    theftIdVerified: 'ajokortti',
+    theftDetentionPlace: 'Pääovi',
+    theftClaimsCompensation: false,
+  }, 'poliisi');
+  assert.match(html, /25,10\s€/);            // 2 × 12,55
+  assert.ok(html.includes('Turmeltunut'));
+  assert.ok(html.includes('Ajokortti'));
+  assert.ok(html.includes('Pääovi'));
+  assert.ok(html.includes('Ei esitetty'));
+  assert.ok(!html.includes('Korvaussumma yhteensä'));
+});

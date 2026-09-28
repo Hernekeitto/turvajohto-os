@@ -256,8 +256,41 @@ export type GuardRaportti = {
   theftAt?: string;
   theftCheckoutAt?: string;
   theftDetainedAt?: string;
-  theftItems?: { id: string; nimi: string; hinta: number; alv: number }[];
+  theftItems?: {
+    id: string; nimi: string; hinta: number; alv: number;
+    kpl?: number; tila?: 'kadoksissa' | 'turmeltunut' | 'korvattu' | null;
+  }[];
   theftOtherCosts?: { id: string; selite: string; summa: number }[];
+  // Vanhan paperipohjan kohdat (lisätty 28.9.2026). Kiinniotetun osoite on
+  // subjectAddress-kentässä kuten tapahtumailmoituksessa. Henkilötietoa sisältävät
+  // vapaatekstit salataan (server/store.js).
+  theftBusinessId?: string;             // asianomistajan Y-tunnus
+  theftPenaltyClaimant?: string;        // rangaistusta vaatii: nimi ja puhelin
+  theftWrittenProcedureConsent?: boolean | null; // kirjallinen menettely
+  theftPlace?: string;                  // tapahtumapaikka
+  theftDetentionPlace?: string;         // kiinniottopaikka
+  theftMethod?: string;                 // anastustapa: mistä otettu, miten, mihin laitettu
+  theftVehicle?: string;                // kiinniotetun ajoneuvo
+  theftTagsBroken?: number;             // rikottuja tuotesuojahälyttimiä, kpl
+  theftTagsAmount?: number;             // niiden korvattava summa, €
+  theftViolent?: boolean | null;        // käyttäytyi väkivaltaisesti
+  theftResistedGuard?: boolean;         // järjestystä ylläpitävän henkilön vastustaminen
+  theftSubjectPostalCode?: string;
+  theftSubjectPostOffice?: string;
+  theftIdVerified?: 'henkilokortti' | 'ajokortti' | 'passi' | 'ei' | null;
+  theftGuardian?: string;               // holhooja, osoite ja puhelin
+  theftOtherInfo?: string;              // muita tietoja kiinniotetusta
+  theftAccompanying?: string;           // mukana olleet
+  theftReporter?: string;               // ilmoittaja: nimi, työpaikka, puhelin
+  theftDetainer?: string;               // kiinniottaja: nimi, työpaikka, puhelin
+  theftWitnesses?: string;              // todistajat
+  theftVideo?: boolean;                 // videotallenne on olemassa
+  theftClaimsCompensation?: boolean | null; // asianomistaja esittää korvausvaatimuksen
+  theftReportedToPolice?: boolean | null;
+  theftHandedToPolice?: boolean | null;
+  theftOtherActions?: string;           // muut toimenpiteet
+  theftReleasedAt?: string;             // vapautettu poliisin luvalla: pvm ja klo
+  theftReleasedBy?: string;             // poliisimies jonka luvalla vapautettu
   // Erässä 1 lisätyt kentät. Samat kuin EVENT-puolen raporteilla, koska molempia
   // koskee sama tilamalli ja sama muuttumattomuussääntö (ks. server/kirjaukset.js).
   status?: string | null;
