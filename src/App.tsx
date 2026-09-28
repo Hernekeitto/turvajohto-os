@@ -29,6 +29,7 @@ import { ArkistoidutTapahtumat, ArkistoidunTapahtumanTiedot } from './event/naky
 import { HataviestiLoki } from './event/nakymat/HataviestiLoki';
 import { TyontekijaLista } from './shared/komponentit/TyontekijaLista';
 import { AvaaEditorissa, Esikatsele, UusiTekstitiedosto } from './shared/komponentit/Dokumenttieditori';
+import { NykyisetJaot } from './shared/komponentit/NykyisetJaot';
 import { TyontekijanMuokkaus } from './shared/komponentit/TyontekijanMuokkaus';
 import { KayttajaLista } from './event/nakymat/KayttajaHallinta';
 import { riskipisteet, riskitaso, RISKISAVYT, RISKITASOT } from './event/riskiarvio';
@@ -9354,6 +9355,8 @@ export default function App() {
             <X size={20} />
           </button>
         </div>
+
+        <NykyisetJaot lahde="eventFiles" targetId={shareTarget.id} paivitys={luotuLinkki} onMuuttui={paivitaJaot} />
 
         {luotuLinkki ? (
           <div className="p-5 space-y-4">

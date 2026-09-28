@@ -9,6 +9,7 @@
 // Oma komponenttinsa eikä App.tsx:n dialogi, koska se on sidottu tapahtumanäkymän tilaan.
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Info, Share2, ShieldAlert, X } from 'lucide-react';
+import { NykyisetJaot } from './NykyisetJaot';
 
 export type JaonLahde = 'eventFiles' | 'guardFiles';
 
@@ -134,6 +135,8 @@ export const JakoDialogi = ({ kohde, lahde, saaValitaKayttajia, onSulje, onJaett
             <X size={20} />
           </button>
         </div>
+
+        <NykyisetJaot lahde={lahde} targetId={kohde.id} paivitys={tulos} onMuuttui={onJaettu} />
 
         {tulos ? (
           <div className="p-5 space-y-4">
