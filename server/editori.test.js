@@ -17,6 +17,7 @@ import {
   jaonIdTunnisteesta,
   jaonEditoriTila,
   jakoVoimassaEditorissa,
+  onKelvollinenOdf,
 } from './editori.js';
 
 const SALAISUUS = 'x'.repeat(64);
@@ -179,4 +180,19 @@ test('jako editorissa: peruutus, hylkäys ja vanheneminen katkaisevat, latausraj
   assert.equal(jakoVoimassaEditorissa({ expiresAt: '2026-09-28T11:59:59Z' }, nyt), false);
   assert.equal(jakoVoimassaEditorissa({ expiresAt: '2026-09-28T12:00:01Z' }, nyt), true);
   assert.equal(jakoVoimassaEditorissa(null, nyt), false);
+});
+
+test('ODF-tarkistus: oikea paketti kelpaa, muu sisältö ei', async () => {
+  const { tyhjaOdt } = await import('../src/shared/odfPohja.ts');
+  const odt = Buffer.from(tyhjaOdt());
+  assert.equal(onKelvollinenOdf(odt, 'a.odt'), true);
+  // Sama paketti väärällä päätteellä: mimetype ei vastaa esitystä.
+  assert.equal(onKelvollinenOdf(odt, 'a.odp'), false);
+  assert.equal(onKelvollinenOdf(Buffer.from('<html><script>alert(1)</script></html>'), 'a.odt'), false);
+  assert.equal(onKelvollinenOdf(Buffer.from('MZ\x90\x00haittaohjelma'), 'a.odt'), false);
+  assert.equal(onKelvollinenOdf(Buffer.alloc(0), 'a.odt'), false);
+  // Zip mutta ei ODF:ää (mimetype ei ensimmäisenä).
+  const muu = Buffer.from(odt);
+  muu.write('eimetype', 30, 'latin1');
+  assert.equal(onKelvollinenOdf(muu, 'a.odt'), false);
 });

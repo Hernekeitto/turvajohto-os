@@ -28,7 +28,7 @@ import { isAllowedFile, saveUpload, getUploadPath, korvaaUpload, deleteUpload, c
 import {
   EDITOITAVAT, ESIKATSELTAVAT, onEditoitava, onEsikatseltava, wopiAvain, luoWopiToken, tarkistaWopiToken, etsiTiedosto, saaKirjoittaa,
   checkFileInfo, versio, jasennaDiscovery, editorinOsoite,
-  jakoTunniste, jaonIdTunnisteesta, jaonEditoriTila, jakoVoimassaEditorissa,
+  jakoTunniste, jaonIdTunnisteesta, jaonEditoriTila, jakoVoimassaEditorissa, onKelvollinenOdf,
 } from './editori.js';
 import { verifyTotp, buildOtpauthUri } from './totp.js';
 import { istunnonKesto, SOVELLUS_VUOROKAUDET } from './istunto.js';
@@ -7398,6 +7398,12 @@ app.post('/api/wopi/files/:id/contents', wopiPortti, express.raw({ type: () => t
   const { k, loyto, polku, kirjoitus } = req.wopi;
   if (!kirjoitus) return res.status(401).end();
   if (!Buffer.isBuffer(req.body)) return res.status(400).end();
+  // Vain OpenDocument-paketti kelpaa (editori.js: onKelvollinenOdf). Token todistaa
+  // oikeuden tallentaa, ei sitä että tallennettava on dokumentti.
+  if (!onKelvollinenOdf(req.body, loyto.tietue.name)) {
+    logAudit({ user: k.username, action: 'editori_tallennus_hylatty', recordId: loyto.tietue.id, collection: loyto.lahde, koko: req.body.length });
+    return res.status(400).end();
+  }
   // Ristiriitatarkistus: Collabora kertoo minkä version päälle se luulee tallentavansa.
   // Jos tiedosto on muuttunut sillä välin, Collabora kysyy käyttäjältä mitä tehdään.
   const odotettu = req.get('X-COOL-WOPI-Timestamp');

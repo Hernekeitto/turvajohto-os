@@ -80,6 +80,28 @@ export function tarkistaWopiToken(token, uploadId, avain) {
   }
 }
 
+// Onko tallennettava sisältö OpenDocument-paketti. PutFile hyväksyy muuten mitä tahansa
+// tavuja, ja WOPI-tokenin haltija (esim. muokkauslinkin saaja) voisi korvata dokumentin
+// millä tahansa tiedostolla — vaikkapa haittaohjelmalla, joka jakautuu eteenpäin
+// alkuperäisen nimellä. ODF-määrittely vaatii että zip-paketin ensimmäinen tiedosto on
+// pakkaamaton "mimetype", joten tarkistus on tavuvertailu kiinteistä kohdista eikä vaadi
+// zip-jäsennintä. Collabora kirjoittaa ODF:n aina tässä muodossa.
+const ODF_MIME = {
+  '.odt': 'application/vnd.oasis.opendocument.text',
+  '.odp': 'application/vnd.oasis.opendocument.presentation',
+};
+export function onKelvollinenOdf(buffer, nimi) {
+  const odotettu = ODF_MIME[path.extname(String(nimi || '')).toLowerCase()];
+  if (!odotettu || !Buffer.isBuffer(buffer) || buffer.length < 38 + odotettu.length) return false;
+  if (buffer.readUInt32LE(0) !== 0x04034b50) return false; // paikallisen tiedoston otsake
+  if (buffer.readUInt16LE(8) !== 0) return false; // tallennusmenetelmä: pakkaamaton
+  const nimenPituus = buffer.readUInt16LE(26);
+  const lisaPituus = buffer.readUInt16LE(28);
+  if (buffer.toString('latin1', 30, 30 + nimenPituus) !== 'mimetype') return false;
+  const alku = 30 + nimenPituus + lisaPituus;
+  return buffer.toString('latin1', alku, alku + odotettu.length) === odotettu;
+}
+
 // --- Jakolinkin kautta avattu editori (28.9.2026) ---
 //
 // Jakolinkin avaaja ei ole kirjautunut, joten WOPI-token sidotaan jakoon eikä
