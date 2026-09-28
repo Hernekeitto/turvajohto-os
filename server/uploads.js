@@ -12,8 +12,9 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const ALLOWED_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif',
   '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt',
-  // OpenDocument-teksti ja -esitys: avautuvat dokumenttieditoriin (editori.js).
-  '.odt', '.odp'
+  // OpenDocument (teksti, taulukko, esitys) ja PowerPoint: avautuvat Toimistoon
+  // (editori.js) muokattaviksi tai esikatseltaviksi.
+  '.odt', '.ods', '.odp', '.ppt', '.pptx'
 ]);
 
 export function isAllowedFile(originalName) {

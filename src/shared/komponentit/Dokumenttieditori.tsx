@@ -6,8 +6,8 @@
 // koko ruudun.
 
 import { useState } from 'react';
-import { Eye, FilePen, FilePlus } from 'lucide-react';
-import { uusiOdtTiedosto } from '../odfPohja';
+import { Eye, FilePen, FilePlus, FileText, Presentation, Sheet } from 'lucide-react';
+import { uusiOdfTiedosto, type OdfTyyppi } from '../odfPohja';
 import { editorinOsoite, esikatselunOsoite, paate, useEditorinTila } from '../editori';
 
 const PAINIKE = 'inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-md transition-colors text-accent bg-sunken hover:bg-line-soft';
@@ -38,28 +38,38 @@ export function Esikatsele({ uploadId, nimi, className }: { uploadId?: string; n
   );
 }
 
-// "Uusi tekstitiedosto": nimen kysely, tyhjän .odt:n luonti ja avaus editoriin.
+// "Uusi dokumentti": tyypin (teksti, taulukko, esitys) ja nimen valinta, tyhjän
+// ODF-pohjan luonti ja avaus Toimistoon.
 //
 // onLuo lataa tiedoston ja lisää sen listaan samaa reittiä kuin käyttäjän oma lataus,
 // ja palauttaa latauksen id:n (tai heittää virheen). Editorin välilehti avataan HETI
 // klikkauksesta ja ohjataan editoriin vasta kun tiedosto on tallessa: jos ikkuna
 // avattaisiin vasta latauksen jälkeen, selain tulkitsisi sen ponnahdusikkunaksi ja
 // estäisi sen, koska käyttäjän klikkaus on jo vanhentunut.
-export function UusiTekstitiedosto({ onLuo }: { onLuo: (tiedosto: File) => Promise<string | undefined> }) {
+const TYYPIT: { tyyppi: OdfTyyppi; nimi: string; Ikoni: typeof FileText }[] = [
+  { tyyppi: 'odt', nimi: 'Teksti', Ikoni: FileText },
+  { tyyppi: 'ods', nimi: 'Taulukko', Ikoni: Sheet },
+  { tyyppi: 'odp', nimi: 'Esitys', Ikoni: Presentation },
+];
+
+export function UusiDokumentti({ onLuo }: { onLuo: (tiedosto: File) => Promise<string | undefined> }) {
   const tila = useEditorinTila();
   const [auki, setAuki] = useState(false);
+  const [tyyppi, setTyyppi] = useState<OdfTyyppi>('odt');
   const [nimi, setNimi] = useState('');
   const [luodaan, setLuodaan] = useState(false);
   const [virhe, setVirhe] = useState<string | null>(null);
 
-  if (!tila?.kaytossa || !tila.muokattavat.includes('.odt')) return null;
+  // Vain tyypit jotka palvelin kertoo muokattaviksi (server/editori.js: EDITOITAVAT).
+  const tarjolla = TYYPIT.filter((t) => tila?.muokattavat.includes(`.${t.tyyppi}`));
+  if (!tila?.kaytossa || tarjolla.length === 0) return null;
 
   const luo = async () => {
     setVirhe(null);
     setLuodaan(true);
     const ikkuna = window.open('', '_blank');
     try {
-      const uploadId = await onLuo(uusiOdtTiedosto(nimi));
+      const uploadId = await onLuo(uusiOdfTiedosto(nimi, tyyppi));
       if (!uploadId) throw new Error('Tiedoston luonti epäonnistui.');
       const osoite = editorinOsoite(uploadId, 'muokkaus');
       if (ikkuna) ikkuna.location.href = osoite;
@@ -82,13 +92,31 @@ export function UusiTekstitiedosto({ onLuo }: { onLuo: (tiedosto: File) => Promi
         className="shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors text-ink-body bg-sunken hover:bg-line-soft"
       >
         <FilePlus size={16} />
-        Uusi tekstitiedosto
+        Uusi dokumentti
       </button>
     );
   }
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-2">
+      <div className="inline-flex flex-wrap gap-1" role="radiogroup" aria-label="Dokumentin tyyppi">
+        {tarjolla.map(({ tyyppi: t, nimi: otsikko, Ikoni }) => (
+          <button
+            key={t}
+            type="button"
+            role="radio"
+            aria-checked={tyyppi === t}
+            onClick={() => setTyyppi(t)}
+            disabled={luodaan}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors ${
+              tyyppi === t ? 'bg-accent-soft border-accent/40 text-accent' : 'bg-surface border-line text-ink-body hover:bg-sunken'
+            }`}
+          >
+            <Ikoni size={15} />
+            {otsikko}
+          </button>
+        ))}
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <input
           type="text"

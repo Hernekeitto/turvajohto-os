@@ -15,20 +15,20 @@ import path from 'node:path';
 import jwt from 'jsonwebtoken';
 import { canEdit, eventAllowed, legacyEventId } from './permissions.js';
 
-// Tiedostotyypit jotka avataan editoriin. Collabora osaa muitakin (docx, xlsx, ods), mutta
-// käyttöönotto rajattiin OpenDocument-tekstiin ja -esityksiin. Laajennus on yksi rivi
-// tähän — discovery kertoo kyllä jokaiselle päätteelle oman editori-osoitteensa.
-export const EDITOITAVAT = new Set(['.odt', '.odp']);
+// Tiedostotyypit jotka avataan Toimistoon muokattaviksi: OpenDocument-teksti (Writer),
+// -taulukko (Calc, 29.9.2026) ja -esitys (Impress). Microsoftin muodot (docx, xlsx, pptx)
+// avautuvat vain esikatseluun: tallennustarkistus (onKelvollinenOdf) hyväksyy vain ODF:n.
+export const EDITOITAVAT = new Set(['.odt', '.ods', '.odp']);
 
 export function onEditoitava(nimi) {
   return EDITOITAVAT.has(path.extname(String(nimi || '')).toLowerCase());
 }
 
 // Tiedostotyypit jotka voi esikatsella editorissa vain luku -tilassa. Nämä ovat ne
-// sallituista latauksista (uploads.js) joita selain ei osaa näyttää itse: Word- ja
-// Excel-tiedostot sekä OpenDocument. PDF, kuvat ja teksti avautuvat selaimeen suoraan
+// sallituista latauksista (uploads.js) joita selain ei osaa näyttää itse: Word-, Excel-
+// ja PowerPoint-tiedostot sekä OpenDocument. PDF, kuvat ja teksti avautuvat selaimeen suoraan
 // eikä niitä kannata kierrättää Collaboran kautta.
-export const ESIKATSELTAVAT = new Set([...EDITOITAVAT, '.doc', '.docx', '.xls', '.xlsx']);
+export const ESIKATSELTAVAT = new Set([...EDITOITAVAT, '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']);
 
 export function onEsikatseltava(nimi) {
   return ESIKATSELTAVAT.has(path.extname(String(nimi || '')).toLowerCase());
@@ -88,6 +88,7 @@ export function tarkistaWopiToken(token, uploadId, avain) {
 // zip-jäsennintä. Collabora kirjoittaa ODF:n aina tässä muodossa.
 const ODF_MIME = {
   '.odt': 'application/vnd.oasis.opendocument.text',
+  '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
   '.odp': 'application/vnd.oasis.opendocument.presentation',
 };
 export function onKelvollinenOdf(buffer, nimi) {

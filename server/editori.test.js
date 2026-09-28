@@ -23,16 +23,22 @@ import {
 const SALAISUUS = 'x'.repeat(64);
 const AVAIN = wopiAvain(SALAISUUS);
 
-test('editoitavat päätteet: odt ja odp, kirjainkoosta riippumatta', () => {
+test('editoitavat päätteet: odt, ods ja odp, kirjainkoosta riippumatta', () => {
   assert.equal(onEditoitava('Ohje.odt'), true);
   assert.equal(onEditoitava('ESITYS.ODP'), true);
+  assert.equal(onEditoitava('Budjetti.ods'), true);
+  assert.equal(onEditoitava('taulukko.xlsx'), false);
+  assert.equal(onEditoitava('esitys.pptx'), false);
   assert.equal(onEditoitava('raportti.docx'), false);
   assert.equal(onEditoitava('odt'), false);
   assert.equal(onEditoitava(null), false);
 });
 
-test('esikatseltavat: editoitavat sekä Word ja Excel, ei PDF:ää eikä kuvia', () => {
+test('esikatseltavat: editoitavat sekä Word, Excel ja PowerPoint, ei PDF:ää eikä kuvia', () => {
   assert.equal(onEsikatseltava('Ohje.odt'), true);
+  assert.equal(onEsikatseltava('Budjetti.ods'), true);
+  assert.equal(onEsikatseltava('Esitys.pptx'), true);
+  assert.equal(onEsikatseltava('vanha.ppt'), true);
   assert.equal(onEsikatseltava('Sopimus.DOCX'), true);
   assert.equal(onEsikatseltava('vanha.doc'), true);
   assert.equal(onEsikatseltava('taulukko.xlsx'), true);
@@ -183,9 +189,13 @@ test('jako editorissa: peruutus, hylkäys ja vanheneminen katkaisevat, latausraj
 });
 
 test('ODF-tarkistus: oikea paketti kelpaa, muu sisältö ei', async () => {
-  const { tyhjaOdt } = await import('../src/shared/odfPohja.ts');
-  const odt = Buffer.from(tyhjaOdt());
+  const { tyhjaOdf } = await import('../src/shared/odfPohja.ts');
+  const odt = Buffer.from(tyhjaOdf('odt'));
   assert.equal(onKelvollinenOdf(odt, 'a.odt'), true);
+  assert.equal(onKelvollinenOdf(Buffer.from(tyhjaOdf('ods')), 'a.ods'), true);
+  assert.equal(onKelvollinenOdf(Buffer.from(tyhjaOdf('odp')), 'a.odp'), true);
+  // Taulukko esityksen nimellä ei kelpaa.
+  assert.equal(onKelvollinenOdf(Buffer.from(tyhjaOdf('ods')), 'a.odp'), false);
   // Sama paketti väärällä päätteellä: mimetype ei vastaa esitystä.
   assert.equal(onKelvollinenOdf(odt, 'a.odp'), false);
   assert.equal(onKelvollinenOdf(Buffer.from('<html><script>alert(1)</script></html>'), 'a.odt'), false);

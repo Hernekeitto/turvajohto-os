@@ -1,26 +1,57 @@
-// Tyhjä OpenDocument-tekstitiedosto (.odt) uutta dokumenttia varten.
+// Tyhjät OpenDocument-pohjat uutta dokumenttia varten: teksti (.odt, Writer), taulukko
+// (.ods, Calc) ja esitys (.odp, Impress).
 //
 // Muodostetaan selaimessa ja ladataan palvelimelle samaa reittiä kuin käyttäjän oma
 // tiedosto (/api/uploads). Näin uusi dokumentti kulkee täsmälleen saman oikeus- ja
 // tallennuspolun kuin lataus, eikä palvelimelle tarvita omaa luontireittiä.
 //
-// .odt on zip-paketti. ODF-määrittely vaatii että `mimetype` on paketin ensimmäinen
+// ODF-tiedosto on zip-paketti. Määrittely vaatii että `mimetype` on paketin ensimmäinen
 // tiedosto ja pakkaamaton; yksinkertaisuuden vuoksi mitään ei pakata. Sisältö on
-// minimi jonka LibreOffice avaa: manifest ja yksi tyhjä kappale. Tyylit tulevat
-// LibreOfficen oletuksista.
+// minimi jonka LibreOffice avaa (todennettu LibreOfficen omalla muunnoksella, ks.
+// odfPohja.test.ts). Tyylit tulevat LibreOfficen oletuksista — paitsi esityksessä,
+// jonka dia tarvitsee pohjasivun (master page) ja sen sivumitat: ilman niitä dia olisi
+// A4-pystymuodossa.
 
-const MIMETYPE = 'application/vnd.oasis.opendocument.text';
+export type OdfTyyppi = 'odt' | 'ods' | 'odp';
 
-const MANIFEST = `<?xml version="1.0" encoding="UTF-8"?>
-<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">
- <manifest:file-entry manifest:full-path="/" manifest:version="1.2" manifest:media-type="${MIMETYPE}"/>
+const NS = {
+  office: 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
+  text: 'urn:oasis:names:tc:opendocument:xmlns:text:1.0',
+  table: 'urn:oasis:names:tc:opendocument:xmlns:table:1.0',
+  draw: 'urn:oasis:names:tc:opendocument:xmlns:drawing:1.0',
+  style: 'urn:oasis:names:tc:opendocument:xmlns:style:1.0',
+  fo: 'urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0',
+};
+
+const XML = '<?xml version="1.0" encoding="UTF-8"?>\n';
+
+const POHJAT: Record<OdfTyyppi, { mimetype: string; content: string; styles?: string; oletusnimi: string }> = {
+  odt: {
+    mimetype: 'application/vnd.oasis.opendocument.text',
+    oletusnimi: 'Uusi dokumentti',
+    content: `${XML}<office:document-content xmlns:office="${NS.office}" xmlns:text="${NS.text}" office:version="1.2"><office:body><office:text><text:p/></office:text></office:body></office:document-content>\n`,
+  },
+  ods: {
+    mimetype: 'application/vnd.oasis.opendocument.spreadsheet',
+    oletusnimi: 'Uusi taulukko',
+    content: `${XML}<office:document-content xmlns:office="${NS.office}" xmlns:table="${NS.table}" office:version="1.2"><office:body><office:spreadsheet><table:table table:name="Taulukko1"><table:table-row><table:table-cell/></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>\n`,
+  },
+  odp: {
+    mimetype: 'application/vnd.oasis.opendocument.presentation',
+    oletusnimi: 'Uusi esitys',
+    content: `${XML}<office:document-content xmlns:office="${NS.office}" xmlns:draw="${NS.draw}" office:version="1.2"><office:body><office:presentation><draw:page draw:name="Dia1" draw:master-page-name="Oletus"/></office:presentation></office:body></office:document-content>\n`,
+    // 16:9, 28 × 15,75 cm — sama kuin LibreOffice Impressin oletus.
+    styles: `${XML}<office:document-styles xmlns:office="${NS.office}" xmlns:style="${NS.style}" xmlns:fo="${NS.fo}" office:version="1.2"><office:automatic-styles><style:page-layout style:name="PM1"><style:page-layout-properties fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" fo:page-width="28cm" fo:page-height="15.75cm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Oletus" style:page-layout-name="PM1"/></office:master-styles></office:document-styles>\n`,
+  },
+};
+
+function manifest(mimetype: string, styles: boolean) {
+  return `${XML}<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">
+ <manifest:file-entry manifest:full-path="/" manifest:version="1.2" manifest:media-type="${mimetype}"/>
  <manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>
-</manifest:manifest>
+${styles ? ' <manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>\n' : ''}</manifest:manifest>
 `;
-
-const CONTENT = `<?xml version="1.0" encoding="UTF-8"?>
-<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2"><office:body><office:text><text:p/></office:text></office:body></office:document-content>
-`;
+}
 
 let crcTaulu: Uint32Array | null = null;
 function crc32(data: Uint8Array): number {
@@ -88,29 +119,31 @@ export function zipPakkaamaton(tiedostot: { nimi: string; data: Uint8Array }[]):
   return tulos;
 }
 
-export function tyhjaOdt(): Uint8Array {
+export function tyhjaOdf(tyyppi: OdfTyyppi): Uint8Array {
+  const pohja = POHJAT[tyyppi];
   const k = new TextEncoder();
   return zipPakkaamaton([
-    { nimi: 'mimetype', data: k.encode(MIMETYPE) },
-    { nimi: 'META-INF/manifest.xml', data: k.encode(MANIFEST) },
-    { nimi: 'content.xml', data: k.encode(CONTENT) },
+    { nimi: 'mimetype', data: k.encode(pohja.mimetype) },
+    { nimi: 'META-INF/manifest.xml', data: k.encode(manifest(pohja.mimetype, Boolean(pohja.styles))) },
+    { nimi: 'content.xml', data: k.encode(pohja.content) },
+    ...(pohja.styles ? [{ nimi: 'styles.xml', data: k.encode(pohja.styles) }] : []),
   ]);
 }
 
-// Käyttäjän antamasta nimestä tiedostonimi: kielletyt merkit pois ja .odt-pääte
-// varmasti perään. Tyhjä nimi → "Uusi dokumentti.odt".
-export function uudenDokumentinNimi(syote: string): string {
+// Käyttäjän antamasta nimestä tiedostonimi: kielletyt merkit pois ja oikea pääte
+// varmasti perään. Tyhjä nimi → tyypin oletusnimi ("Uusi taulukko.ods").
+export function uudenDokumentinNimi(syote: string, tyyppi: OdfTyyppi = 'odt'): string {
   // Ohjausmerkit (< 0x20) suodatetaan koodin eikä säännöllisen lausekkeen avulla.
   const puhdas = [...syote]
     .filter((m) => m.charCodeAt(0) >= 0x20 && !'\\/:*?"<>|'.includes(m))
     .join('')
     .trim()
     .slice(0, 120);
-  const pohja = puhdas.replace(/\.odt$/i, '').trim() || 'Uusi dokumentti';
-  return `${pohja}.odt`;
+  const pohja = puhdas.replace(new RegExp(`\\.${tyyppi}$`, 'i'), '').trim() || POHJAT[tyyppi].oletusnimi;
+  return `${pohja}.${tyyppi}`;
 }
 
-export function uusiOdtTiedosto(nimi: string): File {
-  const data = tyhjaOdt();
-  return new File([data.buffer as ArrayBuffer], uudenDokumentinNimi(nimi), { type: MIMETYPE });
+export function uusiOdfTiedosto(nimi: string, tyyppi: OdfTyyppi): File {
+  const data = tyhjaOdf(tyyppi);
+  return new File([data.buffer as ArrayBuffer], uudenDokumentinNimi(nimi, tyyppi), { type: POHJAT[tyyppi].mimetype });
 }

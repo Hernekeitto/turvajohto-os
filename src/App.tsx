@@ -28,7 +28,7 @@ import { TallennetutRaportit } from './event/nakymat/TallennetutRaportit';
 import { ArkistoidutTapahtumat, ArkistoidunTapahtumanTiedot } from './event/nakymat/ArkistoidutTapahtumat';
 import { HataviestiLoki } from './event/nakymat/HataviestiLoki';
 import { TyontekijaLista } from './shared/komponentit/TyontekijaLista';
-import { AvaaEditorissa, Esikatsele, UusiTekstitiedosto } from './shared/komponentit/Dokumenttieditori';
+import { AvaaEditorissa, Esikatsele, UusiDokumentti } from './shared/komponentit/Dokumenttieditori';
 import { NykyisetJaot } from './shared/komponentit/NykyisetJaot';
 import { EditoriOikeusValinta } from './shared/komponentit/EditoriOikeusValinta';
 import type { EditoriOikeus } from './shared/editori';
@@ -2068,7 +2068,7 @@ export default function App() {
   };
 
   // Palauttaa latauksen id:n onnistuessa, jotta juuri luotu dokumentti voidaan avata
-  // editoriin (UusiTekstitiedosto). Tiedostolista tallentuu palvelimelle useEffectillä
+  // editoriin (UusiDokumentti). Tiedostolista tallentuu palvelimelle useEffectillä
   // hetken viiveellä — editorisivu yrittää siksi avausta uudelleen jos tiedostoa ei
   // vielä löydy (public/editori.js).
   const lataaTiedosto = async (tiedosto?: File): Promise<string | undefined> => {
@@ -3957,7 +3957,7 @@ export default function App() {
                 </button>
               </div>
             )}
-            {saaMuokata && <UusiTekstitiedosto onLuo={lataaTiedosto} />}
+            {saaMuokata && <UusiDokumentti onLuo={lataaTiedosto} />}
 
             {/* Sisältö */}
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">

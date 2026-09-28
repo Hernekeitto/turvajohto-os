@@ -32,7 +32,7 @@ export const MAX_LIITTEITA = 10;
 export const SALLITUT_PAATTEET = [
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif',
   '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt',
-  '.odt', '.odp',
+  '.odt', '.ods', '.odp', '.ppt', '.pptx',
 ];
 
 export const TIEDOSTOVALITSIMEN_SUODATIN = SALLITUT_PAATTEET.join(',');

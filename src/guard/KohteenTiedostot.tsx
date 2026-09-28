@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { muotoileTavut } from '../shared/muotoilu';
 import { JakoDialogi, jakolinkinOsoite } from '../shared/komponentit/JakoDialogi';
-import { AvaaEditorissa, Esikatsele, UusiTekstitiedosto } from '../shared/komponentit/Dokumenttieditori';
+import { AvaaEditorissa, Esikatsele, UusiDokumentti } from '../shared/komponentit/Dokumenttieditori';
 import type { KohteenTiedosto } from './tyypit';
 
 // Kohteen tiedostot: toimeksiantosopimus, pohjapiirros, vartio-ohje ja vastaavat.
@@ -389,7 +389,7 @@ export const KohteenTiedostot = ({
               <Upload size={16} />
               {lataa ? 'Lähetetään…' : 'Lisää tiedosto'}
             </button>
-            <UusiTekstitiedosto onLuo={luoDokumentti} />
+            <UusiDokumentti onLuo={luoDokumentti} />
           </div>
           <p className="text-xs text-ink-subtle mt-2">
             Enintään 15 Mt. Tuetut tiedostotyypit: kuvat, PDF ja tavalliset asiakirjamuodot.

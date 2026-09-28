@@ -1,6 +1,6 @@
 // Jaa-ikkunan valinta: saako jaon saaja vain esikatsella dokumenttia vai myös muokata
 // sitä editorissa. Näytetään vain kun valinnalla on merkitystä: editori on käytössä ja
-// jaetaan muokattava dokumentti (.odt/.odp) tai kansio, jossa sellaisia voi olla.
+// jaetaan muokattava dokumentti (.odt/.ods/.odp) tai kansio, jossa sellaisia voi olla.
 // Muut tiedostotyypit voi aina esikatsella, koska esikatselu ei anna mitään mitä
 // lataus ei jo antaisi.
 
