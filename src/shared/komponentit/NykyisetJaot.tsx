@@ -40,7 +40,8 @@ const pvm = (iso?: string | null) =>
 const jakolinkki = (token: string) => `${window.location.origin}${import.meta.env.BASE_URL}jako.html#${token}`;
 
 // Tapahtumapuolen vanhoilla jaoilla ei ole lahde-kenttää: ne ovat eventFiles-jakoja.
-const jaonLahde = (j: Jako): JaonLahde => (j.lahde === 'guardFiles' ? 'guardFiles' : 'eventFiles');
+const jaonLahde = (j: Jako): JaonLahde => (
+  j.lahde === 'guardFiles' || j.lahde === 'personalFiles' ? j.lahde : 'eventFiles');
 
 export const NykyisetJaot = ({ lahde, targetId, paivitys, onMuuttui }: Props) => {
   const [jaot, setJaot] = useState<Jako[] | null>(null);
@@ -48,7 +49,9 @@ export const NykyisetJaot = ({ lahde, targetId, paivitys, onMuuttui }: Props) =>
   const [virhe, setVirhe] = useState('');
 
   const hae = useCallback(() => {
-    fetch('/api/data/fileShares', { credentials: 'include' })
+    // Henkilökohtaisten tiedostojen jaot eivät näy kokoelmareitillä (permissions.js),
+    // joten omistaja hakee omansa omalta reitiltään samassa muodossa.
+    fetch(lahde === 'personalFiles' ? '/api/omat/jaot' : '/api/data/fileShares', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
       .then((res) => {
         if (!res?.ok || !Array.isArray(res.data)) return;

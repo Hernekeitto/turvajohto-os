@@ -13,13 +13,13 @@ import { NykyisetJaot } from './NykyisetJaot';
 import { EditoriOikeusValinta } from './EditoriOikeusValinta';
 import type { EditoriOikeus } from '../editori';
 
-export type JaonLahde = 'eventFiles' | 'guardFiles';
+export type JaonLahde = 'eventFiles' | 'guardFiles' | 'personalFiles';
 
 type Props = {
   kohde: { id: string; name: string; henkilotietoa: boolean };
   lahde: JaonLahde;
-  // Nimetyille käyttäjille jakaminen vaatii käyttäjälistan, jonka palvelin antaa vain
-  // pääkäyttäjälle (/api/users). Muilta vaihtoehto piilotetaan.
+  // Nimetyille käyttäjille jakaminen. Lista tulee reitiltä /api/jako/kayttajat (tunnus ja
+  // näyttönimi kaikille kirjautuneille, 29.9.2026).
   saaValitaKayttajia: boolean;
   onSulje: () => void;
   onJaettu: () => void;
@@ -57,7 +57,7 @@ export const JakoDialogi = ({ kohde, lahde, saaValitaKayttajia, onSulje, onJaett
 
   useEffect(() => {
     if (!saaValitaKayttajia) return;
-    fetch('/api/users', { credentials: 'include' })
+    fetch('/api/jako/kayttajat', { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => { if (data?.ok && Array.isArray(data.users)) setKayttajat(data.users); })
       .catch(() => { /* lista jää tyhjäksi, virhe näkyy tekstinä */ });

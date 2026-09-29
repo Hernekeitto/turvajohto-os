@@ -78,6 +78,7 @@ import { useKanava, type Sijainti } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
 import { luoMuunnos } from '../shared/georeferointi';
 import { Pohjanakyma } from '../shared/komponentit/Pohjanakyma';
+import { OmatTiedostot } from '../shared/komponentit/OmatTiedostot';
 import { VartijanTiedostot, vartijalleNakyvat } from './VartijanTiedostot';
 import { haeSuoritukset, type Pohja, type Suoritus } from '../shared/pohjat';
 import { Tiedotteet, TiedoteKehote } from '../shared/komponentit/Tiedotteet';
@@ -336,6 +337,24 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const [raportitKohde, setRaportitKohde] = useState<Kohde | null>(null);
   // Kohteen tiedostokansio vartijalle (28.9.2026): vain luku, ks. VartijanTiedostot.
   const [tiedostoKohde, setTiedostoKohde] = useState<Kohde | null>(null);
+  // Yläpalkin "Tiedostot": käyttäjän oma kansio ja tallennustila (29.9.2026).
+  const [omatTiedostotAuki, setOmatTiedostotAuki] = useState(false);
+  // Palvelimen ilmoitukset kelloon (tallennustila, jakolinkkien hyväksyntä). Haetaan
+  // minuutin välein: nämä eivät ole kiireellisiä, ja hälytykset tulevat kanavaa pitkin.
+  const [palvelinIlmoitukset, setPalvelinIlmoitukset] = useState<
+    { id: string; otsikko: string; kuvaus?: string; aika?: string; tyyppi?: string }[]
+  >([]);
+  const haePalvelinIlmoitukset = useCallback(() => {
+    fetch('/api/notifications', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.ok && Array.isArray(d.notifications)) setPalvelinIlmoitukset(d.notifications); })
+      .catch(() => { /* kello jää ennalleen */ });
+  }, []);
+  useEffect(() => {
+    haePalvelinIlmoitukset();
+    const ajastin = window.setInterval(haePalvelinIlmoitukset, 60_000);
+    return () => window.clearInterval(ajastin);
+  }, [haePalvelinIlmoitukset]);
   // Hälytykset (erä 7). Palvelimen ylläpitämä kokoelma: tänne tulee vain luettua tilaa,
   // ja jokainen muutos tehdään /api/halytys-reiteillä.
   const [halytykset, setHalytykset] = useState<Halytys[]>([]);
@@ -1479,6 +1498,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Tämä nollaa VAIN näkymät, ei valittua kohdetta: näkymän sulkeminen palaa kohteen
   // valikkoon eikä kohdelistaan.
   const nollaaAlanakymat = () => {
+    setOmatTiedostotAuki(false);
     setLomake(null);
     setPoistettava(null);
     setTehtavaKohde(null);
@@ -1889,9 +1909,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       // 'Vaihda kohdetta' päätti ennen vain laitteen tilan. Erässä 17 se päättää vuoron
       // myös palvelimella, joten nimi kertoo sen: vuoron päättyminen on kirjaus, ja
       // painike joka aliarvioi tekonsa on pahempi kuin pitkä nimi.
+      { id: 'omat-tiedostot', label: 'Tiedostot' },
       { id: 'vaihda-kohde', label: 'Vaihda vuoroa (päättää nykyisen)' },
     ]
-    : [];
+    : [{ id: 'omat-tiedostot', label: 'Tiedostot' }];
 
   // Sivuvalikosta siirrytään suoraan näkymästä toiseen, ja siksi edellinen on
   // suljettava ensin. Työpöytäversiossa tätä ei tarvita, koska siellä näkymään mennään
@@ -1901,6 +1922,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const avaaMobiiliLinkki = (id: string) => {
     if (id === 'vaihda-kohde') {
       paataVuoro();
+      return;
+    }
+    if (id === 'omat-tiedostot') {
+      avaaOmatTiedostot();
       return;
     }
     if (!vuoroKohde) return;
@@ -1973,9 +1998,37 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
 
   const mobiiliIlmoitukset: MobiiliIlmoitus[] = [
     ...tehtavaIlmoitukset, ...omatHalytysIlmoitukset, ...unohtunutVuoroIlmoitus,
+    ...palvelinIlmoitukset.map((i) => ({
+      id: `palvelin:${i.id}`, otsikko: i.otsikko, kuvaus: i.kuvaus, taso: 'perus' as const,
+    })),
   ];
 
+  // Tiedostot-näkymä avataan minkä tahansa näkymän päältä, joten muut suljetaan ensin.
+  function avaaOmatTiedostot() {
+    nollaaAlanakymat();
+    setAsetuksissa(false);
+    setOmatTiedostotAuki(true);
+  }
+
+  // Palvelimen ilmoitus: tallennustilan pyyntö vie pääkäyttäjän asetuksiin, päätös ja
+  // rajan ylitys omiin tiedostoihin. Muut (esim. EVENT-puolen jakolinkit) eivät vie
+  // minnekään GUARDissa.
+  function avaaPalvelinIlmoitus(ilm?: { tyyppi?: string }) {
+    if (!ilm) return;
+    if (ilm.tyyppi === 'tallennustila_pyynto') {
+      nollaaAlanakymat();
+      setAsetuksissa(true);
+    } else if (ilm.tyyppi === 'tallennustila_paatos' || ilm.tyyppi === 'tallennustila_ylitys') {
+      avaaOmatTiedostot();
+    }
+    haePalvelinIlmoitukset();
+  }
+
   const avaaIlmoitus = (id: string) => {
+    if (id.startsWith('palvelin:')) {
+      avaaPalvelinIlmoitus(palvelinIlmoitukset.find((i) => `palvelin:${i.id}` === id));
+      return;
+    }
     if (id.startsWith('tehtava:')) {
       avaaTehtava(id.slice('tehtava:'.length));
       return;
@@ -2024,10 +2077,11 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           {saaNahdaPtt && <PttPainike />}
         </>
       ) : undefined}
-      // GUARD-puolella ei ole vielä ilmoituksia eikä salasananvaihtoa: molemmat odottavat
-      // purkamista jaetuksi App.tsx:stä. Uloskirjautuminen toimii jo.
-      ilmoitukset={[]}
-      onIlmoitus={() => {}}
+      onTiedostot={avaaOmatTiedostot}
+      // Ilmoitukset palvelimelta (/api/notifications). Salasananvaihto odottaa yhä
+      // purkamista jaetuksi App.tsx:stä.
+      ilmoitukset={palvelinIlmoitukset}
+      onIlmoitus={avaaPalvelinIlmoitus}
       nimimerkki={session?.nickname || ''}
       isAdmin={!!isAdmin}
       onLogout={kirjauduUlos}
@@ -2060,9 +2114,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // renderöintiketjun kautta; muuten näytetään Vartijanäkymän oma etusivu.
   const vartijanAlanakyma = !!(
     raporttiKohde || kalustoKohde || tiedoteKohde || pohjaNakyma || kierrosKohde || tehtavaKohde
-    || kohteenTehtavatKohde || tiedostoKohde
+    || kohteenTehtavatKohde || tiedostoKohde || omatTiedostotAuki
   );
   const nakymanNimi = vartijanPuolella && !vartijanAlanakyma ? 'Vartijanäkymä'
+    : omatTiedostotAuki ? 'Tiedostot'
     : asetuksissa ? 'Sovellusasetukset'
     : avattu ? `${TEHTAVAN_LAJI[avattu.laji]} — ${avattu.siteNimi}`
     : osio === 'halytyskeskus' ? 'Hälytyskeskus'
@@ -2236,7 +2291,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         </div>
       )}
 
-      {asetuksissa ? (
+      {omatTiedostotAuki ? (
+        <OmatTiedostot onTakaisin={() => setOmatTiedostotAuki(false)} mobiili={mobiili} />
+      ) : asetuksissa ? (
         <Asetukset
           raportit={raportit}
           isAdmin={!!isAdmin}

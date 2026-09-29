@@ -10,7 +10,7 @@
 // vain YlapalkkiLogoa.
 
 import type { ReactNode } from 'react';
-import { ShieldCheck, Clock } from 'lucide-react';
+import { ShieldCheck, Clock, FolderOpen } from 'lucide-react';
 import { NotificationBell, ProfileMenu, type Ilmoitus } from './YlapalkkiOsat';
 
 type YlapalkkiLogoProps = {
@@ -47,6 +47,8 @@ type YlapalkkiProps<T extends Ilmoitus> = YlapalkkiLogoProps & {
   // PTT-painike). Puuttuva ei näytä mitään — EVENT-puoli ei anna tätä propsia lainkaan,
   // eikä tämän jaetun komponentin tarvitse tietää mitä tuotteita on olemassa.
   ekstra?: ReactNode;
+  // Käyttäjän henkilökohtainen tallennustila (29.9.2026). Kaikilla käyttäjillä.
+  onTiedostot?: () => void;
   ilmoitukset: T[];
   onIlmoitus: (ilmoitus: T) => void;
   nimimerkki: string;
@@ -63,6 +65,7 @@ export const Ylapalkki = <T extends Ilmoitus,>({
   kello,
   sticky = false,
   ekstra,
+  onTiedostot,
   ilmoitukset,
   onIlmoitus,
   nimimerkki,
@@ -84,6 +87,7 @@ export const Ylapalkki = <T extends Ilmoitus,>({
           <span className="font-mono text-sm tracking-widest">{kello}</span>
         </div>
       )}
+      {onTiedostot && <TiedostotPainike onClick={onTiedostot} />}
       {ekstra}
       <NotificationBell notifications={ilmoitukset} onOpen={onIlmoitus} />
       <ProfileMenu
@@ -95,4 +99,18 @@ export const Ylapalkki = <T extends Ilmoitus,>({
       />
     </div>
   </nav>
+);
+
+// "Tiedostot": käyttäjän oma kansio ja tallennustila. Myös tapahtumanäkymän omassa
+// yläpalkissa (App.tsx), siksi erillinen komponentti.
+export const TiedostotPainike = ({ onClick }: { onClick: () => void }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title="Omat tiedostot ja tallennustila"
+    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-sm font-medium"
+  >
+    <FolderOpen size={16} className="text-accent-on-dark" />
+    <span className="hidden sm:inline">Tiedostot</span>
+  </button>
 );

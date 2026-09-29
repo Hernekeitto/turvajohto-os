@@ -4,6 +4,7 @@ import { Kayttajatasot } from '../shared/asetukset/Kayttajatasot';
 import { Kayttajat } from '../shared/asetukset/Kayttajat';
 import { Laitteet } from '../shared/asetukset/Laitteet';
 import { Tallennustila } from '../shared/asetukset/Tallennustila';
+import { KayttajienTallennustila } from '../shared/asetukset/KayttajienTallennustila';
 import { Sailytysajat } from '../shared/asetukset/Sailytysajat';
 import { ASETUSTEN_SIVUKARTAT } from '../asetusten-sivukartat';
 import type { GuardRaportti } from './tyypit';
@@ -96,6 +97,8 @@ export const Asetukset = ({ raportit, isAdmin, onHavita, onAvaaHenkilo, onTakais
       <Laitteet />
 
       <Tallennustila isAdmin={isAdmin} />
+
+      <KayttajienTallennustila isAdmin={isAdmin} />
 
       <Sailytysajat
         raportit={sailytysRaportit}

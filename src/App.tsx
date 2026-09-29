@@ -81,12 +81,14 @@ import {
 import { DashboardCard } from './shared/komponentit/DashboardCard';
 import { EmpStatusBadge, getEmpStatus } from './shared/komponentit/EmpStatusBadge';
 import { NotificationBell, ProfileMenu } from './shared/komponentit/YlapalkkiOsat';
-import { Ylapalkki, YlapalkkiLogo } from './shared/komponentit/Ylapalkki';
+import { Ylapalkki, YlapalkkiLogo, TiedostotPainike } from './shared/komponentit/Ylapalkki';
 import { TakaisinLinkki } from './shared/komponentit/TakaisinLinkki';
 import { AlertBanner, type AlertTyyppi } from './shared/komponentit/AlertBanner';
 import { ASETUSTEN_SIVUKARTAT } from './asetusten-sivukartat';
 import { Kayttajatasot } from './shared/asetukset/Kayttajatasot';
 import { Tallennustila } from './shared/asetukset/Tallennustila';
+import { KayttajienTallennustila } from './shared/asetukset/KayttajienTallennustila';
+import { OmatTiedostot } from './shared/komponentit/OmatTiedostot';
 import { Sailytysajat } from './shared/asetukset/Sailytysajat';
 import {
   AlertTriangle, 
@@ -410,6 +412,8 @@ export default function App() {
   const [notifications, setNotifications] = useState<Ilmoitus[]>([]);
   // "Minulle jaetut" -näkymä: käyttäjälle erikseen jaetut tiedostot ja kansiot.
   const [viewingSharedWithMe, setViewingSharedWithMe] = useState(false);
+  // Käyttäjän henkilökohtainen tallennustila, yläpalkin "Tiedostot" (29.9.2026).
+  const [viewingOmatTiedostot, setViewingOmatTiedostot] = useState(false);
   const [sharedWithMe, setSharedWithMe] = useState<JaettuKohde[]>([]);
   const [sharedWithMeLoading, setSharedWithMeLoading] = useState(false);
 
@@ -1884,6 +1888,7 @@ export default function App() {
     setViewingAuditLog(false);
     setViewingSettings(false);
     setViewingSharedWithMe(false);
+    setViewingOmatTiedostot(false);
     setShowQuickActions(false);
     setViewingSmsLog(false);
     setAvattuLahetys(null);
@@ -1919,6 +1924,13 @@ export default function App() {
   // Ilmoituksen avaus vie sinne missä asia hoidetaan. Toistaiseksi kaikki ilmoitukset
   // ovat jakolinkkien hyväksymispyyntöjä, jotka käsitellään tapahtuman tiedostosivulla.
   const avaaIlmoitus = (ilm: Ilmoitus) => {
+    // Tallennustila (29.9.2026): pyyntö vie pääkäyttäjän asetuksiin, päätös ja rajan
+    // ylitys käyttäjän omiin tiedostoihin.
+    if (ilm.tyyppi === 'tallennustila_pyynto') { siirryNakymaan('asetukset'); return; }
+    if (ilm.tyyppi === 'tallennustila_paatos' || ilm.tyyppi === 'tallennustila_ylitys') {
+      siirryNakymaan('omat');
+      return;
+    }
     if (ilm.tyyppi === 'share_approval') {
       setViewingSettings(false);
       setViewingUserAdmin(null);
@@ -1926,6 +1938,7 @@ export default function App() {
       setViewingAllReports(false);
       setViewingArchivedEvents(false);
       setViewingSharedWithMe(false);
+      setViewingOmatTiedostot(false);
       setShowEventPicker(false);
       if (ilm.eventId) setSelectedEvent(ilm.eventId);
       setActiveTab('eventfiles');
@@ -1943,6 +1956,7 @@ export default function App() {
       onLogo={palaaEtusivulle}
       kello={valinnat.kello ? formatTime(currentTime) : undefined}
       sticky={valinnat.sticky}
+      onTiedostot={() => siirryNakymaan('omat')}
       ilmoitukset={notifications}
       onIlmoitus={avaaIlmoitus}
       nimimerkki={sessionNickname || ''}
@@ -3715,6 +3729,7 @@ export default function App() {
       : viewingAuditLog ? 'auditloki'
       : viewingAllReports ? 'raportit'
       : viewingArchivedEvents ? 'arkisto'
+      : viewingOmatTiedostot ? 'omat'
       : viewingSharedWithMe ? 'jaetut'
       : selectedEvent === null ? (showEventPicker ? 'tapahtumalista' : 'etusivu')
       : selectedEvent === 'new' ? 'uusi-tapahtuma'
@@ -3731,6 +3746,7 @@ export default function App() {
     setViewingAllReports(false);
     setViewingArchivedEvents(false);
     setViewingSharedWithMe(false);
+    setViewingOmatTiedostot(false);
 
     const erotin = kohde.indexOf(':');
     const laji = erotin === -1 ? kohde : kohde.slice(0, erotin);
@@ -3760,6 +3776,9 @@ export default function App() {
         return;
       case 'jaetut':
         setViewingSharedWithMe(true);
+        return;
+      case 'omat':
+        setViewingOmatTiedostot(true);
         return;
       case 'etusivu':
         setSelectedEvent(null);
@@ -10318,6 +10337,8 @@ export default function App() {
 
             <Tallennustila isAdmin={isAdminUser} />
 
+            <KayttajienTallennustila isAdmin={isAdminUser} />
+
             <Sailytysajat
               raportit={reports}
               isAdmin={isAdminUser}
@@ -10503,6 +10524,19 @@ export default function App() {
             onAvaa={setArchivedEventDetailId}
             onTakaisin={() => setViewingArchivedEvents(false)}
           />
+        </main>
+        {globalOverlays}
+      </div>
+    );
+  }
+
+  // ====================== TIEDOSTOT (oma tallennustila) ======================
+  if (viewingOmatTiedostot) {
+    return (
+      <div className="min-h-screen bg-canvas font-sans flex flex-col">
+        {ylapalkki('Tiedostot', { kello: true })}
+        <main className="flex-1 p-6 md:p-10">
+          <OmatTiedostot onTakaisin={() => setViewingOmatTiedostot(false)} />
         </main>
         {globalOverlays}
       </div>
@@ -11258,7 +11292,8 @@ export default function App() {
           />
         </div>
         <div className="flex items-center gap-4 sm:gap-6">
-          
+          <TiedostotPainike onClick={() => siirryNakymaan('omat')} />
+
           {/* Pikatoiminnot -ponnahdusvalikko. Napit tulevat smsButtons-kokoelmasta
               (Sovellusasetukset -> Pikatoiminnot), eivät enää koodista. Valikko näkyy
               näkyvyysoikeudella, mutta LÄHETYS vaatii muokkausoikeuden — sama tarkistus

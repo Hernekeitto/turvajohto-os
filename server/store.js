@@ -106,6 +106,10 @@ const COLLECTIONS = {
   // säännöt (kriittistä kohtaa ei voi ohittaa, keskeytys vaatii syyn) menettäisivät
   // merkityksensä jos selain voisi kirjoittaa kokoelman suoraan.
   templateRuns: 'templateRuns.json',
+  // Käyttäjien henkilökohtainen tallennustila (29.9.2026) ja lisätilapyynnöt. Palvelimen
+  // ylläpitämiä: omistajuus ja kiintiö tarkistetaan omilla reiteillä (/api/omat).
+  personalFiles: 'personalFiles.json',
+  storageRequests: 'storageRequests.json',
   // Tiedotteet (erä 8): sovelluksen sisäinen viesti kentälle, jonka lukeminen kuitataan.
   // Palvelimen ylläpitämä, koska kuittauslista on koko toiminnon sisältö — selaimesta
   // kirjoitettava kuittauslista ei todistaisi mitään.
@@ -347,6 +351,8 @@ const ENCRYPTED_FIELDS = {
   // mainitaan usein ihmisiä nimeltä ("Virtanen jää portille 2"). Otsikko jää
   // selväkieliseksi: se on listan rivi eikä sisältö.
   broadcasts: ['viesti'],
+  // Lisätilapyynnön perustelu ja päätöksen syy ovat vapaata tekstiä käyttäjän tilanteesta.
+  storageRequests: ['perustelu', 'paatoksenSyy'],
   // Avaimen haltija on ihmisen nimi — usein sellaisen ihmisen, jolla ei ole tunnusta
   // järjestelmään (siivooja, huoltomies). Historian tekstit ovat vapaata tekstiä samasta
   // tapahtumasta. Avaimen tunnus ("A-12 pääovi") jää selväkieliseksi: se on esineen nimi.

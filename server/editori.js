@@ -136,12 +136,15 @@ export function jakoVoimassaEditorissa(share, nyt = new Date()) {
 // (tapahtuman tiedostot, kohteen tiedostot) — ei raporttien liitteille, pohjakartoille
 // tai muille uploads-hakemiston tiedostoille, joilla on oma omistajansa ja oma
 // muokkauspolkunsa.
-export function etsiTiedosto(uploadId, eventFiles = [], guardFiles = []) {
+export function etsiTiedosto(uploadId, eventFiles = [], guardFiles = [], personalFiles = []) {
   if (!uploadId) return null;
   const e = (Array.isArray(eventFiles) ? eventFiles : []).find((f) => f?.type !== 'folder' && f?.uploadId === uploadId);
   if (e) return { lahde: 'eventFiles', tietue: e, kohdeId: legacyEventId(e) };
   const g = (Array.isArray(guardFiles) ? guardFiles : []).find((f) => f?.uploadId === uploadId);
   if (g) return { lahde: 'guardFiles', tietue: g, kohdeId: g.siteId ?? null };
+  // Henkilökohtainen tiedosto (29.9.2026): kohdeId on omistajan käyttäjätunnus.
+  const p = (Array.isArray(personalFiles) ? personalFiles : []).find((f) => f?.type === 'file' && f?.uploadId === uploadId);
+  if (p) return { lahde: 'personalFiles', tietue: p, kohdeId: p.omistaja ?? null };
   return null;
 }
 
@@ -162,6 +165,8 @@ export function saaKirjoittaa(kayttaja, loyto) {
     if (!eventAllowed(eventAccess, loyto.kohdeId)) return false;
     return canEdit(permissions, loyto.kohdeId, 'guard_sites');
   }
+  // Omaa tiedostoa muokkaa vain omistaja (muut nimetyn muokkausjaon kautta).
+  if (loyto.lahde === 'personalFiles') return !!kayttaja.username && kayttaja.username === loyto.kohdeId;
   return false;
 }
 

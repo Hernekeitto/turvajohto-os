@@ -102,6 +102,7 @@ import {
   eventAllowed,
 } from './permissions.js';
 import { liitaKanava, laheta as lahetaKanavalle, lahetaViesti } from './kanava.js';
+import * as omatTiedostot from './omattiedostot.js';
 import {
   seurantaKaytossa, paivita as paivitaSijainti, kaikki as sijainnit,
   hae as haeSijainti, unohda as unohdaSijainti,
@@ -687,6 +688,9 @@ const UPLOAD_VIITTAAJAT = {
   patrolRuns: (arr) => (Array.isArray(arr) ? arr : [])
     .flatMap((k) => (Array.isArray(k?.liitteet) ? k.liitteet.map((l) => l?.id) : []))
     .filter(Boolean),
+  // Käyttäjien henkilökohtaiset tiedostot (29.9.2026). Ilman tätä riviä minkä tahansa
+  // muun kokoelman tallennus pitäisi niitä orpoina ja poistaisi ne armonajan jälkeen.
+  personalFiles: (arr) => (Array.isArray(arr) ? arr : []).map((f) => f?.uploadId).filter(Boolean),
 };
 
 // Tuoteportti: kokoelma joka kuuluu vain toiselle puolelle (esim. guardSites) on
@@ -6749,8 +6753,16 @@ app.post('/api/qr', requireAuth, async (req, res) => {
 // vartiointikohteen tiedostot (guardFiles, litteä lista). Kohteen tiedostot muunnetaan
 // samaan muotoon kuin tapahtuman tiedostot, jotta jakologiikka (kansion alipuu,
 // henkilötietolippu, julkinen lataussivu) on yksi eikä kaksi. eventId = kohteen id.
-const jaonLahde = (share) => (share?.lahde === 'guardFiles' ? 'guardFiles' : 'eventFiles');
+const JAON_LAHTEET = ['eventFiles', 'guardFiles', 'personalFiles'];
+const jaonLahde = (share) => (JAON_LAHTEET.includes(share?.lahde) ? share.lahde : 'eventFiles');
 function jaettavatTiedostot(lahde) {
+  // Henkilökohtaisen tiedoston "omistaja-id" on sen omistajan käyttäjätunnus. Jaon
+  // eventId on siksi käyttäjätunnus: saaHallitaJakoja vertaa sitä kutsujaan, ja
+  // fileShares-kokoelman lukusääntö (permissions.js) ei näytä näitä jakoja kenellekään
+  // muulle kuin pääkäyttäjälle — omistaja näkee omansa reitiltä /api/omat/jaot.
+  if (lahde === 'personalFiles') {
+    return (readCollection('personalFiles') || []).map((t) => ({ ...t, eventId: t.omistaja }));
+  }
   if (lahde === 'guardFiles') {
     return (readCollection('guardFiles') || []).map((t) => ({
       ...t, type: 'file', parentId: null, eventId: t.siteId,
@@ -6763,6 +6775,8 @@ function jaettavatTiedostot(lahde) {
 // se laajentaa pääsyn sovelluksen ulkopuolelle.
 function saaHallitaJakoja(req, lahde, omistajaId) {
   if (req.role === 'admin') return true;
+  // Omia tiedostoja saa jakaa jokainen (käyttäjän päätös 29.9.2026), mutta vain omiaan.
+  if (lahde === 'personalFiles') return !!req.username && req.username === omistajaId;
   if (lahde === 'guardFiles') {
     return (req.tuotteet || []).includes('guard')
       && eventAllowed(req.eventAccess, omistajaId)
@@ -6770,6 +6784,289 @@ function saaHallitaJakoja(req, lahde, omistajaId) {
   }
   return canEdit(req.permissions, omistajaId, 'eventfiles');
 }
+
+// ====================== HENKILÖKOHTAINEN TALLENNUSTILA (29.9.2026) ======================
+//
+// Jokaisen käyttäjän oma kansiopuu ("Tiedostot" yläpalkissa). Säännöt ja kiintiöt ovat
+// omattiedostot.js:ssä; tässä on omistajuus, levy ja ilmoitukset. Kokoelma EI ole
+// /api/data-reiteillä (permissions.js ei tunne sitä), joten sitä luetaan ja kirjoitetaan
+// vain näiden reittien kautta — muuten kiintiö ja omistajuus olisivat selaimen varassa.
+
+function saaLukeaOmanTiedoston(username, uploadId, shares) {
+  if (!username || !uploadId) return false;
+  const tiedostot = readCollection('personalFiles') || [];
+  const tiedosto = tiedostot.find((t) => t?.uploadId === uploadId);
+  if (!tiedosto) return false;
+  if (tiedosto.omistaja === username) return true;
+  const nyt = new Date();
+  return (Array.isArray(shares) ? shares : []).some((sh) => jaonLahde(sh) === 'personalFiles'
+    && sh.mode === 'users' && !sh.revokedAt
+    && (sh.allowedUsernames || []).includes(username)
+    && !(sh.expiresAt && new Date(sh.expiresAt) <= nyt)
+    && kuuluuJakoon(sh.targetId, tiedosto.id, tiedostot));
+}
+
+function tallennustilanTila(username) {
+  const kayttaja = findUser(username);
+  const pyynnot = readCollection('storageRequests') || [];
+  const raja = omatTiedostot.kayttajanRaja(kayttaja ? { ...kayttaja, username } : null, pyynnot);
+  const kaytetty = omatTiedostot.kaytto(readCollection('personalFiles') || [], username);
+  return {
+    kaytetty,
+    raja,
+    puskuri: omatTiedostot.PUSKURI,
+    ylitys: raja !== null && kaytetty > raja,
+  };
+}
+
+// Ilmoituskellon rivit: pääkäyttäjälle odottavat pyynnöt, käyttäjälle päätös omasta
+// pyynnöstä (kunnes hän on nähnyt sen) ja rajan ylitys.
+function tallennustilanIlmoitukset(req) {
+  const tulos = [];
+  const pyynnot = readCollection('storageRequests') || [];
+  if (req.role === 'admin') {
+    for (const p of pyynnot.filter((x) => x.tila === 'odottaa')) {
+      tulos.push({
+        id: `tallennustila-pyynto-${p.id}`,
+        tyyppi: 'tallennustila_pyynto',
+        otsikko: 'Lisätallennustilaa pyydetään',
+        kuvaus: `${p.nimimerkki} pyytää ${p.pyydettyMt >= 1024 ? `${p.pyydettyMt / 1024} Gt` : `${p.pyydettyMt} Mt`}`,
+        aika: p.luotu,
+        kohdeId: p.id,
+      });
+    }
+    // Henkilökohtaisten tiedostojen pysyvät jakolinkit hyväksytään tallennustilan
+    // hallinnassa, koska niillä ei ole tapahtumaa johon ilmoitus veisi.
+  }
+  for (const p of pyynnot.filter((x) => x.username === req.username && x.tila !== 'odottaa' && !x.kuitattu)) {
+    const hyvaksytty = p.tila === 'hyvaksytty';
+    tulos.push({
+      id: `tallennustila-paatos-${p.id}`,
+      tyyppi: 'tallennustila_paatos',
+      otsikko: hyvaksytty ? 'Lisätallennustila myönnetty' : 'Lisätallennustilan pyyntö hylätty',
+      kuvaus: hyvaksytty
+        ? `Tallennustilaasi lisättiin ${p.myonnettyMt >= 1024 ? `${Math.round((p.myonnettyMt / 1024) * 10) / 10} Gt` : `${p.myonnettyMt} Mt`}.`
+        : (p.paatoksenSyy || 'Pääkäyttäjä hylkäsi pyynnön.'),
+      aika: p.kasitelty,
+      kohdeId: p.id,
+    });
+  }
+  const tila = tallennustilanTila(req.username);
+  if (tila.ylitys) {
+    tulos.push({
+      id: 'tallennustila-ylitys',
+      tyyppi: 'tallennustila_ylitys',
+      otsikko: 'Tallennustilasi raja on ylittynyt',
+      kuvaus: 'Voit tallentaa vielä hetken, mutta poista tiedostoja tai pyydä lisää tilaa.',
+      aika: new Date().toISOString(),
+    });
+  }
+  return tulos;
+}
+
+// Oma kansiopuu, oma tila, omat jaot ja omat lisätilapyynnöt yhdellä haulla.
+app.get('/api/omat', requireAuth, (req, res) => {
+  const tiedostot = omatTiedostot.omat(readCollection('personalFiles') || [], req.username);
+  const pyynnot = (readCollection('storageRequests') || []).filter((p) => p.username === req.username);
+  res.json({ ok: true, tiedostot, tila: tallennustilanTila(req.username), pyynnot });
+});
+
+// Omien tiedostojen jaot (NykyisetJaot-komponentti). fileShares-kokoelman lukusääntö ei
+// näytä henkilökohtaisia jakoja, joten omistaja saa ne tästä.
+app.get('/api/omat/jaot', requireAuth, (req, res) => {
+  const jaot = (readCollection('fileShares') || [])
+    .filter((sh) => jaonLahde(sh) === 'personalFiles' && sh.eventId === req.username)
+    .map(julkinenJako);
+  res.json({ ok: true, data: jaot });
+});
+
+app.post('/api/omat/kansio', requireAuth, (req, res) => {
+  const nimi = omatTiedostot.puhdistaNimi(req.body?.nimi);
+  if (!nimi) return res.status(400).json({ ok: false, error: 'Anna kansiolle nimi.' });
+  const kaikki = readCollection('personalFiles') || [];
+  const parentId = req.body?.parentId || null;
+  if (!omatTiedostot.omaKansio(kaikki, req.username, parentId)) {
+    return res.status(404).json({ ok: false, error: 'Kansiota ei löytynyt.' });
+  }
+  const kansio = omatTiedostot.uusiKohde({ omistaja: req.username, type: 'folder', name: nimi, parentId });
+  writeCollection('personalFiles', [...kaikki, kansio]);
+  res.json({ ok: true, kohde: kansio });
+});
+
+app.post('/api/omat/tiedosto', requireAuth, uploadLimiter, (req, res) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Tiedosto on liian suuri (max 15 Mt).' : 'Tiedoston lähetys epäonnistui.';
+      return res.status(400).json({ ok: false, error: msg });
+    }
+    if (!req.file) return res.status(400).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
+    if (!isAllowedFile(req.file.originalname)) {
+      return res.status(400).json({ ok: false, error: 'Tiedostotyyppiä ei tueta.' });
+    }
+    const kaikki = readCollection('personalFiles') || [];
+    const parentId = req.body?.parentId || null;
+    if (!omatTiedostot.omaKansio(kaikki, req.username, parentId)) {
+      return res.status(404).json({ ok: false, error: 'Kansiota ei löytynyt.' });
+    }
+    const tila = tallennustilanTila(req.username);
+    const tarkistus = omatTiedostot.tarkistaTila({ kaytetty: tila.kaytetty, koko: req.file.size, raja: tila.raja });
+    if (!tarkistus.ok) return res.status(413).json({ ok: false, error: tarkistus.error, taynna: true });
+
+    const nimi = omatTiedostot.puhdistaNimi(req.file.originalname) || 'tiedosto';
+    const uploadId = saveUpload(nimi, req.file.buffer);
+    const kohde = omatTiedostot.uusiKohde({
+      omistaja: req.username, type: 'file', name: nimi, parentId, uploadId, size: req.file.size,
+    });
+    writeCollection('personalFiles', [...kaikki, kohde]);
+    res.json({ ok: true, kohde, uploadId, ylitys: tarkistus.ylitys, tila: tallennustilanTila(req.username) });
+  });
+});
+
+// Nimen vaihto ja siirto toiseen kansioon.
+app.put('/api/omat/:id', requireAuth, (req, res) => {
+  const kaikki = readCollection('personalFiles') || [];
+  const kohde = kaikki.find((t) => t.id === req.params.id && t.omistaja === req.username);
+  if (!kohde) return res.status(404).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
+  const paivitetty = { ...kohde };
+  if (req.body?.nimi !== undefined) {
+    const nimi = omatTiedostot.puhdistaNimi(req.body.nimi);
+    if (!nimi) return res.status(400).json({ ok: false, error: 'Anna nimi.' });
+    paivitetty.name = nimi;
+  }
+  if (req.body?.parentId !== undefined) {
+    const parentId = req.body.parentId || null;
+    if (!omatTiedostot.omaKansio(kaikki, req.username, parentId) || !omatTiedostot.voiSiirtaa(kaikki, kohde.id, parentId)) {
+      return res.status(400).json({ ok: false, error: 'Kohdetta ei voi siirtää tähän kansioon.' });
+    }
+    paivitetty.parentId = parentId;
+  }
+  writeCollection('personalFiles', kaikki.map((t) => (t.id === kohde.id ? paivitetty : t)));
+  res.json({ ok: true, kohde: paivitetty });
+});
+
+// Poisto vie kansion koko sisällön ja levyltä tiedostot. Kohteen jaot peruutetaan
+// samalla, jottei linkki jää osoittamaan olematonta.
+app.delete('/api/omat/:id', requireAuth, (req, res) => {
+  const kaikki = readCollection('personalFiles') || [];
+  const kohde = kaikki.find((t) => t.id === req.params.id && t.omistaja === req.username);
+  if (!kohde) return res.status(404).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
+  const poistettavat = omatTiedostot.alipuu(kaikki, kohde.id);
+  const poistuvat = kaikki.filter((t) => poistettavat.has(t.id));
+  writeCollection('personalFiles', kaikki.filter((t) => !poistettavat.has(t.id)));
+  for (const t of poistuvat) if (t.uploadId) deleteUpload(t.uploadId);
+  const nyt = new Date().toISOString();
+  const jaot = readCollection('fileShares') || [];
+  if (jaot.some((sh) => jaonLahde(sh) === 'personalFiles' && poistettavat.has(sh.targetId) && !sh.revokedAt)) {
+    writeCollection('fileShares', jaot.map((sh) => (jaonLahde(sh) === 'personalFiles' && poistettavat.has(sh.targetId) && !sh.revokedAt
+      ? { ...sh, revokedAt: nyt, revokedBy: req.username }
+      : sh)));
+  }
+  res.json({ ok: true, poistettu: poistettavat.size, tila: tallennustilanTila(req.username) });
+});
+
+// Lisätilapyyntö pääkäyttäjälle. Yksi odottava pyyntö kerrallaan.
+app.post('/api/omat/lisatila', requireAuth, (req, res) => {
+  const pyynnot = readCollection('storageRequests') || [];
+  if (pyynnot.some((p) => p.username === req.username && p.tila === 'odottaa')) {
+    return res.status(400).json({ ok: false, error: 'Sinulla on jo käsittelyä odottava pyyntö.' });
+  }
+  const kayttaja = findUser(req.username);
+  const tulos = omatTiedostot.luoPyynto({
+    username: req.username, nimimerkki: kayttaja?.nickname, perustelu: req.body?.perustelu, maaraMt: req.body?.maaraMt,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  writeCollection('storageRequests', [...pyynnot, tulos.pyynto]);
+  logAudit({ user: req.username, action: 'storage_request', collection: 'storageRequests', recordId: tulos.pyynto.id });
+  res.json({ ok: true, pyynto: tulos.pyynto });
+});
+
+// Käyttäjä on nähnyt päätöksen: ilmoitus poistuu kellosta.
+app.post('/api/omat/lisatila/:id/kuittaa', requireAuth, (req, res) => {
+  const pyynnot = readCollection('storageRequests') || [];
+  const p = pyynnot.find((x) => x.id === req.params.id && x.username === req.username);
+  if (!p) return res.status(404).json({ ok: false, error: 'Pyyntöä ei löytynyt.' });
+  if (!p.kuitattu && p.tila !== 'odottaa') {
+    writeCollection('storageRequests', pyynnot.map((x) => (x.id === p.id ? { ...x, kuitattu: true } : x)));
+  }
+  res.json({ ok: true });
+});
+
+// Käyttäjät jakovalintaan (nimetty jako). Kaikille kirjautuneille, koska jokainen voi
+// jakaa omia tiedostojaan: vain tunnus ja näyttönimi, ei tasoa, oikeuksia eikä muuta.
+app.get('/api/jako/kayttajat', requireAuth, (req, res) => {
+  const kayttajat = listUsers()
+    .filter((u) => u.username !== req.username)
+    .map((u) => ({ username: u.username, nickname: u.nickname || u.username }))
+    .sort((a, b) => a.nickname.localeCompare(b.nickname, 'fi'));
+  res.json({ ok: true, users: kayttajat });
+});
+
+// --- Pääkäyttäjän hallinta (Sovellusasetukset > Käyttäjien tallennustila) ---
+
+app.get('/api/tallennustila/kayttajat', requireAuth, requireAdmin, (req, res) => {
+  const tiedostot = readCollection('personalFiles') || [];
+  const pyynnot = readCollection('storageRequests') || [];
+  const kayttajat = listUsers().map((u) => {
+    const raja = omatTiedostot.kayttajanRaja(u, pyynnot);
+    const kaytetty = omatTiedostot.kaytto(tiedostot, u.username);
+    return {
+      username: u.username,
+      nickname: u.nickname || u.username,
+      roleId: u.roleId || null,
+      admin: u.role === 'admin',
+      kaytetty,
+      raja,
+      lisatila: omatTiedostot.lisatila(pyynnot, u.username),
+      tiedostoja: omatTiedostot.omat(tiedostot, u.username).filter((t) => t.type === 'file').length,
+    };
+  });
+  const jaot = (readCollection('fileShares') || [])
+    .filter((sh) => jaonLahde(sh) === 'personalFiles' && sh.approvalStatus === 'pending' && !sh.revokedAt)
+    .map((sh) => ({ ...julkinenJako(sh), nimi: tiedostot.find((t) => t.id === sh.targetId)?.name || 'Poistettu' }));
+  res.json({
+    ok: true,
+    kayttajat,
+    pyynnot: [...pyynnot].sort((a, b) => String(b.luotu).localeCompare(String(a.luotu))),
+    odottavatJaot: jaot,
+    vaihtoehdot: omatTiedostot.LISATILAN_VAIHTOEHDOT,
+  });
+});
+
+app.post('/api/tallennustila/pyynto/:id', requireAuth, requireAdmin, (req, res) => {
+  const pyynnot = readCollection('storageRequests') || [];
+  const pyynto = pyynnot.find((p) => p.id === req.params.id);
+  const tulos = omatTiedostot.kasittelePyynto({
+    pyynto, hyvaksy: req.body?.hyvaksy === true, maaraMt: req.body?.maaraMt,
+    kasittelija: req.username, syy: req.body?.syy,
+  });
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: tulos.error });
+  writeCollection('storageRequests', pyynnot.map((p) => (p.id === pyynto.id ? tulos.pyynto : p)));
+  logAudit({
+    user: req.username, action: tulos.pyynto.tila === 'hyvaksytty' ? 'storage_request_approved' : 'storage_request_rejected',
+    collection: 'storageRequests', recordId: pyynto.id,
+  });
+  res.json({ ok: true, pyynto: tulos.pyynto });
+});
+
+// Pääkäyttäjä voi myöntää lisätilaa myös ilman pyyntöä. Kirjataan hyväksyttynä pyyntönä,
+// jotta lisätilan kertymä on yhdessä paikassa ja käyttäjä saa siitä ilmoituksen.
+app.post('/api/tallennustila/myonna', requireAuth, requireAdmin, (req, res) => {
+  const kayttaja = findUser(String(req.body?.username || ''));
+  if (!kayttaja) return res.status(404).json({ ok: false, error: 'Käyttäjää ei löytynyt.' });
+  const maara = Math.round(Number(req.body?.maaraMt));
+  if (!Number.isFinite(maara) || maara <= 0 || maara > 100 * 1024) {
+    return res.status(400).json({ ok: false, error: 'Anna määrä megatavuina (1–102400).' });
+  }
+  const nyt = new Date().toISOString();
+  const pyynto = {
+    id: crypto.randomUUID(), username: req.body.username, nimimerkki: kayttaja.nickname || req.body.username,
+    perustelu: 'Pääkäyttäjän myöntämä', pyydettyMt: maara, tila: 'hyvaksytty', luotu: nyt,
+    kasittelija: req.username, kasitelty: nyt, myonnettyMt: maara, paatoksenSyy: '', kuitattu: false,
+  };
+  writeCollection('storageRequests', [...(readCollection('storageRequests') || []), pyynto]);
+  logAudit({ user: req.username, action: 'storage_granted', collection: 'storageRequests', recordId: pyynto.id });
+  res.json({ ok: true, pyynto });
+});
 
 // Etsii jakolinkin tokenilla. Vakioaikainen vertailu jokaista vastaan, jottei
 // vastausaika kerro kuinka moni merkki osui.
@@ -6953,7 +7250,7 @@ app.post('/api/shares/:id/approval', requireAuth, requireAdmin, (req, res) => {
 // ja salasana hashattava palvelimella — kumpaakaan ei voi tehdä selaimessa.
 app.post('/api/shares', requireAuth, (req, res) => {
   const { targetId, mode, password, expiresAt, ikuinen, maxDownloads, allowedUsernames } = req.body || {};
-  const lahde = req.body?.lahde === 'guardFiles' ? 'guardFiles' : 'eventFiles';
+  const lahde = JAON_LAHTEET.includes(req.body?.lahde) ? req.body.lahde : 'eventFiles';
   // Saako saaja muokata jaettuja dokumentteja editorissa (vain .odt/.odp), vai vain
   // esikatsella. Oletus on katselu: muokkausoikeus on aina erikseen valittava.
   const editori = req.body?.editori === 'muokkaus' ? 'muokkaus' : 'katselu';
@@ -7004,7 +7301,7 @@ app.post('/api/shares', requireAuth, (req, res) => {
   const share = {
     id: crypto.randomUUID(),
     eventId: kohde.eventId,
-    ...(lahde === 'guardFiles' ? { lahde } : {}),
+    ...(lahde !== 'eventFiles' ? { lahde } : {}),
     targetId,
     mode,
     token: onTokenJako ? luoToken() : null,
@@ -7066,7 +7363,7 @@ app.delete('/api/shares/:id', requireAuth, (req, res) => {
 // tiedostot, ei koko jakotietuetta.
 app.get('/api/shares/for-me', requireAuth, (req, res) => {
   const shares = readCollection('fileShares') || [];
-  const lahteet = { eventFiles: jaettavatTiedostot('eventFiles'), guardFiles: jaettavatTiedostot('guardFiles') };
+  const lahteet = Object.fromEntries(JAON_LAHTEET.map((l) => [l, jaettavatTiedostot(l)]));
   const nyt = new Date();
 
   const omat = shares.filter((sh) => {
@@ -7110,7 +7407,7 @@ app.get('/api/notifications', requireAuth, (req, res) => {
 
   if (req.role === 'admin') {
     const shares = readCollection('fileShares') || [];
-    const lahteet = { eventFiles: jaettavatTiedostot('eventFiles'), guardFiles: jaettavatTiedostot('guardFiles') };
+    const lahteet = Object.fromEntries(JAON_LAHTEET.map((l) => [l, jaettavatTiedostot(l)]));
     for (const sh of shares) {
       if (sh.approvalStatus !== 'pending' || sh.revokedAt) continue;
       const kohde = lahteet[jaonLahde(sh)].find((f) => f.id === sh.targetId);
@@ -7125,6 +7422,8 @@ app.get('/api/notifications', requireAuth, (req, res) => {
       });
     }
   }
+
+  ilmoitukset.push(...tallennustilanIlmoitukset(req));
 
   ilmoitukset.sort((a, b) => String(b.aika || '').localeCompare(String(a.aika || '')));
   res.json({ ok: true, notifications: ilmoitukset });
@@ -7193,6 +7492,8 @@ function saaLukeaLiitteen(k, uploadId) {
     reportsArr, eventsArr, filesArr, sharesArr, k.username
   );
   if (tapahtumaPuoli) return true;
+  // Henkilökohtainen tiedosto (29.9.2026): omistaja ja nimellä jaetut saajat.
+  if (saaLukeaOmanTiedoston(k.username, uploadId, sharesArr)) return true;
   // Nimellä jaettu kohteen tiedosto avautuu ilman kohteen oikeuksia ja GUARD-tuotetta.
   if (jaettuKohteenTiedostoMinulle(k.username, uploadId, readCollection('guardFiles') || [], sharesArr)) {
     return true;
@@ -7284,7 +7585,7 @@ app.post('/api/editori/avaa', requireAuth, async (req, res) => {
   if (!EDITORI_URL) return res.status(503).json({ ok: false, error: 'Dokumenttieditori ei ole käytössä.' });
   const uploadId = String(req.body?.uploadId || '');
   const muokkaus = req.body?.tila !== 'katselu';
-  const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || []);
+  const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || [], readCollection('personalFiles') || []);
   if (!loyto || !getUploadPath(uploadId)) return res.status(404).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
   if (muokkaus ? !onEditoitava(loyto.tietue.name) : !onEsikatseltava(loyto.tietue.name)) {
     return res.status(400).json({ ok: false, error: 'Tätä tiedostotyyppiä ei voi avata editorissa.' });
@@ -7352,7 +7653,7 @@ function wopiPortti(req, res, next) {
 
   const k = editorinKayttaja(tokeni.username);
   if (!k) return res.status(401).end();
-  const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || []);
+  const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || [], readCollection('personalFiles') || []);
   const polku = loyto && getUploadPath(uploadId);
   if (!polku || !onEsikatseltava(loyto.tietue.name)) return res.status(404).end();
   if (!saaLukeaLiitteen(k, uploadId)) return res.status(401).end();

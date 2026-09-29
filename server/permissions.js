@@ -206,9 +206,14 @@ const COLLECTIONS = {
   // eventId on kohteen id ja oikeus tulee kohteen hallinnasta, ei tapahtuman tiedostoista.
   fileShares: {
     view: ['eventfiles', 'guard_sites'],
-    viewOf: (item) => (item?.lahde === 'guardFiles' ? ['guard_sites'] : ['eventfiles']),
+    // Henkilökohtaisten tiedostojen jaot (lahde personalFiles, 29.9.2026) eivät näy
+    // kokoelmareitillä kenellekään muulle kuin pääkäyttäjälle: solmua ei ole olemassa.
+    // Omistaja näkee omansa reitiltä /api/omat/jaot.
+    viewOf: (item) => (item?.lahde === 'personalFiles' ? ['__henkilokohtainen__']
+      : item?.lahde === 'guardFiles' ? ['guard_sites'] : ['eventfiles']),
     vaatiiMuokkauksen: (item) => item?.lahde === 'guardFiles',
-    touch: (item) => (item?.lahde === 'guardFiles' ? ['guard_sites'] : ['eventfiles']),
+    touch: (item) => (item?.lahde === 'personalFiles' ? ['__henkilokohtainen__']
+      : item?.lahde === 'guardFiles' ? ['guard_sites'] : ['eventfiles']),
     eventScoped: true,
     eventIdOf: legacyEventId,
   },
