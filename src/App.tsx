@@ -47,7 +47,7 @@ import { TILAT, VAKAVUUDET, tila as kirjauksenTila, onLukittu, onPoikkeama, uusi
 import { lomakeRaportille, lomakeTunnus } from './shared/lomakerekisteri';
 import { TilaMerkki, VakavuusMerkki, LukkoMerkki } from './shared/komponentit/TilaMerkki';
 import { useKanava, type Sijainti } from './shared/kanava';
-import { useHistorianavigointi, useTakaisinEste } from './shared/navigointi';
+import { useHistorianavigointi, useNakymanPalautus, useTakaisinEste } from './shared/navigointi';
 import { onAsennettuSovellus } from './shared/asennettu';
 import { useSijainninLahetys, ikaTekstina } from './shared/sijainninLahetys';
 import { luoMuunnos, kuvanSisalla, vyohykePisteessa } from './shared/georeferointi';
@@ -3804,6 +3804,26 @@ export default function App() {
   };
 
   useHistorianavigointi(nakyma, siirryNakymaan);
+
+  // Sivun päivitys palauttaa saman näkymän (ks. navigointi.ts). Uuden tapahtuman lomaketta
+  // ei palauteta, koska sen sisältö ei säily päivityksen yli, ja poistettu tai muuten
+  // näkymättömiin jäänyt tapahtuma jättää käyttäjän etusivulle.
+  useNakymanPalautus(
+    sessionUsername ? `tj_nakyma:event:${sessionUsername}` : null,
+    nakyma,
+    eventsLoaded,
+    (tallennettu) => {
+      if (tallennettu === 'uusi-tapahtuma') return;
+      // Lomakkeet avautuvat listaansa: tyhjä lomake ilman valittua henkilöä hämäisi.
+      if (tallennettu === 'tyontekijapankki:form') { siirryNakymaan('tyontekijapankki:list'); return; }
+      if (tallennettu === 'kayttajat:new') { siirryNakymaan('kayttajat:list'); return; }
+      if (tallennettu.startsWith('tapahtuma:')) {
+        const id = tallennettu.slice(tallennettu.indexOf(':', 'tapahtuma:'.length) + 1);
+        if (!events.some((e) => String(e.id) === id)) return;
+      }
+      siirryNakymaan(tallennettu);
+    },
+  );
 
   // Modaalit: takaisin-nappi sulkee päällimmäisen modaalin eikä vaihda näkymää.
   // Sulkutoiminto on SAMA kuin modaalin omassa sulkunapissa — takaisin peruu, ei

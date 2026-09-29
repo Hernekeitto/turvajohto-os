@@ -198,3 +198,55 @@ export function useTakaisinEste(aktiivinen: boolean, sulje: () => void) {
     };
   }, [aktiivinen]);
 }
+
+// --- Näkymän palautus sivun päivityksen jälkeen (29.9.2026) --------------------------
+//
+// Päivitys (F5, vetopäivitys mobiilissa) käynnistää sovelluksen alusta, ja ilman tätä
+// käyttäjä päätyi aina etusivulle kesken työn. Näkymän tunniste tallennetaan
+// sessionStorageen: se säilyy saman välilehden päivityksen yli mutta ei vuoda toiseen
+// välilehteen eikä selaimen sulkemisen yli. Avaimessa on käyttäjätunnus, jotta samalla
+// koneella myöhemmin kirjautuva toinen käyttäjä ei päädy edellisen näkymään.
+//
+// Palautus tehdään vasta kun sovellus on `valmis` (kirjautunut ja data ladattu): kohteen
+// tai tapahtuman näkymää ei voi avata ennen kuin kohde on listassa. Siihen asti
+// tallennusta ei myöskään tehdä, muuten käynnistyksen etusivu pyyhkisi tallennetun
+// näkymän ennen kuin sitä ehdittiin lukea.
+
+function lueTallennettu(avain: string): string | null {
+  try { return window.sessionStorage.getItem(avain); } catch { return null; }
+}
+
+function tallenna(avain: string, arvo: string) {
+  try { window.sessionStorage.setItem(avain, arvo); } catch { /* yksityinen tila tms. */ }
+}
+
+/**
+ * Säilyttää näkymän sivun päivityksen yli. `tunniste` on nykyisen näkymän tunniste
+ * (sovelluksen oma muoto), `palauta` avaa tallennetun näkymän. Palautus yritetään
+ * kerran, kun `valmis` muuttuu todeksi; `palauta` saa itse hylätä tunnisteen jonka
+ * kohdetta ei enää ole.
+ */
+export function useNakymanPalautus(
+  avain: string | null,
+  tunniste: string,
+  valmis: boolean,
+  palauta: (tunniste: string) => void,
+) {
+  // Minkä avaimen (käyttäjän) näkymä on jo palautettu. Avain eikä totuusarvo: uloskirjautuminen
+  // ja toisen käyttäjän kirjautuminen samassa välilehdessä palauttaa tämän näkymän.
+  const palautettu = useRef<string | null>(null);
+  const palautaRef = useRef(palauta);
+  palautaRef.current = palauta;
+
+  useEffect(() => {
+    if (!avain || !valmis || palautettu.current === avain) return;
+    palautettu.current = avain;
+    const tallennettu = lueTallennettu(avain);
+    if (tallennettu && tallennettu !== tunniste) palautaRef.current(tallennettu);
+  }, [avain, valmis, tunniste]);
+
+  useEffect(() => {
+    if (!avain || palautettu.current !== avain) return;
+    tallenna(avain, tunniste);
+  }, [avain, valmis, tunniste]);
+}

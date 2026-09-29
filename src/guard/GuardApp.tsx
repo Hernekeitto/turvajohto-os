@@ -95,7 +95,7 @@ import type { KalustoTietue, SijoitusLaji } from './kalusto/tyypit';
 import { Mittaristo } from '../shared/komponentit/Mittaristo';
 import { Jalkiraportit } from '../shared/komponentit/Jalkiraportit';
 import { haeJalkiraportit, type Jalkiraportti } from '../shared/jalkiraportit';
-import { useHistorianavigointi, useTakaisinEste } from '../shared/navigointi';
+import { useHistorianavigointi, useNakymanPalautus, useTakaisinEste } from '../shared/navigointi';
 import {
   uusiId, type GuardRaportti, type Kohde, type KohteenTiedosto, type RaporttiTyyppi,
   type TehtavaSuoritus, type Kierrospohja, type Kierros as KierrosTietue,
@@ -2042,6 +2042,70 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   };
 
   useHistorianavigointi(nakyma, siirry);
+
+  // Sivun päivitys palauttaa saman näkymän (29.9.2026, ks. navigointi.ts). Oma tunniste
+  // eikä historian `nakyma`: historiamerkintä kertoo vain tason, mutta päivityksen jälkeen
+  // on tiedettävä myös MINKÄ kohteen näkymä oli auki. Muoto:
+  //   asetukset | omat | osio:<osio> | kohde:<id> | toiminto:<toiminto>:<id>
+  // Kohteen id on viimeisenä, koska se on ainoa osa joka voi sisältää kaksoispisteen.
+  // Lomakkeita (kohteen hallinta, avattu hälytystehtävä) ei palauteta: niiden sisältö ei
+  // säily päivityksen yli, joten ne avautuvat kohteen tai osion tasolle.
+  const kohteenToiminto: [string, Kohde] | null =
+    raporttiKohde ? [
+      raporttiKohde.tyyppi === 'guard_action' ? 'toimenpide'
+        : raporttiKohde.tyyppi === 'guard_jvreport' ? 'ilmoitus' : 'anastus',
+      raporttiKohde.kohde,
+    ]
+      : tietoKohde ? ['tiedot', tietoKohde]
+      : kalustoKohde ? ['kalusto', kalustoKohde]
+      : mittariKohde ? ['mittaristo', mittariKohde]
+      : jaksoKohde ? ['jaksoraportit', jaksoKohde]
+      : tiedoteKohde ? ['tiedotteet', tiedoteKohde]
+      : pohjaNakyma ? [pohjaNakyma.laji === 'guide' ? 'ohjeet' : 'skenaariot', pohjaNakyma.kohde]
+      : halytysKohde ? ['halytykset', halytysKohde]
+      : raportitKohde ? ['raportit', raportitKohde]
+      : kohteenTehtavatKohde ? ['kohteen_tehtavat', kohteenTehtavatKohde]
+      : kierrosKohde ? ['kierros', kierrosKohde]
+      : pohjaKohde ? ['kierrospohjat', pohjaKohde]
+      : tehtavaKohde ? ['tehtavat', tehtavaKohde]
+      : tiedostoKohde ? ['tiedostot', tiedostoKohde]
+      : null;
+  const palautusTunniste =
+    omatTiedostotAuki ? 'omat'
+      : asetuksissa ? 'asetukset'
+      : kohteenToiminto ? `toiminto:${kohteenToiminto[0]}:${kohteenToiminto[1].id}`
+      : valittuKohde && !mobiili ? `kohde:${valittuKohde.id}`
+      : `osio:${osio}`;
+
+  const palautaNakyma = (tallennettu: string) => {
+    const [laji, ...loput] = tallennettu.split(':');
+    if (laji === 'omat') { avaaOmatTiedostot(); return; }
+    if (laji === 'asetukset') { nollaaNakymat(); setAsetuksissa(true); return; }
+    if (laji === 'osio') {
+      if (mobiili) return;
+      nollaaNakymat();
+      setOsio(loput[0] as Osio);
+      return;
+    }
+    const toiminto = laji === 'toiminto' ? loput.shift() : null;
+    const kohde = kohteet.find((k) => k.id === loput.join(':'));
+    // Kohde poistettu tai oikeudet muuttuneet: jäädään etusivulle.
+    if (!kohde) return;
+    nollaaNakymat();
+    if (!mobiili) {
+      setOsio('kohteet');
+      setValittuKohde(kohde);
+    }
+    if (toiminto === 'kohteen_tehtavat') setKohteenTehtavatKohde(kohde);
+    else if (toiminto) avaaToiminto(toiminto as Toiminto, kohde);
+  };
+
+  useNakymanPalautus(
+    session?.username && !HALKE_OSOITE.paneeli ? `tj_nakyma:guard:${session.username}` : null,
+    palautusTunniste,
+    ladattu,
+    palautaNakyma,
+  );
 
   // Poistovahvistus on modaali: takaisin peruu sen eikä vie kohdelistaan.
   useTakaisinEste(!!poistettava, () => setPoistettava(null));
