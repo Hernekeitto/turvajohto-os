@@ -204,6 +204,20 @@ const COLLECTIONS = {
   },
   // Jaot kattavat myös GUARD-kohteen tiedostot (lahde: 'guardFiles', 28.9.2026). Silloin
   // eventId on kohteen id ja oikeus tulee kohteen hallinnasta, ei tapahtuman tiedostoista.
+  // Henkilökohtainen tallennustila ja lisätilapyynnöt (29.9.2026). Luetaan ja kirjoitetaan
+  // VAIN omilla reiteillä (index.js: /api/omat, /api/tallennustila), jotka tarkistavat
+  // omistajuuden ja kiintiön. Kokoelmareitillä solmua ei ole kenelläkään: vain pääkäyttäjä
+  // näkee datan, eikä kukaan voi kirjoittaa sitä (PALVELIMEN_YLLAPITAMAT).
+  personalFiles: {
+    view: ['__henkilokohtainen__'],
+    touch: () => ['__henkilokohtainen__'],
+    eventScoped: false,
+  },
+  storageRequests: {
+    view: ['__henkilokohtainen__'],
+    touch: () => ['__henkilokohtainen__'],
+    eventScoped: false,
+  },
   fileShares: {
     view: ['eventfiles', 'guard_sites'],
     // Henkilökohtaisten tiedostojen jaot (lahde personalFiles, 29.9.2026) eivät näy
