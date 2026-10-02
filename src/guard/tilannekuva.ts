@@ -432,6 +432,9 @@ export function tapahtumavirta(lahteet: Lahteet, raja = 40): Tapahtuma[] {
     // Tilatiedot ovat omassa listassaan (ks. tilatiedot): ne ovat vuoron rutiinia jota
     // tulee kymmeniä, ja virrassa ne hukuttavat sen mitä virta on olemassa näyttämään.
     if (onTilatieto(r)) continue;
+    // Mikroraporteista virtaan nousevat vain poikkeamat. Havainnot ja toimenpiteet ovat
+    // hiljaista dataa, jota kertyy kymmeniä vuorossa — ne luetaan Kohteen raporteista.
+    if (r.typeId === 'guard_micro' && r.microClass !== 'poikkeama') continue;
     const ts = raportinAika(r);
     if (!ts) continue;
     virta.push({
@@ -442,7 +445,8 @@ export function tapahtumavirta(lahteet: Lahteet, raja = 40): Tapahtuma[] {
       // kohteessa on puututtu johonkin, ja päivystäjän on tiedettävä siitä samana iltana
       // eikä vasta kuukausiraportissa.
       // Anastusilmoitus samasta syystä: siinä on otettu kiinni tai ainakin puututtu.
-      taso: r.typeId === 'guard_jvreport' || r.typeId === 'guard_theft' ? 'varoitus' : 'rauhallinen',
+      // Mikroraportin poikkeama samoin: jokin kohteessa on vialla.
+      taso: ['guard_jvreport', 'guard_theft', 'guard_micro'].includes(r.typeId) ? 'varoitus' : 'rauhallinen',
       otsikko: r.typeId === 'guard_action' ? 'Toimenpide kirjattu' : raportinNimi(r.typeId),
       teksti: r.summary || r.type || '',
       kuka: r.author,
@@ -530,13 +534,14 @@ export function tapahtumavirta(lahteet: Lahteet, raja = 40): Tapahtuma[] {
 const raportinNimi = (typeId: string) => (
   typeId === 'guard_jvreport' ? 'Tapahtumailmoitus'
     : typeId === 'guard_theft' ? 'Anastusilmoitus'
-      : 'Toimenpidekirjaus'
+      : typeId === 'guard_micro' ? 'Mikroraportti'
+        : 'Toimenpidekirjaus'
 );
 
 export type Toiminto =
   | 'tehtavat' | 'kierros' | 'kierrospohjat' | 'kalusto' | 'mittaristo' | 'jaksoraportit'
   | 'tiedotteet' | 'ohjeet' | 'skenaariot' | 'halytykset' | 'toimenpide' | 'ilmoitus'
-  | 'anastus' | 'tiedot' | 'raportit' | 'tiedostot';
+  | 'anastus' | 'mikro' | 'tiedot' | 'raportit' | 'tiedostot';
 
 export type Tiivistelma = {
   // Painikkeen alle tuleva rivi: mitä kohteessa on tämän toiminnon osalta tehty.
@@ -588,6 +593,7 @@ export function kohteenToiminnot(
   const toimenpiteet = lahteet.raportit.filter((r) => r.siteId === kohdeId && r.typeId === 'guard_action');
   const ilmoitukset = lahteet.raportit.filter((r) => r.siteId === kohdeId && r.typeId === 'guard_jvreport');
   const anastukset = lahteet.raportit.filter((r) => r.siteId === kohdeId && r.typeId === 'guard_theft');
+  const mikrot = lahteet.raportit.filter((r) => r.siteId === kohdeId && r.typeId === 'guard_micro');
   // Kohteen kalusto on pankin rivejä joiden sijoitus osoittaa tähän kohteeseen (erä 20).
   // Avoimet pyynnöt lasketaan erikseen ja koko pankista, koska pyydetty esine EI ole
   // vielä kohteella — se on juuri se mitä valikon tiivistelmän on kerrottava.
@@ -622,6 +628,7 @@ export function kohteenToiminnot(
   const viimeisinToimenpide = uusinAika(toimenpiteet.map((r) => r.luotu || r.date));
   const viimeisinIlmoitus = uusinAika(ilmoitukset.map((r) => r.luotu || r.date));
   const viimeisinAnastus = uusinAika(anastukset.map((r) => r.luotu || r.date));
+  const viimeisinMikro = uusinAika(mikrot.map((r) => r.luotu || r.date));
   const viimeisinTehtava = uusinAika(tehtavat.map((t) => t.aika));
 
   return {
@@ -719,6 +726,12 @@ export function kohteenToiminnot(
       teksti: anastukset.length === 0
         ? 'Ei anastusilmoituksia'
         : `${monikko(anastukset.length, 'ilmoitus', 'ilmoitusta')} · viimeisin ${lyhytAika(viimeisinAnastus, nyt)}`,
+      huomio: null,
+    },
+    mikro: {
+      teksti: mikrot.length === 0
+        ? 'Nopea kirjaus valmiista otsikoista'
+        : `${monikko(mikrot.length, 'kirjaus', 'kirjausta')} · viimeisin ${lyhytAika(viimeisinMikro, nyt)}`,
       huomio: null,
     },
     tiedot: {

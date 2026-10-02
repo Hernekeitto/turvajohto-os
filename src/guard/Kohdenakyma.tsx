@@ -14,7 +14,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   ClipboardList, Route, QrCode, KeyRound, BarChart3, FileText, Megaphone, BookOpen,
   ListChecks, Siren, ShieldAlert, ShoppingBag, Info, Trash2, MapPin, Phone, ChevronRight,
-  Building2, FolderOpen, CalendarClock, GraduationCap, ClipboardCheck, FileStack,
+  Building2, FolderOpen, CalendarClock, GraduationCap, ClipboardCheck, FileStack, NotebookPen,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
@@ -71,6 +71,7 @@ const VUORON_TOIMINNOT: { id: Toiminto; nimi: string; ikoni: LucideIcon }[] = [
   { id: 'tiedotteet', nimi: 'Tiedotteet', ikoni: Megaphone },
   { id: 'ohjeet', nimi: 'Ohjepankki', ikoni: BookOpen },
   { id: 'skenaariot', nimi: 'Skenaariot', ikoni: ListChecks },
+  { id: 'mikro', nimi: 'Mikroraportti', ikoni: NotebookPen },
   { id: 'toimenpide', nimi: 'Vartijan toimenpide', ikoni: FileText },
   { id: 'ilmoitus', nimi: 'Vartijan tapahtumailmoitus', ikoni: ShieldAlert },
   { id: 'anastus', nimi: 'Anastusilmoitus', ikoni: ShoppingBag },

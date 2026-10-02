@@ -96,7 +96,14 @@ const POISTETTU_VARTIJALTA = ['guard_site_info', 'guard_reporting'];
 // organisaatiossa vain esimiehelle, oikeus otetaan pois Sovellusasetuksista.
 // Kierros (guard_patrols) lisättiin 28.9.2026: Vartijanäkymän "Kohteen tehtävät" sisältää
 // kierrokset, ja kierroksen kulkeminen on muokkausoikeus.
-const VARTIJA_MUOKKAUS = ['guard_tasks', 'guard_patrols', 'guard_report_action', 'guard_report_jv', 'guard_report_theft'];
+// Mikroraportti (guard_report_micro) lisättiin 2.10.2026, oikeusversio 4.
+const VARTIJA_MUOKKAUS = [
+  'guard_tasks', 'guard_patrols', 'guard_report_action', 'guard_report_jv', 'guard_report_theft',
+  'guard_report_micro',
+];
+// Versiossa 4 lisättävät solmut. Erikseen VARTIJA_MUOKKAUKSESTA: jos koko lista
+// lisättäisiin uudelleen, pääkäyttäjän tasolta poistama oikeus palaisi.
+const LISATTY_VERSIOSSA_4 = ['guard_report_micro'];
 
 // Sisäänrakennettujen GUARD-tasojen oikeusversio. withBuiltins luo PUUTTUVAN tason mutta
 // ei päivitä olemassa olevaa, joten ennen tätä tasolle myöhemmin lisätyt solmut (esim.
@@ -105,8 +112,8 @@ const VARTIJA_MUOKKAUS = ['guard_tasks', 'guard_patrols', 'guard_report_action',
 // palvelimen uudelleenkäynnistys palauta niitä.
 //
 // Versiot: 2 = Vartijanäkymän toimintojen solmut lisätään, 3 = Vartija-tasolta poistetaan
-// solmut joita Vartijanäkymä ei käytä (POISTETTU_VARTIJALTA).
-const GUARD_OIKEUSVERSIO = 3;
+// solmut joita Vartijanäkymä ei käytä (POISTETTU_VARTIJALTA), 4 = mikroraportti.
+const GUARD_OIKEUSVERSIO = 4;
 
 export function paivitaGuardTaso(taso) {
   if (![ROLE_GUARD, ROLE_GUARD_LEAD].includes(taso?.id)) return taso;
@@ -125,6 +132,9 @@ export function paivitaGuardTaso(taso) {
   }
   if (versio < 3 && taso.id === ROLE_GUARD) {
     bucket = Object.fromEntries(Object.entries(bucket).filter(([id]) => !POISTETTU_VARTIJALTA.includes(id)));
+  }
+  if (versio < 4) {
+    for (const id of LISATTY_VERSIOSSA_4) if (!(id in bucket)) bucket[id] = { view: true, edit: true };
   }
   return {
     ...taso,

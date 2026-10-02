@@ -73,6 +73,7 @@ import { PuoliValitsin } from './PuoliValitsin';
 import { Vartijanakyma } from './Vartijanakyma';
 import { LiitaPuhelin } from './mobiili/LiitaPuhelin';
 import { Anastusilmoitus } from './Anastusilmoitus';
+import { Mikroraportti } from './Mikroraportti';
 import { KohteenRaportit } from './KohteenRaportit';
 import { useKanava, type Sijainti } from '../shared/kanava';
 import { useSijainninLahetys } from '../shared/sijainninLahetys';
@@ -248,6 +249,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const saaKirjataToimenpiteen = isAdmin || canEdit(perms, null, 'guard_report_action');
   const saaKirjataIlmoituksen = isAdmin || canEdit(perms, null, 'guard_report_jv');
   const saaKirjataAnastuksen = isAdmin || canEdit(perms, null, 'guard_report_theft');
+  const saaKirjataMikron = isAdmin || canEdit(perms, null, 'guard_report_micro');
   // Sovellusasetukset on oma solmunsa (guard_settings), ei EVENTin 'settings': muuten
   // toisen puolen asetusoikeus avaisi myös tämän puolen asetukset.
   const saaNahdaAsetukset = isAdmin || canView(perms, null, 'guard_settings');
@@ -263,7 +265,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     || canView(perms, null, 'guard_site_info')
     || canView(perms, null, 'guard_report_action')
     || canView(perms, null, 'guard_report_jv')
-    || canView(perms, null, 'guard_report_theft');
+    || canView(perms, null, 'guard_report_theft')
+    || canView(perms, null, 'guard_report_micro');
 
   // Avoinna oleva osio. Etusivulta mennään joko kohteisiin tai hälytyskeskukseen; kaikki
   // muut näkymät avautuvat näiden sisältä.
@@ -1625,6 +1628,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     else if (toiminto === 'toimenpide') setRaporttiKohde({ kohde, tyyppi: 'guard_action' });
     else if (toiminto === 'ilmoitus') setRaporttiKohde({ kohde, tyyppi: 'guard_jvreport' });
     else if (toiminto === 'anastus') setRaporttiKohde({ kohde, tyyppi: 'guard_theft' });
+    else if (toiminto === 'mikro') setRaporttiKohde({ kohde, tyyppi: 'guard_micro' });
     else if (toiminto === 'tiedot') setTietoKohde(kohde);
     else if (toiminto === 'raportit') setRaportitKohde(kohde);
     else if (toiminto === 'tiedostot') setTiedostoKohde(kohde);
@@ -1901,6 +1905,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       ...(saaNahdaOhjeet ? [{ id: 'ohjeet', label: 'Työvuoron ohjeet' }] : []),
       ...(saaNahdaSkenaariot ? [{ id: 'skenaariot', label: 'Skenaariot' }] : []),
       ...(saaNahdaHalytykset ? [{ id: 'halytykset', label: 'Hälytykset ja hätäpainike' }] : []),
+      ...(saaKirjataMikron ? [{ id: 'mikro', label: 'Mikroraportti' }] : []),
       ...(saaKirjataToimenpiteen ? [{ id: 'toimenpide', label: 'Kirjaa toimenpide' }] : []),
       ...(saaKirjataIlmoituksen ? [{ id: 'ilmoitus', label: 'Tapahtumailmoitus' }] : []),
       ...(saaKirjataAnastuksen ? [{ id: 'anastus', label: 'Anastusilmoitus' }] : []),
@@ -2053,7 +2058,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const kohteenToiminto: [string, Kohde] | null =
     raporttiKohde ? [
       raporttiKohde.tyyppi === 'guard_action' ? 'toimenpide'
-        : raporttiKohde.tyyppi === 'guard_jvreport' ? 'ilmoitus' : 'anastus',
+        : raporttiKohde.tyyppi === 'guard_jvreport' ? 'ilmoitus'
+          : raporttiKohde.tyyppi === 'guard_micro' ? 'mikro' : 'anastus',
       raporttiKohde.kohde,
     ]
       : tietoKohde ? ['tiedot', tietoKohde]
@@ -2475,6 +2481,13 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onTallenna={tallennaRaportti}
           onTakaisin={() => setRaporttiKohde(null)}
         />
+      ) : raporttiKohde?.tyyppi === 'guard_micro' ? (
+        <Mikroraportti
+          kohde={raporttiKohde.kohde}
+          vartija={session?.nickname || ''}
+          onTallenna={tallennaRaportti}
+          onTakaisin={() => setRaporttiKohde(null)}
+        />
       ) : raporttiKohde ? (
         <Raportit
           kohde={raporttiKohde.kohde}
@@ -2748,6 +2761,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
             toimenpide: saaKirjataToimenpiteen,
             ilmoitus: saaKirjataIlmoituksen,
             anastus: saaKirjataAnastuksen,
+            mikro: saaKirjataMikron,
             tiedot: saaNahdaTiedot,
             raportit: saaNahdaRaportit,
             tiedostot: saaNahda,
@@ -2981,6 +2995,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
                   toimenpide: saaKirjataToimenpiteen,
                   ilmoitus: saaKirjataIlmoituksen,
                   anastus: saaKirjataAnastuksen,
+                  mikro: saaKirjataMikron,
                   tiedostot: saaNahda,
                 }}
                 onToiminto={(toiminto, kohde) => (toiminto === 'kohteen_tehtavat'

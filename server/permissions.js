@@ -144,7 +144,8 @@ const TIKE_FORM_NODES = [
 // sama oikeus kuin pankin ylläpito, eikä kuvan lähettäminen saa vaatia erikseen
 // kohde- tai raporttioikeutta. Ilman tätä kartta olisi käytännössä vain pääkäyttäjän.
 const GUARD_ATTACHMENT_NODES = [
-  'guard_sites', 'guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_assets',
+  'guard_sites', 'guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_report_micro',
+  'guard_assets',
   // Tehtävän ja kierroksen huomioiden kuvat (27.9.2026).
   'guard_tasks', 'guard_patrols',
 ];
@@ -333,13 +334,17 @@ const COLLECTIONS = {
   // Vartijan raportit: kirjaaminen on lomakesolmujen takana, lukeminen myös kohteen
   // tiedot -koosteessa. Sama jako kuin tapahtumapuolella (tike_form_* vs report_list).
   guardReports: {
-    view: ['guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_site_info'],
+    view: ['guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_report_micro', 'guard_site_info'],
     // Anastusilmoitus (27.9.2026) on OMAN solmunsa takana: siinä on anastajan
     // henkilötunnus, eikä pelkkä toimenpidekirjausoikeus saa avata sen kirjoittamista.
     // Samasta syystä anastusoikeus ei avaa kahta muuta tyyppiä.
+    // Mikroraportti (2.10.2026) on samoin omansa: kevyen kirjauksen voi antaa tunnukselle
+    // jolla ei ole toimenpidekirjausta, eikä se avaa muita tyyppejä.
     touch: (item) => (item?.typeId === 'guard_theft'
       ? ['guard_report_theft']
-      : ['guard_report_action', 'guard_report_jv']),
+      : item?.typeId === 'guard_micro'
+        ? ['guard_report_micro']
+        : ['guard_report_action', 'guard_report_jv']),
     eventScoped: true,
     eventIdOf: (item) => item?.siteId,
     tuote: 'guard',
@@ -1009,7 +1014,7 @@ export function canReadGuardAttachment(
   if (raportti) {
     if (!eventAllowed(eventAccess, raportti.siteId)) return false;
     return hasAnyView(permissions, raportti.siteId, [
-      'guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_site_info',
+      'guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_report_micro', 'guard_site_info',
     ]);
   }
 

@@ -42,7 +42,7 @@ test('olemassa olevaan merkintään ei kosketa', () => {
 
 test('migraatio ajetaan kerran eikä koske muihin tasoihin', () => {
   const kerran = paivitaGuardTaso(vanhaVartija);
-  assert.equal(kerran.oikeusversio, 3);
+  assert.equal(kerran.oikeusversio, 4);
   // Pääkäyttäjä poistaa myöhemmin kierroksen: seuraava ajo ei palauta sitä.
   const rajattu = { ...kerran, permissions: { [DEFAULT_BUCKET]: { guard_sites: { view: true, edit: false } } } };
   assert.equal(paivitaGuardTaso(rajattu), rajattu);
@@ -66,4 +66,18 @@ test('versio 3: Vartija-tasolta poistetaan Kohteen tiedot ja Raportointi, esimie
   const esimies = paivitaGuardTaso(v2('vartioesimies')).permissions[DEFAULT_BUCKET];
   assert.deepEqual(esimies.guard_site_info, { view: true, edit: false });
   assert.deepEqual(esimies.guard_reporting, { view: true, edit: false });
+});
+
+test('versio 4: mikroraportti lisätään kerran, eikä pääkäyttäjän rajaus palaa', () => {
+  const v3 = {
+    id: 'vartija', oikeusversio: 3,
+    permissions: { [DEFAULT_BUCKET]: { guard_sites: { view: true, edit: false } } },
+  };
+  const paivitetty = paivitaGuardTaso(v3);
+  assert.equal(paivitetty.oikeusversio, 4);
+  assert.deepEqual(paivitetty.permissions[DEFAULT_BUCKET].guard_report_micro, { view: true, edit: true });
+  // Versio 3 ei saa saada versio 2:n muita solmuja uudelleen.
+  assert.equal('guard_report_jv' in paivitetty.permissions[DEFAULT_BUCKET], false);
+  const rajattu = { ...v3, permissions: { [DEFAULT_BUCKET]: { guard_report_micro: { view: false, edit: false } } } };
+  assert.deepEqual(paivitaGuardTaso(rajattu).permissions[DEFAULT_BUCKET].guard_report_micro, { view: false, edit: false });
 });

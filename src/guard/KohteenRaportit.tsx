@@ -11,21 +11,23 @@
 // ei hae mitään itse — palvelin on jo rajannut mitä käyttäjä saa nähdä.
 import { useMemo, useState, type ReactNode } from 'react';
 import {
-  Camera, Check, ChevronDown, ChevronRight, ClipboardCheck, FileText, GitBranch, MessageSquare, Paperclip,
-  Route, ShieldAlert, ShoppingBag, X,
+  Camera, Check, ChevronDown, ChevronRight, ClipboardCheck, FileText, GitBranch, MessageSquare, NotebookPen,
+  Paperclip, Route, ShieldAlert, ShoppingBag, X,
 } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { AnastuksenYhteenveto } from './Anastusilmoitus';
+import { MikroraportinTiedot } from './Mikroraportti';
 import { Peitetty } from './KohteenTiedot';
 import type { GuardRaportti, Kierros, Kohde, TehtavaSuoritus } from './tyypit';
 import {
   aktiivisia, kuittaamatta, tilanneloki, valitutPolut, type Suoritus,
 } from '../shared/pohjat';
 
-type Laji = 'toimenpide' | 'ilmoitus' | 'anastus' | 'tehtava' | 'kierros' | 'skenaario';
+type Laji = 'mikro' | 'toimenpide' | 'ilmoitus' | 'anastus' | 'tehtava' | 'kierros' | 'skenaario';
 
 const LAJIT: Record<Laji, { nimi: string; Ikoni: typeof FileText }> = {
+  mikro: { nimi: 'Mikroraportit', Ikoni: NotebookPen },
   toimenpide: { nimi: 'Toimenpiteet', Ikoni: FileText },
   ilmoitus: { nimi: 'Tapahtumailmoitukset', Ikoni: ShieldAlert },
   anastus: { nimi: 'Anastusilmoitukset', Ikoni: ShoppingBag },
@@ -90,7 +92,9 @@ const kello = (iso?: string | null) => {
 };
 
 const raportinLaji = (r: GuardRaportti): Laji =>
-  r.typeId === 'guard_jvreport' ? 'ilmoitus' : r.typeId === 'guard_theft' ? 'anastus' : 'toimenpide';
+  r.typeId === 'guard_jvreport' ? 'ilmoitus'
+    : r.typeId === 'guard_theft' ? 'anastus'
+      : r.typeId === 'guard_micro' ? 'mikro' : 'toimenpide';
 
 // Raportin aika: tallennushetki jos se on, muuten lomakkeen päivä ja kellonaika.
 const raportinAika = (r: GuardRaportti) => r.luotu || `${r.date}T${r.time || '00:00'}`;
@@ -166,10 +170,18 @@ const raporttiRivi = (r: GuardRaportti): Rivi => {
     otsikko: r.type || LAJIT[laji].nimi,
     kuka: r.author,
     yhteenveto: r.summary || '',
+    // Mikroraportin poikkeama erottuu merkillä: listassa on muuten pelkkiä rutiineja.
+    poikkeama: laji === 'mikro' && r.microClass === 'poikkeama' ? 'Poikkeama' : undefined,
+    kommentti: laji === 'mikro' && !!r.description?.trim(),
     liitteet: raportinLiitteet(r),
     sisalto: (
       <>
-        {r.description && <Tieto otsikko={laji === 'anastus' ? 'Vartijan havainnot' : 'Kuvaus'}>{r.description}</Tieto>}
+        {laji === 'mikro' && <MikroraportinTiedot raportti={r} />}
+        {r.description && (
+          <Tieto otsikko={laji === 'anastus' ? 'Vartijan havainnot' : laji === 'mikro' ? 'Selvitys' : 'Kuvaus'}>
+            {r.description}
+          </Tieto>
+        )}
         {maarat.length > 0 && <Tieto otsikko="Toimenpiteet">{maarat.join(' · ')}</Tieto>}
         {laji === 'anastus' && <AnastuksenYhteenveto raportti={r} />}
         {(henkilo || r.subjectPersonalId) && (

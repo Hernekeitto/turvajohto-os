@@ -32,7 +32,7 @@ export const ASETUSTEN_SIVUKARTAT: AsetusSivukartta[] = [
       id: 'guard_sites',
       sisaiset: [
         'guard_site_info', 'guard_tasks', 'guard_reporting',
-        'guard_report_action', 'guard_report_jv',
+        'guard_report_action', 'guard_report_jv', 'guard_report_theft', 'guard_report_micro',
       ],
       varoitus: (
         <>

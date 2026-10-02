@@ -217,7 +217,8 @@ export type TehtavaSuoritus = {
 // Vartijan raportti (guardReports). Kentät vastaavat EVENT-puolen raportteja, koska sama
 // laki koskee molempia ja palvelimen kenttäsalaus on identtinen (store.js: ENCRYPTED_FIELDS).
 // 'guard_theft' = anastusilmoitus (27.9.2026), oma lomakkeensa (Anastusilmoitus.tsx).
-export type RaporttiTyyppi = 'guard_action' | 'guard_jvreport' | 'guard_theft';
+// 'guard_micro' = mikroraportti (2.10.2026), oma lomakkeensa (Mikroraportti.tsx).
+export type RaporttiTyyppi = 'guard_action' | 'guard_jvreport' | 'guard_theft' | 'guard_micro';
 
 export type GuardRaportti = {
   id: string;
@@ -295,6 +296,16 @@ export type GuardRaportti = {
   theftOtherActions?: string;           // muut toimenpiteet
   theftReleasedAt?: string;             // vapautettu poliisin luvalla: pvm ja klo
   theftReleasedBy?: string;             // poliisimies jonka luvalla vapautettu
+  // Vain mikroraportissa (guard_micro). Valinnat valmiista luettelosta
+  // (mikroraportti/luettelo.ts) TEKSTEINÄ, jotta vanha raportti pysyy luettavana vaikka
+  // luettelo muuttuu. Salaamattomia: ne ovat luokittelua eivätkä henkilötietoa, ja
+  // niistä lasketaan kohteen tilastot. Vapaa selvitys on salatussa description-kentässä.
+  microClass?: 'havainto' | 'poikkeama' | 'toimenpide';
+  microTopic?: string;      // aihe, esim. "Kiinteistö- ja toimitilaturvallisuus"
+  microArea?: string;       // alue, esim. "Ovet, lukitukset ja kulkureitit"
+  microEvent?: string;      // tapahtuma, havainto tai toimenpide
+  microPlaceGroup?: string; // paikan ryhmä, esim. "Yleiset tilat ja kulkureitit"
+  microPlace?: string;      // kohta tai tila, esim. "Aula"
   // Erässä 1 lisätyt kentät. Samat kuin EVENT-puolen raporteilla, koska molempia
   // koskee sama tilamalli ja sama muuttumattomuussääntö (ks. server/kirjaukset.js).
   status?: string | null;

@@ -12,6 +12,7 @@ import { muotoileTunniste } from '../shared/tunnisteet';
 import { muotoileTavut } from '../shared/muotoilu';
 import type { GuardRaportti, Kohde, KohteenTiedosto, TehtavaSuoritus, Kierros } from './tyypit';
 import { AnastuksenYhteenveto } from './Anastusilmoitus';
+import { MikroraportinTiedot } from './Mikroraportti';
 
 // Kohteen tiedot: koottu näkymä siitä mitä kohteessa on ja mitä siellä on tapahtunut.
 // EI kohteen perustietojen muokkausnäkymä — se on KohteenHallinta, ja tämä on
@@ -337,6 +338,7 @@ export const KohteenTiedot = ({
                         {r.firstAid && <span>Ensiapua annettu</span>}
                       </div>
                       {r.typeId === 'guard_theft' && <AnastuksenYhteenveto raportti={r} />}
+                      {r.typeId === 'guard_micro' && <MikroraportinTiedot raportti={r} />}
                       {(r.subjectLastName || r.subjectFirstNames || r.subjectPersonalId) && (
                         <div className="bg-sunken rounded-lg p-3 space-y-1 text-xs">
                           <p className="font-medium text-ink-body">Kohdehenkilö</p>

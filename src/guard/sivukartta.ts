@@ -154,6 +154,7 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
     { id: 'guard_report_action', label: 'Vartijan toimenpide' },
     { id: 'guard_report_jv', label: 'Vartijan tapahtumailmoitus' },
     { id: 'guard_report_theft', label: 'Anastusilmoitus' },
+    { id: 'guard_report_micro', label: 'Mikroraportti' },
   ] },
   // Sovellusasetukset. Oma solmunsa eikä EVENTin 'settings', vaikka näkymä on sama:
   // muuten GUARD-tunnuksen asetusoikeus avaisi myös tapahtumapuolen asetukset ja
