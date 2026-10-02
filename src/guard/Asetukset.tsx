@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
+import type { LucideIcon } from 'lucide-react';
+import {
+  Archive, ChevronRight, HardDrive, ListTree, ShieldCheck, Smartphone, UserCog, Users,
+} from 'lucide-react';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
+import { useTakaisinEste } from '../shared/navigointi';
 import { Kayttajatasot } from '../shared/asetukset/Kayttajatasot';
 import { Kayttajat } from '../shared/asetukset/Kayttajat';
 import { Laitteet } from '../shared/asetukset/Laitteet';
@@ -18,6 +23,25 @@ import { MikroraportinValikot } from './MikroraportinValikot';
 // App.tsx:n asetuksista vaan sama koodi. Käyttäjätasot ja tallennustila ovat koko
 // sovelluksen yhteisiä; vain säilytysaikaosio saa eri datan, koska se laskee sen puolen
 // raporteista jolta se avataan.
+//
+// Jokainen osio on oma painikkeensa (2.10.2026, käyttäjän pyyntö): kaikki osiot yhdellä
+// sivulla tekivät siitä niin pitkän, että etsitty asetus hukkui. Avattu osio näkyy
+// yksinään, ja takaisin pääsee linkistä tai selaimen/puhelimen takaisin-painikkeella.
+
+type OsioId = 'kayttajat' | 'tasot' | 'laitteet' | 'mikro' | 'tallennustila' | 'kayttajien_tila' | 'sailytys';
+
+const OSIOT: { id: OsioId; nimi: string; kuvaus: string; Ikoni: LucideIcon; vainPaakayttajalle?: boolean }[] = [
+  { id: 'kayttajat', nimi: 'Käyttäjät', kuvaus: 'Käyttäjätunnukset, tasot ja kirjautumiset.', Ikoni: Users },
+  { id: 'tasot', nimi: 'Käyttäjätasot', kuvaus: 'Tasojen oikeudet sivukartan solmuittain.', Ikoni: ShieldCheck },
+  { id: 'laitteet', nimi: 'Laitteet', kuvaus: 'Sovellukseen sidotut puhelimet ja niiden nollaus.', Ikoni: Smartphone },
+  {
+    id: 'mikro', nimi: 'Mikroraportin valikot', kuvaus: 'Paikat ja otsikot, joista vartija valitsee.',
+    Ikoni: ListTree, vainPaakayttajalle: true,
+  },
+  { id: 'tallennustila', nimi: 'Tallennustila', kuvaus: 'Palvelimen levytilan käyttö.', Ikoni: HardDrive },
+  { id: 'kayttajien_tila', nimi: 'Käyttäjien tallennustila', kuvaus: 'Henkilökohtaiset kiintiöt ja lisätilapyynnöt.', Ikoni: UserCog },
+  { id: 'sailytys', nimi: 'Säilytysajat', kuvaus: 'Lakisääteiset säilytysajat ja vanhentuneiden hävitys.', Ikoni: Archive },
+];
 
 type Props = {
   raportit: GuardRaportti[];
@@ -32,6 +56,9 @@ export const Asetukset = ({ raportit, isAdmin, onHavita, onAvaaHenkilo, onTakais
   const [roles, setRoles] = useState<any[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [kayttajat, setKayttajat] = useState<any[]>([]);
+  const [osio, setOsio] = useState<OsioId | null>(null);
+  // Takaisin-painike sulkee avatun osion eikä poistu koko asetuksista.
+  useTakaisinEste(!!osio, () => setOsio(null));
 
   // Molemmat reitit ovat palvelimella pääkäyttäjärajattuja. 403 ei ole tässä virhe vaan
   // odotettu lopputulos muille: tasot näkyvät silloin tyhjänä listana eikä käyttäjämääriä
@@ -67,47 +94,93 @@ export const Asetukset = ({ raportit, isAdmin, onHavita, onAvaaHenkilo, onTakais
     createdAt: r.luotu || null,
   }));
 
+  const osiot = OSIOT.filter((o) => !o.vainPaakayttajalle || isAdmin);
+  const auki = osiot.find((o) => o.id === osio) || null;
+
+  // Avatun osion sisältö. Osiot ovat samat jaetut komponentit kuin ennenkin; vain se
+  // muuttui, että kerralla näkyy yksi.
+  const sisalto = (id: OsioId) => {
+    switch (id) {
+      case 'kayttajat':
+        return (
+          <Kayttajat
+            kayttajat={kayttajat}
+            roles={roles}
+            isAdmin={isAdmin}
+            onAvaaHenkilo={onAvaaHenkilo}
+            onMuuttui={haeKayttajat}
+          />
+        );
+      case 'tasot':
+        return (
+          <Kayttajatasot
+            roles={roles}
+            rolesLoading={rolesLoading}
+            kayttajat={kayttajat}
+            sivukartat={ASETUSTEN_SIVUKARTAT}
+            isAdmin={isAdmin}
+            onMuuttui={() => { haeTasot(); haeKayttajat(); }}
+          />
+        );
+      // Laitesidonnat GUARD-puolella eikä EVENTissä: sovellus on vartijan työkalu, ja
+      // nollausoikeus on hälytyskeskuksella joka on tämän puolen käsite.
+      case 'laitteet':
+        return <Laitteet />;
+      case 'mikro':
+        return <MikroraportinValikot isAdmin={isAdmin} />;
+      case 'tallennustila':
+        return <Tallennustila isAdmin={isAdmin} />;
+      case 'kayttajien_tila':
+        return <KayttajienTallennustila isAdmin={isAdmin} />;
+      case 'sailytys':
+        return <Sailytysajat raportit={sailytysRaportit} isAdmin={isAdmin} onHavita={onHavita} />;
+    }
+  };
+
+  // Painikkeen alle tuleva tieto, kun se on jo käsillä ilman erillistä hakua.
+  const tiivistelma = (id: OsioId): string | null => {
+    if (!isAdmin) return null;
+    if (id === 'kayttajat' && kayttajat.length > 0) return `${kayttajat.length} tunnusta`;
+    if (id === 'tasot' && roles.length > 0) return `${roles.length} tasoa`;
+    return null;
+  };
+
+  if (auki) {
+    return (
+      <div>
+        <TakaisinLinkki onClick={() => setOsio(null)}>Sovellusasetukset</TakaisinLinkki>
+        {sisalto(auki.id)}
+      </div>
+    );
+  }
+
   return (
     <div>
       <TakaisinLinkki onClick={onTakaisin}>Takaisin</TakaisinLinkki>
 
       <h2 className="text-2xl font-bold text-ink-strong mb-1">Sovellusasetukset</h2>
-      <p className="text-sm text-ink-muted mb-8">
-        Käyttäjätunnukset ja -tasot, palvelimen tallennustila ja lakisääteiset säilytysajat.
-      </p>
+      <p className="text-sm text-ink-muted mb-6">Valitse muokattava asetus.</p>
 
-      <Kayttajat
-        kayttajat={kayttajat}
-        roles={roles}
-        isAdmin={isAdmin}
-        onAvaaHenkilo={onAvaaHenkilo}
-        onMuuttui={haeKayttajat}
-      />
-
-      <Kayttajatasot
-        roles={roles}
-        rolesLoading={rolesLoading}
-        kayttajat={kayttajat}
-        sivukartat={ASETUSTEN_SIVUKARTAT}
-        isAdmin={isAdmin}
-        onMuuttui={() => { haeTasot(); haeKayttajat(); }}
-      />
-
-      {/* Laitesidonnat GUARD-puolella eikä EVENTissä: sovellus on vartijan työkalu, ja
-          nollausoikeus on hälytyskeskuksella joka on tämän puolen käsite. */}
-      <Laitteet />
-
-      <MikroraportinValikot isAdmin={isAdmin} />
-
-      <Tallennustila isAdmin={isAdmin} />
-
-      <KayttajienTallennustila isAdmin={isAdmin} />
-
-      <Sailytysajat
-        raportit={sailytysRaportit}
-        isAdmin={isAdmin}
-        onHavita={onHavita}
-      />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {osiot.map(({ id, nimi, kuvaus, Ikoni }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setOsio(id)}
+            className="text-left rounded-xl border border-line bg-surface hover:bg-sunken hover:border-line-strong p-4 flex items-start gap-3 transition-colors"
+          >
+            <Ikoni size={20} className="text-accent shrink-0 mt-0.5" />
+            <span className="flex-1 min-w-0">
+              <span className="block font-medium text-ink-strong">{nimi}</span>
+              <span className="block text-xs text-ink-muted mt-0.5 leading-relaxed">{kuvaus}</span>
+              {tiivistelma(id) && (
+                <span className="block text-xs font-medium text-ink-body mt-1">{tiivistelma(id)}</span>
+              )}
+            </span>
+            <ChevronRight size={18} className="text-ink-subtle shrink-0 self-center" />
+          </button>
+        ))}
+      </div>
     </div>
   );
 };
