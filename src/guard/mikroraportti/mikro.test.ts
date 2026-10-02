@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  KAIKKI_PAIKAT, KAIKKI_TAPAHTUMAT, haePaikat, haeTapahtumat, lisaaViimeisimpiin, raportinTunnus,
+  KAIKKI_PAIKAT, KAIKKI_TAPAHTUMAT, OMA, OMAN_PITUUS, haePaikat, haeTapahtumat, lisaaViimeisimpiin,
+  omaksiPaikaksi, omaksiTapahtumaksi, paikanAvain, raportinTunnus,
   tapahtumanAvain, viimeisimmatPaikat, viimeisimmatTapahtumat,
 } from './mikro.ts';
 
@@ -58,4 +59,21 @@ test('viimeisimmistä putoavat luettelosta poistuneet ja muun luokan rivit', () 
   assert.deepEqual(viimeisimmatTapahtumat(avaimet, 'toimenpide'), [ovi]);
   assert.deepEqual(viimeisimmatTapahtumat(avaimet, 'havainto'), []);
   assert.deepEqual(viimeisimmatPaikat(['Yleiset tilat ja kulkureitit|Aula', 'x|y']).map((p) => p.paikka), ['Aula']);
+});
+
+test('oma paikka ja otsikko siistitään, ja tyhjä hylätään', () => {
+  assert.deepEqual(omaksiPaikaksi('  Kolmas   kerros '), { ryhma: OMA, paikka: 'Kolmas kerros' });
+  assert.equal(omaksiPaikaksi('   '), null);
+  assert.equal(omaksiTapahtumaksi('havainto', 'x'.repeat(500))!.teksti.length, OMAN_PITUUS);
+});
+
+test('omat kirjaukset palautuvat viimeisimmistä eivätkä sekoitu luettelon riveihin', () => {
+  const oma = omaksiTapahtumaksi('toimenpide', 'Ovi avattu')!;
+  const luettelon = KAIKKI_TAPAHTUMAT.find((t) => t.teksti.startsWith('Ovi avattu'))!;
+  assert.notEqual(tapahtumanAvain(oma), tapahtumanAvain(luettelon));
+  const avaimet = [tapahtumanAvain(oma), 'toimenpide|oma|a|b'];
+  assert.deepEqual(viimeisimmatTapahtumat(avaimet, 'toimenpide').map((t) => t.teksti), ['Ovi avattu', 'a|b']);
+  assert.deepEqual(viimeisimmatTapahtumat(['kissa|oma|x'], 'toimenpide'), []);
+  const paikka = omaksiPaikaksi('Kolmas kerros')!;
+  assert.deepEqual(viimeisimmatPaikat([paikanAvain(paikka)]), [paikka]);
 });

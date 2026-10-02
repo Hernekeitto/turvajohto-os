@@ -13,7 +13,7 @@
 // Jos sopivaa otsikkoa ei löydy, haun tekstin voi käyttää sellaisenaan — huono otsikko
 // on parempi kuin kirjaamatta jäänyt asia.
 import { useMemo, useState, type ReactNode } from 'react';
-import { Check, ChevronRight, NotebookPen, Search, X } from 'lucide-react';
+import { Check, ChevronRight, NotebookPen, PencilLine, Search, X } from 'lucide-react';
 
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { Liitteet } from '../shared/komponentit/Liitteet';
@@ -22,12 +22,10 @@ import { paikallinenPaiva } from '../shared/ajat';
 import { lomakeRaportille } from '../shared/lomakerekisteri';
 import { uusiId, type GuardRaportti, type Kohde } from './tyypit';
 import {
-  LUOKAT, haePaikat, haeTapahtumat, lueViimeisimmat, raportinTunnus, ryhmittele, tallennaViimeisimmat,
-  viimeisimmatPaikat, viimeisimmatTapahtumat, type Luokka, type Paikka, type Tapahtuma,
+  LUOKAT, OMA, OMAN_PITUUS, haePaikat, haeTapahtumat, lueViimeisimmat, omaksiPaikaksi, omaksiTapahtumaksi,
+  raportinTunnus, ryhmittele, tallennaViimeisimmat, viimeisimmatPaikat, viimeisimmatTapahtumat,
+  type Luokka, type Paikka, type Tapahtuma,
 } from './mikroraportti/mikro';
-
-// Itse kirjoitetun otsikon ryhmä. Erotettavissa luettelon riveistä tilastoissa.
-const OMA = 'Muu (oma otsikko)';
 
 // HH:MM itse koottuna: fi-FI-muotoilu antaa "20.06", jota <input type="time"> ei hyväksy.
 const nyt = () => {
@@ -152,6 +150,56 @@ const Ryhma = ({ otsikko, maara, children }: { otsikko: string; maara: number; c
   </details>
 );
 
+// Oma vaihtoehto jokaisen listan alla. Luettelo ei ole tyhjentävä, eikä oman
+// kirjoittaminen saa olla haun takana piilossa: aukeaa napautuksella, ja haun teksti
+// tulee valmiiksi kenttään.
+const OmaKirjaus = ({
+  nimi, alkuarvo, onKayta,
+}: { nimi: string; alkuarvo: string; onKayta: (teksti: string) => void }) => {
+  const [auki, setAuki] = useState(false);
+  const [teksti, setTeksti] = useState('');
+  if (!auki) {
+    return (
+      <button
+        type="button"
+        onClick={() => { setTeksti(alkuarvo); setAuki(true); }}
+        className="mt-1 w-full flex items-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-line-strong text-sm text-ink-body hover:bg-sunken"
+      >
+        <PencilLine size={16} className="text-accent shrink-0" />
+        Kirjoita oma {nimi}
+      </button>
+    );
+  }
+  const kayta = () => { if (teksti.trim()) onKayta(teksti); };
+  return (
+    <div className="mt-1 rounded-lg border border-accent/40 bg-accent-soft/40 p-3">
+      <label className="block text-xs font-medium text-ink-muted mb-1">Oma {nimi}</label>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          autoFocus
+          value={teksti}
+          maxLength={OMAN_PITUUS}
+          onChange={(e) => setTeksti(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); kayta(); } }}
+          className="flex-1 min-w-0 rounded-lg border border-line-strong px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent bg-surface"
+        />
+        <button
+          type="button"
+          disabled={!teksti.trim()}
+          onClick={kayta}
+          className="px-4 py-2 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-50"
+        >
+          Käytä
+        </button>
+      </div>
+      <button type="button" onClick={() => setAuki(false)} className="mt-2 text-xs text-ink-muted hover:underline">
+        Peruuta
+      </button>
+    </div>
+  );
+};
+
 export const Mikroraportti = ({ kohde, vartija, onTallenna, onTakaisin }: Props) => {
   const [paikka, setPaikka] = useState<Paikka | null>(null);
   const [luokka, setLuokka] = useState<Luokka | null>(null);
@@ -167,8 +215,9 @@ export const Mikroraportti = ({ kohde, vartija, onTallenna, onTakaisin }: Props)
   const [virhe, setVirhe] = useState<string | null>(null);
   // Edellisen tallennuksen tunnus "Tallenna ja kirjaa seuraava" -kuittausta varten.
   const [kuittaus, setKuittaus] = useState<string | null>(null);
-  // Luetaan kerran avattaessa; tallennus päivittää laitteen muistin seuraavaa kertaa varten.
-  const [viimeisimmat] = useState(lueViimeisimmat);
+  // Luetaan avattaessa ja uudelleen jokaisen tallennuksen jälkeen, jotta "kirjaa seuraava"
+  // tarjoaa heti juuri käytetyn.
+  const [viimeisimmat, setViimeisimmat] = useState(lueViimeisimmat);
 
   const paikat = useMemo(() => haePaikat(paikkaHaku), [paikkaHaku]);
   const tapahtumat = useMemo(
@@ -244,8 +293,10 @@ export const Mikroraportti = ({ kohde, vartija, onTallenna, onTakaisin }: Props)
     const ok = await onTallenna(raportti);
     setTallentaa(false);
     if (!ok) return;
-    // Omia otsikoita ei muisteta: ne eivät ole luettelossa, josta pikavalinnat haetaan.
-    if (tapahtuma.aihe !== OMA) tallennaViimeisimmat(tapahtuma, paikka.ryhma === OMA ? null : paikka);
+    // Myös omat kirjaukset muistetaan: toistuva oma otsikko on juuri se, jonka kirjoittaminen
+    // joka kerta uudelleen nostaisi kynnystä.
+    tallennaViimeisimmat(tapahtuma, paikka);
+    setViimeisimmat(lueViimeisimmat());
     if (!jatka) {
       onTakaisin();
       return;
@@ -311,7 +362,7 @@ export const Mikroraportti = ({ kohde, vartija, onTallenna, onTakaisin }: Props)
                   <Rivi key={`${p.ryhma}|${p.paikka}`} onClick={() => setPaikka(p)} ala={p.ryhma}>{p.paikka}</Rivi>
                 ))}
                 {!paikat.some((p) => tasmaa(omaPaikka, p.paikka)) && (
-                  <Rivi onClick={() => setPaikka({ ryhma: OMA, paikka: omaPaikka })} ala="Ei luettelossa — käytä omana">
+                  <Rivi onClick={() => setPaikka(omaksiPaikaksi(omaPaikka))} ala="Ei luettelossa — käytä omana">
                     ”{omaPaikka}”
                   </Rivi>
                 )}
@@ -325,6 +376,7 @@ export const Mikroraportti = ({ kohde, vartija, onTallenna, onTakaisin }: Props)
                 </Ryhma>
               ))
             )}
+            <OmaKirjaus nimi="paikka" alkuarvo={omaPaikka} onKayta={(t) => setPaikka(omaksiPaikaksi(t))} />
           </Osio>
 
           <Osio numero={2} otsikko="Mitä havaittiin tai tehtiin?" valmis={!!luokka}>
@@ -371,7 +423,7 @@ export const Mikroraportti = ({ kohde, vartija, onTallenna, onTakaisin }: Props)
                   ))}
                   {!tapahtumat.some((t) => tasmaa(omaTapahtuma, t.teksti)) && (
                     <Rivi
-                      onClick={() => setTapahtuma({ luokka, aihe: OMA, alue: OMA, teksti: omaTapahtuma })}
+                      onClick={() => setTapahtuma(omaksiTapahtumaksi(luokka, omaTapahtuma))}
                       ala="Ei luettelossa — käytä omana otsikkona"
                     >
                       ”{omaTapahtuma}”
@@ -394,6 +446,11 @@ export const Mikroraportti = ({ kohde, vartija, onTallenna, onTakaisin }: Props)
                   </Ryhma>
                 ))
               )}
+              <OmaKirjaus
+                nimi="otsikko"
+                alkuarvo={omaTapahtuma}
+                onKayta={(t) => setTapahtuma(omaksiTapahtumaksi(luokka, t))}
+              />
             </Osio>
           )}
 

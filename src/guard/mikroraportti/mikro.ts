@@ -56,6 +56,22 @@ export const ryhmittele = <T,>(rivit: T[], avain: (r: T) => string) => {
   return [...ryhmat.entries()].map(([nimi, jasenet]) => ({ nimi, jasenet }));
 };
 
+// --- Omat kirjaukset -----------------------------------------------------------------
+//
+// Luettelo ei ole tyhjentävä, joten paikan ja otsikon voi aina kirjoittaa itse. Oma
+// kirjaus saa ryhmäkseen OMA:n, jolloin ne erottuvat luettelon riveistä tilastoissa ja
+// niistä näkee mitä luetteloon kannattaisi lisätä.
+export const OMA = 'Muu (oma)';
+export const OMAN_PITUUS = 120;
+
+const siisti = (teksti: string) => teksti.replace(/\s+/g, ' ').trim().slice(0, OMAN_PITUUS);
+
+export const omaksiPaikaksi = (teksti: string): Paikka | null =>
+  siisti(teksti) ? { ryhma: OMA, paikka: siisti(teksti) } : null;
+
+export const omaksiTapahtumaksi = (luokka: Luokka, teksti: string): Tapahtuma | null =>
+  siisti(teksti) ? { luokka, aihe: OMA, alue: OMA, teksti: siisti(teksti) } : null;
+
 // Raportin tunnus eli otsikko listoissa: "Toimenpide: Ovi avattu (…) — Aula". Paikka
 // viimeisenä, koska listaa silmäillään mitä-kysymyksen perusteella.
 export const raportinTunnus = (luokka: Luokka, tapahtuma: string, paikka: string) =>
@@ -72,8 +88,10 @@ const AVAIN = 'turvajohto-guard-mikro-viimeisimmat';
 
 export type Viimeisimmat = { tapahtumat: string[]; paikat: string[] };
 
-// Tapahtuman avain: sama otsikko voi teoriassa olla kahdessa luokassa.
-export const tapahtumanAvain = (t: Pick<Tapahtuma, 'luokka' | 'teksti'>) => `${t.luokka}|${t.teksti}`;
+// Tapahtuman avain: sama otsikko voi teoriassa olla kahdessa luokassa. Oma otsikko saa
+// välitunnisteen, jotta sitä ei sekoiteta luettelon samannimiseen riviin.
+export const tapahtumanAvain = (t: Pick<Tapahtuma, 'luokka' | 'teksti' | 'aihe'>) =>
+  t.aihe === OMA ? `${t.luokka}|oma|${t.teksti}` : `${t.luokka}|${t.teksti}`;
 export const paikanAvain = (p: Paikka) => `${p.ryhma}|${p.paikka}`;
 
 export const lisaaViimeisimpiin = (lista: string[], arvo: string, max = VIIMEISIMPIA) =>
@@ -101,14 +119,23 @@ export const tallennaViimeisimmat = (tapahtuma: Tapahtuma, paikka: Paikka | null
   }
 };
 
-// Avaimista takaisin luettelon riveiksi. Luettelosta poistunut rivi putoaa pois
-// hiljaa, jottei vanha muisti tarjoa otsikkoa jota ei enää ole.
+// Avaimista takaisin riveiksi. Luettelosta poistunut rivi putoaa pois hiljaa, jottei
+// vanha muisti tarjoa otsikkoa jota ei enää ole. Omat kirjaukset palautetaan avaimesta
+// sellaisenaan: ne ovat juuri niitä joita luettelossa ei ole, ja toistuvat silti.
+const omaTapahtuma = (avain: string): Tapahtuma | null => {
+  const [luokka, merkki, ...loput] = avain.split('|');
+  if (merkki !== 'oma' || !LUOKAT.some((l) => l.id === luokka) || loput.length === 0) return null;
+  return omaksiTapahtumaksi(luokka as Luokka, loput.join('|'));
+};
+
 export const viimeisimmatTapahtumat = (avaimet: string[], luokka: Luokka) =>
   avaimet
-    .map((a) => KAIKKI_TAPAHTUMAT.find((t) => tapahtumanAvain(t) === a))
+    .map((a) => omaTapahtuma(a) || KAIKKI_TAPAHTUMAT.find((t) => tapahtumanAvain(t) === a))
     .filter((t): t is Tapahtuma => !!t && t.luokka === luokka);
 
 export const viimeisimmatPaikat = (avaimet: string[]) =>
   avaimet
-    .map((a) => KAIKKI_PAIKAT.find((p) => paikanAvain(p) === a))
+    .map((a) => (a.startsWith(`${OMA}|`)
+      ? omaksiPaikaksi(a.slice(OMA.length + 1))
+      : KAIKKI_PAIKAT.find((p) => paikanAvain(p) === a)))
     .filter((p): p is Paikka => !!p);
