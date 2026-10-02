@@ -98,11 +98,14 @@ const kutsu = (metodi, polku, runko, evaste) => fetch(`${PALVELIN}${polku}`, {
   ...(runko ? { body: runko } : {}),
 });
 
-const [metodi, raakaPolku, runko] = process.argv.slice(2);
+const [metodi, raakaPolku, raakaRunko] = process.argv.slice(2);
 if (!metodi || !raakaPolku) {
-  console.error('Käyttö: node tyokalut/tj.mjs <METODI> <polku> [json-runko]');
+  console.error('Käyttö: node tyokalut/tj.mjs <METODI> <polku> [json-runko | @tiedosto.json]');
   process.exit(2);
 }
+// @tiedosto: runko luetaan tiedostosta. Windowsin komentorivin pituusraja (~32 000
+// merkkiä) ei riitä isoille kuormille, kuten mikroraportin koko luettelolle.
+const runko = raakaRunko?.startsWith('@') ? fs.readFileSync(raakaRunko.slice(1), 'utf8') : raakaRunko;
 const polku = siivoaPolku(raakaPolku);
 
 let evaste = lueEvaste() || (await kirjaudu());
