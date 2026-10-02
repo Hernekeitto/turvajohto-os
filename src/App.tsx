@@ -83,6 +83,7 @@ import { EmpStatusBadge, getEmpStatus } from './shared/komponentit/EmpStatusBadg
 import { NotificationBell, ProfileMenu } from './shared/komponentit/YlapalkkiOsat';
 import { Ylapalkki, YlapalkkiLogo, TiedostotPainike } from './shared/komponentit/Ylapalkki';
 import { TakaisinLinkki } from './shared/komponentit/TakaisinLinkki';
+import { AsetusValikko } from './shared/komponentit/AsetusValikko';
 import { AlertBanner, type AlertTyyppi } from './shared/komponentit/AlertBanner';
 import { ASETUSTEN_SIVUKARTAT } from './asetusten-sivukartat';
 import { Kayttajatasot } from './shared/asetukset/Kayttajatasot';
@@ -147,7 +148,12 @@ import {
   BookOpen,
   BarChart3,
   ClipboardList,
+  HardDrive,
+  UserCog,
 } from 'lucide-react';
+
+// Sovellusasetusten osiot (2.10.2026): jokainen on oma painikkeensa.
+type AsetusOsio = 'tasot' | 'pikatoiminnot' | 'tallennustila' | 'kayttajien_tila' | 'sailytys';
 
 // Montako hälytystä Tilannekuvan paneeliin mahtuu ennen kuin loput siirtyvät
 // "Näytä kaikki" -painikkeen taakse. Ilman rajaa paneeli kasvaisi rajatta ja
@@ -397,6 +403,9 @@ export default function App() {
   // käyttäjähallinnan muutokset, kirjautumiset) — vain admin, ks. server/audit.js.
   const [viewingAuditLog, setViewingAuditLog] = useState(false);
   const [viewingSettings, setViewingSettings] = useState(false);
+  // Sovellusasetusten avattu osio (2.10.2026): jokainen osio on oma painikkeensa, ja
+  // null = asetusten etusivu (painikeruudukko).
+  const [asetusOsio, setAsetusOsio] = useState<AsetusOsio | null>(null);
   const [auditEntries, setAuditEntries] = useState<AuditMerkinta[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState('');
@@ -3848,6 +3857,10 @@ export default function App() {
   });
   useTakaisinEste(!!openedReport, () => setOpenedReport(null));
   useTakaisinEste(!!openedRiskAssessment, () => setOpenedRiskAssessment(null));
+  // Takaisin-painike sulkee avatun asetusosion ja palaa asetusten etusivulle.
+  useTakaisinEste(viewingSettings && !!asetusOsio, () => setAsetusOsio(null));
+  // Asetuksista poistuttaessa seuraava avaus alkaa etusivulta.
+  useEffect(() => { if (!viewingSettings) setAsetusOsio(null); }, [viewingSettings]);
 
   const renderContent = () => {
     // Suoja tilanteille joissa aiemmin sallitun sivun activeTab jää voimaan sen jälkeen
@@ -10061,13 +10074,41 @@ export default function App() {
 
         <main className="flex-1 p-6 md:p-10">
           <div className="max-w-4xl mx-auto text-left">
-            <TakaisinLinkki onClick={() => setViewingSettings(false)}>
-              Takaisin
+            <TakaisinLinkki onClick={() => (asetusOsio ? setAsetusOsio(null) : setViewingSettings(false))}>
+              {asetusOsio ? 'Sovellusasetukset' : 'Takaisin'}
             </TakaisinLinkki>
 
-            <h2 className="text-2xl font-bold text-slate-800 mb-1">Sovellusasetukset</h2>
-            <p className="text-sm text-slate-500 mb-8">Käyttäjätasot, palvelimen tallennustila ja lakisääteiset säilytysajat.</p>
+            {!asetusOsio && (
+              <>
+                <h2 className="text-2xl font-bold text-slate-800 mb-1">Sovellusasetukset</h2>
+                <p className="text-sm text-slate-500 mb-6">Valitse muokattava asetus.</p>
+                <AsetusValikko
+                  osiot={[
+                    {
+                      id: 'tasot', nimi: 'Käyttäjätasot', kuvaus: 'Tasojen oikeudet sivukartan solmuittain.',
+                      Ikoni: ShieldCheck, tiivistelma: isAdminUser && roles.length > 0 ? `${roles.length} tasoa` : null,
+                    },
+                    {
+                      id: 'pikatoiminnot', nimi: 'Pikatoiminnot', kuvaus: 'Hätätekstiviestien napit ja vastaanottajaryhmät.',
+                      Ikoni: Smartphone, tiivistelma: smsButtons ? `${smsButtons.length} nappia` : null,
+                    },
+                    { id: 'tallennustila', nimi: 'Tallennustila', kuvaus: 'Palvelimen levytilan käyttö.', Ikoni: HardDrive },
+                    {
+                      id: 'kayttajien_tila', nimi: 'Käyttäjien tallennustila',
+                      kuvaus: 'Henkilökohtaiset kiintiöt ja lisätilapyynnöt.', Ikoni: UserCog,
+                    },
+                    {
+                      id: 'sailytys', nimi: 'Säilytysajat', kuvaus: 'Lakisääteiset säilytysajat, vanhentuneiden hävitys ja arkistoidut tapahtumat.',
+                      Ikoni: Archive,
+                      tiivistelma: arkistoidutPoistettavissa > 0 ? `${arkistoidutPoistettavissa} tapahtumaa poistettavissa` : null,
+                    },
+                  ]}
+                  onValitse={setAsetusOsio}
+                />
+              </>
+            )}
 
+            {asetusOsio === 'tasot' && (
             <Kayttajatasot
               roles={roles}
               rolesLoading={rolesLoading}
@@ -10076,8 +10117,10 @@ export default function App() {
               isAdmin={isAdminUser}
               onMuuttui={() => { fetchRoles(); fetchUserAdminList(); }}
             />
+            )}
 
             {/* ==================== PIKATOIMINTONAPIT (hätätekstiviestit) ==================== */}
+            {asetusOsio === 'pikatoiminnot' && (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
               <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                 <Smartphone size={18} className="text-rose-500" />
@@ -10355,10 +10398,13 @@ export default function App() {
               )}
             </div>
 
-            <Tallennustila isAdmin={isAdminUser} />
+            )}
 
-            <KayttajienTallennustila isAdmin={isAdminUser} />
+            {asetusOsio === 'tallennustila' && <Tallennustila isAdmin={isAdminUser} />}
 
+            {asetusOsio === 'kayttajien_tila' && <KayttajienTallennustila isAdmin={isAdminUser} />}
+
+            {asetusOsio === 'sailytys' && (
             <Sailytysajat
               raportit={reports}
               isAdmin={isAdminUser}
@@ -10456,6 +10502,7 @@ export default function App() {
                     )}
                   </div>
             </Sailytysajat>
+            )}
           </div>
         </main>
         {globalOverlays}

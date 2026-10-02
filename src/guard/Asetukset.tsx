@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Archive, ChevronRight, HardDrive, ListTree, ShieldCheck, Smartphone, UserCog, Users,
+  Archive, HardDrive, ListTree, ShieldCheck, Smartphone, UserCog, Users,
 } from 'lucide-react';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
+import { AsetusValikko } from '../shared/komponentit/AsetusValikko';
 import { useTakaisinEste } from '../shared/navigointi';
 import { Kayttajatasot } from '../shared/asetukset/Kayttajatasot';
 import { Kayttajat } from '../shared/asetukset/Kayttajat';
@@ -161,26 +162,7 @@ export const Asetukset = ({ raportit, isAdmin, onHavita, onAvaaHenkilo, onTakais
       <h2 className="text-2xl font-bold text-ink-strong mb-1">Sovellusasetukset</h2>
       <p className="text-sm text-ink-muted mb-6">Valitse muokattava asetus.</p>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {osiot.map(({ id, nimi, kuvaus, Ikoni }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setOsio(id)}
-            className="text-left rounded-xl border border-line bg-surface hover:bg-sunken hover:border-line-strong p-4 flex items-start gap-3 transition-colors"
-          >
-            <Ikoni size={20} className="text-accent shrink-0 mt-0.5" />
-            <span className="flex-1 min-w-0">
-              <span className="block font-medium text-ink-strong">{nimi}</span>
-              <span className="block text-xs text-ink-muted mt-0.5 leading-relaxed">{kuvaus}</span>
-              {tiivistelma(id) && (
-                <span className="block text-xs font-medium text-ink-body mt-1">{tiivistelma(id)}</span>
-              )}
-            </span>
-            <ChevronRight size={18} className="text-ink-subtle shrink-0 self-center" />
-          </button>
-        ))}
-      </div>
+      <AsetusValikko osiot={osiot.map((o) => ({ ...o, tiivistelma: tiivistelma(o.id) }))} onValitse={setOsio} />
     </div>
   );
 };
