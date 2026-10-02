@@ -26,6 +26,7 @@ import {
   raportinTunnus, ryhmittele, tallennaViimeisimmat, viimeisimmatPaikat, viimeisimmatTapahtumat,
   type Luokka, type Paikka, type Tapahtuma,
 } from './mikroraportti/mikro';
+import { useMikroluettelo } from './mikroraportti/useMikroluettelo';
 
 // HH:MM itse koottuna: fi-FI-muotoilu antaa "20.06", jota <input type="time"> ei hyväksy.
 const nyt = () => {
@@ -218,16 +219,18 @@ export const Mikroraportti = ({ kohde, vartija, onTallenna, onTakaisin }: Props)
   // Luetaan avattaessa ja uudelleen jokaisen tallennuksen jälkeen, jotta "kirjaa seuraava"
   // tarjoaa heti juuri käytetyn.
   const [viimeisimmat, setViimeisimmat] = useState(lueViimeisimmat);
+  // Pääkäyttäjän ylläpitämä luettelo (taulukko), välimuisti tai sisäänrakennettu.
+  const luettelo = useMikroluettelo();
 
-  const paikat = useMemo(() => haePaikat(paikkaHaku), [paikkaHaku]);
+  const paikat = useMemo(() => haePaikat(paikkaHaku, luettelo), [paikkaHaku, luettelo]);
   const tapahtumat = useMemo(
-    () => (luokka ? haeTapahtumat(luokka, tapahtumaHaku) : []),
-    [luokka, tapahtumaHaku]
+    () => (luokka ? haeTapahtumat(luokka, tapahtumaHaku, luettelo) : []),
+    [luokka, tapahtumaHaku, luettelo]
   );
-  const paikkaPika = useMemo(() => viimeisimmatPaikat(viimeisimmat.paikat), [viimeisimmat]);
+  const paikkaPika = useMemo(() => viimeisimmatPaikat(viimeisimmat.paikat, luettelo), [viimeisimmat, luettelo]);
   const tapahtumaPika = useMemo(
-    () => (luokka ? viimeisimmatTapahtumat(viimeisimmat.tapahtumat, luokka) : []),
-    [viimeisimmat, luokka]
+    () => (luokka ? viimeisimmatTapahtumat(viimeisimmat.tapahtumat, luokka, luettelo) : []),
+    [viimeisimmat, luokka, luettelo]
   );
 
   const valitseLuokka = (uusi: Luokka) => {

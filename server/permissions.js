@@ -219,6 +219,14 @@ const COLLECTIONS = {
     touch: () => ['__henkilokohtainen__'],
     eventScoped: false,
   },
+  // Mikroraportin valikot (2.10.2026). Luetaan ja kirjoitetaan vain omilla reiteillä
+  // (index.js: /api/mikroluettelo): vartijat saavat voimassa olevan luettelon, ja
+  // pääkäyttäjä muokkaa taulukkoa Toimistossa. Kokoelmareitillä vain pääkäyttäjä.
+  mikroLuettelo: {
+    view: ['__paakayttaja__'],
+    touch: () => ['__paakayttaja__'],
+    eventScoped: false,
+  },
   fileShares: {
     view: ['eventfiles', 'guard_sites'],
     // Henkilökohtaisten tiedostojen jaot (lahde personalFiles, 29.9.2026) eivät näy

@@ -104,6 +104,9 @@ import {
 import { liitaKanava, laheta as lahetaKanavalle, lahetaViesti } from './kanava.js';
 import * as omatTiedostot from './omattiedostot.js';
 import {
+  TIEDOSTONIMI, omatKirjaukset, rakennaOds, siistiLuettelo, tulkitseOds,
+} from './mikroluettelo.js';
+import {
   seurantaKaytossa, paivita as paivitaSijainti, kaikki as sijainnit,
   hae as haeSijainti, unohda as unohdaSijainti,
   saaNahdaSijainteja, saaNahdaSijaintirivin, kirjataankoKatselu,
@@ -649,7 +652,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets', 'keyTypes', 'personalFiles', 'storageRequests']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets', 'keyTypes', 'personalFiles', 'storageRequests', 'mikroLuettelo']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -691,6 +694,8 @@ const UPLOAD_VIITTAAJAT = {
   // Käyttäjien henkilökohtaiset tiedostot (29.9.2026). Ilman tätä riviä minkä tahansa
   // muun kokoelman tallennus pitäisi niitä orpoina ja poistaisi ne armonajan jälkeen.
   personalFiles: (arr) => (Array.isArray(arr) ? arr : []).map((f) => f?.uploadId).filter(Boolean),
+  // Mikroraportin valikkotaulukko (2.10.2026). Sama syy kuin yllä.
+  mikroLuettelo: (arr) => (Array.isArray(arr) ? arr : []).map((t) => t?.uploadId).filter(Boolean),
 };
 
 // Tuoteportti: kokoelma joka kuuluu vain toiselle puolelle (esim. guardSites) on
@@ -7585,7 +7590,7 @@ app.post('/api/editori/avaa', requireAuth, async (req, res) => {
   if (!EDITORI_URL) return res.status(503).json({ ok: false, error: 'Dokumenttieditori ei ole käytössä.' });
   const uploadId = String(req.body?.uploadId || '');
   const muokkaus = req.body?.tila !== 'katselu';
-  const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || [], readCollection('personalFiles') || []);
+  const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || [], readCollection('personalFiles') || [], readCollection('mikroLuettelo') || []);
   if (!loyto || !getUploadPath(uploadId)) return res.status(404).json({ ok: false, error: 'Tiedostoa ei löytynyt.' });
   if (muokkaus ? !onEditoitava(loyto.tietue.name) : !onEsikatseltava(loyto.tietue.name)) {
     return res.status(400).json({ ok: false, error: 'Tätä tiedostotyyppiä ei voi avata editorissa.' });
@@ -7653,7 +7658,7 @@ function wopiPortti(req, res, next) {
 
   const k = editorinKayttaja(tokeni.username);
   if (!k) return res.status(401).end();
-  const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || [], readCollection('personalFiles') || []);
+  const loyto = etsiTiedosto(uploadId, readCollection('eventFiles') || [], readCollection('guardFiles') || [], readCollection('personalFiles') || [], readCollection('mikroLuettelo') || []);
   const polku = loyto && getUploadPath(uploadId);
   if (!polku || !onEsikatseltava(loyto.tietue.name)) return res.status(404).end();
   if (!saaLukeaLiitteen(k, uploadId)) return res.status(401).end();
@@ -7727,7 +7732,114 @@ app.post('/api/wopi/files/:id/contents', wopiPortti, express.raw({ type: () => t
     user: k.username, action: 'editori_tallennus', recordId: loyto.tietue.id,
     collection: loyto.lahde, eventId: loyto.kohdeId, koko: stat.size,
   });
+  // Mikroraportin valikkotaulukko tarkistetaan jokaisella tallennuksella. Tallennus
+  // onnistuu Collaboralle aina — virheellinen taulukko ei vain tule käyttöön.
+  if (loyto.lahde === 'mikroLuettelo') {
+    const tietue = mikroluettelonTietue();
+    if (tietue) tarkistaMikroluettelo(tietue, req.body, k.username);
+  }
   res.json({ LastModifiedTime: versio(stat) });
+});
+
+// ====================== MIKRORAPORTIN VALIKOT ======================
+//
+// Yksi luettelo kaikille kohteille, ja vain pääkäyttäjä muokkaa sitä (käyttäjän päätös
+// 2.10.2026). Lähde on .ods-taulukko jota muokataan Toimistossa; jokainen tallennus
+// tarkistetaan (mikroluettelo.js), ja vain virheetön taulukko otetaan käyttöön.
+// Kokoelmassa on yksi tietue: taulukon tiedostotiedot, voimassa oleva luettelo ja
+// viimeisimmän tarkistuksen virheet.
+
+const MIKROLUETTELO_ID = 'mikroluettelo';
+const mikroluettelonTietue = () =>
+  (readCollection('mikroLuettelo') || []).find((t) => t?.id === MIKROLUETTELO_ID) || null;
+
+function tarkistaMikroluettelo(tietue, puskuri, username) {
+  const tulos = tulkitseOds(puskuri);
+  const nyt = new Date().toISOString();
+  // Collabora tallentaa myös muuttumattoman taulukon (automaattinen tallennus), joten
+  // versio nousee vain kun luettelo oikeasti muuttui. Versiosta selain tietää hakea uuden.
+  const muuttui = tulos.ok && JSON.stringify(tulos.luettelo) !== JSON.stringify(tietue.voimassa);
+  const paivitetty = {
+    ...tietue,
+    tarkistettu: nyt,
+    virheet: tulos.virheet,
+    varoitukset: tulos.varoitukset,
+    ...(muuttui ? {
+      voimassa: tulos.luettelo, versio: (tietue.versio || 0) + 1, kayttoonOtettu: nyt, kayttoonOtti: username,
+    } : {}),
+  };
+  writeCollection('mikroLuettelo', (readCollection('mikroLuettelo') || [])
+    .map((t) => (t?.id === MIKROLUETTELO_ID ? paivitetty : t)));
+  if (muuttui || !tulos.ok) {
+    logAudit({
+      user: username, action: tulos.ok ? 'mikroluettelo_kayttoon' : 'mikroluettelo_hylatty',
+      recordId: MIKROLUETTELO_ID, collection: 'mikroLuettelo', versio: paivitetty.versio,
+      paikkoja: tulos.luettelo.paikat.length, otsikoita: tulos.luettelo.tapahtumat.length,
+      virheita: tulos.virheet.length,
+    });
+  }
+  return paivitetty;
+}
+
+// Vartijan lomake: voimassa oleva luettelo. null = taulukkoa ei ole vielä luotu, ja
+// selain käyttää sisäänrakennettua luetteloa.
+app.get('/api/mikroluettelo', requireAuth, guardPortti, (req, res) => {
+  const tietue = mikroluettelonTietue();
+  res.json({ ok: true, versio: tietue?.versio || 0, luettelo: tietue?.voimassa || null });
+});
+
+// Pääkäyttäjän asetusnäkymä: taulukon tila, viimeisimmän tarkistuksen virheet ja
+// vartijoiden omista kirjauksista koottu ehdotuslista.
+app.get('/api/mikroluettelo/tila', requireAuth, requireAdmin, (req, res) => {
+  const tietue = mikroluettelonTietue();
+  const { voimassa, ...tiedot } = tietue || {};
+  res.json({
+    ok: true,
+    taulukko: tietue ? {
+      ...tiedot,
+      paikkoja: voimassa?.paikat?.length || 0,
+      otsikoita: voimassa?.tapahtumat?.length || 0,
+    } : null,
+    editori: Boolean(EDITORI_URL),
+    omat: omatKirjaukset(readCollection('guardReports') || []),
+  });
+});
+
+// Taulukon luonti — tai palautus, jos `korvaa` on annettu. Luettelon lähettää selain
+// (sisäänrakennettu luettelo on selaimen koodissa), ja se kierrätetään taulukon kautta
+// samaan tarkistukseen kuin Toimistossa tallennettu: luotu tiedosto on taatusti luettava.
+app.post('/api/mikroluettelo/luo', requireAuth, requireAdmin, (req, res) => {
+  const olemassa = mikroluettelonTietue();
+  if (olemassa && req.body?.korvaa !== true) {
+    return res.status(409).json({ ok: false, error: 'Taulukko on jo olemassa.' });
+  }
+  const ods = rakennaOds(siistiLuettelo(req.body?.luettelo));
+  const tulos = tulkitseOds(ods);
+  if (!tulos.ok) return res.status(400).json({ ok: false, error: 'Luettelo ei kelpaa.', virheet: tulos.virheet });
+
+  const nyt = new Date().toISOString();
+  let uploadId = olemassa?.uploadId;
+  if (uploadId && getUploadPath(uploadId)) korvaaUpload(uploadId, ods);
+  else uploadId = saveUpload(TIEDOSTONIMI, ods);
+  const tietue = {
+    id: MIKROLUETTELO_ID,
+    uploadId,
+    name: TIEDOSTONIMI,
+    type: 'file',
+    size: ods.length,
+    luotu: olemassa?.luotu || nyt,
+    muokattu: nyt,
+    muokkaaja: req.username,
+    versio: olemassa?.versio || 0,
+    voimassa: olemassa?.voimassa || null,
+  };
+  writeCollection('mikroLuettelo', [tietue]);
+  logAudit({
+    user: req.username, action: olemassa ? 'mikroluettelo_palautus' : 'mikroluettelo_luonti',
+    recordId: MIKROLUETTELO_ID, collection: 'mikroLuettelo',
+  });
+  const paivitetty = tarkistaMikroluettelo(tietue, ods, req.username);
+  res.json({ ok: true, uploadId, versio: paivitetty.versio });
 });
 
 // ====================== HÄTÄTEKSTIVIESTIT (BulkSMS) ======================

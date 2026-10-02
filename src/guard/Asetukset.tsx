@@ -8,6 +8,7 @@ import { KayttajienTallennustila } from '../shared/asetukset/KayttajienTallennus
 import { Sailytysajat } from '../shared/asetukset/Sailytysajat';
 import { ASETUSTEN_SIVUKARTAT } from '../asetusten-sivukartat';
 import type { GuardRaportti } from './tyypit';
+import { MikroraportinValikot } from './MikroraportinValikot';
 
 // GUARD-puolen sovellusasetukset. Samat osiot kuin tapahtumapuolella yhtä lukuun
 // ottamatta: pikatoiminnot (hätätekstiviestit) ovat tapahtuman johtamisen työkalu ja
@@ -95,6 +96,8 @@ export const Asetukset = ({ raportit, isAdmin, onHavita, onAvaaHenkilo, onTakais
       {/* Laitesidonnat GUARD-puolella eikä EVENTissä: sovellus on vartijan työkalu, ja
           nollausoikeus on hälytyskeskuksella joka on tämän puolen käsite. */}
       <Laitteet />
+
+      <MikroraportinValikot isAdmin={isAdmin} />
 
       <Tallennustila isAdmin={isAdmin} />
 

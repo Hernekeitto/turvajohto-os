@@ -206,3 +206,12 @@ test('ODF-tarkistus: oikea paketti kelpaa, muu sisältö ei', async () => {
   muu.write('eimetype', 30, 'latin1');
   assert.equal(onKelvollinenOdf(muu, 'a.odt'), false);
 });
+
+test('mikroraportin valikkotaulukko löytyy, ja siihen kirjoittaa vain pääkäyttäjä', () => {
+  const luettelo = [{ id: 'mikroluettelo', uploadId: 'm.ods', name: 'Mikroraportin valikot.ods' }];
+  const loyto = etsiTiedosto('m.ods', EVENT_FILES, GUARD_FILES, [], luettelo);
+  assert.equal(loyto?.lahde, 'mikroLuettelo');
+  assert.equal(saaKirjoittaa({ role: 'admin', username: 'a' }, loyto), true);
+  const kaikkiOikeudet = { __default__: { guard_sites: { view: true, edit: true }, guard_report_micro: { view: true, edit: true } } };
+  assert.equal(saaKirjoittaa({ role: 'user', username: 'e', permissions: kaikkiOikeudet, tuotteet: ['guard'] }, loyto), false);
+});

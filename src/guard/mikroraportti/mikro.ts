@@ -28,6 +28,12 @@ export const KAIKKI_TAPAHTUMAT: Tapahtuma[] = AIHEET.flatMap(({ aihe, alueet }) 
 export const KAIKKI_PAIKAT: Paikka[] = PAIKKARYHMAT.flatMap(({ ryhma, paikat }) =>
   paikat.map((paikka) => ({ ryhma, paikka })));
 
+// Luettelo litteänä. Pääkäyttäjän taulukosta tulkittu luettelo (server/mikroluettelo.js)
+// on samaa muotoa; sisäänrakennettu on käytössä kunnes taulukko on luotu, ja varalla
+// jos palvelimelta ei saada mitään.
+export type Luettelo = { paikat: Paikka[]; tapahtumat: Tapahtuma[] };
+export const SISAANRAKENNETTU: Luettelo = { paikat: KAIKKI_PAIKAT, tapahtumat: KAIKKI_TAPAHTUMAT };
+
 // Haku: jokaisen sanan on löydyttävä jostain kentästä, järjestyksellä ei ole väliä.
 // "ovi auki" löytää siis myös rivin "Konesalin ovi jätetty raolleen / pönkitetty auki".
 const sanat = (haku: string) => haku.toLocaleLowerCase('fi').split(/\s+/).filter(Boolean);
@@ -39,11 +45,11 @@ export const osuu = (haku: string, ...kentat: string[]) => {
   return etsittavat.every((s) => teksti.includes(s));
 };
 
-export const haeTapahtumat = (luokka: Luokka, haku: string) =>
-  KAIKKI_TAPAHTUMAT.filter((t) => t.luokka === luokka && osuu(haku, t.teksti, t.alue, t.aihe));
+export const haeTapahtumat = (luokka: Luokka, haku: string, luettelo: Luettelo = SISAANRAKENNETTU) =>
+  luettelo.tapahtumat.filter((t) => t.luokka === luokka && osuu(haku, t.teksti, t.alue, t.aihe));
 
-export const haePaikat = (haku: string) =>
-  KAIKKI_PAIKAT.filter((p) => osuu(haku, p.paikka, p.ryhma));
+export const haePaikat = (haku: string, luettelo: Luettelo = SISAANRAKENNETTU) =>
+  luettelo.paikat.filter((p) => osuu(haku, p.paikka, p.ryhma));
 
 // Listan ryhmittely näkymää varten, järjestys säilyy luettelon mukaisena.
 export const ryhmittele = <T,>(rivit: T[], avain: (r: T) => string) => {
@@ -128,14 +134,30 @@ const omaTapahtuma = (avain: string): Tapahtuma | null => {
   return omaksiTapahtumaksi(luokka as Luokka, loput.join('|'));
 };
 
-export const viimeisimmatTapahtumat = (avaimet: string[], luokka: Luokka) =>
+export const viimeisimmatTapahtumat = (avaimet: string[], luokka: Luokka, luettelo: Luettelo = SISAANRAKENNETTU) =>
   avaimet
-    .map((a) => omaTapahtuma(a) || KAIKKI_TAPAHTUMAT.find((t) => tapahtumanAvain(t) === a))
+    .map((a) => omaTapahtuma(a) || luettelo.tapahtumat.find((t) => tapahtumanAvain(t) === a))
     .filter((t): t is Tapahtuma => !!t && t.luokka === luokka);
 
-export const viimeisimmatPaikat = (avaimet: string[]) =>
+export const viimeisimmatPaikat = (avaimet: string[], luettelo: Luettelo = SISAANRAKENNETTU) =>
   avaimet
     .map((a) => (a.startsWith(`${OMA}|`)
       ? omaksiPaikaksi(a.slice(OMA.length + 1))
-      : KAIKKI_PAIKAT.find((p) => paikanAvain(p) === a)))
+      : luettelo.paikat.find((p) => paikanAvain(p) === a)))
     .filter((p): p is Paikka => !!p);
+
+// Palvelimelta tai laitteen välimuistista tullut luettelo: hyväksytään vain oikean
+// muotoinen. Rikkinäinen välimuisti ei saa tyhjentää vartijan valikkoa.
+export const luetteloksi = (x: unknown): Luettelo | null => {
+  const l = x as Partial<Luettelo> | null;
+  if (!l || !Array.isArray(l.paikat) || !Array.isArray(l.tapahtumat)) return null;
+  const teksti = (v: unknown) => typeof v === 'string' && v.trim() !== '';
+  const paikat = l.paikat.filter((p) => teksti(p?.ryhma) && teksti(p?.paikka));
+  const tapahtumat = l.tapahtumat.filter((t) => teksti(t?.teksti) && teksti(t?.aihe) && teksti(t?.alue)
+    && LUOKAT.some((k) => k.id === t?.luokka));
+  if (paikat.length === 0 || tapahtumat.length === 0) return null;
+  return {
+    paikat: paikat.map(({ ryhma, paikka }) => ({ ryhma, paikka })),
+    tapahtumat: tapahtumat.map(({ luokka, aihe, alue, teksti: t }) => ({ luokka, aihe, alue, teksti: t })),
+  };
+};

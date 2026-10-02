@@ -110,6 +110,10 @@ const COLLECTIONS = {
   // ylläpitämiä: omistajuus ja kiintiö tarkistetaan omilla reiteillä (/api/omat).
   personalFiles: 'personalFiles.json',
   storageRequests: 'storageRequests.json',
+  // Mikroraportin valikot (2.10.2026): yksi tietue, jossa pääkäyttäjän .ods-taulukko ja
+  // siitä tulkittu voimassa oleva luettelo. Palvelimen ylläpitämä: luettelo syntyy vain
+  // taulukon tarkistuksen kautta (mikroluettelo.js), ei selaimen kirjoittamana.
+  mikroLuettelo: 'mikroLuettelo.json',
   // Tiedotteet (erä 8): sovelluksen sisäinen viesti kentälle, jonka lukeminen kuitataan.
   // Palvelimen ylläpitämä, koska kuittauslista on koko toiminnon sisältö — selaimesta
   // kirjoitettava kuittauslista ei todistaisi mitään.

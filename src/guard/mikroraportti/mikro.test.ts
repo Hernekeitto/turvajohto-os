@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   KAIKKI_PAIKAT, KAIKKI_TAPAHTUMAT, OMA, OMAN_PITUUS, haePaikat, haeTapahtumat, lisaaViimeisimpiin,
   omaksiPaikaksi, omaksiTapahtumaksi, paikanAvain, raportinTunnus,
-  tapahtumanAvain, viimeisimmatPaikat, viimeisimmatTapahtumat,
+  luetteloksi, tapahtumanAvain, viimeisimmatPaikat, viimeisimmatTapahtumat,
 } from './mikro.ts';
 
 test('luettelossa on kaikki taulukon rivit ja jokaisessa luokassa otsikoita', () => {
@@ -76,4 +76,15 @@ test('omat kirjaukset palautuvat viimeisimmistä eivätkä sekoitu luettelon riv
   assert.deepEqual(viimeisimmatTapahtumat(['kissa|oma|x'], 'toimenpide'), []);
   const paikka = omaksiPaikaksi('Kolmas kerros')!;
   assert.deepEqual(viimeisimmatPaikat([paikanAvain(paikka)]), [paikka]);
+});
+
+test('luetteloksi hyväksyy vain oikean muotoisen luettelon', () => {
+  assert.equal(luetteloksi(null), null);
+  assert.equal(luetteloksi({ paikat: [], tapahtumat: [] }), null);
+  const l = luetteloksi({
+    paikat: [{ ryhma: 'A', paikka: 'B', ylim: 1 }, { ryhma: '', paikka: 'X' }],
+    tapahtumat: [{ luokka: 'havainto', aihe: 'a', alue: 'b', teksti: 'c' }, { luokka: 'muu', aihe: 'a', alue: 'b', teksti: 'd' }],
+  });
+  assert.deepEqual(l, { paikat: [{ ryhma: 'A', paikka: 'B' }], tapahtumat: [{ luokka: 'havainto', aihe: 'a', alue: 'b', teksti: 'c' }] });
+  assert.deepEqual(haePaikat('', l!), [{ ryhma: 'A', paikka: 'B' }]);
 });

@@ -136,7 +136,7 @@ export function jakoVoimassaEditorissa(share, nyt = new Date()) {
 // (tapahtuman tiedostot, kohteen tiedostot) — ei raporttien liitteille, pohjakartoille
 // tai muille uploads-hakemiston tiedostoille, joilla on oma omistajansa ja oma
 // muokkauspolkunsa.
-export function etsiTiedosto(uploadId, eventFiles = [], guardFiles = [], personalFiles = []) {
+export function etsiTiedosto(uploadId, eventFiles = [], guardFiles = [], personalFiles = [], mikroLuettelo = []) {
   if (!uploadId) return null;
   const e = (Array.isArray(eventFiles) ? eventFiles : []).find((f) => f?.type !== 'folder' && f?.uploadId === uploadId);
   if (e) return { lahde: 'eventFiles', tietue: e, kohdeId: legacyEventId(e) };
@@ -145,6 +145,9 @@ export function etsiTiedosto(uploadId, eventFiles = [], guardFiles = [], persona
   // Henkilökohtainen tiedosto (29.9.2026): kohdeId on omistajan käyttäjätunnus.
   const p = (Array.isArray(personalFiles) ? personalFiles : []).find((f) => f?.type === 'file' && f?.uploadId === uploadId);
   if (p) return { lahde: 'personalFiles', tietue: p, kohdeId: p.omistaja ?? null };
+  // Mikroraportin valikkotaulukko (2.10.2026): yksi koko sovelluksen tiedosto.
+  const m = (Array.isArray(mikroLuettelo) ? mikroLuettelo : []).find((t) => t?.uploadId === uploadId);
+  if (m) return { lahde: 'mikroLuettelo', tietue: m, kohdeId: null };
   return null;
 }
 
@@ -167,6 +170,9 @@ export function saaKirjoittaa(kayttaja, loyto) {
   }
   // Omaa tiedostoa muokkaa vain omistaja (muut nimetyn muokkausjaon kautta).
   if (loyto.lahde === 'personalFiles') return !!kayttaja.username && kayttaja.username === loyto.kohdeId;
+  // Mikroraportin valikot: vain pääkäyttäjä, joka on jo palautettu yllä (käyttäjän päätös
+  // 2.10.2026). Tämä rivi on olemassa, jotta päätös näkyy eikä jää oletuksen varaan.
+  if (loyto.lahde === 'mikroLuettelo') return false;
   return false;
 }
 
