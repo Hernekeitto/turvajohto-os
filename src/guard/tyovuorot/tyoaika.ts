@@ -45,10 +45,40 @@ export type TyoaikaVastaus = {
   saannollinenH: number;
   jaksonEnimmaisH: number;
   listat: Lista[];
+  // Miehitykset jotka eivät täytä voimassa olevia sääntöjä (erä 3).
+  miehitysVaroitukset: { siteId: string; siteNimi: string; viesti: string }[];
   tanaan: string;
   muokattu: string | null;
   muokkasi: string | null;
 };
+
+// Suunniteltava henkilö: kapea ote työntekijäpankista (server/index.js: /api/tyovuorot/henkilot).
+export type Henkilo = {
+  username: string;
+  nimi: string;
+  kytketty: boolean;
+  workTimeType: string | null;
+  minHoursPer3Weeks: string | null;
+  hasGuardCard: boolean | null;
+  guardCardValidUntil: string | null;
+  employmentStart: string | null;
+  employmentType: string | null;
+  employmentFixedTo: string | null;
+  korttiAsti: string | null;
+};
+
+export const TYOAIKAMUOTO: Record<string, string> = {
+  monthly: 'Kuukausipalkka, 120 h / 3 vk',
+  parttime: 'Osa-aikainen',
+  oncall: 'Työvoimareservi',
+};
+
+export async function haeHenkilot(): Promise<Henkilo[]> {
+  const r = await fetch('/api/tyovuorot/henkilot', { credentials: 'include' });
+  const vastaus = await r.json().catch(() => null);
+  if (!vastaus?.ok) throw new Error(vastaus?.error || 'Henkilöiden lukeminen ei onnistunut.');
+  return vastaus.henkilot;
+}
 
 export async function haeTyoaika(): Promise<TyoaikaVastaus> {
   const r = await fetch('/api/tyovuorot/asetukset', { credentials: 'include' });

@@ -43,8 +43,10 @@ import {
 } from './vuorot.js';
 import {
   ASETUKSET as TYOAIKA_ASETUKSET, JAKSON_ENIMMAIS_H, JAKSON_PITUUS_VK, SAANNOLLINEN_H,
-  listat, normalisoiAsetukset, suunnitellutVuorot, tamaPaiva, tarkistaAsetukset, tarkistaMiehitys, tesPoikkeamat,
+  lisaaPaivia, listat, normalisoiAsetukset, suunnitellutVuorot, tamaPaiva, tarkistaAsetukset, tarkistaMiehitys,
+  tesPoikkeamat,
 } from './tyovuorolista.js';
+import { korttiVoimassaAsti, tarkistaHenkilo } from './tyoaikatarkistus.js';
 import {
   onOsallistuja, loydaDm, luoDmKanava,
   pttKaytossa, vuorossaOlevatMuut, vuorossaOlevat, dmPurkautunut, hataKanavaId, luoHataKanava,
@@ -7916,6 +7918,14 @@ function tyoaikaVastaus(tietue, kohteet = []) {
     // Edelliset listat eivät kuulu tähän: suunnittelu katsoo eteenpäin, ja menneet
     // listat näkyvät erässä 4 omassa näkymässään.
     listat: tulevat,
+    // Miehitykset jotka eivät enää täytä voimassa olevia sääntöjä (erä 3). Kohteen
+    // tallennus tarkistaa vain muuttuneet vuorot, joten sääntöjen tiukennuksen jälkeen
+    // vanha miehitys jää voimaan — ja se kerrotaan täällä eikä jätetä hiljaiseksi.
+    miehitysVaroitukset: kohteet
+      .filter((k) => k && !k.archived)
+      .flatMap((k) => (k.vuorotyypit || [])
+        .filter((v) => v && !v.arkistoitu)
+        .flatMap((v) => tarkistaMiehitys(v, asetukset).map((viesti) => ({ siteId: k.id, siteNimi: k.name || '', viesti })))),
     tanaan: tamaPaiva(),
     muokattu: tietue?.muokattu || null,
     muokkasi: tietue?.muokkasi || null,
@@ -7957,6 +7967,97 @@ app.put('/api/tyovuorot/asetukset', requireAuth, guardPortti, requireAdmin, (req
     collection: 'tyoaikaAsetukset', muutokset, poikkeamat: tesPoikkeamat(tulos.asetukset),
   });
   res.json(tyoaikaVastaus(tietue, luettavatKohteet(req)));
+});
+
+// --- Suunniteltavat henkilöt (erä 3) ---------------------------------------------------
+//
+// KAPEA OTE työntekijäpankista eikä pankki. Suunnittelija tarvitsee henkilöstä vain sen
+// mikä vaikuttaa listaan: työaikamuodon, vähimmäistyöajan, vartijakortin voimassaolon ja
+// työsuhteen rajat. Henkilötunnus, tilinumero, osoite ja palkka eivät kuulu siihen, eikä
+// Vuorosuunnittelija-taso siksi saa global_employee_bank-solmua (server/roles.js).
+//
+// Suunniteltava on tunnus, jolla on GUARD-tuote ja taso joka saa tehdä työvuoron
+// (guard_tasks-muokkaus). Pääkäyttäjä ei ole: hänen '*'-oikeutensa täyttäisi ehdon
+// sattumalta, vaikka hän ei ole vartija. Tunnus ilman pankkikytköstä on mukana
+// merkittynä, koska sen vuorot voi suunnitella mutta kortteja ja tunteja ei voi tarkistaa.
+
+const TYOAIKAKENTAT = [
+  'workTimeType', 'minHoursPer3Weeks', 'hasGuardCard', 'guardCardValidUntil',
+  'employmentStart', 'employmentType', 'employmentFixedTo',
+];
+
+function suunniteltavatHenkilot() {
+  const pankki = new Map((readCollection('employees') || []).map((t) => [t?.id, t]));
+  return listUsers()
+    .filter((u) => u.role !== 'admin' && (u.tuotteet || []).includes('guard')
+      && canEdit(rolePermissions(u.roleId), null, 'guard_tasks'))
+    .map((u) => {
+      const t = u.employeeId ? pankki.get(u.employeeId) : null;
+      const nimi = t ? `${t.firstName || ''} ${t.lastName || ''}`.trim() : '';
+      return {
+        username: u.username,
+        nimi: nimi || u.nickname || u.username,
+        kytketty: !!t,
+        ...Object.fromEntries(TYOAIKAKENTAT.map((k) => [k, t ? t[k] ?? null : null])),
+        // Viimeinen voimassaolopäivä valmiiksi tulkittuna (pankissa kuukausi, '2027-03').
+        korttiAsti: t?.hasGuardCard ? korttiVoimassaAsti(t.guardCardValidUntil) : null,
+      };
+    })
+    .sort((a, b) => a.nimi.localeCompare(b.nimi, 'fi'));
+}
+
+app.get('/api/tyovuorot/henkilot', requireAuth, guardPortti, (req, res) => {
+  if (!saaSuunnitella(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta työvuorosuunnitteluun.' });
+  }
+  res.json({ ok: true, henkilot: suunniteltavatHenkilot() });
+});
+
+// --- Sijoitusten tarkistus (erä 3) -------------------------------------------------------
+//
+// Ottaa listan ja ehdotetut sijoitukset ({ vuoroId, username }) ja palauttaa jokaiselle
+// henkilölle havainnot (tyoaikatarkistus.js). Ei tallenna mitään: erä 4 tallentaa listan
+// ja kutsuu samaa tarkistusta.
+//
+// Vuorot lasketaan neljä viikkoa ennen listan alkua, jotta listan alun lepoajat ja
+// viikkovapaat voidaan tarkistaa edellisen listan sijoituksia vasten — kunhan kutsuja
+// lähettää ne mukana.
+
+const TARKISTUKSEN_MAX_SIJOITUKSIA = 5000;
+
+app.post('/api/tyovuorot/tarkista', requireAuth, guardPortti, (req, res) => {
+  if (!saaSuunnitella(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta työvuorosuunnitteluun.' });
+  }
+  const asetukset = normalisoiAsetukset(tyoaikaTietue());
+  const lista = listat(asetukset, String(req.body?.listanAlku || ''), 1)[0];
+  if (!lista) {
+    return res.status(400).json({ ok: false, error: 'Listaa ei löytynyt: tarkista jaksojen alkupäivä ja listan päivä.' });
+  }
+  const sijoitukset = Array.isArray(req.body?.sijoitukset) ? req.body.sijoitukset : [];
+  if (sijoitukset.length > TARKISTUKSEN_MAX_SIJOITUKSIA) {
+    return res.status(400).json({ ok: false, error: 'Liian monta sijoitusta.' });
+  }
+
+  const kohteet = luettavatKohteet(req);
+  const vuorot = new Map(suunnitellutVuorot(kohteet, lisaaPaivia(lista.alku, -28), lista.loppu).map((v) => [v.id, v]));
+  const henkilot = new Map(suunniteltavatHenkilot().map((h) => [h.username, h]));
+
+  const perHenkilo = new Map();
+  const tuntemattomat = [];
+  for (const s of sijoitukset) {
+    const vuoro = vuorot.get(String(s?.vuoroId || ''));
+    const henkilo = henkilot.get(String(s?.username || ''));
+    if (!vuoro || !henkilo) { tuntemattomat.push({ vuoroId: s?.vuoroId ?? null, username: s?.username ?? null }); continue; }
+    if (!perHenkilo.has(henkilo.username)) perHenkilo.set(henkilo.username, []);
+    perHenkilo.get(henkilo.username).push(vuoro);
+  }
+
+  const tulokset = Object.fromEntries([...perHenkilo].map(([username, omat]) => [
+    username,
+    tarkistaHenkilo({ henkilo: henkilot.get(username), vuorot: omat, kohteet, asetukset, lista }),
+  ]));
+  res.json({ ok: true, lista, tulokset, tuntemattomat });
 });
 
 // ====================== HÄTÄTEKSTIVIESTIT (BulkSMS) ======================

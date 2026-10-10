@@ -12,8 +12,8 @@ export const VIIKONPAIVAT = ['ma', 'ti', 'ke', 'to', 'pe', 'la', 'su'];
 export type Poikkeama = 'lyhyt' | 'pitka' | 'yo';
 
 export const POIKKEAMAN_TEKSTI: Record<Poikkeama, string> = {
-  lyhyt: 'on lyhyempi kuin TES:n vähimmäispituus',
-  pitka: 'on pidempi kuin TES:n tavallinen enimmäispituus (poikkeava työvuoro)',
+  lyhyt: 'on lyhyempi kuin työaikasääntöjen vähimmäispituus',
+  pitka: 'on pidempi kuin työaikasääntöjen tavallinen enimmäispituus (poikkeava työvuoro)',
   yo: 'alkaa tai päättyy klo 00–06',
 };
 

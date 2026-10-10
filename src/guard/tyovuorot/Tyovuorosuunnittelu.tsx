@@ -1,15 +1,15 @@
-// Työvuorosuunnittelu (erä 1): listat, julkaisumääräajat ja voimassa olevat säännöt.
+// Työvuorosuunnittelu (erät 1–3): listat, julkaisumääräajat, suunniteltavat vartijat ja säännöt.
 //
 // Erä 1 näyttää sen kehyksen jonka sisään listat laaditaan: mitkä jaksot ovat tulossa,
 // mihin mennessä kunkin lista on julkaistava ja mitä sääntöjä sitä vastaan tarkistetaan.
 // Itse ruudukko (jakso × vartijat) tulee erässä 4.
 
 import { useEffect, useState } from 'react';
-import { CalendarClock, CalendarDays, TriangleAlert } from 'lucide-react';
+import { CalendarClock, CalendarDays, TriangleAlert, Users } from 'lucide-react';
 
 import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
-import { arvoTekstina, haeTyoaika, paiviaPaivaan, pvm } from './tyoaika';
-import type { Lista, TyoaikaVastaus } from './tyoaika';
+import { TYOAIKAMUOTO, arvoTekstina, haeHenkilot, haeTyoaika, paiviaPaivaan, pvm } from './tyoaika';
+import type { Henkilo, Lista, TyoaikaVastaus } from './tyoaika';
 
 type Props = {
   isAdmin: boolean;
@@ -20,9 +20,12 @@ type Props = {
 export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props) => {
   const [tila, setTila] = useState<TyoaikaVastaus | null>(null);
   const [virhe, setVirhe] = useState<string | null>(null);
+  const [henkilot, setHenkilot] = useState<Henkilo[] | null>(null);
+  const [henkiloVirhe, setHenkiloVirhe] = useState<string | null>(null);
 
   useEffect(() => {
     haeTyoaika().then(setTila).catch((e: Error) => setVirhe(e.message));
+    haeHenkilot().then(setHenkilot).catch((e: Error) => setHenkiloVirhe(e.message));
   }, []);
 
   return (
@@ -75,6 +78,23 @@ export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props)
           </div>
         </section>
       )}
+
+      {/* Vanha miehitys joka ei täytä nykyisiä sääntöjä (erä 3). Kohteen tallennus ei
+          tarkista muuttumattomia vuoroja, joten tämä on se paikka jossa ristiriita näkyy. */}
+      {tila && tila.miehitysVaroitukset.length > 0 && (
+        <div className="mb-8 rounded-lg border border-warning/30 bg-warning-soft px-4 py-3 text-sm text-warning-ink">
+          <p className="font-medium flex items-center gap-2">
+            <TriangleAlert size={16} />
+            Kohteiden vuorot, jotka eivät täytä voimassa olevia työaikasääntöjä
+          </p>
+          <ul className="mt-1.5 list-disc pl-5 space-y-0.5">
+            {tila.miehitysVaroitukset.map((m, i) => <li key={i}>{m.siteNimi}: {m.viesti}</li>)}
+          </ul>
+          <p className="mt-1.5 text-xs">Korjaa vuoro kohteen hallinnassa, tai kirjaa sille perustelu.</p>
+        </div>
+      )}
+
+      <HenkiloLista henkilot={henkilot} virhe={henkiloVirhe} tanaan={tila?.tanaan || null} varoitusPv={Number(tila?.asetukset.korttiVaroitusPv ?? 45)} />
 
       {tila && (
         <section className="bg-surface rounded-xl border border-line shadow-sm p-6">
@@ -151,5 +171,63 @@ const ListaKortti = ({ lista, tanaan, kuluva }: { lista: Lista; tanaan: string; 
         </p>
       )}
     </div>
+  );
+};
+
+// Suunniteltavat henkilöt (erä 3): kapea ote työntekijäpankista. Kortin tila lasketaan
+// tästä päivästä; listakohtainen tarkistus (vuoron päivä vs. voimassaolo) tehdään
+// palvelimella sijoitusten yhteydessä.
+const HenkiloLista = ({
+  henkilot, virhe, tanaan, varoitusPv,
+}: { henkilot: Henkilo[] | null; virhe: string | null; tanaan: string | null; varoitusPv: number }) => {
+  const kortinTila = (h: Henkilo): { teksti: string; taso: 'ok' | 'varoitus' | 'este' } => {
+    if (!h.kytketty) return { teksti: 'Ei kytketty työntekijäpankkiin', taso: 'varoitus' };
+    if (!h.hasGuardCard) return { teksti: 'Ei vartijakorttia', taso: 'este' };
+    if (!h.korttiAsti) return { teksti: 'Kortin voimassaolo puuttuu', taso: 'este' };
+    if (!tanaan) return { teksti: `Kortti ${pvm(h.korttiAsti)} asti`, taso: 'ok' };
+    const jaljella = paiviaPaivaan(tanaan, h.korttiAsti);
+    if (jaljella < 0) return { teksti: `Kortti vanhentunut ${pvm(h.korttiAsti)}`, taso: 'este' };
+    if (jaljella <= varoitusPv) return { teksti: `Kortti vanhenee ${pvm(h.korttiAsti)}`, taso: 'varoitus' };
+    return { teksti: `Kortti ${pvm(h.korttiAsti)} asti`, taso: 'ok' };
+  };
+  const vari = { ok: 'text-ink-muted', varoitus: 'text-warning-ink font-medium', este: 'text-danger font-medium' };
+
+  return (
+    <section className="mb-8">
+      <h3 className="text-lg font-bold text-ink flex items-center gap-2 mb-1">
+        <Users size={18} className="text-accent" />
+        Suunniteltavat vartijat
+      </h3>
+      <p className="text-xs text-ink-muted mb-3">
+        GUARD-tunnukset joilla on oikeus tehdä työvuoroja. Työaikamuoto ja kortit tulevat
+        työntekijäpankista.
+      </p>
+      {virhe && <p className="text-sm text-danger">{virhe}</p>}
+      {!henkilot && !virhe && <p className="text-sm text-ink-muted">Luetaan…</p>}
+      {henkilot && henkilot.length === 0 && (
+        <p className="text-sm text-ink-muted">Yhdelläkään GUARD-tunnuksella ei ole oikeutta tehdä työvuoroja.</p>
+      )}
+      {henkilot && henkilot.length > 0 && (
+        <div className="bg-surface rounded-xl border border-line divide-y divide-line-soft">
+          {henkilot.map((h) => {
+            const kortti = kortinTila(h);
+            return (
+              <div key={h.username} className="px-4 py-2.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-ink-strong">{h.nimi}</p>
+                  <p className="text-xs text-ink-muted">
+                    {h.username}
+                    {h.workTimeType && ` · ${TYOAIKAMUOTO[h.workTimeType] || h.workTimeType}`}
+                    {h.workTimeType === 'parttime' && h.minHoursPer3Weeks && `, vähintään ${h.minHoursPer3Weeks} h / 3 vk`}
+                    {h.kytketty && !h.workTimeType && ' · työaikamuoto puuttuu'}
+                  </p>
+                </div>
+                <span className={`text-xs ${vari[kortti.taso]}`}>{kortti.teksti}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 };

@@ -398,8 +398,8 @@ export function vuoronTesPoikkeamat(vuorotyyppi, asetukset) {
 }
 
 export const POIKKEAMAN_TEKSTI = {
-  lyhyt: 'vuoro on lyhyempi kuin TES:n vähimmäispituus',
-  pitka: 'vuoro on pidempi kuin TES:n tavallinen enimmäispituus (poikkeava työvuoro)',
+  lyhyt: 'vuoro on lyhyempi kuin työaikasääntöjen vähimmäispituus',
+  pitka: 'vuoro on pidempi kuin työaikasääntöjen tavallinen enimmäispituus (poikkeava työvuoro)',
   yo: 'vuoro alkaa tai päättyy klo 00–06',
 };
 
