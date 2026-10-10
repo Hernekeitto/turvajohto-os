@@ -305,3 +305,21 @@ export const vastaaVaihtoon = (id: string, hyvaksy: boolean) =>
 
 export const peruVaihto = (id: string) =>
   jsonPyynto<OmatNakyma>(`/api/tyovuorot/vaihdot/${encodeURIComponent(id)}/peru`, { method: 'POST', body: '{}' });
+
+// --- Generaattori (erä 7) ------------------------------------------------------------------
+
+export type Ehdotus = {
+  ok: true;
+  versio: number;
+  ehdotus: { vuoroId: string; username: string; pisteet: number }[];
+  avoimiksi: { vuoroId: string; syy: string }[];
+};
+
+export const laskeListanEhdotus = (alku: string) =>
+  jsonPyynto<Ehdotus>(`/api/tyovuorot/lista/${encodeURIComponent(alku)}/ehdotus`, { method: 'POST', body: '{}' });
+
+export const hyvaksyEhdotus = (alku: string, ehdotus: { vuoroId: string; username: string }[], muutossyy?: string) =>
+  jsonPyynto<ListaNakyma & { generaattori: { tehty: number; ohitetut: { vuoroId: string; username: string; syy: string }[] } }>(
+    `/api/tyovuorot/lista/${encodeURIComponent(alku)}/ehdotus/hyvaksy`,
+    { method: 'POST', body: JSON.stringify({ ehdotus, ...(muutossyy ? { muutossyy } : {}) }) },
+  );

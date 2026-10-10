@@ -47,6 +47,7 @@ import {
   tesPoikkeamat,
 } from './tyovuorolista.js';
 import { korttiVoimassaAsti, tarkistaHenkilo } from './tyoaikatarkistus.js';
+import { laskeEhdotus } from './tyovuorogeneraattori.js';
 import {
   julkaise, kaikkiSijoitukset, kuittaaMuutokset, kuittaamattomat, sijoita, tarkistaLista, tyhjaLista,
 } from './tyovuorolistat.js';
@@ -8216,6 +8217,71 @@ app.put('/api/tyovuorot/lista/:alku/sijoitus', requireAuth, guardPortti, (req, r
     });
   }
   res.json(listanNakyma(req, { ...ymp, tietue: tulos.tietue }));
+});
+
+// --- Generaattori (erä 7) -------------------------------------------------------------------
+//
+// Kaksi vaihetta: ehdotus lasketaan tallentamatta, ja hyväksyntä tekee sijoitukset yksi
+// kerrallaan tavallisella tarkistuksella. Hyväksyntä ei luota ehdotukseen: jos tilanne
+// muuttui välissä (joku sijoitti käsin, loma kirjattiin), kyseinen rivi ohitetaan ja
+// kerrotaan miksi. Muut rivit tehdään.
+
+app.post('/api/tyovuorot/lista/:alku/ehdotus', requireAuth, guardPortti, (req, res) => {
+  if (!saaMuokataListaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta muokata työvuorolistaa.' });
+  }
+  const ymp = listanYmparisto(req, req.params.alku);
+  if (!ymp) return res.status(404).json({ ok: false, error: 'Listaa ei löytynyt tälle päivälle.' });
+  const tulos = laskeEhdotus({
+    tietue: ymp.tietue, lista: ymp.lista, vuorot: ymp.vuorot, listanVuorot: ymp.listanVuorot,
+    henkilot: suunniteltavatHenkilot(), kohteet: ymp.kohteet, asetukset: ymp.asetukset,
+    muutSijoitukset: ymp.muutSijoitukset, poissaolot: ymp.poissaolot, toiveet: ymp.toiveet,
+    nytPaikallinen: paikallinenHetki(),
+  });
+  res.json({ ok: true, versio: ymp.tietue.versio || 0, ...tulos });
+});
+
+const EHDOTUKSEN_MAX = 5000;
+
+app.post('/api/tyovuorot/lista/:alku/ehdotus/hyvaksy', requireAuth, guardPortti, (req, res) => {
+  if (!saaMuokataListaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta muokata työvuorolistaa.' });
+  }
+  const ymp = listanYmparisto(req, req.params.alku);
+  if (!ymp) return res.status(404).json({ ok: false, error: 'Listaa ei löytynyt tälle päivälle.' });
+  const rivit = Array.isArray(req.body?.ehdotus) ? req.body.ehdotus.slice(0, EHDOTUKSEN_MAX) : [];
+  const henkilot = suunniteltavatHenkilot();
+  const nytHetki = paikallinenHetki();
+  let tietue = ymp.tietue;
+  const tehdyt = [];
+  const ohitetut = [];
+  for (const r of rivit) {
+    const vuoroId = String(r?.vuoroId || '');
+    const username = String(r?.username || '');
+    // Vain avoimiin: hyväksyntä ei saa korvata välissä käsin tehtyä sijoitusta.
+    if (tietue.sijoitukset.some((s) => s.vuoroId === vuoroId)) {
+      ohitetut.push({ vuoroId, username, syy: 'Vuoroon on jo sijoitettu joku.' });
+      continue;
+    }
+    const tulos = sijoita({
+      tietue, lista: ymp.lista, vuoroId, username, vuorot: ymp.vuorot, listanVuorot: ymp.listanVuorot,
+      henkilot, kohteet: ymp.kohteet, asetukset: ymp.asetukset, muutSijoitukset: ymp.muutSijoitukset,
+      poissaolot: ymp.poissaolot, toiveet: ymp.toiveet, tekija: req.username, nytPaikallinen: nytHetki,
+      muutossyy: req.body?.muutossyy,
+    });
+    if (!tulos.ok) { ohitetut.push({ vuoroId, username, syy: tulos.error }); continue; }
+    tietue = tulos.tietue;
+    tehdyt.push(vuoroId);
+  }
+  if (tehdyt.length) {
+    const muut = ymp.tietueet.filter((t) => t?.id !== ymp.lista.alku);
+    writeCollection('tyovuorolistat', [...muut, tietue]);
+    logAudit({
+      user: req.username, action: 'tyovuorolista_generaattori', collection: 'tyovuorolistat',
+      recordId: ymp.lista.alku, sijoitettu: tehdyt.length, ohitettu: ohitetut.length,
+    });
+  }
+  res.json({ ...listanNakyma(req, { ...ymp, tietue }), generaattori: { tehty: tehdyt.length, ohitetut } });
 });
 
 // --- Julkaisu (erä 6) ---------------------------------------------------------------------

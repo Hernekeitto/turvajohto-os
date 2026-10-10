@@ -9,13 +9,13 @@
 // on 42 saraketta, eikä se mahdu millekään näytölle.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CalendarDays, CalendarOff, History, MessageSquareText, Repeat, Send, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CalendarOff, History, MessageSquareText, Repeat, Send, Trash2, Wand2, X } from 'lucide-react';
 
 import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
 import {
-  TYOAIKAMUOTO, haeLista, julkaiseLista, kirjaaPoissaolo, poistaPoissaolo, pvm, ratkaiseVaihto, tallennaSijoitus,
+  TYOAIKAMUOTO, haeLista, hyvaksyEhdotus, julkaiseLista, kirjaaPoissaolo, laskeListanEhdotus, poistaPoissaolo, pvm, ratkaiseVaihto, tallennaSijoitus,
 } from './tyoaika';
-import type { Havainto, ListaNakyma, Sijoitus, SuunniteltuVuoro, Taso } from './tyoaika';
+import type { Ehdotus, Havainto, ListaNakyma, Sijoitus, SuunniteltuVuoro, Taso } from './tyoaika';
 import { listanPaivat, lyhytNimi, paivanOtsikko, rivit, solunTaso, valitsimenHenkilot } from './ruudukko';
 
 const TASON_VARI: Record<Taso, string> = {
@@ -36,6 +36,9 @@ export const Suunnitteluruudukko = ({ alku, onTakaisin }: Props) => {
   const [virhe, setVirhe] = useState<string | null>(null);
   const [ilmoitus, setIlmoitus] = useState<string | null>(null);
   const [valittu, setValittu] = useState<SuunniteltuVuoro | null>(null);
+  // Generaattorin ehdotus (erä 7). Näytetään ruudukossa esikatseluna, kunnes se
+  // hyväksytään tai hylätään; mitään ei tallenneta ennen hyväksyntää.
+  const [ehdotus, setEhdotus] = useState<Ehdotus | null>(null);
 
   const hae = useCallback(() => {
     haeLista(alku).then((v) => { setTila(v); setVirhe(null); }).catch((e: Error) => setVirhe(e.message));
@@ -74,7 +77,15 @@ export const Suunnitteluruudukko = ({ alku, onTakaisin }: Props) => {
         {tila.muokkasi && ` · viimeksi muokannut ${tila.muokkasi}`}
       </p>
 
-      <Julkaisu tila={tila} onTila={setTila} />
+      <div className="flex flex-wrap items-start gap-3">
+        <Julkaisu tila={tila} onTila={setTila} />
+        <Generaattori
+          tila={tila}
+          ehdotus={ehdotus}
+          onEhdotus={setEhdotus}
+          onTila={(uusi, viesti) => { setTila(uusi); setEhdotus(null); setIlmoitus(viesti); }}
+        />
+      </div>
 
       {ilmoitus && (
         <p className="mb-3 text-sm text-warning-ink bg-warning-soft border border-warning/30 rounded-lg px-3 py-2">{ilmoitus}</p>
@@ -119,6 +130,21 @@ export const Suunnitteluruudukko = ({ alku, onTakaisin }: Props) => {
                     if (!vuoro) return <td key={p} className={`border-b border-line-soft ${vl ? 'bg-sunken' : ''}`} />;
                     const s = sijoitukset.get(vuoro.id);
                     const taso = solunTaso(vuoro.id, s, tila.tulokset);
+                    // Generaattorin ehdotus (erä 7) näkyy vain avoimessa solussa: sijoitettu
+                    // vuoro ohitetaan hyväksynnässä joka tapauksessa.
+                    const ehdotettu = !s ? ehdotus?.ehdotus.find((e) => e.vuoroId === vuoro.id) : undefined;
+                    if (ehdotettu) {
+                      return (
+                        <td key={p} className={`border-b border-line-soft p-0.5 ${vl ? 'bg-sunken' : ''}`}>
+                          <span
+                            title={`Ehdotus: ${henkilot.get(ehdotettu.username)?.nimi || ehdotettu.username}`}
+                            className="flex items-center justify-center w-full h-9 rounded border-2 border-dashed border-accent/60 bg-accent-soft/40 px-1 text-[11px] leading-tight truncate text-accent-ink italic"
+                          >
+                            {lyhytNimi(henkilot.get(ehdotettu.username), ehdotettu.username)}
+                          </span>
+                        </td>
+                      );
+                    }
                     return (
                       <td key={p} className={`border-b border-line-soft p-0.5 ${vl ? 'bg-sunken' : ''}`}>
                         <button
@@ -598,7 +624,7 @@ const Julkaisu = ({ tila, onTila }: { tila: ListaNakyma; onTila: (t: ListaNakyma
 
   if (tila.julkaistu) {
     return (
-      <div className="mb-4 rounded-lg border border-accent/30 bg-accent-soft px-4 py-2.5 text-sm text-accent-ink">
+      <div className="w-full mb-4 rounded-lg border border-accent/30 bg-accent-soft px-4 py-2.5 text-sm text-accent-ink">
         <span className="font-medium">
           Julkaistu {new Date(tila.julkaistu.aika).toLocaleString('fi-FI', { dateStyle: 'short', timeStyle: 'short' })}
         </span>
@@ -768,5 +794,137 @@ const Muutosloki = ({ tila }: { tila: ListaNakyma }) => {
         </ul>
       )}
     </section>
+  );
+};
+
+// --- Generaattori (erä 7) -----------------------------------------------------------------
+//
+// "Täytä avoimet" laskee ehdotuksen palvelimella (server/tyovuorogeneraattori.js) ja
+// näyttää sen ruudukossa katkoviivoin. Hyväksyntä tekee sijoitukset tavallisella
+// tarkistuksella; jos jokin rivi ei enää kelpaa, se ohitetaan ja kerrotaan.
+//
+// Generaattori ei ehdota esteitä, TES-poikkeamia eikä yli 120 tunnin jaksoja. Avoimiksi
+// jäävät vuorot luetellaan syineen, jotta suunnittelija tietää mitä niille pitää tehdä
+// käsin (sopia poikkeama, kysyä ylityötä tai tarjota reserville).
+
+const Generaattori = ({
+  tila, ehdotus, onEhdotus, onTila,
+}: {
+  tila: ListaNakyma;
+  ehdotus: Ehdotus | null;
+  onEhdotus: (e: Ehdotus | null) => void;
+  onTila: (t: ListaNakyma, viesti: string | null) => void;
+}) => {
+  const [tyossa, setTyossa] = useState(false);
+  const [virhe, setVirhe] = useState<string | null>(null);
+  const [muutossyy, setMuutossyy] = useState('');
+  const [syytAuki, setSyytAuki] = useState(false);
+
+  if (!tila.saaMuokata) return null;
+  const avoimia = tila.vuorot.filter((v) => !tila.sijoitukset.some((s) => s.vuoroId === v.id)).length;
+  if (!ehdotus && avoimia === 0) return null;
+
+  const laske = async () => {
+    setTyossa(true);
+    setVirhe(null);
+    const v = await laskeListanEhdotus(tila.lista.alku);
+    setTyossa(false);
+    if (v.ok) onEhdotus(v); else setVirhe(v.error);
+  };
+
+  const hyvaksy = async () => {
+    if (!ehdotus) return;
+    setTyossa(true);
+    setVirhe(null);
+    const v = await hyvaksyEhdotus(
+      tila.lista.alku,
+      ehdotus.ehdotus.map(({ vuoroId, username }) => ({ vuoroId, username })),
+      tila.julkaistu ? muutossyy : undefined,
+    );
+    setTyossa(false);
+    if (!v.ok) { setVirhe(v.error); return; }
+    const { tehty, ohitetut } = v.generaattori;
+    onTila(v, ohitetut.length
+      ? `Sijoitettiin ${tehty} vuoroa. ${ohitetut.length} ohitettiin, koska tilanne oli muuttunut: ${ohitetut.slice(0, 3).map((o) => o.syy).join(' ')}`
+      : `Sijoitettiin ${tehty} vuoroa.`);
+  };
+
+  if (!ehdotus) {
+    return (
+      <div className="mb-4">
+        <button
+          type="button"
+          disabled={tyossa}
+          onClick={laske}
+          className="inline-flex items-center gap-2 bg-surface hover:bg-sunken text-ink-body border border-line text-sm font-medium rounded-lg px-4 py-2 transition-colors disabled:opacity-60"
+        >
+          <Wand2 size={16} />
+          {tyossa ? 'Lasketaan…' : `Täytä avoimet (${avoimia})`}
+        </button>
+        {virhe && <p className="mt-2 text-sm text-danger">{virhe}</p>}
+      </div>
+    );
+  }
+
+  // Avoimiksi jäävät ryhmiteltynä syyn mukaan: sama syy sadalle vuorolle on yksi rivi.
+  const syyt = new Map<string, number>();
+  for (const a of ehdotus.avoimiksi) syyt.set(a.syy, (syyt.get(a.syy) || 0) + 1);
+  const syyPuuttuu = !!tila.julkaistu && muutossyy.trim().length < 3;
+
+  return (
+    <div className="w-full mb-4 rounded-lg border-2 border-dashed border-accent/50 bg-accent-soft/30 px-4 py-3">
+      <p className="text-sm font-medium text-ink-strong flex items-center gap-2">
+        <Wand2 size={16} className="text-accent" />
+        Ehdotus: {ehdotus.ehdotus.length} vuoroa
+        {ehdotus.avoimiksi.length > 0 && `, ${ehdotus.avoimiksi.length} jää avoimeksi`}
+      </p>
+      <p className="text-xs text-ink-muted mt-0.5">
+        Ehdotetut näkyvät ruudukossa katkoviivoin. Ehdotus ei sisällä esteitä, TES-poikkeamia eikä
+        yli 120 tunnin jaksoja. Mitään ei ole vielä tallennettu.
+      </p>
+      {syyt.size > 0 && (
+        <div className="mt-2">
+          <button type="button" onClick={() => setSyytAuki(!syytAuki)} className="text-xs font-medium text-accent hover:underline">
+            {syytAuki ? 'Piilota' : 'Näytä'} miksi vuoroja jää avoimeksi
+          </button>
+          {syytAuki && (
+            <ul className="mt-1 space-y-0.5 text-xs text-ink-body list-disc pl-5">
+              {[...syyt].map(([syy, n]) => <li key={syy}>{n} × {syy}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+      {tila.julkaistu && (
+        <label className="block mt-3">
+          <span className="block text-xs font-medium text-ink-strong mb-1">
+            Muutoksen syy (pakollinen, lista on julkaistu)
+          </span>
+          <input
+            maxLength={500}
+            value={muutossyy}
+            onChange={(e) => setMuutossyy(e.target.value)}
+            placeholder="esim. Avoimien vuorojen täyttö"
+            className="w-full bg-surface border border-line-soft rounded-lg px-3 py-2 text-sm text-ink-strong"
+          />
+        </label>
+      )}
+      {virhe && <p className="mt-2 text-sm text-danger">{virhe}</p>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={tyossa || syyPuuttuu || ehdotus.ehdotus.length === 0}
+          onClick={hyvaksy}
+          className="px-4 py-2 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-60"
+        >
+          {tyossa ? 'Tallennetaan…' : 'Hyväksy ehdotus'}
+        </button>
+        <button type="button" disabled={tyossa} onClick={laske} className="px-4 py-2 text-sm font-medium text-ink-body hover:text-accent">
+          Laske uudelleen
+        </button>
+        <button type="button" disabled={tyossa} onClick={() => onEhdotus(null)} className="px-4 py-2 text-sm font-medium text-ink-muted hover:text-ink-body">
+          Hylkää
+        </button>
+      </div>
+    </div>
   );
 };
