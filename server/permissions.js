@@ -238,6 +238,13 @@ const COLLECTIONS = {
     touch: () => ['__paakayttaja__'],
     eventScoped: false,
   },
+  // Työvuorolistat (erä 4). Luetaan ja kirjoitetaan vain omilla reiteillä
+  // (index.js: /api/tyovuorot/lista), jotka tarkistavat jokaisen sijoituksen.
+  tyovuorolistat: {
+    view: ['__paakayttaja__'],
+    touch: () => ['__paakayttaja__'],
+    eventScoped: false,
+  },
   fileShares: {
     view: ['eventfiles', 'guard_sites'],
     // Henkilökohtaisten tiedostojen jaot (lahde personalFiles, 29.9.2026) eivät näy

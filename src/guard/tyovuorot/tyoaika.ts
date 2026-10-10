@@ -107,3 +107,81 @@ export function paiviaPaivaan(tanaan: string, iso: string): number {
   const b = Date.parse(`${iso}T00:00:00Z`);
   return Math.round((b - a) / 86400000);
 }
+
+// --- Työvuorolista (erä 4) ------------------------------------------------------------
+
+export type Taso = 'este' | 'poikkeama' | 'varoitus' | 'huomio';
+
+export type Havainto = { taso: Taso; koodi: string; viesti: string; vuoroIdt: string[] };
+
+export type SuunniteltuVuoro = {
+  id: string;
+  siteId: string;
+  siteNimi: string;
+  vuorotyyppiId: string;
+  vuoroNimi: string;
+  pvm: string;
+  paikka: number;
+  alkaa: string;
+  paattyy: string;
+  kestoMin: number;
+};
+
+export type Sijoitus = {
+  vuoroId: string;
+  username: string;
+  syy?: string;
+  poikkeamat?: string[];
+  sijoitti?: string;
+  sijoitettu?: string;
+};
+
+export type HenkilonTarkistus = {
+  havainnot: Havainto[];
+  jaksot: { alku: string; viimeinen: string; tunnit: number; vuoroIdt: string[] }[];
+};
+
+export type ListaNakyma = {
+  ok: true;
+  lista: Lista;
+  versio: number;
+  muokattu: string | null;
+  muokkasi: string | null;
+  vuorot: SuunniteltuVuoro[];
+  sijoitukset: Sijoitus[];
+  orvot: Sijoitus[];
+  henkilot: Henkilo[];
+  tulokset: Record<string, HenkilonTarkistus>;
+  perehdytetyt: Record<string, string[]>;
+  saaMuokata: boolean;
+};
+
+export async function haeLista(alku: string): Promise<ListaNakyma> {
+  const r = await fetch(`/api/tyovuorot/lista/${encodeURIComponent(alku)}`, { credentials: 'include' });
+  const vastaus = await r.json().catch(() => null);
+  if (!vastaus?.ok) throw new Error(vastaus?.error || 'Listan lukeminen ei onnistunut.');
+  return vastaus;
+}
+
+export type SijoitusVastaus =
+  | ListaNakyma
+  | ({ ok: false; koodi?: string; error: string; havainnot?: Havainto[] } & Omit<Partial<ListaNakyma>, 'ok'>);
+
+export async function tallennaSijoitus(
+  alku: string, body: { vuoroId: string; username: string | null; syy?: string; versio: number },
+): Promise<SijoitusVastaus> {
+  try {
+    const r = await fetch(`/api/tyovuorot/lista/${encodeURIComponent(alku)}/sijoitus`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const vastaus = await r.json().catch(() => null);
+    return vastaus || { ok: false, error: `Tallennus ei onnistunut (virhe ${r.status}).` };
+  } catch {
+    return { ok: false, error: 'Tallennus ei onnistunut: ei yhteyttä palvelimeen.' };
+  }
+}
+
+export const TASOJARJESTYS: Taso[] = ['este', 'poikkeama', 'varoitus', 'huomio'];

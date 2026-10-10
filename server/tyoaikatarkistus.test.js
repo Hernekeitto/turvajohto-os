@@ -233,3 +233,27 @@ test('paikallisesti sovittu lyhyempi lepo otetaan asetuksista', () => {
   assert.ok(!koodit(t).includes('vuorokausilepo'));
   assert.equal(OLETUKSET.vuorokausilepoH, 10);
 });
+
+// --- Erä 4: pidennetty työvuoro ---
+
+test('peräkkäiset vuorot ilman väliä ovat pidennetty vuoro eikä lepopoikkeama', () => {
+  const t = tarkista([vuoro(pv(0), '06:00', '14:00'), vuoro(pv(0), '14:00', '22:00')]);
+  assert.ok(!koodit(t).includes('vuorokausilepo'));
+  const h = t.havainnot.find((x) => x.koodi === 'jatkettu');
+  assert.equal(h.taso, 'poikkeama');
+  assert.match(h.viesti, /16 h/);
+  assert.equal(h.vuoroIdt.length, 2);
+});
+
+test('pidennetty vuoro: enintään 12 h ei ole poikkeama, yli 16 h on este', () => {
+  const lyhyt = tarkista([vuoro(pv(0), '06:00', '12:00'), vuoro(pv(0), '12:00', '18:00')]);
+  assert.ok(!koodit(lyhyt).some((k) => k === 'jatkettu' || k === 'vuorokausilepo'));
+  const pitka = tarkista([vuoro(pv(0), '06:00', '14:00'), vuoro(pv(0), '14:00', '22:00'), vuoro(pv(0), '22:00', '02:00')]);
+  assert.equal(pitka.havainnot.find((x) => x.koodi === 'liian_pitka').taso, 'este');
+});
+
+test('pidennetyn vuoron jälkeinen lepo lasketaan ketjun lopusta', () => {
+  const t = tarkista([vuoro(pv(0), '06:00', '14:00'), vuoro(pv(0), '14:00', '22:00'), vuoro(pv(1), '06:00', '14:00')]);
+  const h = t.havainnot.find((x) => x.koodi === 'vuorokausilepo');
+  assert.match(h.viesti, /8 h/);
+});

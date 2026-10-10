@@ -47,6 +47,7 @@ import {
   tesPoikkeamat,
 } from './tyovuorolista.js';
 import { korttiVoimassaAsti, tarkistaHenkilo } from './tyoaikatarkistus.js';
+import { kaikkiSijoitukset, sijoita, tarkistaLista, tyhjaLista } from './tyovuorolistat.js';
 import {
   onOsallistuja, loydaDm, luoDmKanava,
   pttKaytossa, vuorossaOlevatMuut, vuorossaOlevat, dmPurkautunut, hataKanavaId, luoHataKanava,
@@ -658,7 +659,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets', 'keyTypes', 'personalFiles', 'storageRequests', 'mikroLuettelo', 'tyoaikaAsetukset']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets', 'keyTypes', 'personalFiles', 'storageRequests', 'mikroLuettelo', 'tyoaikaAsetukset', 'tyovuorolistat']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -8058,6 +8059,115 @@ app.post('/api/tyovuorot/tarkista', requireAuth, guardPortti, (req, res) => {
     tarkistaHenkilo({ henkilo: henkilot.get(username), vuorot: omat, kohteet, asetukset, lista }),
   ]));
   res.json({ ok: true, lista, tulokset, tuntemattomat });
+});
+
+// --- Työvuorolista ja sijoitukset (erä 4) -----------------------------------------------
+//
+// Lista luetaan ja muokataan sijoitus kerrallaan. Koko listan tallennusta ei ole: se
+// ohittaisi tarkistuksen kaikilta muilta kuin muuttuneilta vuoroilta, ja kahden
+// suunnittelijan samanaikainen työ ylikirjoittaisi toisensa. Versiotarkistus (`versio`)
+// kertoo jos lista muuttui välissä, ja selain hakee silloin tuoreen tilan.
+
+const saaMuokataListaa = (req) => req.role === 'admin' || canEdit(req.permissions, null, 'guard_planning');
+
+// Ympäristö yhdelle listalle: lista, sen vuorot ja neljän edellisen viikon vuorot
+// lepoaikoja varten. Palauttaa null jos alkupäivä ei ole listan alku.
+function listanYmparisto(req, alku) {
+  const asetukset = normalisoiAsetukset(tyoaikaTietue());
+  const lista = listat(asetukset, String(alku || ''), 1)[0];
+  if (!lista || lista.alku !== alku) return null;
+  const kohteet = luettavatKohteet(req);
+  const vuorot = new Map(
+    suunnitellutVuorot(kohteet, lisaaPaivia(lista.alku, -28), lista.loppu).map((v) => [v.id, v]),
+  );
+  const listanVuorot = new Map([...vuorot].filter(([, v]) => v.pvm >= lista.alku));
+  const tietueet = readCollection('tyovuorolistat') || [];
+  const tietue = tietueet.find((t) => t?.id === lista.alku) || tyhjaLista(lista);
+  const muutSijoitukset = kaikkiSijoitukset(tietueet.filter((t) => t?.id !== lista.alku));
+  return { asetukset, lista, kohteet, vuorot, listanVuorot, tietueet, tietue, muutSijoitukset };
+}
+
+function listanNakyma(req, ymp) {
+  const henkilot = suunniteltavatHenkilot();
+  const { lista, kohteet, vuorot, listanVuorot, tietue, muutSijoitukset, asetukset } = ymp;
+  const tulokset = tarkistaLista({
+    lista, sijoitukset: [...muutSijoitukset, ...tietue.sijoitukset], vuorot, henkilot, kohteet, asetukset,
+  });
+  // Perehdytetyt vuorotyypeittäin valitsinta varten: suunnittelija näkee ensin ne joilla
+  // on perehdytys. Lista tunnuksista eikä nimistä, sama tieto jonka kohde jo antaa.
+  const perehdytetyt = {};
+  for (const k of kohteet) {
+    for (const p of k?.perehdytykset || []) {
+      if (!p?.username) continue;
+      for (const vt of p.vuorotyyppiIdt || []) {
+        const avain = `${k.id}:${vt}`;
+        (perehdytetyt[avain] ||= []).push(p.username);
+      }
+    }
+  }
+  return {
+    ok: true,
+    lista,
+    versio: tietue.versio || 0,
+    muokattu: tietue.muokattu || null,
+    muokkasi: tietue.muokkasi || null,
+    vuorot: [...listanVuorot.values()],
+    sijoitukset: tietue.sijoitukset,
+    // Sijoitukset joiden vuoroa ei enää ole (miehitys muuttui tai kohde poistui).
+    orvot: tietue.sijoitukset.filter((s) => !listanVuorot.has(s.vuoroId)),
+    henkilot,
+    tulokset,
+    perehdytetyt,
+    saaMuokata: saaMuokataListaa(req),
+  };
+}
+
+app.get('/api/tyovuorot/lista/:alku', requireAuth, guardPortti, (req, res) => {
+  if (!saaSuunnitella(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta työvuorosuunnitteluun.' });
+  }
+  const ymp = listanYmparisto(req, req.params.alku);
+  if (!ymp) return res.status(404).json({ ok: false, error: 'Listaa ei löytynyt tälle päivälle.' });
+  res.json(listanNakyma(req, ymp));
+});
+
+app.put('/api/tyovuorot/lista/:alku/sijoitus', requireAuth, guardPortti, (req, res) => {
+  if (!saaMuokataListaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta muokata työvuorolistaa.' });
+  }
+  const ymp = listanYmparisto(req, req.params.alku);
+  if (!ymp) return res.status(404).json({ ok: false, error: 'Listaa ei löytynyt tälle päivälle.' });
+  if (req.body?.versio !== undefined && Number(req.body.versio) !== (ymp.tietue.versio || 0)) {
+    // Tuore tila mukaan, jotta selain voi päivittää näkymän ilman erillistä hakua.
+    return res.status(409).json({
+      ...listanNakyma(req, ymp),
+      ok: false, koodi: 'vanhentunut', error: 'Listaa on muokattu välillä. Näkymä päivitettiin.',
+    });
+  }
+  const vuoroId = String(req.body?.vuoroId || '');
+  const username = req.body?.username ? String(req.body.username) : null;
+  const edellinen = ymp.tietue.sijoitukset.find((s) => s.vuoroId === vuoroId) || null;
+  const tulos = sijoita({
+    tietue: ymp.tietue, lista: ymp.lista, vuoroId, username, syy: req.body?.syy,
+    vuorot: ymp.vuorot, listanVuorot: ymp.listanVuorot, henkilot: suunniteltavatHenkilot(),
+    kohteet: ymp.kohteet, asetukset: ymp.asetukset, muutSijoitukset: ymp.muutSijoitukset,
+    tekija: req.username,
+  });
+  if (!tulos.ok) {
+    return res.status(tulos.status).json({ ok: false, koodi: tulos.koodi, error: tulos.error, havainnot: tulos.havainnot });
+  }
+  if (tulos.tietue !== ymp.tietue) {
+    const muut = ymp.tietueet.filter((t) => t?.id !== ymp.lista.alku);
+    writeCollection('tyovuorolistat', [...muut, tulos.tietue]);
+    const uusi = tulos.tietue.sijoitukset.find((s) => s.vuoroId === vuoroId) || null;
+    logAudit({
+      user: req.username, action: 'tyovuorolista_sijoitus', collection: 'tyovuorolistat',
+      recordId: ymp.lista.alku, vuoroId,
+      oli: edellinen?.username || null, nyt: uusi?.username || null,
+      ...(uusi?.syy ? { syy: uusi.syy, poikkeamat: uusi.poikkeamat } : {}),
+    });
+  }
+  res.json(listanNakyma(req, { ...ymp, tietue: tulos.tietue }));
 });
 
 // ====================== HÄTÄTEKSTIVIESTIT (BulkSMS) ======================

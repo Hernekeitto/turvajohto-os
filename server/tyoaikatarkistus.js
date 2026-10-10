@@ -139,9 +139,33 @@ export function tarkistaHenkilo({ henkilo, vuorot, kohteet, asetukset, lista }) 
   // Pari raportoidaan jos jälkimmäinen on listalla. Edellisen listan viimeinen vuoro ja
   // tämän ensimmäinen ovat silloin yksi pari, mutta mikään ei raportoidu kahdesti.
 
+  // Välittömästi peräkkäiset vuorot (06–14 ja 14–22) ovat yksi pidennetty työvuoro eikä
+  // kaksi vuoroa ilman lepoa. Pituus tarkistetaan ketjun yhteispituutena TES 10 §:n
+  // rajoja vasten: tavallisen enimmäispituuden ylitys on poikkeama, poikkeavan vuoron
+  // enimmäispituuden ylitys este.
+  let ketju = [];
+  const raportoiKetju = () => {
+    if (ketju.length > 1 && ketju.some((v) => v.a >= alkuMin && v.a < loppuMin)) {
+      const pituus = ketju[ketju.length - 1].l - ketju[0].a;
+      const idt = ketju.map((v) => v.id);
+      if (pituus > asetukset.poikkeavanMaxH * 60) {
+        lisaa('este', 'liian_pitka', `Peräkkäiset vuorot muodostavat ${tunnit(pituus)} h työvuoron, enintään ${asetukset.poikkeavanMaxH} h (TES 10 §).`, idt);
+      } else if (pituus > asetukset.vuoronMaxH * 60) {
+        lisaa('poikkeama', 'jatkettu', `Peräkkäiset vuorot muodostavat ${tunnit(pituus)} h työvuoron, tavallisesti enintään ${asetukset.vuoronMaxH} h (TES 10 §).`, idt);
+      }
+    }
+    ketju = [];
+  };
+
   for (let i = 1; i < kaikki.length; i++) {
     const ed = kaikki[i - 1];
     const v = kaikki[i];
+    if (v.a === ed.l) {
+      if (!ketju.length) ketju.push(ed);
+      ketju.push(v);
+      continue;
+    }
+    raportoiKetju();
     if (v.a < alkuMin || v.a >= loppuMin) continue;
     const vali = v.a - ed.l;
     if (vali < 0) {
@@ -152,6 +176,7 @@ export function tarkistaHenkilo({ henkilo, vuorot, kohteet, asetukset, lista }) 
         [ed.id, v.id]);
     }
   }
+  raportoiKetju();
 
   // --- Viikoittainen vapaa-aika (TES 16 §) --------------------------------------------
   //

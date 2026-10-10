@@ -118,6 +118,10 @@ const COLLECTIONS = {
   // ylläpitämä, koska TES:stä poikkeava arvo vaatii kirjauksen paikallisesta sopimuksesta
   // (tyovuorolista.js: tarkistaAsetukset) eikä kokoelmareitti tarkistaisi sitä.
   tyoaikaAsetukset: 'tyoaikaAsetukset.json',
+  // Työvuorolistat (erä 4): tietue per lista, sijoitukset viittaavat laskettuihin vuoroihin.
+  // Palvelimen ylläpitämä, koska jokainen sijoitus tarkistetaan TES-sääntöjä vasten
+  // (tyovuorolistat.js: sijoita) eikä kokoelmareitti tekisi sitä.
+  tyovuorolistat: 'tyovuorolistat.json',
   // Tiedotteet (erä 8): sovelluksen sisäinen viesti kentälle, jonka lukeminen kuitataan.
   // Palvelimen ylläpitämä, koska kuittauslista on koko toiminnon sisältö — selaimesta
   // kirjoitettava kuittauslista ei todistaisi mitään.

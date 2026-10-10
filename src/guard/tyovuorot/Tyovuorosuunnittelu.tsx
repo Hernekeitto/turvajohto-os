@@ -2,12 +2,14 @@
 //
 // Erä 1 näyttää sen kehyksen jonka sisään listat laaditaan: mitkä jaksot ovat tulossa,
 // mihin mennessä kunkin lista on julkaistava ja mitä sääntöjä sitä vastaan tarkistetaan.
-// Itse ruudukko (jakso × vartijat) tulee erässä 4.
+// Listakortti avaa suunnitteluruudukon (erä 4, Suunnitteluruudukko.tsx).
 
 import { useEffect, useState } from 'react';
 import { CalendarClock, CalendarDays, TriangleAlert, Users } from 'lucide-react';
 
 import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
+import { useTakaisinEste } from '../../shared/navigointi';
+import { Suunnitteluruudukko } from './Suunnitteluruudukko';
 import { TYOAIKAMUOTO, arvoTekstina, haeHenkilot, haeTyoaika, paiviaPaivaan, pvm } from './tyoaika';
 import type { Henkilo, Lista, TyoaikaVastaus } from './tyoaika';
 
@@ -22,11 +24,19 @@ export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props)
   const [virhe, setVirhe] = useState<string | null>(null);
   const [henkilot, setHenkilot] = useState<Henkilo[] | null>(null);
   const [henkiloVirhe, setHenkiloVirhe] = useState<string | null>(null);
+  // Avattu lista (erä 4). Takaisin-painike sulkee listan eikä poistu suunnittelusta.
+  const [avoinLista, setAvoinLista] = useState<string | null>(null);
+  useTakaisinEste(!!avoinLista, () => setAvoinLista(null));
 
-  useEffect(() => {
+  const hae = () => {
     haeTyoaika().then(setTila).catch((e: Error) => setVirhe(e.message));
     haeHenkilot().then(setHenkilot).catch((e: Error) => setHenkiloVirhe(e.message));
-  }, []);
+  };
+  useEffect(hae, []);
+
+  if (avoinLista) {
+    return <Suunnitteluruudukko alku={avoinLista} onTakaisin={() => { setAvoinLista(null); hae(); }} />;
+  }
 
   return (
     <div>
@@ -74,7 +84,9 @@ export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props)
             Työvuorolistat
           </h3>
           <div className="grid gap-3 sm:grid-cols-2">
-            {tila.listat.map((l, i) => <ListaKortti key={l.alku} lista={l} tanaan={tila.tanaan} kuluva={i === 0} />)}
+            {tila.listat.map((l, i) => (
+              <ListaKortti key={l.alku} lista={l} tanaan={tila.tanaan} kuluva={i === 0} onAvaa={() => setAvoinLista(l.alku)} />
+            ))}
           </div>
         </section>
       )}
@@ -142,7 +154,9 @@ export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props)
 
 // Listan kortti. Määräajan tila on tässä vaiheessa pelkkä kalenterilaskelma: julkaisua
 // ei vielä ole (erä 6), joten kortti kertoo vain kuinka paljon aikaa on jäljellä.
-const ListaKortti = ({ lista, tanaan, kuluva }: { lista: Lista; tanaan: string; kuluva: boolean }) => {
+const ListaKortti = ({
+  lista, tanaan, kuluva, onAvaa,
+}: { lista: Lista; tanaan: string; kuluva: boolean; onAvaa: () => void }) => {
   const alkanut = paiviaPaivaan(tanaan, lista.alku) <= 0;
   const jaljella = paiviaPaivaan(tanaan, lista.julkaistavaViimeistaan);
   const maaraaika = alkanut ? null
@@ -151,7 +165,11 @@ const ListaKortti = ({ lista, tanaan, kuluva }: { lista: Lista; tanaan: string; 
         : { teksti: `Julkaistava ${jaljella} pv kuluessa`, varoitus: jaljella <= 7 };
 
   return (
-    <div className="bg-surface rounded-xl border border-line p-4">
+    <button
+      type="button"
+      onClick={onAvaa}
+      className="text-left bg-surface rounded-xl border border-line p-4 hover:border-accent transition-colors"
+    >
       <div className="flex items-start justify-between gap-2">
         <p className="font-bold text-ink-strong">{pvm(lista.alku)} – {pvm(lista.viimeinen)}</p>
         {kuluva && alkanut && <span className="text-xs rounded-full bg-sunken px-2 py-0.5 text-ink-muted">Kuluva</span>}
@@ -170,7 +188,8 @@ const ListaKortti = ({ lista, tanaan, kuluva }: { lista: Lista; tanaan: string; 
           {maaraaika.teksti}
         </p>
       )}
-    </div>
+      <p className="text-sm font-medium text-accent mt-3">Avaa lista →</p>
+    </button>
   );
 };
 
