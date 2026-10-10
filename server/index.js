@@ -47,7 +47,12 @@ import {
   tesPoikkeamat,
 } from './tyovuorolista.js';
 import { korttiVoimassaAsti, tarkistaHenkilo } from './tyoaikatarkistus.js';
-import { kaikkiSijoitukset, sijoita, tarkistaLista, tyhjaLista } from './tyovuorolistat.js';
+import {
+  julkaise, kaikkiSijoitukset, kuittaaMuutokset, kuittaamattomat, sijoita, tarkistaLista, tyhjaLista,
+} from './tyovuorolistat.js';
+import {
+  TILAT as VAIHDON_TILAT, onAvoin as vaihtoAvoin, peruVaihto, pyydaVaihto, ratkaiseVaihto, suljeVanhentuneet, vastaaVaihtoon,
+} from './vuoronvaihdot.js';
 import { POISSAOLOLAJIT, TOIVELAJIT, asetaToive, tarkistaPoissaolo, toiveenLukitus } from './tyovuorotoiveet.js';
 import {
   onOsallistuja, loydaDm, luoDmKanava,
@@ -660,7 +665,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets', 'keyTypes', 'personalFiles', 'storageRequests', 'mikroLuettelo', 'tyoaikaAsetukset', 'tyovuorolistat', 'tyovuorotoiveet', 'poissaolot']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets', 'keyTypes', 'personalFiles', 'storageRequests', 'mikroLuettelo', 'tyoaikaAsetukset', 'tyovuorolistat', 'tyovuorotoiveet', 'poissaolot', 'vuoronvaihdot']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -7901,12 +7906,20 @@ function tyoaikaVastaus(tietue, kohteet = []) {
   const asetukset = normalisoiAsetukset(tietue);
   // Kuluva lista ja kolme seuraavaa. Jokaiselle lasketaan kohteiden miehityksestä
   // syntyvä vuoromäärä (erä 2), jotta suunnittelija näkee työn koon ennen ruudukkoa.
+  const tietueet = readCollection('tyovuorolistat') || [];
+  const vaihdot = vaihdotTuoreina();
   const tulevat = listat(asetukset, tamaPaiva(), 4).map((l) => {
     const vuorot = suunnitellutVuorot(kohteet, l.alku, l.loppu);
+    const tietue = tietueet.find((t) => t?.id === l.alku);
+    const idt = new Set(vuorot.map((v) => v.id));
     return {
       ...l,
       vuoroja: vuorot.length,
       tunteja: Math.round(vuorot.reduce((s, v) => s + v.kestoMin, 0) / 6) / 10,
+      // Erä 6: sijoitetut, julkaisu ja suunnittelijaa odottavat vaihdot kortille.
+      sijoitettuja: (tietue?.sijoitukset || []).filter((s) => idt.has(s.vuoroId)).length,
+      julkaistu: tietue?.julkaistu || null,
+      vaihtojaOdottaa: vaihdot.filter((v) => v.listanAlku === l.alku && v.tila === 'odottaa_suunnittelijaa').length,
     };
   });
   return {
@@ -8134,8 +8147,25 @@ function listanNakyma(req, ymp) {
     toiveet,
     poissaolot: poissaolot.filter((p) => p.loppu >= lista.alku),
     poissaololajit: POISSAOLOLAJIT,
+    // Erä 6: julkaisun tila, muutosloki ja tämän listan vuoronvaihdot.
+    julkaistu: tietue.julkaistu || null,
+    muutokset: tietue.muutokset || [],
+    vaihdot: vaihdotTuoreina().filter((v) => v.listanAlku === lista.alku),
+    vaihdonTilat: VAIHDON_TILAT,
     saaMuokata: saaMuokataListaa(req),
   };
+}
+
+// Vuoronvaihdot luettuna niin, että vanhentuneet (vuoro alkoi, tai lista muuttui niin ettei
+// vuoro ole enää antajalla) on suljettu. Sulkeminen tallennetaan heti, jotta kaikki
+// näkymät näkevät saman tilan.
+function vaihdotTuoreina() {
+  const vaihdot = readCollection('vuoronvaihdot') || [];
+  if (!vaihdot.some(vaihtoAvoin)) return vaihdot;
+  const omistajat = new Map(kaikkiSijoitukset(readCollection('tyovuorolistat') || []).map((s) => [s.vuoroId, s.username]));
+  const tulos = suljeVanhentuneet(vaihdot, { nytPaikallinen: paikallinenHetki(), omistaja: (id) => omistajat.get(id) || null });
+  if (tulos.muuttui) writeCollection('vuoronvaihdot', tulos.vaihdot);
+  return tulos.vaihdot;
 }
 
 app.get('/api/tyovuorot/lista/:alku', requireAuth, guardPortti, (req, res) => {
@@ -8168,6 +8198,7 @@ app.put('/api/tyovuorot/lista/:alku/sijoitus', requireAuth, guardPortti, (req, r
     vuorot: ymp.vuorot, listanVuorot: ymp.listanVuorot, henkilot: suunniteltavatHenkilot(),
     kohteet: ymp.kohteet, asetukset: ymp.asetukset, muutSijoitukset: ymp.muutSijoitukset,
     poissaolot: ymp.poissaolot, toiveet: ymp.toiveet, tekija: req.username,
+    muutossyy: req.body?.muutossyy, nytPaikallinen: paikallinenHetki(),
   });
   if (!tulos.ok) {
     return res.status(tulos.status).json({ ok: false, koodi: tulos.koodi, error: tulos.error, havainnot: tulos.havainnot });
@@ -8181,8 +8212,35 @@ app.put('/api/tyovuorot/lista/:alku/sijoitus', requireAuth, guardPortti, (req, r
       recordId: ymp.lista.alku, vuoroId,
       oli: edellinen?.username || null, nyt: uusi?.username || null,
       ...(uusi?.syy ? { syy: uusi.syy, poikkeamat: uusi.poikkeamat } : {}),
+      ...(tulos.tietue.julkaistu ? { muutossyy: String(req.body?.muutossyy || '').trim() } : {}),
     });
   }
+  res.json(listanNakyma(req, { ...ymp, tietue: tulos.tietue }));
+});
+
+// --- Julkaisu (erä 6) ---------------------------------------------------------------------
+
+app.post('/api/tyovuorot/lista/:alku/julkaise', requireAuth, guardPortti, (req, res) => {
+  if (!saaMuokataListaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta julkaista työvuorolistaa.' });
+  }
+  const ymp = listanYmparisto(req, req.params.alku);
+  if (!ymp) return res.status(404).json({ ok: false, error: 'Listaa ei löytynyt tälle päivälle.' });
+  if (req.body?.versio !== undefined && Number(req.body.versio) !== (ymp.tietue.versio || 0)) {
+    return res.status(409).json({ ok: false, koodi: 'vanhentunut', error: 'Listaa on muokattu välillä. Päivitä näkymä ennen julkaisua.' });
+  }
+  const nakyma = listanNakyma(req, ymp);
+  const tulos = julkaise({
+    tietue: ymp.tietue, lista: ymp.lista, tulokset: nakyma.tulokset, listanVuorot: ymp.listanVuorot,
+    tekija: req.username, tanaan: tamaPaiva(),
+  });
+  if (!tulos.ok) return res.status(tulos.status).json({ ok: false, koodi: tulos.koodi, error: tulos.error, esteet: tulos.esteet });
+  const muut = ymp.tietueet.filter((t) => t?.id !== ymp.lista.alku);
+  writeCollection('tyovuorolistat', [...muut, tulos.tietue]);
+  logAudit({
+    user: req.username, action: 'tyovuorolista_julkaistu', collection: 'tyovuorolistat', recordId: ymp.lista.alku,
+    sijoituksia: tulos.tietue.sijoitukset.length, avoimia: tulos.tietue.julkaistu.avoimia, myohassa: tulos.tietue.julkaistu.myohassa,
+  });
   res.json(listanNakyma(req, { ...ymp, tietue: tulos.tietue }));
 });
 
@@ -8279,8 +8337,163 @@ function omatNakyma(req) {
     toivelajit: TOIVELAJIT,
     poissaololajit: POISSAOLOLAJIT,
     avoimet,
+    ...omatJulkaistut(req.username, tanaan),
   };
 }
+
+// Vuorojen tiedot tunnisteista. Vuorot lasketaan kohteiden miehityksestä, joten tiedot
+// haetaan kaikista kohteista eikä vain luettavista: vartija saa aina tietää oman vuoronsa
+// kohteen ja kellonajan, vaikka kohteen hallintatietoja hän ei näe.
+function vuorotiedot(vuoroIdt) {
+  const pvmt = vuoroIdt.map((id) => String(id).split(':')[2]).filter(Boolean).sort();
+  if (!pvmt.length) return new Map();
+  return new Map(suunnitellutVuorot(readCollection('guardSites') || [], pvmt[0], lisaaPaivia(pvmt[pvmt.length - 1], 1))
+    .map((v) => [v.id, v]));
+}
+
+// Erä 6: vartijan julkaistut vuorot, kuittaamattomat muutokset ja vaihdot. Vain
+// julkaistuilta listoilta: luonnos ei ole vartijan tiedossa (TES 10 §).
+function omatJulkaistut(username, tanaan) {
+  const julkaistut = (readCollection('tyovuorolistat') || []).filter((t) => t?.julkaistu && t.loppu > tanaan);
+  const omat = julkaistut.flatMap((t) => t.sijoitukset
+    .filter((s) => s.username === username)
+    .map((s) => ({ vuoroId: s.vuoroId, listanAlku: t.alku })));
+  const muutokset = julkaistut.flatMap((t) => kuittaamattomat(t, username).map((m) => ({ ...m, listanAlku: t.alku })));
+  const vaihdot = vaihdotTuoreina().filter((v) => (v.antaja === username || v.saaja === username)
+    && (vaihtoAvoin(v) || v.alkaa.slice(0, 10) >= tanaan));
+  const tiedot = vuorotiedot([...omat.map((o) => o.vuoroId), ...muutokset.map((m) => m.vuoroId), ...vaihdot.map((v) => v.vuoroId)]);
+  const kuvaus = (id) => {
+    const v = tiedot.get(id);
+    return v ? { siteNimi: v.siteNimi, vuoroNimi: v.vuoroNimi, pvm: v.pvm, alkaa: v.alkaa, paattyy: v.paattyy } : { pvm: String(id).split(':')[2] || '' };
+  };
+  const nimet = new Map(suunniteltavatHenkilot().map((h) => [h.username, h.nimi]));
+  return {
+    omatVuorot: omat
+      .map((o) => ({ ...o, ...kuvaus(o.vuoroId) }))
+      .filter((o) => o.pvm >= tanaan)
+      .sort((a, b) => String(a.alkaa || a.pvm).localeCompare(String(b.alkaa || b.pvm))),
+    muutokset: muutokset.map((m) => ({
+      aika: m.aika, vuoroId: m.vuoroId, syy: m.syy, listanAlku: m.listanAlku,
+      // Kumpi suunta koskee kysyjää: sai vuoron vai menetti sen.
+      suunta: m.nyt === username ? 'sait' : 'poistettiin',
+      ...kuvaus(m.vuoroId),
+    })),
+    vaihdot: vaihdot.map((v) => ({
+      id: v.id, vuoroId: v.vuoroId, tila: v.tila, viesti: v.viesti || null,
+      rooli: v.antaja === username ? 'antaja' : 'saaja',
+      toinen: nimet.get(v.antaja === username ? v.saaja : v.antaja) || (v.antaja === username ? v.saaja : v.antaja),
+      ...kuvaus(v.vuoroId),
+    })),
+    vaihdonTilat: VAIHDON_TILAT,
+  };
+}
+
+app.post('/api/tyovuorot/omat/kuittaa-muutokset', requireAuth, guardPortti, (req, res) => {
+  const tietueet = readCollection('tyovuorolistat') || [];
+  let muuttui = false;
+  const uudet = tietueet.map((t) => {
+    if (!t?.julkaistu || !kuittaamattomat(t, req.username).length) return t;
+    muuttui = true;
+    return kuittaaMuutokset(t, req.username);
+  });
+  if (muuttui) writeCollection('tyovuorolistat', uudet);
+  res.json(omatNakyma(req));
+});
+
+// --- Vuoronvaihdot (erä 6) ------------------------------------------------------------------
+
+// Kenelle vartija voi tarjota vuoronsa: suunniteltavat henkilöt jotka on perehdytetty
+// samaan vuorotyyppiin. Kollegan nimi on tieto jonka vartija tarvitsee voidakseen kysyä
+// häneltä; muuta kollegasta ei kerrota.
+app.get('/api/tyovuorot/vaihdot/ehdokkaat', requireAuth, guardPortti, (req, res) => {
+  const vuoroId = String(req.query.vuoroId || '');
+  const [siteId, vuorotyyppiId] = vuoroId.split(':');
+  const kohde = (readCollection('guardSites') || []).find((k) => k?.id === siteId);
+  if (!kohde) return res.status(404).json({ ok: false, error: 'Vuoroa ei löytynyt.' });
+  const ehdokkaat = suunniteltavatHenkilot()
+    .filter((h) => h.username !== req.username && perehdytetytVuorot(kohde, h.username).has(String(vuorotyyppiId)))
+    .map((h) => ({ username: h.username, nimi: h.nimi }));
+  res.json({ ok: true, ehdokkaat });
+});
+
+app.post('/api/tyovuorot/vaihdot', requireAuth, guardPortti, (req, res) => {
+  const vuoroId = String(req.body?.vuoroId || '');
+  const oma = omatJulkaistut(req.username, tamaPaiva()).omatVuorot.find((v) => v.vuoroId === vuoroId);
+  const saaja = String(req.body?.saaja || '');
+  if (saaja && !suunniteltavatHenkilot().some((h) => h.username === saaja)) {
+    return res.status(404).json({ ok: false, error: 'Kollegaa ei löytynyt.' });
+  }
+  const vaihdot = vaihdotTuoreina();
+  const tulos = pyydaVaihto({
+    vaihdot, vuoro: oma ? { vuoroId, listanAlku: oma.listanAlku, alkaa: oma.alkaa || `${oma.pvm}T00:00` } : null,
+    antaja: req.username, saaja, viesti: req.body?.viesti, nytPaikallinen: paikallinenHetki(), id: crypto.randomUUID(),
+  });
+  if (!tulos.ok) return res.status(400).json(tulos);
+  writeCollection('vuoronvaihdot', [...vaihdot, tulos.vaihto]);
+  logAudit({ user: req.username, action: 'vuoronvaihto_pyydetty', collection: 'vuoronvaihdot', recordId: tulos.vaihto.id, vuoroId, saaja });
+  res.json(omatNakyma(req));
+});
+
+// Yhden vaihdon tilamuutos. `muuta` saa vaihdon ja palauttaa tilakoneen tuloksen.
+// `luetut` on vahvistuksessa ennen sijoitusta luettu tila: sijoituksen jälkeen vuoro ei
+// ole enää antajalla, ja tuore luku sulkisi pyynnön vanhentuneena ennen hyväksyntää.
+function paivitaVaihto(req, res, toiminto, muuta, vastaus, luetut = null) {
+  const vaihdot = luetut || vaihdotTuoreina();
+  const vaihto = vaihdot.find((v) => v?.id === req.params.id);
+  if (!vaihto) return res.status(404).json({ ok: false, error: 'Vaihtopyyntöä ei löytynyt.' });
+  const tulos = muuta(vaihto);
+  if (!tulos.ok) return res.status(tulos.status || 400).json({ ok: false, error: tulos.error, koodi: tulos.koodi, havainnot: tulos.havainnot });
+  writeCollection('vuoronvaihdot', vaihdot.map((v) => (v.id === vaihto.id ? tulos.vaihto : v)));
+  logAudit({
+    user: req.username, action: toiminto, collection: 'vuoronvaihdot', recordId: vaihto.id,
+    vuoroId: vaihto.vuoroId, tila: tulos.vaihto.tila,
+  });
+  return res.json(vastaus());
+}
+
+app.post('/api/tyovuorot/vaihdot/:id/vastaa', requireAuth, guardPortti, (req, res) =>
+  paivitaVaihto(req, res, 'vuoronvaihto_vastattu', (v) => vastaaVaihtoon({
+    vaihto: v, kuka: req.username, hyvaksy: req.body?.hyvaksy === true, nytPaikallinen: paikallinenHetki(),
+  }), () => omatNakyma(req)));
+
+app.post('/api/tyovuorot/vaihdot/:id/peru', requireAuth, guardPortti, (req, res) =>
+  paivitaVaihto(req, res, 'vuoronvaihto_peruttu', (v) => peruVaihto({ vaihto: v, kuka: req.username }), () => omatNakyma(req)));
+
+// Suunnittelijan vahvistus. Hyväksyntä tekee listan muutoksen samalla tarkistuksella kuin
+// mikä tahansa sijoitus; jos saajalle syntyy poikkeama, suunnittelija antaa syyn.
+// Vaihto merkitään hyväksytyksi vasta kun sijoitus on tallennettu.
+app.post('/api/tyovuorot/vaihdot/:id/ratkaise', requireAuth, guardPortti, (req, res) => {
+  if (!saaMuokataListaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta ratkaista vuoronvaihtoja.' });
+  }
+  const hyvaksy = req.body?.hyvaksy === true;
+  const luetut = vaihdotTuoreina();
+  const vaihto = luetut.find((v) => v?.id === req.params.id);
+  if (!vaihto) return res.status(404).json({ ok: false, error: 'Vaihtopyyntöä ei löytynyt.' });
+  const ymp = listanYmparisto(req, vaihto.listanAlku);
+  if (!ymp) return res.status(404).json({ ok: false, error: 'Listaa ei löytynyt.' });
+  let uusiYmp = ymp;
+  if (hyvaksy) {
+    if (vaihto.tila !== 'odottaa_suunnittelijaa') return res.status(409).json({ ok: false, error: 'Pyyntö ei odota vahvistusta.' });
+    const nimet = new Map(suunniteltavatHenkilot().map((h) => [h.username, h.nimi]));
+    const tulos = sijoita({
+      tietue: ymp.tietue, lista: ymp.lista, vuoroId: vaihto.vuoroId, username: vaihto.saaja, syy: req.body?.syy,
+      vuorot: ymp.vuorot, listanVuorot: ymp.listanVuorot, henkilot: suunniteltavatHenkilot(),
+      kohteet: ymp.kohteet, asetukset: ymp.asetukset, muutSijoitukset: ymp.muutSijoitukset,
+      poissaolot: ymp.poissaolot, toiveet: ymp.toiveet, tekija: req.username, nytPaikallinen: paikallinenHetki(),
+      muutossyy: `Vuoronvaihto: ${nimet.get(vaihto.antaja) || vaihto.antaja} → ${nimet.get(vaihto.saaja) || vaihto.saaja}`,
+    });
+    if (!tulos.ok) {
+      return res.status(tulos.status).json({ ok: false, koodi: tulos.koodi, error: tulos.error, havainnot: tulos.havainnot });
+    }
+    const muut = ymp.tietueet.filter((t) => t?.id !== ymp.lista.alku);
+    writeCollection('tyovuorolistat', [...muut, tulos.tietue]);
+    uusiYmp = { ...ymp, tietue: tulos.tietue };
+  }
+  return paivitaVaihto(req, res, hyvaksy ? 'vuoronvaihto_vahvistettu' : 'vuoronvaihto_hylatty',
+    (v) => ratkaiseVaihto({ vaihto: v, kuka: req.username, hyvaksy, perustelu: req.body?.perustelu }),
+    () => listanNakyma(req, uusiYmp), luetut);
+});
 
 app.get('/api/tyovuorot/omat', requireAuth, guardPortti, (req, res) => {
   res.json(omatNakyma(req));
@@ -8312,7 +8525,7 @@ app.post('/api/tyovuorot/omat/kuittaa', requireAuth, guardPortti, (req, res) => 
     vuorot: ymp.vuorot, listanVuorot: ymp.listanVuorot, henkilot: suunniteltavatHenkilot(),
     kohteet: ymp.kohteet, asetukset: ymp.asetukset, muutSijoitukset: ymp.muutSijoitukset,
     poissaolot: ymp.poissaolot, toiveet: ymp.toiveet, tekija: req.username,
-    reservinKuittaus: true, nytPaikallinen: paikallinenHetki(),
+    reservinKuittaus: true, nytPaikallinen: paikallinenHetki(), muutossyy: 'Reservin kuittaus',
   });
   if (!tulos.ok) {
     return res.status(tulos.status).json({ ok: false, koodi: tulos.koodi, error: tulos.error, havainnot: tulos.havainnot });

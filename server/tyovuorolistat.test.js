@@ -8,7 +8,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { kaikkiSijoitukset, sijoita, tarkistaLista, tyhjaLista } from './tyovuorolistat.js';
+import {
+  julkaise, kaikkiSijoitukset, kuittaaMuutokset, kuittaamattomat, onHalytystyo, sijoita, tarkistaLista, tyhjaLista,
+} from './tyovuorolistat.js';
 import { listat, normalisoiAsetukset, suunnitellutVuorot } from './tyovuorolista.js';
 
 const ASETUKSET = normalisoiAsetukset({ jaksotAlkaen: '2026-10-05' });
@@ -165,4 +167,73 @@ test('reservin kuittaus: varattu, alkanut, ei-reservi ja poikkeama hylätään',
   assert.equal(eka.ok, true);
   const toka = tee(eka.tietue, id('aamu', '2026-10-06'), 'reservi', { ...k, kohteet: [kohde], syy: 'yritys' });
   assert.equal(toka.koodi, 'poikkeama');
+});
+
+// --- Erä 6: julkaisu, muutokset ja syiden siivous ---
+
+const julkaistu = (tietue) => julkaise({
+  tietue, lista: LISTA, tulokset: {}, listanVuorot: LISTAN_VUOROT, tekija: 'suunnittelija', tanaan: '2026-09-20', nyt: NYT,
+}).tietue;
+
+test('julkaisu: merkintä, avoimet ja myöhästyminen', () => {
+  const t1 = tee(tyhjaLista(LISTA), id('aamu', '2026-10-05'), 'virtanen').tietue;
+  const j = julkaise({ tietue: t1, lista: LISTA, tulokset: {}, listanVuorot: LISTAN_VUOROT, tekija: 's', tanaan: '2026-09-22', nyt: NYT });
+  assert.equal(j.ok, true);
+  assert.equal(j.tietue.julkaistu.myohassa, true); // määräaika 21.9.
+  assert.equal(j.tietue.julkaistu.avoimia, LISTAN_VUOROT.size - 1);
+  assert.equal(julkaise({ tietue: j.tietue, lista: LISTA, tulokset: {}, listanVuorot: LISTAN_VUOROT, tekija: 's', tanaan: '2026-09-22' }).koodi, 'julkaistu');
+});
+
+test('julkaisu: este estää', () => {
+  const tulokset = { virtanen: { havainnot: [{ taso: 'este', koodi: 'poissa', viesti: 'Loma', vuoroIdt: [id('aamu', '2026-10-05')] }] } };
+  const j = julkaise({ tietue: tyhjaLista(LISTA), lista: LISTA, tulokset, listanVuorot: LISTAN_VUOROT, tekija: 's', tanaan: '2026-09-20' });
+  assert.equal(j.koodi, 'esteita');
+  assert.equal(j.esteet[0].username, 'virtanen');
+});
+
+test('julkaistun listan muutos vaatii syyn ja kirjautuu', () => {
+  const j = julkaistu(tyhjaLista(LISTA));
+  const ilman = tee(j, id('aamu', '2026-10-07'), 'virtanen', { nytPaikallinen: '2026-10-01T10:00' });
+  assert.equal(ilman.koodi, 'muutossyy_puuttuu');
+  const kanssa = tee(j, id('aamu', '2026-10-07'), 'virtanen', { nytPaikallinen: '2026-10-01T10:00', muutossyy: 'Lisävuoro' });
+  assert.equal(kanssa.ok, true);
+  const m = kanssa.tietue.muutokset[0];
+  assert.deepEqual([m.oli, m.nyt, m.syy, m.halytystyo], [null, 'virtanen', 'Lisävuoro', undefined]);
+});
+
+test('alle 72 h varoitusajalla tehty sijoitus merkitään hälytystyöksi', () => {
+  assert.equal(onHalytystyo('2026-10-07T06:00', '2026-10-04T06:01'), true);
+  assert.equal(onHalytystyo('2026-10-07T06:00', '2026-10-04T06:00'), false);
+  const j = julkaistu(tyhjaLista(LISTA));
+  const t = tee(j, id('aamu', '2026-10-07'), 'virtanen', { nytPaikallinen: '2026-10-05T12:00', muutossyy: 'Sairastuminen' });
+  assert.equal(t.tietue.muutokset[0].halytystyo, true);
+  // Poisto ei ole hälytystyötä: kenellekään ei tule uutta vuoroa.
+  const poisto = tee(t.tietue, id('aamu', '2026-10-07'), null, { nytPaikallinen: '2026-10-05T12:00', muutossyy: 'Peruttu' });
+  assert.equal(poisto.tietue.muutokset[1].halytystyo, undefined);
+});
+
+test('muutosten kuittaus koskee vain omia ja vain kuittaamattomia', () => {
+  const j = julkaistu(tyhjaLista(LISTA));
+  const t = tee(j, id('aamu', '2026-10-07'), 'virtanen', { nytPaikallinen: '2026-10-01T10:00', muutossyy: 'Lisävuoro' }).tietue;
+  assert.equal(kuittaamattomat(t, 'virtanen').length, 1);
+  assert.equal(kuittaamattomat(t, 'joku').length, 0);
+  const k = kuittaaMuutokset(t, 'virtanen', new Date('2026-10-01T11:00:00Z'));
+  assert.equal(kuittaamattomat(k, 'virtanen').length, 0);
+});
+
+test('sama henkilö samaan vuoroon ei ole muutos', () => {
+  const t1 = tee(tyhjaLista(LISTA), id('aamu', '2026-10-05'), 'virtanen').tietue;
+  const j = julkaistu(t1);
+  const t2 = tee(j, id('aamu', '2026-10-05'), 'virtanen');
+  assert.equal(t2.tietue, j);
+});
+
+test('vanhentunut syy poistuu kun poikkeaman aiheuttanut vuoro poistetaan', () => {
+  const t1 = tee(tyhjaLista(LISTA), id('ilta', '2026-10-05'), 'virtanen').tietue;
+  const t2 = tee(t1, id('aamu', '2026-10-06'), 'virtanen', { syy: 'Sovittu' }).tietue;
+  assert.equal(t2.sijoitukset.find((s) => s.vuoroId === id('aamu', '2026-10-06')).syy, 'Sovittu');
+  const t3 = tee(t2, id('ilta', '2026-10-05'), null).tietue;
+  const jaljella = t3.sijoitukset.find((s) => s.vuoroId === id('aamu', '2026-10-06'));
+  assert.equal(jaljella.syy, undefined);
+  assert.equal(jaljella.poikkeamat, undefined);
 });

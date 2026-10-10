@@ -223,7 +223,7 @@ export const Vartijanakyma = ({ kohdeTiedot, kaikkiKohteet, sallitut, onToiminto
           className="shrink-0 inline-flex items-center gap-2 bg-surface hover:bg-sunken text-ink-body border border-line text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
         >
           <CalendarHeart size={16} />
-          Työvuorotoiveet
+          Omat työvuorot
         </button>
       </div>
 

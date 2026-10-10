@@ -6,14 +6,16 @@
 // enää voi muuttaa: kun listan julkaisun määräaika on ohi, suunnittelija tekee listaa ja
 // sen alla muuttuvat toiveet olisivat hiljaisia muutoksia jo tehtyyn työhön.
 //
-// Omat julkaistut vuorot tulevat tänne erässä 6. Ennen julkaisua lista on luonnos, eikä
-// sitä näytetä vartijalle.
+// Erä 6: omat vuorot julkaistuilta listoilta, julkaisun jälkeiset muutokset kuitattaviksi
+// ja vuoronvaihdot. Luonnoslistaa ei näytetä: se ei ole vartijan tiedossa ennen julkaisua.
 
 import { useEffect, useState } from 'react';
-import { CalendarHeart, CalendarOff, Lock, Users } from 'lucide-react';
+import { BellRing, CalendarCheck, CalendarHeart, CalendarOff, Lock, Repeat, Users } from 'lucide-react';
 
 import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
-import { asetaOmaToive, haeOmat, kuittaaVuoro, pvm } from './tyoaika';
+import {
+  asetaOmaToive, haeOmat, haeVaihtoehdokkaat, kuittaaMuutokset, kuittaaVuoro, peruVaihto, pvm, pyydaVaihto, vastaaVaihtoon,
+} from './tyoaika';
 import type { OmaLista, OmatNakyma, Toive } from './tyoaika';
 import { listanPaivat, paivanOtsikko } from './ruudukko';
 
@@ -41,7 +43,7 @@ export const OmatTyovuorot = ({ onTakaisin }: { onTakaisin: () => void }) => {
   return (
     <div>
       <TakaisinLinkki onClick={onTakaisin}>Takaisin</TakaisinLinkki>
-      <h2 className="text-2xl font-bold text-ink-strong mb-1">Työvuorotoiveet</h2>
+      <h2 className="text-2xl font-bold text-ink-strong mb-1">Työvuorot ja toiveet</h2>
       <p className="text-sm text-ink-muted mb-6 leading-relaxed">
         Kerro tuleville listoille, milloin toivot vuoroa tai vapaata. Vuorosuunnittelija näkee
         toiveesi listaa tehdessään. Toive ei ole varaus: lopullinen lista julkaistaan
@@ -57,6 +59,9 @@ export const OmatTyovuorot = ({ onTakaisin }: { onTakaisin: () => void }) => {
 
       {tila?.suunniteltava && (
         <>
+          {tila.muutokset.length > 0 && <Muutokset tila={tila} onTulos={paivita} />}
+          <Vaihtopyynnot tila={tila} onTulos={paivita} />
+          <OmatVuorot tila={tila} onTulos={paivita} />
           {tila.poissaolot.length > 0 && <OmatPoissaolot tila={tila} />}
           {tila.reservi && <Avoimet tila={tila} onTulos={paivita} />}
           {tila.listat.length === 0 ? (
@@ -220,6 +225,213 @@ const ListanToiveet = ({
           })}
         </ul>
       )}
+    </section>
+  );
+};
+
+// --- Erä 6: muutokset, omat vuorot ja vaihdot ------------------------------------------------
+
+type Tulos = (v: Awaited<ReturnType<typeof haeOmat>>, ok?: string) => void;
+
+const vuoronTeksti = (v: { pvm: string; alkaa?: string; paattyy?: string; siteNimi?: string; vuoroNimi?: string }) => {
+  const o = paivanOtsikko(v.pvm);
+  const aika = v.alkaa && v.paattyy ? ` ${v.alkaa.slice(11)}–${v.paattyy.slice(11)}` : '';
+  return `${o.viikonpaiva} ${pvm(v.pvm)}${aika}${v.siteNimi ? `, ${v.siteNimi}` : ''}`;
+};
+
+// Julkaisun jälkeiset muutokset omiin vuoroihin. Kuittaus kertoo suunnittelijalle, että
+// vartija on nähnyt muutoksen — siksi se on erillinen painallus eikä näkymän avaaminen.
+const Muutokset = ({ tila, onTulos }: { tila: Valmis; onTulos: Tulos }) => {
+  const [tyossa, setTyossa] = useState(false);
+  return (
+    <section className="mb-6 rounded-xl border border-warning/40 bg-warning-soft p-4">
+      <h3 className="font-bold text-warning-ink flex items-center gap-2">
+        <BellRing size={18} />
+        Muutoksia vuoroihisi
+      </h3>
+      <ul className="mt-2 space-y-1.5 text-sm text-warning-ink">
+        {tila.muutokset.map((m, i) => (
+          <li key={i}>
+            <span className="font-medium">{m.suunta === 'sait' ? 'Uusi vuoro' : 'Vuoro poistettu'}:</span> {vuoronTeksti(m)}
+            <span className="block text-xs">Syy: {m.syy}</span>
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        disabled={tyossa}
+        onClick={async () => { setTyossa(true); onTulos(await kuittaaMuutokset()); setTyossa(false); }}
+        className="mt-3 px-4 py-2 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-60"
+      >
+        Kuittaa nähdyksi
+      </button>
+    </section>
+  );
+};
+
+// Omat julkaistut vuorot. Vuoron voi tarjota kollegalle: kollega hyväksyy, suunnittelija
+// vahvistaa. Avoin pyyntö näkyy vuoron kohdalla, eikä samasta vuorosta voi tehdä toista.
+const OmatVuorot = ({ tila, onTulos }: { tila: Valmis; onTulos: Tulos }) => {
+  const [tarjottava, setTarjottava] = useState<string | null>(null);
+  const [ehdokkaat, setEhdokkaat] = useState<{ username: string; nimi: string }[] | null>(null);
+  const [saaja, setSaaja] = useState('');
+  const [viesti, setViesti] = useState('');
+  const [virhe, setVirhe] = useState<string | null>(null);
+
+  const avaa = async (vuoroId: string) => {
+    setTarjottava(vuoroId);
+    setEhdokkaat(null);
+    setSaaja('');
+    setViesti('');
+    setVirhe(null);
+    const v = await haeVaihtoehdokkaat(vuoroId);
+    if (v.ok) setEhdokkaat(v.ehdokkaat); else setVirhe(v.error);
+  };
+  const laheta = async (kuvaus: string) => {
+    const v = await pyydaVaihto(tarjottava as string, saaja, viesti);
+    if (!v.ok) { setVirhe(v.error); return; }
+    setTarjottava(null);
+    onTulos(v, `Vaihtopyyntö lähetetty: ${kuvaus}.`);
+  };
+  const avoinPyynto = (vuoroId: string) => tila.vaihdot.find((x) => x.vuoroId === vuoroId && x.rooli === 'antaja'
+    && (x.tila === 'odottaa_saajaa' || x.tila === 'odottaa_suunnittelijaa'));
+
+  return (
+    <section className="mb-8">
+      <h3 className="text-lg font-bold text-ink flex items-center gap-2 mb-2">
+        <CalendarCheck size={18} className="text-accent" />
+        Omat vuorot
+      </h3>
+      {tila.omatVuorot.length === 0 ? (
+        <p className="text-sm text-ink-muted">Ei julkaistuja tulevia vuoroja.</p>
+      ) : (
+        <ul className="bg-surface rounded-xl border border-line divide-y divide-line-soft">
+          {tila.omatVuorot.map((v) => {
+            const kuvaus = vuoronTeksti(v);
+            const pyynto = avoinPyynto(v.vuoroId);
+            return (
+              <li key={v.vuoroId} className="px-4 py-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm">
+                    <span className="font-medium text-ink-strong">{kuvaus}</span>
+                    {v.vuoroNimi && <span className="block text-xs text-ink-muted">{v.vuoroNimi}</span>}
+                  </span>
+                  {pyynto ? (
+                    <span className="text-xs text-warning-ink">Vaihto: {tila.vaihdonTilat[pyynto.tila]}</span>
+                  ) : tarjottava !== v.vuoroId && (
+                    <button type="button" onClick={() => avaa(v.vuoroId)} className="text-xs font-medium text-accent hover:underline">
+                      Tarjoa vaihtoon
+                    </button>
+                  )}
+                </div>
+                {tarjottava === v.vuoroId && (
+                  <div className="mt-2 space-y-2">
+                    {!ehdokkaat && !virhe && <p className="text-xs text-ink-muted">Haetaan kollegoita…</p>}
+                    {ehdokkaat && ehdokkaat.length === 0 && (
+                      <p className="text-xs text-ink-muted">Kukaan muu ei ole perehdytetty tähän vuoroon.</p>
+                    )}
+                    {ehdokkaat && ehdokkaat.length > 0 && (
+                      <>
+                        <select value={saaja} onChange={(e) => setSaaja(e.target.value)} className="w-full bg-surface border border-line rounded-md px-2 py-1.5 text-sm text-ink">
+                          <option value="">Kenelle?</option>
+                          {ehdokkaat.map((e) => <option key={e.username} value={e.username}>{e.nimi}</option>)}
+                        </select>
+                        <input
+                          maxLength={300}
+                          value={viesti}
+                          onChange={(e) => setViesti(e.target.value)}
+                          placeholder="Viesti kollegalle (vapaaehtoinen)"
+                          className="w-full bg-surface border border-line rounded-md px-2 py-1.5 text-sm text-ink"
+                        />
+                      </>
+                    )}
+                    {virhe && <p className="text-xs text-danger">{virhe}</p>}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={!saaja}
+                        onClick={() => laheta(kuvaus)}
+                        className="px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-60"
+                      >
+                        Lähetä pyyntö
+                      </button>
+                      <button type="button" onClick={() => setTarjottava(null)} className="px-3 py-1.5 text-xs font-medium text-ink-muted">
+                        Peruuta
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+};
+
+// Vaihtopyynnöt: saapuneet (hyväksy/hylkää) ja omat lähetetyt (peru).
+const Vaihtopyynnot = ({ tila, onTulos }: { tila: Valmis; onTulos: Tulos }) => {
+  const [tyossa, setTyossa] = useState<string | null>(null);
+  const nakyvat = tila.vaihdot.filter((v) => v.tila === 'odottaa_saajaa' || v.tila === 'odottaa_suunnittelijaa'
+    || v.rooli === 'antaja');
+  if (!nakyvat.length) return null;
+  const tee = async (id: string, toiminto: () => ReturnType<typeof haeOmat>, ok: string) => {
+    setTyossa(id);
+    onTulos(await toiminto(), ok);
+    setTyossa(null);
+  };
+  return (
+    <section className="mb-8">
+      <h3 className="text-lg font-bold text-ink flex items-center gap-2 mb-2">
+        <Repeat size={18} className="text-accent" />
+        Vuoronvaihdot
+      </h3>
+      <ul className="bg-surface rounded-xl border border-line divide-y divide-line-soft">
+        {nakyvat.map((v) => (
+          <li key={v.id} className="px-4 py-2.5 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                <span className="font-medium text-ink-strong">
+                  {v.rooli === 'saaja' ? `${v.toinen} tarjoaa sinulle vuoroa` : `Tarjottu: ${v.toinen}`}
+                </span>
+                <span className="block text-xs text-ink-muted">{vuoronTeksti(v)} · {tila.vaihdonTilat[v.tila] || v.tila}</span>
+                {v.viesti && <span className="block text-xs text-ink-body">Viesti: {v.viesti}</span>}
+              </span>
+              {v.rooli === 'saaja' && v.tila === 'odottaa_saajaa' && (
+                <span className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={tyossa === v.id}
+                    onClick={() => tee(v.id, () => vastaaVaihtoon(v.id, true), 'Hyväksytty. Vuorosuunnittelija vahvistaa vaihdon.')}
+                    className="px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-60"
+                  >
+                    Otan vuoron
+                  </button>
+                  <button
+                    type="button"
+                    disabled={tyossa === v.id}
+                    onClick={() => tee(v.id, () => vastaaVaihtoon(v.id, false), 'Pyyntö hylätty.')}
+                    className="px-3 py-1.5 text-xs font-medium text-ink-muted hover:text-danger"
+                  >
+                    En ota
+                  </button>
+                </span>
+              )}
+              {v.rooli === 'antaja' && (v.tila === 'odottaa_saajaa' || v.tila === 'odottaa_suunnittelijaa') && (
+                <button
+                  type="button"
+                  disabled={tyossa === v.id}
+                  onClick={() => tee(v.id, () => peruVaihto(v.id), 'Pyyntö peruttu.')}
+                  className="text-xs font-medium text-ink-muted hover:text-danger"
+                >
+                  Peru
+                </button>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 };

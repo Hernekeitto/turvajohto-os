@@ -34,6 +34,10 @@ export type Lista = {
   // Kohteiden miehityksestä syntyvät vuorot (erä 2): vartijapaikkojen määrä ja tunnit.
   vuoroja: number;
   tunteja: number;
+  // Erä 6.
+  sijoitettuja: number;
+  julkaistu: Julkaisu | null;
+  vaihtojaOdottaa: number;
 };
 
 export type TyoaikaVastaus = {
@@ -158,6 +162,10 @@ export type ListaNakyma = {
   toiveet: Toive[];
   poissaolot: Poissaolo[];
   poissaololajit: Record<string, string>;
+  julkaistu: Julkaisu | null;
+  muutokset: Muutos[];
+  vaihdot: Vaihto[];
+  vaihdonTilat: Record<string, string>;
   saaMuokata: boolean;
 };
 
@@ -173,7 +181,7 @@ export type SijoitusVastaus =
   | ({ ok: false; koodi?: string; error: string; havainnot?: Havainto[] } & Omit<Partial<ListaNakyma>, 'ok'>);
 
 export async function tallennaSijoitus(
-  alku: string, body: { vuoroId: string; username: string | null; syy?: string; versio: number },
+  alku: string, body: { vuoroId: string; username: string | null; syy?: string; muutossyy?: string; versio: number },
 ): Promise<SijoitusVastaus> {
   try {
     const r = await fetch(`/api/tyovuorot/lista/${encodeURIComponent(alku)}/sijoitus`, {
@@ -226,6 +234,10 @@ export type OmatNakyma =
     toivelajit: Record<string, string>;
     poissaololajit: Record<string, string>;
     avoimet: AvoinVuoro[];
+    omatVuorot: OmaVuoro[];
+    muutokset: OmaMuutos[];
+    vaihdot: OmaVaihto[];
+    vaihdonTilat: Record<string, string>;
   };
 
 async function jsonPyynto<T>(url: string, init?: RequestInit): Promise<T | { ok: false; error: string; havainnot?: Havainto[] }> {
@@ -251,3 +263,45 @@ export const kirjaaPoissaolo = (p: { username: string; laji: string; alku: strin
 
 export const poistaPoissaolo = (id: string) =>
   jsonPyynto<{ ok: true }>(`/api/tyovuorot/poissaolot/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+// --- Julkaisu, muutokset ja vaihdot (erä 6) --------------------------------------------------
+
+export type Julkaisu = { aika: string; julkaisija: string; myohassa: boolean; avoimia: number };
+
+export type Muutos = {
+  aika: string; tekija: string; vuoroId: string; oli: string | null; nyt: string | null; syy: string; halytystyo?: boolean;
+};
+
+export type Vaihto = {
+  id: string; vuoroId: string; listanAlku: string; alkaa: string; antaja: string; saaja: string;
+  viesti?: string; tila: string; historia: { aika: string; kuka: string; mita: string; viesti?: string }[];
+};
+
+type Vuorokuvaus = { siteNimi?: string; vuoroNimi?: string; pvm: string; alkaa?: string; paattyy?: string };
+
+export type OmaVuoro = Vuorokuvaus & { vuoroId: string; listanAlku: string };
+export type OmaMuutos = Vuorokuvaus & { aika: string; vuoroId: string; syy: string; suunta: 'sait' | 'poistettiin' };
+export type OmaVaihto = Vuorokuvaus & {
+  id: string; vuoroId: string; tila: string; viesti: string | null; rooli: 'antaja' | 'saaja'; toinen: string;
+};
+
+export const julkaiseLista = (alku: string, versio: number) =>
+  jsonPyynto<ListaNakyma>(`/api/tyovuorot/lista/${encodeURIComponent(alku)}/julkaise`, { method: 'POST', body: JSON.stringify({ versio }) });
+
+export const ratkaiseVaihto = (id: string, body: { hyvaksy: boolean; syy?: string; perustelu?: string }) =>
+  jsonPyynto<ListaNakyma>(`/api/tyovuorot/vaihdot/${encodeURIComponent(id)}/ratkaise`, { method: 'POST', body: JSON.stringify(body) });
+
+export const kuittaaMuutokset = () =>
+  jsonPyynto<OmatNakyma>('/api/tyovuorot/omat/kuittaa-muutokset', { method: 'POST', body: '{}' });
+
+export const haeVaihtoehdokkaat = (vuoroId: string) =>
+  jsonPyynto<{ ok: true; ehdokkaat: { username: string; nimi: string }[] }>(`/api/tyovuorot/vaihdot/ehdokkaat?vuoroId=${encodeURIComponent(vuoroId)}`);
+
+export const pyydaVaihto = (vuoroId: string, saaja: string, viesti: string) =>
+  jsonPyynto<OmatNakyma>('/api/tyovuorot/vaihdot', { method: 'POST', body: JSON.stringify({ vuoroId, saaja, viesti }) });
+
+export const vastaaVaihtoon = (id: string, hyvaksy: boolean) =>
+  jsonPyynto<OmatNakyma>(`/api/tyovuorot/vaihdot/${encodeURIComponent(id)}/vastaa`, { method: 'POST', body: JSON.stringify({ hyvaksy }) });
+
+export const peruVaihto = (id: string) =>
+  jsonPyynto<OmatNakyma>(`/api/tyovuorot/vaihdot/${encodeURIComponent(id)}/peru`, { method: 'POST', body: '{}' });

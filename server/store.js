@@ -128,6 +128,10 @@ const COLLECTIONS = {
   // henkilötietoa jota näkee vain suunnittelija ja henkilö itse.
   tyovuorotoiveet: 'tyovuorotoiveet.json',
   poissaolot: 'poissaolot.json',
+  // Vuoronvaihdot (erä 6): antaja pyytää, saaja hyväksyy, suunnittelija vahvistaa.
+  // Palvelimen ylläpitämä, koska vahvistus tekee listan muutoksen tarkistettuna
+  // (vuoronvaihdot.js, tyovuorolistat.js: sijoita).
+  vuoronvaihdot: 'vuoronvaihdot.json',
   // Tiedotteet (erä 8): sovelluksen sisäinen viesti kentälle, jonka lukeminen kuitataan.
   // Palvelimen ylläpitämä, koska kuittauslista on koko toiminnon sisältö — selaimesta
   // kirjoitettava kuittauslista ei todistaisi mitään.

@@ -159,7 +159,7 @@ const ListaKortti = ({
 }: { lista: Lista; tanaan: string; kuluva: boolean; onAvaa: () => void }) => {
   const alkanut = paiviaPaivaan(tanaan, lista.alku) <= 0;
   const jaljella = paiviaPaivaan(tanaan, lista.julkaistavaViimeistaan);
-  const maaraaika = alkanut ? null
+  const maaraaika = alkanut || lista.julkaistu ? null
     : jaljella < 0 ? { teksti: `Määräaika ohitettu ${-jaljella} pv sitten`, varoitus: true }
       : jaljella === 0 ? { teksti: 'Julkaistava tänään', varoitus: true }
         : { teksti: `Julkaistava ${jaljella} pv kuluessa`, varoitus: jaljella <= 7 };
@@ -181,8 +181,18 @@ const ListaKortti = ({
       <p className="text-sm text-ink-body mt-2">
         {lista.vuoroja === 0
           ? 'Ei suunniteltavia vuoroja'
-          : `${lista.vuoroja} ${lista.vuoroja === 1 ? 'vuoro' : 'vuoroa'} · ${String(lista.tunteja).replace('.', ',')} h`}
+          : `${lista.sijoitettuja} / ${lista.vuoroja} vuoroa sijoitettu · ${String(lista.tunteja).replace('.', ',')} h`}
       </p>
+      {lista.julkaistu && (
+        <p className="text-sm mt-2 text-accent-ink font-medium">
+          Julkaistu {pvm(lista.julkaistu.aika.slice(0, 10))}{lista.julkaistu.myohassa ? ' (myöhässä)' : ''}
+        </p>
+      )}
+      {lista.vaihtojaOdottaa > 0 && (
+        <p className="text-sm mt-1 text-warning-ink font-medium">
+          {lista.vaihtojaOdottaa} {lista.vaihtojaOdottaa === 1 ? 'vuoronvaihto odottaa' : 'vuoronvaihtoa odottaa'} vahvistusta
+        </p>
+      )}
       {maaraaika && (
         <p className={`text-sm mt-2 ${maaraaika.varoitus ? 'text-warning-ink font-medium' : 'text-ink-body'}`}>
           {maaraaika.teksti}

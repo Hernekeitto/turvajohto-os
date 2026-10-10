@@ -9,10 +9,12 @@
 // on 42 saraketta, eikä se mahdu millekään näytölle.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CalendarDays, CalendarOff, MessageSquareText, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CalendarOff, History, MessageSquareText, Repeat, Send, Trash2, X } from 'lucide-react';
 
 import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
-import { TYOAIKAMUOTO, haeLista, kirjaaPoissaolo, poistaPoissaolo, pvm, tallennaSijoitus } from './tyoaika';
+import {
+  TYOAIKAMUOTO, haeLista, julkaiseLista, kirjaaPoissaolo, poistaPoissaolo, pvm, ratkaiseVaihto, tallennaSijoitus,
+} from './tyoaika';
 import type { Havainto, ListaNakyma, Sijoitus, SuunniteltuVuoro, Taso } from './tyoaika';
 import { listanPaivat, lyhytNimi, paivanOtsikko, rivit, solunTaso, valitsimenHenkilot } from './ruudukko';
 
@@ -71,6 +73,8 @@ export const Suunnitteluruudukko = ({ alku, onTakaisin }: Props) => {
         {' · '}julkaistava viimeistään {pvm(tila.lista.julkaistavaViimeistaan)}
         {tila.muokkasi && ` · viimeksi muokannut ${tila.muokkasi}`}
       </p>
+
+      <Julkaisu tila={tila} onTila={setTila} />
 
       {ilmoitus && (
         <p className="mb-3 text-sm text-warning-ink bg-warning-soft border border-warning/30 rounded-lg px-3 py-2">{ilmoitus}</p>
@@ -151,7 +155,11 @@ export const Suunnitteluruudukko = ({ alku, onTakaisin }: Props) => {
 
       <Yhteenveto tila={tila} />
 
+      <Vaihdot tila={tila} onTila={setTila} />
+
       <Poissaolot tila={tila} onMuuttui={hae} />
+
+      <Muutosloki tila={tila} />
 
       {valittu && (
         <Valitsin
@@ -186,6 +194,11 @@ const Valitsin = ({ vuoro, tila, sijoitus, onSulje, onTila, onVanhentunut }: Val
   // etukäteen kysytty syy olisi lomakkeen täyttämistä varmuuden vuoksi.
   const [syyHenkilolle, setSyyHenkilolle] = useState<string | null>(null);
   const [syy, setSyy] = useState('');
+  // Julkaistun listan muutoksen syy (erä 6). Kysytään ennen valintaa, koska jokainen
+  // muutos sitä tarvitsee, ja se näkyy muutoksen kohteille heidän omissa vuoroissaan.
+  const [muutossyy, setMuutossyy] = useState('');
+  const julkaistu = !!tila.julkaistu;
+  const syyPuuttuu = julkaistu && muutossyy.trim().length < 3;
 
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onSulje(); };
@@ -201,6 +214,7 @@ const Valitsin = ({ vuoro, tila, sijoitus, onSulje, onTila, onVanhentunut }: Val
     setVirhe(null);
     const v = await tallennaSijoitus(tila.lista.alku, {
       vuoroId: vuoro.id, username, versio: tila.versio, ...(annettuSyy ? { syy: annettuSyy } : {}),
+      ...(julkaistu ? { muutossyy } : {}),
     });
     setTyossa(false);
     if (v.ok) { onTila(v); onSulje(); return; }
@@ -239,6 +253,21 @@ const Valitsin = ({ vuoro, tila, sijoitus, onSulje, onTila, onVanhentunut }: Val
           </button>
         </div>
 
+        {julkaistu && (
+          <label className="block mt-3">
+            <span className="block text-xs font-medium text-ink-strong mb-1">
+              Muutoksen syy (pakollinen, näkyy muutoksen kohteille)
+            </span>
+            <input
+              maxLength={500}
+              value={muutossyy}
+              onChange={(e) => setMuutossyy(e.target.value)}
+              placeholder="esim. Sairastuminen, vuoro siirretty"
+              className="w-full bg-sunken border border-line-soft rounded-lg px-3 py-2 text-sm text-ink-strong focus:outline-none focus:border-accent"
+            />
+          </label>
+        )}
+
         {sijoitus && (
           <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-sunken px-3 py-2 text-sm">
             <span>
@@ -247,7 +276,7 @@ const Valitsin = ({ vuoro, tila, sijoitus, onSulje, onTila, onVanhentunut }: Val
             </span>
             <button
               type="button"
-              disabled={tyossa}
+              disabled={tyossa || syyPuuttuu}
               onClick={() => laheta(null)}
               className="inline-flex items-center gap-1 text-xs font-medium text-danger hover:underline disabled:opacity-60"
             >
@@ -287,7 +316,7 @@ const Valitsin = ({ vuoro, tila, sijoitus, onSulje, onTila, onVanhentunut }: Val
             <div className="mt-2 flex gap-2">
               <button
                 type="button"
-                disabled={tyossa || syy.trim().length < 3}
+                disabled={tyossa || syyPuuttuu || syy.trim().length < 3}
                 onClick={() => laheta(syyHenkilolle, syy)}
                 className="px-4 py-2 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-60"
               >
@@ -313,7 +342,7 @@ const Valitsin = ({ vuoro, tila, sijoitus, onSulje, onTila, onVanhentunut }: Val
                 <li key={h.username}>
                   <button
                     type="button"
-                    disabled={tyossa || reservi || sijoitus?.username === h.username}
+                    disabled={tyossa || syyPuuttuu || reservi || sijoitus?.username === h.username}
                     onClick={() => laheta(h.username)}
                     className={`w-full text-left px-3 py-2 hover:bg-sunken disabled:hover:bg-transparent disabled:cursor-default ${kaytettavissa ? '' : 'opacity-60'}`}
                   >
@@ -552,6 +581,192 @@ const Poissaolot = ({ tila, onMuuttui }: { tila: ListaNakyma; onMuuttui: () => v
           + Kirjaa poissaolo
         </button>
       ))}
+    </section>
+  );
+};
+
+// --- Julkaisu (erä 6) -------------------------------------------------------------------
+//
+// TES 10 §: lista annetaan tiedoksi viimeistään kaksi viikkoa ennen jakson alkua.
+// Julkaisu tekee listasta vartijoiden näkemän, ja sen jälkeen jokainen muutos vaatii syyn.
+
+const Julkaisu = ({ tila, onTila }: { tila: ListaNakyma; onTila: (t: ListaNakyma) => void }) => {
+  const [virhe, setVirhe] = useState<string | null>(null);
+  const [esteet, setEsteet] = useState<(Havainto & { username: string })[]>([]);
+  const [tyossa, setTyossa] = useState(false);
+  const nimi = (u: string) => tila.henkilot.find((h) => h.username === u)?.nimi || u;
+
+  if (tila.julkaistu) {
+    return (
+      <div className="mb-4 rounded-lg border border-accent/30 bg-accent-soft px-4 py-2.5 text-sm text-accent-ink">
+        <span className="font-medium">
+          Julkaistu {new Date(tila.julkaistu.aika).toLocaleString('fi-FI', { dateStyle: 'short', timeStyle: 'short' })}
+        </span>
+        {' '}({tila.julkaistu.julkaisija}){tila.julkaistu.myohassa ? ' — julkaisun määräaika oli ohitettu' : ''}.
+        {' '}Muutokset vaativat syyn ja näkyvät vartijoille.
+      </div>
+    );
+  }
+  if (!tila.saaMuokata) return null;
+
+  const avoimia = tila.vuorot.filter((v) => !tila.sijoitukset.some((s) => s.vuoroId === v.id)).length;
+  const julkaise = async () => {
+    const kysymys = avoimia > 0
+      ? `Julkaistaanko lista? ${avoimia} vuoroa jää avoimeksi — ne näkyvät työvoimareserville.`
+      : 'Julkaistaanko lista? Vartijat näkevät vuoronsa, ja sen jälkeen jokainen muutos vaatii syyn.';
+    if (!window.confirm(kysymys)) return;
+    setTyossa(true);
+    setVirhe(null);
+    const v = await julkaiseLista(tila.lista.alku, tila.versio);
+    setTyossa(false);
+    if (v.ok) { setEsteet([]); onTila(v); return; }
+    setVirhe(v.error);
+    setEsteet((v as { esteet?: (Havainto & { username: string })[] }).esteet || []);
+  };
+
+  return (
+    <div className="mb-4">
+      <button
+        type="button"
+        disabled={tyossa}
+        onClick={julkaise}
+        className="inline-flex items-center gap-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors disabled:opacity-60"
+      >
+        <Send size={16} />
+        Julkaise lista
+      </button>
+      {virhe && <p className="mt-2 text-sm text-danger">{virhe}</p>}
+      {esteet.length > 0 && (
+        <ul className="mt-1 space-y-1">
+          {esteet.map((e, i) => (
+            <li key={i} className={`text-xs rounded border px-2 py-1 ${TASON_VARI.este}`}>
+              <span className="font-medium">{nimi(e.username)}:</span> {e.viesti}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+// --- Vuoronvaihdot (erä 6) --------------------------------------------------------------
+
+const Vaihdot = ({ tila, onTila }: { tila: ListaNakyma; onTila: (t: ListaNakyma) => void }) => {
+  const [virhe, setVirhe] = useState<string | null>(null);
+  const [syyVaihdolle, setSyyVaihdolle] = useState<{ id: string; havainnot: Havainto[] } | null>(null);
+  const [syy, setSyy] = useState('');
+  const nimi = (u: string) => tila.henkilot.find((h) => h.username === u)?.nimi || u;
+  const vuoro = (id: string) => tila.vuorot.find((v) => v.id === id);
+  const odottavat = tila.vaihdot.filter((v) => v.tila === 'odottaa_suunnittelijaa' || v.tila === 'odottaa_saajaa');
+  if (!odottavat.length) return null;
+
+  const ratkaise = async (id: string, hyvaksy: boolean, annettuSyy?: string) => {
+    setVirhe(null);
+    const v = await ratkaiseVaihto(id, { hyvaksy, ...(annettuSyy ? { syy: annettuSyy } : {}) });
+    if (v.ok) { setSyyVaihdolle(null); setSyy(''); onTila(v); return; }
+    const vastaus = v as { koodi?: string; havainnot?: Havainto[]; error: string };
+    if (vastaus.koodi === 'syy_puuttuu') { setSyyVaihdolle({ id, havainnot: vastaus.havainnot || [] }); return; }
+    setVirhe(vastaus.error);
+  };
+
+  return (
+    <section className="mt-8">
+      <h3 className="text-lg font-bold text-ink flex items-center gap-2 mb-2">
+        <Repeat size={18} className="text-accent" />
+        Vuoronvaihdot
+      </h3>
+      {virhe && <p className="text-sm text-danger mb-2">{virhe}</p>}
+      <ul className="bg-surface rounded-xl border border-line divide-y divide-line-soft">
+        {odottavat.map((x) => {
+          const v = vuoro(x.vuoroId);
+          return (
+            <li key={x.id} className="px-4 py-3 text-sm">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <span>
+                  <span className="font-medium text-ink-strong">{nimi(x.antaja)} → {nimi(x.saaja)}</span>
+                  <span className="block text-xs text-ink-muted">
+                    {v ? `${v.siteNimi} · ${v.vuoroNimi} ${pvm(v.pvm)} ${v.alkaa.slice(11)}–${v.paattyy.slice(11)}` : x.vuoroId}
+                    {' · '}{tila.vaihdonTilat[x.tila] || x.tila}
+                  </span>
+                  {x.viesti && <span className="block text-xs text-ink-body mt-0.5">Viesti: {x.viesti}</span>}
+                </span>
+                {tila.saaMuokata && x.tila === 'odottaa_suunnittelijaa' && (
+                  <span className="flex gap-2">
+                    <button type="button" onClick={() => ratkaise(x.id, true)} className="px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent-hover rounded-lg">
+                      Vahvista
+                    </button>
+                    <button type="button" onClick={() => ratkaise(x.id, false)} className="px-3 py-1.5 text-xs font-medium text-ink-muted hover:text-danger">
+                      Hylkää
+                    </button>
+                  </span>
+                )}
+              </div>
+              {syyVaihdolle?.id === x.id && (
+                <div className="mt-2">
+                  {syyVaihdolle.havainnot.map((h, i) => (
+                    <p key={i} className={`text-xs rounded border px-2 py-1 mb-1 ${TASON_VARI[h.taso]}`}>{h.viesti}</p>
+                  ))}
+                  <input
+                    value={syy}
+                    maxLength={500}
+                    onChange={(e) => setSyy(e.target.value)}
+                    placeholder="Syy poikkeamalle (esim. sovittu saajan kanssa)"
+                    className="w-full bg-sunken border border-line-soft rounded-lg px-3 py-1.5 text-sm text-ink-strong"
+                  />
+                  <button
+                    type="button"
+                    disabled={syy.trim().length < 3}
+                    onClick={() => ratkaise(x.id, true, syy)}
+                    className="mt-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-60"
+                  >
+                    Vahvista syyllä
+                  </button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+};
+
+// --- Muutosloki (erä 6) -----------------------------------------------------------------
+//
+// Julkaisun jälkeiset muutokset. Hälytystyö-merkintä (alle 72 h varoitusaika, TES 31 §)
+// on tieto palkanlaskennalle: järjestelmä ei tiedä onko vuoro ylimääräinen.
+
+const Muutosloki = ({ tila }: { tila: ListaNakyma }) => {
+  const [auki, setAuki] = useState(false);
+  if (!tila.julkaistu || !tila.muutokset.length) return null;
+  const nimi = (u: string | null) => (u ? tila.henkilot.find((h) => h.username === u)?.nimi || u : '—');
+  const vuoro = (id: string) => tila.vuorot.find((v) => v.id === id);
+  const halytystoita = tila.muutokset.filter((m) => m.halytystyo).length;
+  return (
+    <section className="mt-8">
+      <button type="button" onClick={() => setAuki(!auki)} className="text-lg font-bold text-ink flex items-center gap-2 mb-2">
+        <History size={18} className="text-accent" />
+        Muutokset julkaisun jälkeen ({tila.muutokset.length})
+        {halytystoita > 0 && <span className="text-xs font-medium text-warning-ink">· {halytystoita} hälytystyötä</span>}
+      </button>
+      {auki && (
+        <ul className="bg-surface rounded-xl border border-line divide-y divide-line-soft">
+          {[...tila.muutokset].reverse().map((m, i) => {
+            const v = vuoro(m.vuoroId);
+            return (
+              <li key={i} className="px-4 py-2 text-sm">
+                <span className="text-ink-strong">{nimi(m.oli)} → {nimi(m.nyt)}</span>
+                {m.halytystyo && <span className="ml-2 text-xs font-medium text-warning-ink">Hälytystyö (alle 72 h, TES 31 §)</span>}
+                <span className="block text-xs text-ink-muted">
+                  {v ? `${v.siteNimi} · ${v.vuoroNimi} ${pvm(v.pvm)}` : m.vuoroId}
+                  {' · '}{new Date(m.aika).toLocaleString('fi-FI', { dateStyle: 'short', timeStyle: 'short' })} {m.tekija}
+                  {' · '}{m.syy}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 };

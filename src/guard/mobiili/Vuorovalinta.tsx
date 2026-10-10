@@ -156,7 +156,7 @@ export const Vuorovalinta = ({
         className="mb-6 inline-flex items-center gap-2 text-sm font-medium text-accent hover:underline"
       >
         <CalendarHeart size={16} />
-        Työvuorotoiveet
+        Omat työvuorot
       </button>
 
       {virhe && (
