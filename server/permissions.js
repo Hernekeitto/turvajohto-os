@@ -70,6 +70,10 @@ const GLOBAL_NODES = new Set([
   // Globaali samasta syystä kuin guard_locations; rivirajaus tulee eventAccessista
   // (server/sijaintihistoria.js: suodataPisteet).
   'guard_location_history',
+  // Työvuorosuunnittelu (erä 1, 10.10.2026). Globaali, koska vuorolista on henkilön
+  // lista eikä kohteen: sama vartija tekee vuoroja monessa kohteessa, ja lepoajat ja
+  // jakson tunnit lasketaan niiden yli. Kohdekohtainen oikeus ei voisi tarkistaa niitä.
+  'guard_planning',
   // PTT (erä 26). Globaali samasta syystä kuin guard_site_assets: tämä solmu ei itse
   // päätä mitä kanavia näkyy — se on pelkkä "onko ominaisuus tällä tunnuksella
   // ollenkaan" -portti. Kiinteän kanavan (kohde/piiri) todellinen jäsenyys tulee
@@ -223,6 +227,13 @@ const COLLECTIONS = {
   // (index.js: /api/mikroluettelo): vartijat saavat voimassa olevan luettelon, ja
   // pääkäyttäjä muokkaa taulukkoa Toimistossa. Kokoelmareitillä vain pääkäyttäjä.
   mikroLuettelo: {
+    view: ['__paakayttaja__'],
+    touch: () => ['__paakayttaja__'],
+    eventScoped: false,
+  },
+  // Työaikasäännöt (erä 1, 10.10.2026). Luetaan ja kirjoitetaan vain omilla reiteillä
+  // (index.js: /api/tyovuorot/asetukset): suunnittelija lukee, pääkäyttäjä muokkaa.
+  tyoaikaAsetukset: {
     view: ['__paakayttaja__'],
     touch: () => ['__paakayttaja__'],
     eventScoped: false,

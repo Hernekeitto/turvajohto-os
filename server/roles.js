@@ -35,7 +35,11 @@ export const ROLE_GUARD = 'vartija';
 // Vartija ja lisää yksi rasti", koska työnjako vartijan ja esimiehen välillä on sama
 // jokaisessa asennuksessa — ja käsin rakennettu taso eroaisi joka kerta hieman.
 export const ROLE_GUARD_LEAD = 'vartioesimies';
-const BUILTIN_IDS = new Set([ROLE_ADMIN, ROLE_BASIC, ROLE_VIEWER, ROLE_GUARD, ROLE_GUARD_LEAD]);
+// Vuorosuunnittelija (erä 1, käyttäjän päätös 10.10.2026) laatii työvuorolistat. Oma
+// tasonsa eikä osa Vartioesimiestä: listan laatija on usein toimistossa eikä kentällä,
+// eikä kohteiden hallinta kuulu hänelle.
+export const ROLE_GUARD_PLANNER = 'vuorosuunnittelija';
+const BUILTIN_IDS = new Set([ROLE_ADMIN, ROLE_BASIC, ROLE_VIEWER, ROLE_GUARD, ROLE_GUARD_LEAD, ROLE_GUARD_PLANNER]);
 
 // Sivukartan solmut, joita Peruskäyttäjä saa oletuksena muokata. Nämä ovat operatiivista
 // työtä (kirjaukset, suunnittelu, asiakirjat) — eivät hallintaa (settings, global_*).
@@ -163,6 +167,15 @@ const ESIMIES_MUOKKAUS = ['guard_sites'];
 // Kohteen tiedot ja Raportointi-otsikko ovat esimiehen katseluoikeuksia (siirretty
 // Vartija-tasolta 28.9.2026): kohteen koosteen lukeminen on ylläpidon työtä.
 const ESIMIES_KATSELU = ['guard_assets', 'guard_site_info', 'guard_reporting'];
+// Vuorosuunnittelija näkee kohteet (vuorotyypit ja perehdytykset ovat kohteen tietoja,
+// ja ilman niitä listaa ei voi laatia) mutta ei muokkaa niitä. Kohteen miehitys eli se
+// mihin aikaan vuoroja suunnitellaan on kohteen hallintaa, ja se kuuluu ylläpidolle.
+//
+// Työntekijäpankkia (global_employee_bank) EI anneta: pankissa on henkilötunnukset ja
+// tilinumerot. Suunnittelija tarvitsee siitä vain työaikamuodon ja korttien
+// voimassaolon, ja ne tulevat suunnittelureitiltä kapeana otteena (erä 3).
+const SUUNNITTELIJA_KATSELU = ['guard_sites', 'guard_site_info'];
+const SUUNNITTELIJA_MUOKKAUS = ['guard_planning'];
 
 function bucketista(nodeIds, { view, edit }) {
   return Object.fromEntries(nodeIds.map((id) => [id, { view, edit }]));
@@ -218,6 +231,20 @@ function oletusTasot() {
           // Viimeisenä, koska tämä nostaa guard_sitesin muokattavaksi — sama solmu on
           // VARTIJA_KATSELUssa pelkkänä katseluoikeutena.
           ...bucketista(ESIMIES_MUOKKAUS, { view: true, edit: true }),
+        },
+      },
+    },
+    {
+      id: ROLE_GUARD_PLANNER,
+      name: 'Vuorosuunnittelija',
+      description:
+        'Turvajohto GUARD: työvuorolistojen laatiminen ja julkaisu sekä vuoronvaihtojen '
+        + 'hyväksyntä. Näkee kohteet mutta ei hallitse niitä.',
+      builtin: true,
+      permissions: {
+        [DEFAULT_BUCKET]: {
+          ...bucketista(SUUNNITTELIJA_KATSELU, { view: true, edit: false }),
+          ...bucketista(SUUNNITTELIJA_MUOKKAUS, { view: true, edit: true }),
         },
       },
     },

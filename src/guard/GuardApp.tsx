@@ -20,6 +20,8 @@ import { Kierros } from './Kierros';
 import { Halytykset } from './Halytykset';
 import { Etusivu } from './Etusivu';
 import { Sijaintihistoria } from './Sijaintihistoria';
+import { Tyovuorosuunnittelu } from './tyovuorot/Tyovuorosuunnittelu';
+import type { OsioId as AsetusOsio } from './Asetukset';
 import { Halytyskeskus } from './Halytyskeskus';
 import { lueOsoite } from './halke/paneelit';
 import { Kohdenakyma } from './Kohdenakyma';
@@ -124,7 +126,7 @@ const JUURINAKYMA = 'etusivu';
 // on kohteiden YLI menevä rekisteri: sen kysymys on "mitä yrityksellä on ja missä", ja
 // kohteen sisältä katsottuna vastaus olisi aina yhden kohteen mittainen.
 type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus' | 'tehtavanjako' | 'kalusto'
-  | 'tyontekijat' | 'sijaintihistoria';
+  | 'tyontekijat' | 'sijaintihistoria' | 'tyovuorot';
 
 // Historiamerkinnän näkymätunniste -> kohteen toiminto. Mobiiliversion takaisin-nappi
 // tarvitsee tämän: siellä ei ole kohdevalikkoa johon palata, joten näkymä avataan
@@ -261,6 +263,9 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // tarvitaan tehtävän kohdentamiseen, jälki kattaa 45 vuorokautta eikä sitä tarvita
   // yhdenkään tehtävän hoitamiseen. Katselupiiri on siksi pienempi.
   const saaNahdaSijaintihistorian = isAdmin || canView(perms, null, 'guard_location_history');
+  // Työvuorosuunnittelu (erä 1). Globaali solmu kuten hälytyskeskus: lista on henkilön
+  // eikä kohteen, joten sitä ei avata kohteen sisältä.
+  const saaNahdaSuunnittelun = isAdmin || canView(perms, null, 'guard_planning');
   const saaNahdaRaportit = isAdmin
     || canView(perms, null, 'guard_site_info')
     || canView(perms, null, 'guard_report_action')
@@ -328,6 +333,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   >(null);
   const [tietoKohde, setTietoKohde] = useState<Kohde | null>(null);
   const [asetuksissa, setAsetuksissa] = useState(false);
+  // Asetusten osio joka avataan suoraan, kun asetuksiin tullaan muualta kuin etusivulta.
+  const [asetustenAlkuOsio, setAsetustenAlkuOsio] = useState<AsetusOsio | null>(null);
   // Kierrospohjat ja kierrokset. Kumpaakaan ei tallenneta täältä kokoelmareitin kautta:
   // pohjilla token syntyy palvelimella, kierroksilla säännöt ovat palvelimella.
   const [pohjat, setPohjat] = useState<Kierrospohja[]>([]);
@@ -1540,6 +1547,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       : osio === 'kalusto' ? 'kalustopankki'
       : osio === 'tyontekijat' ? 'tyontekijapankki'
       : osio === 'sijaintihistoria' ? 'sijaintihistoria'
+      : osio === 'tyovuorot' ? 'tyovuorot'
       : raporttiKohde ? 'raportit'
       : tietoKohde ? 'kohteen-tiedot'
       : kalustoKohde ? 'kalusto'
@@ -1590,6 +1598,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         : tunniste === 'kalustopankki' ? 'kalusto'
           : tunniste === 'tyontekijapankki' ? 'tyontekijat'
           : tunniste === 'sijaintihistoria' ? 'sijaintihistoria'
+          : tunniste === 'tyovuorot' ? 'tyovuorot'
           : tunniste === JUURINAKYMA ? 'etusivu'
             : 'kohteet'
     );
@@ -2194,6 +2203,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     : osio === 'kalusto' ? 'Kalustopankki'
     : osio === 'tyontekijat' ? 'Työntekijäpankki'
     : osio === 'sijaintihistoria' ? 'Sijaintihistoria'
+    : osio === 'tyovuorot' ? 'Työvuorosuunnittelu'
     : raporttiKohde ? 'Raportointi'
     : tietoKohde ? 'Kohteen tiedot'
     : halytysKohde ? 'Hälytykset'
@@ -2369,7 +2379,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           isAdmin={!!isAdmin}
           onHavita={havitaVanhentuneet}
           onAvaaHenkilo={(id) => { setAvattavaTyontekija(id); setAsetuksissa(false); setOsio('tyontekijat'); }}
-          onTakaisin={() => setAsetuksissa(false)}
+          onTakaisin={() => { setAsetuksissa(false); setAsetustenAlkuOsio(null); }}
+          alkuOsio={asetustenAlkuOsio}
         />
       ) : avattu ? (
         <HalytystehtavaNakyma
@@ -2418,6 +2429,14 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         />
       ) : osio === 'sijaintihistoria' ? (
         <Sijaintihistoria onTakaisin={() => setOsio('etusivu')} />
+      ) : osio === 'tyovuorot' ? (
+        <Tyovuorosuunnittelu
+          isAdmin={!!isAdmin}
+          // Asetukset avautuvat suoraan työaikasääntöihin, ja niistä palataan tänne:
+          // osio jää 'tyovuorot':ksi asetusten ajaksi.
+          onAsetukset={isAdmin ? () => { setAsetustenAlkuOsio('tyoaika'); setAsetuksissa(true); } : null}
+          onTakaisin={() => setOsio('etusivu')}
+        />
       ) : osio === 'tehtavanjako' ? (
         <Tehtavanjako onTakaisin={() => setOsio('etusivu')} />
       ) : osio === 'kalusto' ? (
@@ -2833,6 +2852,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           saaNahdaKalusto={saaNahdaPankin}
           saaNahdaTyontekijat={saaNahdaTyontekijat}
           saaNahdaSijaintihistorian={saaNahdaSijaintihistorian}
+          saaNahdaSuunnittelun={saaNahdaSuunnittelun}
           kohteita={kohteet.length}
           lauenneita={halytykset.filter((h) => h.tila === 'lauennut').length}
           ajastimia={halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa').length}
@@ -2846,6 +2866,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onTehtavanjako={() => setOsio('tehtavanjako')}
           onTyontekijat={() => setOsio('tyontekijat')}
           onSijaintihistoria={() => setOsio('sijaintihistoria')}
+          onSuunnittelu={() => setOsio('tyovuorot')}
           onAsetukset={() => setAsetuksissa(true)}
         />
       ) : (

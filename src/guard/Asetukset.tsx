@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Archive, HardDrive, ListTree, ShieldCheck, Smartphone, UserCog, Users,
+  Archive, CalendarClock, HardDrive, ListTree, ShieldCheck, Smartphone, UserCog, Users,
 } from 'lucide-react';
 import { TakaisinLinkki } from '../shared/komponentit/TakaisinLinkki';
 import { AsetusValikko } from '../shared/komponentit/AsetusValikko';
@@ -15,6 +15,7 @@ import { Sailytysajat } from '../shared/asetukset/Sailytysajat';
 import { ASETUSTEN_SIVUKARTAT } from '../asetusten-sivukartat';
 import type { GuardRaportti } from './tyypit';
 import { MikroraportinValikot } from './MikroraportinValikot';
+import { TyoaikaSaannot } from './tyovuorot/TyoaikaSaannot';
 
 // GUARD-puolen sovellusasetukset. Samat osiot kuin tapahtumapuolella yhtä lukuun
 // ottamatta: pikatoiminnot (hätätekstiviestit) ovat tapahtuman johtamisen työkalu ja
@@ -29,7 +30,7 @@ import { MikroraportinValikot } from './MikroraportinValikot';
 // sivulla tekivät siitä niin pitkän, että etsitty asetus hukkui. Avattu osio näkyy
 // yksinään, ja takaisin pääsee linkistä tai selaimen/puhelimen takaisin-painikkeella.
 
-type OsioId = 'kayttajat' | 'tasot' | 'laitteet' | 'mikro' | 'tallennustila' | 'kayttajien_tila' | 'sailytys';
+export type OsioId = 'kayttajat' | 'tasot' | 'laitteet' | 'mikro' | 'tyoaika' | 'tallennustila' | 'kayttajien_tila' | 'sailytys';
 
 const OSIOT: { id: OsioId; nimi: string; kuvaus: string; Ikoni: LucideIcon; vainPaakayttajalle?: boolean }[] = [
   { id: 'kayttajat', nimi: 'Käyttäjät', kuvaus: 'Käyttäjätunnukset, tasot ja kirjautumiset.', Ikoni: Users },
@@ -38,6 +39,13 @@ const OSIOT: { id: OsioId; nimi: string; kuvaus: string; Ikoni: LucideIcon; vain
   {
     id: 'mikro', nimi: 'Mikroraportin valikot', kuvaus: 'Paikat ja otsikot, joista vartija valitsee.',
     Ikoni: ListTree, vainPaakayttajalle: true,
+  },
+  // Työaikasäännöt (erä 1): vain pääkäyttäjälle, koska TES:stä poikkeaminen on
+  // paikallinen sopimus eikä suunnittelijan päätös. Suunnittelija näkee säännöt omassa
+  // näkymässään.
+  {
+    id: 'tyoaika', nimi: 'Työaikasäännöt', kuvaus: 'TES:n lepoajat, vuorojen pituudet ja jaksorytmi.',
+    Ikoni: CalendarClock, vainPaakayttajalle: true,
   },
   { id: 'tallennustila', nimi: 'Tallennustila', kuvaus: 'Palvelimen levytilan käyttö.', Ikoni: HardDrive },
   { id: 'kayttajien_tila', nimi: 'Käyttäjien tallennustila', kuvaus: 'Henkilökohtaiset kiintiöt ja lisätilapyynnöt.', Ikoni: UserCog },
@@ -51,13 +59,16 @@ type Props = {
   // Käyttäjälistan rivi avaa henkilön työntekijäpankissa (tunnusten ainoa hallintapaikka).
   onAvaaHenkilo: (employeeId: string) => void;
   onTakaisin: () => void;
+  // Osio joka avataan suoraan, kun asetuksiin tullaan toisesta näkymästä (esim.
+  // työvuorosuunnittelun "Muokkaa"-linkistä).
+  alkuOsio?: OsioId | null;
 };
 
-export const Asetukset = ({ raportit, isAdmin, onHavita, onAvaaHenkilo, onTakaisin }: Props) => {
+export const Asetukset = ({ raportit, isAdmin, onHavita, onAvaaHenkilo, onTakaisin, alkuOsio = null }: Props) => {
   const [roles, setRoles] = useState<any[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [kayttajat, setKayttajat] = useState<any[]>([]);
-  const [osio, setOsio] = useState<OsioId | null>(null);
+  const [osio, setOsio] = useState<OsioId | null>(alkuOsio);
   // Takaisin-painike sulkee avatun osion eikä poistu koko asetuksista.
   useTakaisinEste(!!osio, () => setOsio(null));
 
@@ -129,6 +140,8 @@ export const Asetukset = ({ raportit, isAdmin, onHavita, onAvaaHenkilo, onTakais
         return <Laitteet />;
       case 'mikro':
         return <MikroraportinValikot isAdmin={isAdmin} />;
+      case 'tyoaika':
+        return <TyoaikaSaannot isAdmin={isAdmin} />;
       case 'tallennustila':
         return <Tallennustila isAdmin={isAdmin} />;
       case 'kayttajien_tila':

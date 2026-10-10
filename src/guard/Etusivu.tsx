@@ -11,7 +11,7 @@
 
 import type { ReactNode } from 'react';
 import {
-  ArrowRight, Boxes, Building2, ClipboardList, History, Siren, Settings, Timer, Route,
+  ArrowRight, Boxes, Building2, CalendarDays, ClipboardList, History, Siren, Settings, Timer, Route,
   TriangleAlert, Users,
 } from 'lucide-react';
 
@@ -34,6 +34,9 @@ type Props = {
   // guard_locations: nykyisen sijainnin näkeminen ja liikehistorian katsominen ovat eri
   // asioita, ja jälkimmäisen katselupiiri on pienempi.
   saaNahdaSijaintihistorian: boolean;
+  // Työvuorosuunnittelu (erä 1). Riviksi kuten tehtävien jako: suunnittelua, ei
+  // tilannetta joka vaatii huomiota juuri nyt.
+  saaNahdaSuunnittelun: boolean;
   kohteita: number;
   lauenneita: number;
   ajastimia: number;
@@ -47,16 +50,17 @@ type Props = {
   onTehtavanjako: () => void;
   onTyontekijat: () => void;
   onSijaintihistoria: () => void;
+  onSuunnittelu: () => void;
   onAsetukset: () => void;
 };
 
 export const Etusivu = ({
   saaNahdaKohteet, saaNahdaHalytyskeskus, saaNahdaAsetukset, saaJakaaTehtavia, saaNahdaKalusto,
-  saaNahdaTyontekijat, saaNahdaSijaintihistorian,
+  saaNahdaTyontekijat, saaNahdaSijaintihistorian, saaNahdaSuunnittelun,
   kohteita, lauenneita, ajastimia, kierroksiaKesken,
   kalustoa, kalustopyyntoja, kadonnuttaKalustoa,
   onKohteet, onKalusto, onHalytyskeskus, onTehtavanjako, onTyontekijat, onSijaintihistoria,
-  onAsetukset,
+  onSuunnittelu, onAsetukset,
 }: Props) => (
   <div>
     <div className="mb-8">
@@ -190,6 +194,17 @@ export const Etusivu = ({
       >
         <Users size={16} />
         Työntekijäpankki
+      </button>
+    )}
+
+    {saaNahdaSuunnittelun && (
+      <button
+        type="button"
+        onClick={onSuunnittelu}
+        className="mt-6 mr-6 inline-flex items-center gap-2 text-sm font-medium text-ink-body hover:text-accent transition-colors"
+      >
+        <CalendarDays size={16} />
+        Työvuorosuunnittelu
       </button>
     )}
 

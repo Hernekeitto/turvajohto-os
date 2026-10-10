@@ -42,6 +42,10 @@ import {
   paataVuoro, vuorovaihtoehdot, vuoronPaattymisaika,
 } from './vuorot.js';
 import {
+  ASETUKSET as TYOAIKA_ASETUKSET, JAKSON_ENIMMAIS_H, JAKSON_PITUUS_VK, SAANNOLLINEN_H,
+  listat, normalisoiAsetukset, tamaPaiva, tarkistaAsetukset, tesPoikkeamat,
+} from './tyovuorolista.js';
+import {
   onOsallistuja, loydaDm, luoDmKanava,
   pttKaytossa, vuorossaOlevatMuut, vuorossaOlevat, dmPurkautunut, hataKanavaId, luoHataKanava,
   hataKanavaPurkautunut, onHalyttaja,
@@ -652,7 +656,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets', 'keyTypes', 'personalFiles', 'storageRequests', 'mikroLuettelo']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets', 'keyTypes', 'personalFiles', 'storageRequests', 'mikroLuettelo', 'tyoaikaAsetukset']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -7840,6 +7844,74 @@ app.post('/api/mikroluettelo/luo', requireAuth, requireAdmin, (req, res) => {
   });
   const paivitetty = tarkistaMikroluettelo(tietue, ods, req.username);
   res.json({ ok: true, uploadId, versio: paivitetty.versio });
+});
+
+// ====================== TYÖVUOROSUUNNITTELU (erä 1) ======================
+//
+// Työaikasäännöt (TES-asetukset) ja niistä lasketut työvuorolistat. Säännöt ovat
+// tyovuorolista.js:ssä; täällä vain luku, kirjoitus ja oikeudet.
+//
+// Suunnittelija LUKEE säännöt, pääkäyttäjä MUOKKAA niitä. Jako on tarkoituksellinen:
+// TES:stä poikkeaminen on työnantajan ja luottamusmiehen sopimus, eikä se jonka listaa
+// säännöt rajoittavat saa itse löysätä niitä.
+
+const TYOAIKA_ID = 'tyoaika';
+const tyoaikaTietue = () =>
+  (readCollection('tyoaikaAsetukset') || []).find((t) => t?.id === TYOAIKA_ID) || null;
+
+const saaSuunnitella = (req) => req.role === 'admin' || canView(req.permissions, null, 'guard_planning');
+
+function tyoaikaVastaus(tietue) {
+  const asetukset = normalisoiAsetukset(tietue);
+  return {
+    ok: true,
+    asetukset,
+    poikkeamat: tesPoikkeamat(asetukset),
+    kuvaukset: TYOAIKA_ASETUKSET,
+    jaksonPituusVk: JAKSON_PITUUS_VK,
+    saannollinenH: SAANNOLLINEN_H,
+    jaksonEnimmaisH: JAKSON_ENIMMAIS_H,
+    // Kuluva lista ja kolme seuraavaa. Edelliset eivät kuulu tähän: suunnittelu katsoo
+    // eteenpäin, ja menneet listat näkyvät erässä 4 omassa näkymässään.
+    listat: listat(asetukset, tamaPaiva(), 4),
+    tanaan: tamaPaiva(),
+    muokattu: tietue?.muokattu || null,
+    muokkasi: tietue?.muokkasi || null,
+  };
+}
+
+app.get('/api/tyovuorot/asetukset', requireAuth, guardPortti, (req, res) => {
+  if (!saaSuunnitella(req) && !canView(req.permissions, null, 'guard_settings')) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta työvuorosuunnitteluun.' });
+  }
+  res.json(tyoaikaVastaus(tyoaikaTietue()));
+});
+
+app.put('/api/tyovuorot/asetukset', requireAuth, guardPortti, requireAdmin, (req, res) => {
+  const tulos = tarkistaAsetukset(req.body);
+  if (!tulos.ok) {
+    return res.status(400).json({ ok: false, error: tulos.virheet[0].viesti, virheet: tulos.virheet });
+  }
+  const edellinen = normalisoiAsetukset(tyoaikaTietue());
+  const tietue = {
+    id: TYOAIKA_ID,
+    ...tulos.asetukset,
+    muokattu: new Date().toISOString(),
+    muokkasi: req.username,
+  };
+  writeCollection('tyoaikaAsetukset', [tietue]);
+  // Auditiin muuttuneet arvot molempine puolineen: työaikasäännön muutos voi myöhemmin
+  // olla se kysymys johon pitää vastata ("miksi lista hyväksyi 9 tunnin levon").
+  const muutokset = Object.fromEntries(
+    [...Object.keys(TYOAIKA_ASETUKSET), 'jaksotAlkaen', 'paikallinenSopimus']
+      .filter((k) => edellinen[k] !== tulos.asetukset[k])
+      .map((k) => [k, { oli: edellinen[k], nyt: tulos.asetukset[k] }]),
+  );
+  logAudit({
+    user: req.username, action: 'tyoaika_asetukset', recordId: TYOAIKA_ID,
+    collection: 'tyoaikaAsetukset', muutokset, poikkeamat: tesPoikkeamat(tulos.asetukset),
+  });
+  res.json(tyoaikaVastaus(tietue));
 });
 
 // ====================== HÄTÄTEKSTIVIESTIT (BulkSMS) ======================

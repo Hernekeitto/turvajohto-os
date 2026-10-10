@@ -114,6 +114,10 @@ const COLLECTIONS = {
   // siitä tulkittu voimassa oleva luettelo. Palvelimen ylläpitämä: luettelo syntyy vain
   // taulukon tarkistuksen kautta (mikroluettelo.js), ei selaimen kirjoittamana.
   mikroLuettelo: 'mikroLuettelo.json',
+  // Työvuorosuunnittelun työaikasäännöt (erä 1, 10.10.2026): yksi tietue. Palvelimen
+  // ylläpitämä, koska TES:stä poikkeava arvo vaatii kirjauksen paikallisesta sopimuksesta
+  // (tyovuorolista.js: tarkistaAsetukset) eikä kokoelmareitti tarkistaisi sitä.
+  tyoaikaAsetukset: 'tyoaikaAsetukset.json',
   // Tiedotteet (erä 8): sovelluksen sisäinen viesti kentälle, jonka lukeminen kuitataan.
   // Palvelimen ylläpitämä, koska kuittauslista on koko toiminnon sisältö — selaimesta
   // kirjoitettava kuittauslista ei todistaisi mitään.

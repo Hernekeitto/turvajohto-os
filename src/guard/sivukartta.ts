@@ -87,6 +87,15 @@ export const SITEMAP_GUARD: SivukarttaSolmu[] = [
   // Katsominen vaatii lisäksi SYYN, joka kirjataan auditlokiin (käyttäjän päätös
   // 16.9.2026). Oikeus avaa näkymän; syy kertoo mihin sitä käytettiin.
   { id: 'guard_location_history', label: 'Sijaintihistoria (jälkiselvitys, katselu vaatii kirjatun syyn)' },
+  // Työvuorosuunnittelu (erä 1, 10.10.2026). LUKU = näet listat ja työaikasäännöt,
+  // MUOKKAUS = laadit ja julkaiset listoja ja hyväksyt vuoronvaihdot. Globaali solmu
+  // (server/permissions.js: GLOBAL_NODES), koska lista on henkilön eikä kohteen: lepoajat
+  // ja jakson tunnit lasketaan kaikkien kohteiden vuoroista yhdessä.
+  //
+  // Työaikasääntöjä (TES-asetukset) tämä solmu ei avaa muokattaviksi. Niitä muokkaa vain
+  // pääkäyttäjä Sovellusasetuksista, koska TES:stä poikkeaminen on paikallinen sopimus
+  // eikä suunnittelijan päätös.
+  { id: 'guard_planning', label: 'Työvuorosuunnittelu (muokkausoikeus = oikeus laatia ja julkaista listoja)' },
   // PTT (erä 26). Näkyvyysportti pelkälle ominaisuudelle — kiinteän kanavan (kohde/piiri)
   // todellinen jäsenyys tulee kesken olevasta vuorosta eikä tästä solmusta, samalla
   // periaatteella kuin guard_site_assets. Palvelimella solmu on GLOBAL_NODES-listassa

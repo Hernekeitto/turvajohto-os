@@ -1,0 +1,76 @@
+// Työaikasäännöt (erä 1): palvelimen vastauksen muoto ja haku.
+//
+// Säännöt, oletukset ja tarkistukset ovat palvelimella (server/tyovuorolista.js). Selain
+// ei toista niitä: kuvaukset, TES-arvot ja rajat tulevat vastauksen `kuvaukset`-oliossa,
+// joten lomake ja palvelin eivät voi erkaantua toisistaan.
+
+export type AsetuksenKuvaus = {
+  nimi: string;
+  yksikko: string | null;
+  // TES:n arvo. null = asetus ei ole TES:n sääntö (korttivaroitus).
+  tes: number | boolean | null;
+  oletus?: number;
+  pykala?: string;
+  min?: number;
+  max?: number;
+  sallitut?: number[];
+  totuusarvo?: boolean;
+  eiPoikkeama?: boolean;
+};
+
+export type Asetukset = Record<string, number | boolean | string | null> & {
+  jaksotAlkaen: string | null;
+  paikallinenSopimus: string;
+};
+
+export type Jakso = { numero: number; alku: string; loppu: string; viimeinen: string };
+
+export type Lista = {
+  alku: string;
+  loppu: string;
+  viimeinen: string;
+  jaksot: Jakso[];
+  julkaistavaViimeistaan: string;
+};
+
+export type TyoaikaVastaus = {
+  ok: true;
+  asetukset: Asetukset;
+  poikkeamat: string[];
+  kuvaukset: Record<string, AsetuksenKuvaus>;
+  jaksonPituusVk: number;
+  saannollinenH: number;
+  jaksonEnimmaisH: number;
+  listat: Lista[];
+  tanaan: string;
+  muokattu: string | null;
+  muokkasi: string | null;
+};
+
+export async function haeTyoaika(): Promise<TyoaikaVastaus> {
+  const r = await fetch('/api/tyovuorot/asetukset', { credentials: 'include' });
+  const vastaus = await r.json().catch(() => null);
+  if (!vastaus?.ok) throw new Error(vastaus?.error || 'Työaikasääntöjen lukeminen ei onnistunut.');
+  return vastaus;
+}
+
+// '2026-10-05' -> '5.10.2026'. Päivä tulkitaan merkkijonona eikä Date-oliona, jotta
+// aikavyöhyke ei siirrä sitä edelliselle päivälle.
+export function pvm(iso: string | null): string {
+  const osuma = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  return osuma ? `${Number(osuma[3])}.${Number(osuma[2])}.${osuma[1]}` : '–';
+}
+
+// Arvo ihmisluettavana yksikköineen: "10 h", "9 kpl", "kyllä".
+export function arvoTekstina(kuvaus: AsetuksenKuvaus, arvo: unknown): string {
+  if (kuvaus.totuusarvo) return arvo ? 'kyllä' : 'ei';
+  const luku = typeof arvo === 'number' ? String(arvo).replace('.', ',') : '–';
+  return kuvaus.yksikko ? `${luku} ${kuvaus.yksikko}` : luku;
+}
+
+// Päivien määrä tänään -> päivä. Negatiivinen = mennyt.
+export function paiviaPaivaan(tanaan: string, iso: string): number {
+  const a = Date.parse(`${tanaan}T00:00:00Z`);
+  const b = Date.parse(`${iso}T00:00:00Z`);
+  return Math.round((b - a) / 86400000);
+}
