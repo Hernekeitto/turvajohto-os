@@ -26,6 +26,7 @@ import { ArrowLeft, Building2, CalendarHeart, ChevronRight, Clock, GraduationCap
 import { LaiteSidonta } from '../../shared/komponentit/LaiteSidonta';
 import { voiAloittaa, type Vuorokohde, type VuoroVaihtoehto } from '../vuorot';
 import { OmatTyovuorot } from '../tyovuorot/OmatTyovuorot';
+import { otaSyvalinkki } from '../tyovuorot/syvalinkki';
 
 type Props = {
   kohteet: Vuorokohde[];
@@ -64,7 +65,7 @@ export const Vuorovalinta = ({
   // Työvuorotoiveet (erä 5). Täältä eikä omasta valikostaan: puhelimen ensimmäinen näkymä
   // on vuoroon kirjautuminen, ja toiveet ovat sen vieressä oleva toinen asia joka koskee
   // vartijan omia vuoroja.
-  const [toiveissa, setToiveissa] = useState(false);
+  const [toiveissa, setToiveissa] = useState(() => otaSyvalinkki('omat-tyovuorot'));
   if (toiveissa) return <OmatTyovuorot onTakaisin={() => setToiveissa(false)} />;
   // Haetaan tuoreesta `kohteet`-listasta id:llä eikä pidetä koko oliota tilassa: jos
   // vuorot päivittyvät kesken valinnan (esim. perehdytys myönnettiin juuri), näkymän on

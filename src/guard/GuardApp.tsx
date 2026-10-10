@@ -21,6 +21,8 @@ import { Halytykset } from './Halytykset';
 import { Etusivu } from './Etusivu';
 import { Sijaintihistoria } from './Sijaintihistoria';
 import { Tyovuorosuunnittelu } from './tyovuorot/Tyovuorosuunnittelu';
+import { OmatTyovuorot } from './tyovuorot/OmatTyovuorot';
+import { otaSyvalinkki } from './tyovuorot/syvalinkki';
 import type { OsioId as AsetusOsio } from './Asetukset';
 import { Halytyskeskus } from './Halytyskeskus';
 import { lueOsoite } from './halke/paneelit';
@@ -126,7 +128,7 @@ const JUURINAKYMA = 'etusivu';
 // on kohteiden YLI menevä rekisteri: sen kysymys on "mitä yrityksellä on ja missä", ja
 // kohteen sisältä katsottuna vastaus olisi aina yhden kohteen mittainen.
 type Osio = 'etusivu' | 'kohteet' | 'halytyskeskus' | 'tehtavanjako' | 'kalusto'
-  | 'tyontekijat' | 'sijaintihistoria' | 'tyovuorot';
+  | 'tyontekijat' | 'sijaintihistoria' | 'tyovuorot' | 'omattyovuorot';
 
 // Historiamerkinnän näkymätunniste -> kohteen toiminto. Mobiiliversion takaisin-nappi
 // tarvitsee tämän: siellä ei ole kohdevalikkoa johon palata, joten näkymä avataan
@@ -266,6 +268,10 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   // Työvuorosuunnittelu (erä 1). Globaali solmu kuten hälytyskeskus: lista on henkilön
   // eikä kohteen, joten sitä ei avata kohteen sisältä.
   const saaNahdaSuunnittelun = isAdmin || canView(perms, null, 'guard_planning');
+  // Omat työvuorot ylläpidon puolelta (10.10.2026): esimies tai suunnittelija joka tekee
+  // myös vuoroja. Vartija-tasolla sama näkymä on Vartijanäkymässä. Pääkäyttäjälle ei
+  // suunnitella vuoroja (server/index.js: suunniteltavatHenkilot), joten linkki ei näy.
+  const saaTehdaVuoroja = !isAdmin && canEdit(perms, null, 'guard_tasks');
   const saaNahdaRaportit = isAdmin
     || canView(perms, null, 'guard_site_info')
     || canView(perms, null, 'guard_report_action')
@@ -291,6 +297,16 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
   const onVartijataso = !isAdmin && session?.roleId === 'vartija';
   const vartijanPuolella = !mobiili && !HALKE_OSOITE.paneeli
     && (onVartijataso || (isAdmin && puoli === 'vartija'));
+  // Push-ilmoituksen linkki (10.10.2026). Vartijanäkymä ja puhelimen vuorovalinta
+  // käsittelevät "omat-tyovuorot"-linkin itse; ylläpidon puolella se avaa osion täällä.
+  // Odotetaan että oikeudet ovat latautuneet, ja käsitellään linkki vain kerran.
+  const syvalinkkiKasitelty = useRef(false);
+  useEffect(() => {
+    if (syvalinkkiKasitelty.current || !session || mobiili || vartijanPuolella) return;
+    syvalinkkiKasitelty.current = true;
+    if (saaNahdaSuunnittelun && otaSyvalinkki('tyovuorot')) setOsio('tyovuorot');
+    else if (saaTehdaVuoroja && otaSyvalinkki('omat-tyovuorot')) setOsio('omattyovuorot');
+  }, [session, mobiili, vartijanPuolella, saaNahdaSuunnittelun, saaTehdaVuoroja]);
   // Asetusten käyttäjälistalta avattava henkilö: pankki avaa sen ja tunnusosion kerran.
   const [avattavaTyontekija, setAvattavaTyontekija] = useState<string | null>(null);
   // Kohde jonka valikko on auki. Kohdelistan ja yksittäisten näkymien VÄLISSÄ oleva taso:
@@ -1548,6 +1564,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
       : osio === 'tyontekijat' ? 'tyontekijapankki'
       : osio === 'sijaintihistoria' ? 'sijaintihistoria'
       : osio === 'tyovuorot' ? 'tyovuorot'
+      : osio === 'omattyovuorot' ? 'omattyovuorot'
       : raporttiKohde ? 'raportit'
       : tietoKohde ? 'kohteen-tiedot'
       : kalustoKohde ? 'kalusto'
@@ -1599,6 +1616,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           : tunniste === 'tyontekijapankki' ? 'tyontekijat'
           : tunniste === 'sijaintihistoria' ? 'sijaintihistoria'
           : tunniste === 'tyovuorot' ? 'tyovuorot'
+          : tunniste === 'omattyovuorot' ? 'omattyovuorot'
           : tunniste === JUURINAKYMA ? 'etusivu'
             : 'kohteet'
     );
@@ -2204,6 +2222,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
     : osio === 'tyontekijat' ? 'Työntekijäpankki'
     : osio === 'sijaintihistoria' ? 'Sijaintihistoria'
     : osio === 'tyovuorot' ? 'Työvuorosuunnittelu'
+    : osio === 'omattyovuorot' ? 'Omat työvuorot'
     : raporttiKohde ? 'Raportointi'
     : tietoKohde ? 'Kohteen tiedot'
     : halytysKohde ? 'Hälytykset'
@@ -2429,6 +2448,8 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
         />
       ) : osio === 'sijaintihistoria' ? (
         <Sijaintihistoria onTakaisin={() => setOsio('etusivu')} />
+      ) : osio === 'omattyovuorot' ? (
+        <OmatTyovuorot onTakaisin={() => setOsio('etusivu')} />
       ) : osio === 'tyovuorot' ? (
         <Tyovuorosuunnittelu
           isAdmin={!!isAdmin}
@@ -2853,6 +2874,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           saaNahdaTyontekijat={saaNahdaTyontekijat}
           saaNahdaSijaintihistorian={saaNahdaSijaintihistorian}
           saaNahdaSuunnittelun={saaNahdaSuunnittelun}
+          saaNahdaOmatVuorot={saaTehdaVuoroja}
           kohteita={kohteet.length}
           lauenneita={halytykset.filter((h) => h.tila === 'lauennut').length}
           ajastimia={halytykset.filter((h) => h.tyyppi === 'ajastin' && h.tila === 'kaynnissa').length}
@@ -2867,6 +2889,7 @@ export default function GuardApp({ mobiili = false }: { mobiili?: boolean }) {
           onTyontekijat={() => setOsio('tyontekijat')}
           onSijaintihistoria={() => setOsio('sijaintihistoria')}
           onSuunnittelu={() => setOsio('tyovuorot')}
+          onOmatVuorot={() => setOsio('omattyovuorot')}
           onAsetukset={() => setAsetuksissa(true)}
         />
       ) : (

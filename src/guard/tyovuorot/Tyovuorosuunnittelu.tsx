@@ -10,6 +10,7 @@ import { CalendarClock, CalendarDays, TriangleAlert, Users } from 'lucide-react'
 import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
 import { useTakaisinEste } from '../../shared/navigointi';
 import { Suunnitteluruudukko } from './Suunnitteluruudukko';
+import { PushIlmoitukset } from './PushIlmoitukset';
 import { TYOAIKAMUOTO, arvoTekstina, haeHenkilot, haeTyoaika, paiviaPaivaan, pvm } from './tyoaika';
 import type { Henkilo, Lista, TyoaikaVastaus } from './tyoaika';
 
@@ -47,6 +48,7 @@ export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props)
         tiedoksi ennen jakson alkua, ja jokainen vuoro tarkistetaan alla olevia sääntöjä vastaan.
       </p>
 
+      <PushIlmoitukset />
       {virhe && <p className="text-sm text-danger">{virhe}</p>}
       {!tila && !virhe && <p className="text-sm text-ink-muted">Luetaan…</p>}
 

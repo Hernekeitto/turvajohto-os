@@ -258,6 +258,13 @@ const COLLECTIONS = {
     touch: () => ['__paakayttaja__'],
     eventScoped: false,
   },
+  // Push-tilaukset. Vain omilla reiteillä (index.js: /api/push): päätepiste ja avaimet
+  // ovat laitekohtaisia salaisuuksia, joilla kuka tahansa voisi lähettää laitteelle viestin.
+  pushTilaukset: {
+    view: ['__paakayttaja__'],
+    touch: () => ['__paakayttaja__'],
+    eventScoped: false,
+  },
   // Vuoronvaihdot (erä 6). Vain omilla reiteillä (index.js: /api/tyovuorot/vaihdot).
   vuoronvaihdot: {
     view: ['__paakayttaja__'],

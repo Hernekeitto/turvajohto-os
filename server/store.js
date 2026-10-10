@@ -132,6 +132,10 @@ const COLLECTIONS = {
   // Palvelimen ylläpitämä, koska vahvistus tekee listan muutoksen tarkistettuna
   // (vuoronvaihdot.js, tyovuorolistat.js: sijoita).
   vuoronvaihdot: 'vuoronvaihdot.json',
+  // Push-tilaukset (10.10.2026): selaimen tai sovelluksen Web Push -tilaus per laite.
+  // Palvelimen ylläpitämä: tilauksen saa tallentaa vain omalle tunnukselle
+  // (/api/push/tilaus), ja vanhentuneet poistetaan push-palvelun vastauksen perusteella.
+  pushTilaukset: 'pushTilaukset.json',
   // Tiedotteet (erä 8): sovelluksen sisäinen viesti kentälle, jonka lukeminen kuitataan.
   // Palvelimen ylläpitämä, koska kuittauslista on koko toiminnon sisältö — selaimesta
   // kirjoitettava kuittauslista ei todistaisi mitään.
@@ -608,4 +612,25 @@ export function kirjaaKorkeinTunniste(n) {
   const tmp = `${TUNNISTELASKURI}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify({ korkein: n, paivitetty: new Date().toISOString() }));
   fs.renameSync(tmp, TUNNISTELASKURI);
+}
+
+// VAPID-avainpari Web Pushille (webpush.js). Ympäristömuuttujat ensin; jos niitä ei ole,
+// pari luodaan kerran ja tallennetaan tänne. Erillinen tiedosto eikä kokoelma, koska
+// yksityinen avain ei saa koskaan kulkea kokoelmareitin kautta selaimelle. Tiedoston
+// poistaminen mitätöi kaikki tilaukset: selaimet on tilattava uudelleen uudella avaimella.
+const VAPID_TIEDOSTO = path.join(DATA_DIR, 'vapid.json');
+
+export function vapidAvaimet(luo) {
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    return { publicKey: process.env.VAPID_PUBLIC_KEY, privateKey: process.env.VAPID_PRIVATE_KEY };
+  }
+  try {
+    const a = JSON.parse(fs.readFileSync(VAPID_TIEDOSTO, 'utf8'));
+    if (a?.publicKey && a?.privateKey) return { publicKey: a.publicKey, privateKey: a.privateKey };
+  } catch { /* luodaan alla */ }
+  const uudet = luo();
+  const tmp = `${VAPID_TIEDOSTO}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ ...uudet, luotu: new Date().toISOString() }), { mode: 0o600 });
+  fs.renameSync(tmp, VAPID_TIEDOSTO);
+  return uudet;
 }

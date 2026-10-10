@@ -28,6 +28,7 @@ import {
 import type { Kohde } from './tyypit';
 import { VartijanToiminnot, type VartijanToiminto } from './VartijanToiminnot';
 import { OmatTyovuorot } from './tyovuorot/OmatTyovuorot';
+import { otaSyvalinkki } from './tyovuorot/syvalinkki';
 
 type Aloitustapa = Exclude<VuoronLaitteet, 'sovellus'>;
 
@@ -82,7 +83,7 @@ export const Vartijanakyma = ({ kohdeTiedot, kaikkiKohteet, sallitut, onToiminto
   const [kaynnissa, setKaynnissa] = useState(false);
   const [virhe, setVirhe] = useState<string | null>(null);
   // Työvuorotoiveet (erä 5) avautuvat tämän näkymän tilalle ja palaavat tänne.
-  const [toiveissa, setToiveissa] = useState(false);
+  const [toiveissa, setToiveissa] = useState(() => otaSyvalinkki('omat-tyovuorot'));
   const [paatetaanko, setPaatetaanko] = useState(false);
 
   const lataa = useCallback(async () => {

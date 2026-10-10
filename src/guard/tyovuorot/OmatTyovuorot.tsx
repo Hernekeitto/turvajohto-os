@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 import { BellRing, CalendarCheck, CalendarHeart, CalendarOff, Lock, Repeat, Users } from 'lucide-react';
 
 import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
+import { PushIlmoitukset } from './PushIlmoitukset';
 import {
   asetaOmaToive, haeOmat, haeVaihtoehdokkaat, kuittaaMuutokset, kuittaaVuoro, peruVaihto, pvm, pyydaVaihto, vastaaVaihtoon,
 } from './tyoaika';
@@ -50,6 +51,7 @@ export const OmatTyovuorot = ({ onTakaisin }: { onTakaisin: () => void }) => {
         viimeistään kaksi viikkoa ennen jakson alkua.
       </p>
 
+      <PushIlmoitukset />
       {virhe && <p className="mb-4 text-sm text-danger">{virhe}</p>}
       {ilmoitus && <p className="mb-4 text-sm text-accent-ink">{ilmoitus}</p>}
       {!tila && !virhe && <p className="text-sm text-ink-muted">Luetaan…</p>}

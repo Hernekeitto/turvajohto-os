@@ -22,7 +22,10 @@ import {
   setTotpRequired,
   forceLogout,
 } from './db.js';
-import { readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage, lueKorkeinTunniste, kirjaaKorkeinTunniste } from './store.js';
+import {
+  readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage, lueKorkeinTunniste, kirjaaKorkeinTunniste, vapidAvaimet,
+} from './store.js';
+import { kelpaakoTilaus, laheta as lahetaPush, luoVapidAvaimet } from './webpush.js';
 import { vahvistaTyontekijoidenNumerot, tunnuksenNumero } from './tunnistenumerot.js';
 import { isAllowedFile, saveUpload, getUploadPath, korvaaUpload, deleteUpload, collectGarbage } from './uploads.js';
 import {
@@ -666,7 +669,7 @@ function requireAdmin(req, res, next) {
 // vaan kierroksen säännöistä (kierros.js). Vajaata kierrosta ei voi merkitä valmiiksi ja
 // keskeytys vaatii syyn — jos selain saisi kirjoittaa kokoelman suoraan, molemmat
 // säännöt olisivat pelkkä kohteliaisuus jonka curl ohittaa.
-const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets', 'keyTypes', 'personalFiles', 'storageRequests', 'mikroLuettelo', 'tyoaikaAsetukset', 'tyovuorolistat', 'tyovuorotoiveet', 'poissaolot', 'vuoronvaihdot']);
+const PALVELIMEN_YLLAPITAMAT = new Set(['smsLog', 'smsReplies', 'patrolRuns', 'alerts', 'templateRuns', 'broadcasts', 'keys', 'equipmentIssues', 'debriefs', 'devices', 'deviceCodes', 'guardShifts', 'guardAssignments', 'guardDispatch', 'assets', 'keyTypes', 'personalFiles', 'storageRequests', 'mikroLuettelo', 'tyoaikaAsetukset', 'tyovuorolistat', 'tyovuorotoiveet', 'poissaolot', 'vuoronvaihdot', 'pushTilaukset']);
 
 // Raportin liiteviitteet: sekä vanha yksittäinen `attachment` ETTÄ erässä 1 lisätty
 // `attachments[]`. Molemmat on luettava koko siirtymäajan yli — jos rekisteri lukisi vain
@@ -8207,6 +8210,7 @@ app.put('/api/tyovuorot/lista/:alku/sijoitus', requireAuth, guardPortti, (req, r
   if (tulos.tietue !== ymp.tietue) {
     const muut = ymp.tietueet.filter((t) => t?.id !== ymp.lista.alku);
     writeCollection('tyovuorolistat', [...muut, tulos.tietue]);
+    ilmoitaMuutoksista(ymp.tietue, tulos.tietue, req.username);
     const uusi = tulos.tietue.sijoitukset.find((s) => s.vuoroId === vuoroId) || null;
     logAudit({
       user: req.username, action: 'tyovuorolista_sijoitus', collection: 'tyovuorolistat',
@@ -8276,6 +8280,7 @@ app.post('/api/tyovuorot/lista/:alku/ehdotus/hyvaksy', requireAuth, guardPortti,
   if (tehdyt.length) {
     const muut = ymp.tietueet.filter((t) => t?.id !== ymp.lista.alku);
     writeCollection('tyovuorolistat', [...muut, tietue]);
+    ilmoitaMuutoksista(ymp.tietue, tietue, req.username);
     logAudit({
       user: req.username, action: 'tyovuorolista_generaattori', collection: 'tyovuorolistat',
       recordId: ymp.lista.alku, sijoitettu: tehdyt.length, ohitettu: ohitetut.length,
@@ -8303,6 +8308,7 @@ app.post('/api/tyovuorot/lista/:alku/julkaise', requireAuth, guardPortti, (req, 
   if (!tulos.ok) return res.status(tulos.status).json({ ok: false, koodi: tulos.koodi, error: tulos.error, esteet: tulos.esteet });
   const muut = ymp.tietueet.filter((t) => t?.id !== ymp.lista.alku);
   writeCollection('tyovuorolistat', [...muut, tulos.tietue]);
+  ilmoitaJulkaisusta(tulos.tietue);
   logAudit({
     user: req.username, action: 'tyovuorolista_julkaistu', collection: 'tyovuorolistat', recordId: ymp.lista.alku,
     sijoituksia: tulos.tietue.sijoitukset.length, avoimia: tulos.tietue.julkaistu.avoimia, myohassa: tulos.tietue.julkaistu.myohassa,
@@ -8497,8 +8503,33 @@ app.post('/api/tyovuorot/vaihdot', requireAuth, guardPortti, (req, res) => {
   if (!tulos.ok) return res.status(400).json(tulos);
   writeCollection('vuoronvaihdot', [...vaihdot, tulos.vaihto]);
   logAudit({ user: req.username, action: 'vuoronvaihto_pyydetty', collection: 'vuoronvaihdot', recordId: tulos.vaihto.id, vuoroId, saaja });
+  ilmoitaVaihdosta(null, tulos.vaihto, req.username);
   res.json(omatNakyma(req));
 });
+
+// Vaihdon tilamuutoksen ilmoitukset. Hyväksytty vaihto ilmoitetaan muutoksena
+// (ilmoitaMuutoksista), joten sitä ei toisteta täällä.
+function ilmoitaVaihdosta(ennen, jalkeen, kuka) {
+  const vuoro = vuoroLyhyesti(jalkeen.vuoroId);
+  const viesti = (otsikko, teksti, url = OMAT_VUOROT_URL) => ({ otsikko, teksti, url, tag: `vaihto-${jalkeen.id}` });
+  if (!ennen) {
+    ilmoita([jalkeen.saaja], viesti('Vuoronvaihtopyyntö', `${nimiTunnukselle(jalkeen.antaja)} tarjoaa sinulle vuoroa: ${vuoro}.`));
+    return;
+  }
+  if (jalkeen.tila === 'odottaa_suunnittelijaa') {
+    ilmoita([jalkeen.antaja], viesti('Vaihto hyväksytty', `${nimiTunnukselle(jalkeen.saaja)} ottaa vuorosi ${vuoro}. Odottaa vuorosuunnittelijan vahvistusta.`));
+    ilmoita(suunnittelijat().filter((u) => u !== kuka), viesti(
+      'Vuoronvaihto odottaa vahvistusta',
+      `${nimiTunnukselle(jalkeen.antaja)} → ${nimiTunnukselle(jalkeen.saaja)}: ${vuoro}.`,
+      '/guard?nakyma=tyovuorot',
+    ));
+  } else if (jalkeen.tila === 'hylatty') {
+    const kohteet = kuka === jalkeen.saaja ? [jalkeen.antaja] : [jalkeen.antaja, jalkeen.saaja];
+    ilmoita(kohteet.filter((u) => u !== kuka), viesti('Vuoronvaihto ei toteutunut', `Vaihto hylättiin: ${vuoro}. Vuoro pysyy ennallaan.`));
+  } else if (jalkeen.tila === 'peruttu') {
+    ilmoita([jalkeen.saaja].filter((u) => u !== kuka), viesti('Vaihtopyyntö peruttu', `${nimiTunnukselle(jalkeen.antaja)} perui pyynnön: ${vuoro}.`));
+  }
+}
 
 // Yhden vaihdon tilamuutos. `muuta` saa vaihdon ja palauttaa tilakoneen tuloksen.
 // `luetut` on vahvistuksessa ennen sijoitusta luettu tila: sijoituksen jälkeen vuoro ei
@@ -8514,6 +8545,7 @@ function paivitaVaihto(req, res, toiminto, muuta, vastaus, luetut = null) {
     user: req.username, action: toiminto, collection: 'vuoronvaihdot', recordId: vaihto.id,
     vuoroId: vaihto.vuoroId, tila: tulos.vaihto.tila,
   });
+  ilmoitaVaihdosta(vaihto, tulos.vaihto, req.username);
   return res.json(vastaus());
 }
 
@@ -8555,6 +8587,7 @@ app.post('/api/tyovuorot/vaihdot/:id/ratkaise', requireAuth, guardPortti, (req, 
     const muut = ymp.tietueet.filter((t) => t?.id !== ymp.lista.alku);
     writeCollection('tyovuorolistat', [...muut, tulos.tietue]);
     uusiYmp = { ...ymp, tietue: tulos.tietue };
+    ilmoitaMuutoksista(ymp.tietue, tulos.tietue, req.username);
   }
   return paivitaVaihto(req, res, hyvaksy ? 'vuoronvaihto_vahvistettu' : 'vuoronvaihto_hylatty',
     (v) => ratkaiseVaihto({ vaihto: v, kuka: req.username, hyvaksy, perustelu: req.body?.perustelu }),
@@ -8603,6 +8636,152 @@ app.post('/api/tyovuorot/omat/kuittaa', requireAuth, guardPortti, (req, res) => 
     recordId: ymp.lista.alku, vuoroId,
   });
   res.json(omatNakyma(req));
+});
+
+// ====================== PUSH-ILMOITUKSET (10.10.2026) ======================
+//
+// Web Push (webpush.js) työvuoromuutoksista. Natiivisovelluksen kanava on auki vain vuoron
+// aikana (VuoroService), mutta vuorolistan muutos koskee juuri sitä aikaa kun vartija EI
+// ole töissä — siksi ilmoitus tulee push-palvelun kautta, joka herättää puhelimen myös
+// silloin kun sovellus on kiinni.
+//
+// MITÄ VIESTISSÄ ON: se mitä lukitusruudulla saa näkyä. Oma vuoro (päivä, kellonaika,
+// kohde) ja syy kertovat vartijalle mitä tapahtui; muiden ihmisten vuoroja, poissaoloja
+// tai TES-havaintoja ei lähetetä. Viesti on salattu push-palvelulta (RFC 8291).
+//
+// Ilmoitus on lisäpalvelu: lähetys tehdään vastauksen jälkeen eikä sen epäonnistuminen
+// koskaan peru muutosta. Muutos näkyy joka tapauksessa "Omat työvuorot" -näkymässä.
+
+const VAPID = { ...vapidAvaimet(luoVapidAvaimet), subject: process.env.VAPID_SUBJECT || 'https://turvajohto-os.fi' };
+const TILAUKSIA_TUNNUKSELLA = 10;
+
+function ilmoita(kenelle, viesti) {
+  const kohteet = new Set((kenelle || []).filter(Boolean));
+  if (!kohteet.size) return;
+  const tilaukset = (readCollection('pushTilaukset') || []).filter((t) => kohteet.has(t.username));
+  if (!tilaukset.length) return;
+  Promise.all(tilaukset.map((t) => lahetaPush(t, viesti, VAPID)))
+    .then((tulokset) => {
+      const vanhat = new Set(tilaukset.filter((_, i) => tulokset[i].vanhentunut).map((t) => t.endpoint));
+      if (vanhat.size) {
+        writeCollection('pushTilaukset', (readCollection('pushTilaukset') || []).filter((t) => !vanhat.has(t.endpoint)));
+      }
+    })
+    .catch(() => { /* ilmoitus on lisäpalvelu */ });
+}
+
+// "ti 27.10. 06:00–14:00, Kauppakeskus"
+function vuoroLyhyesti(vuoroId) {
+  const v = vuorotiedot([vuoroId]).get(vuoroId);
+  const pvm = String(vuoroId).split(':')[2] || '';
+  const [, k, p] = pvm.split('-');
+  const vp = ['su', 'ma', 'ti', 'ke', 'to', 'pe', 'la'][new Date(`${pvm}T00:00:00Z`).getUTCDay()] || '';
+  const aika = v ? ` ${v.alkaa.slice(11)}–${v.paattyy.slice(11)}` : '';
+  return `${vp} ${Number(p)}.${Number(k)}.${aika}${v?.siteNimi ? `, ${v.siteNimi}` : ''}`;
+}
+
+const OMAT_VUOROT_URL = '/guard?nakyma=omat-tyovuorot';
+
+/**
+ * Julkaistun listan uusista muutoksista ilmoitus kummallekin osapuolelle (vuoron saaja ja
+ * menettäjä). Muutoksen tekijälle ei ilmoiteta — hän tietää jo. Monta muutosta samalle
+ * ihmiselle kerralla (esim. generaattori) kootaan yhdeksi viestiksi.
+ */
+function ilmoitaMuutoksista(vanha, uusi, tekija) {
+  const ennen = (vanha?.muutokset || []).length;
+  const uudet = (uusi?.muutokset || []).slice(ennen);
+  if (!uudet.length) return;
+  const perHenkilo = new Map();
+  const lisaa = (u, rivi) => { if (u && u !== tekija) perHenkilo.set(u, [...(perHenkilo.get(u) || []), rivi]); };
+  for (const m of uudet) {
+    lisaa(m.nyt, { tyyppi: 'sait', m });
+    lisaa(m.oli, { tyyppi: 'poistettiin', m });
+  }
+  for (const [u, rivit] of perHenkilo) {
+    if (rivit.length === 1) {
+      const { tyyppi, m } = rivit[0];
+      ilmoita([u], {
+        otsikko: tyyppi === 'sait' ? (m.halytystyo ? 'Uusi vuoro lyhyellä varoitusajalla' : 'Uusi työvuoro') : 'Työvuoro poistettu',
+        teksti: `${vuoroLyhyesti(m.vuoroId)}. Syy: ${m.syy}`,
+        url: OMAT_VUOROT_URL,
+        tag: `muutos-${m.vuoroId}`,
+      });
+    } else {
+      const sait = rivit.filter((r) => r.tyyppi === 'sait').length;
+      const pois = rivit.length - sait;
+      ilmoita([u], {
+        otsikko: 'Työvuoroihisi tuli muutoksia',
+        teksti: [sait && `${sait} uutta vuoroa`, pois && `${pois} vuoroa poistettu`].filter(Boolean).join(', ') + '. Avaa omat työvuorot.',
+        url: OMAT_VUOROT_URL,
+        tag: `muutokset-${uusi.id}`,
+      });
+    }
+  }
+}
+
+function ilmoitaJulkaisusta(tietue) {
+  const maarat = new Map();
+  for (const s of tietue.sijoitukset || []) maarat.set(s.username, (maarat.get(s.username) || 0) + 1);
+  const [, ak, ap] = tietue.alku.split('-');
+  const viimeinen = lisaaPaivia(tietue.loppu, -1);
+  const [, lk, lp] = viimeinen.split('-');
+  for (const [u, n] of maarat) {
+    ilmoita([u], {
+      otsikko: 'Työvuorolista julkaistu',
+      teksti: `${Number(ap)}.${Number(ak)}.–${Number(lp)}.${Number(lk)}.: sinulla ${n} ${n === 1 ? 'vuoro' : 'vuoroa'}.`,
+      url: OMAT_VUOROT_URL,
+      tag: `julkaisu-${tietue.id}`,
+    });
+  }
+}
+
+// Suunnittelijat joille vahvistettava vaihto ilmoitetaan. Pääkäyttäjä ei: '*'-oikeus
+// täyttäisi ehdon, vaikka pääkäyttäjä ei tee listoja (sama rajaus kuin suunniteltavissa).
+const suunnittelijat = () => listUsers()
+  .filter((u) => u.role !== 'admin' && (u.tuotteet || []).includes('guard')
+    && canEdit(rolePermissions(u.roleId), null, 'guard_planning'))
+  .map((u) => u.username);
+
+const nimiTunnukselle = (u) => suunniteltavatHenkilot().find((h) => h.username === u)?.nimi || u;
+
+app.get('/api/push/avain', requireAuth, (req, res) => {
+  res.json({ ok: true, publicKey: VAPID.publicKey });
+});
+
+app.post('/api/push/tilaus', requireAuth, (req, res) => {
+  const t = { endpoint: req.body?.endpoint, keys: { p256dh: req.body?.keys?.p256dh, auth: req.body?.keys?.auth } };
+  if (!kelpaakoTilaus(t)) return res.status(400).json({ ok: false, error: 'Tilaus ei kelpaa.' });
+  // Sama päätepiste on sama laite: uusi tilaus korvaa vanhan, myös toisen tunnuksen
+  // (jaettu puhelin) — viestit menevät sille joka laitteella viimeksi tilasi.
+  const muut = (readCollection('pushTilaukset') || []).filter((x) => x.endpoint !== t.endpoint);
+  const omat = muut.filter((x) => x.username === req.username)
+    .sort((a, b) => String(a.luotu).localeCompare(String(b.luotu)));
+  // Vanhin pois kun raja täyttyy: hylätyt selaimet eivät saa kerätä tilauksia loputtomiin.
+  const pudotettavat = new Set(omat.slice(0, Math.max(0, omat.length - TILAUKSIA_TUNNUKSELLA + 1)).map((x) => x.endpoint));
+  writeCollection('pushTilaukset', [
+    ...muut.filter((x) => !pudotettavat.has(x.endpoint)),
+    { ...t, username: req.username, luotu: new Date().toISOString() },
+  ]);
+  res.json({ ok: true });
+});
+
+app.delete('/api/push/tilaus', requireAuth, (req, res) => {
+  const endpoint = String(req.body?.endpoint || '');
+  writeCollection('pushTilaukset', (readCollection('pushTilaukset') || [])
+    .filter((x) => !(x.endpoint === endpoint && x.username === req.username)));
+  res.json({ ok: true });
+});
+
+// Testi-ilmoitus omille laitteille, jotta käyttäjä näkee heti toimiiko ilmoitus.
+app.post('/api/push/testi', requireAuth, async (req, res) => {
+  const tilaukset = (readCollection('pushTilaukset') || []).filter((t) => t.username === req.username);
+  if (!tilaukset.length) return res.status(404).json({ ok: false, error: 'Tällä tunnuksella ei ole tilattuja laitteita.' });
+  const tulokset = await Promise.all(tilaukset.map((t) => lahetaPush(t, {
+    otsikko: 'Ilmoitukset toimivat', teksti: 'Saat ilmoituksen kun työvuoroihisi tulee muutoksia.', url: OMAT_VUOROT_URL, tag: 'testi',
+  }, VAPID)));
+  const vanhat = new Set(tilaukset.filter((_, i) => tulokset[i].vanhentunut).map((t) => t.endpoint));
+  if (vanhat.size) writeCollection('pushTilaukset', (readCollection('pushTilaukset') || []).filter((t) => !vanhat.has(t.endpoint)));
+  res.json({ ok: tulokset.some((t) => t.ok), laitteita: tilaukset.length, onnistui: tulokset.filter((t) => t.ok).length });
 });
 
 // ====================== HÄTÄTEKSTIVIESTIT (BulkSMS) ======================

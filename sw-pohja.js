@@ -145,3 +145,39 @@ self.addEventListener('fetch', (tapahtuma) => {
     })
   );
 });
+
+// --- Push-ilmoitukset (10.10.2026) ------------------------------------------------
+//
+// Palvelin lähettää salatun viestin (server/webpush.js) kun työvuoroihin tulee muutos.
+// Viesti on JSON: { otsikko, teksti, url, tag }. `tag` korvaa saman asian aiemman
+// ilmoituksen, jottei samasta vuorosta kerry pinoa.
+//
+// Viestissä on vain se mitä lukitusruudulla saa näkyä (oma vuoro ja syy). Kaikki muu
+// haetaan sovelluksessa normaalin oikeustarkistuksen läpi, kun ilmoitusta painetaan.
+self.addEventListener('push', (tapahtuma) => {
+  let viesti = {};
+  try { viesti = tapahtuma.data ? tapahtuma.data.json() : {}; } catch { viesti = {}; }
+  tapahtuma.waitUntil(self.registration.showNotification(viesti.otsikko || 'Turvajohto GUARD', {
+    body: viesti.teksti || '',
+    tag: viesti.tag || undefined,
+    icon: '/kuvakkeet/guard-192.png',
+    badge: '/kuvakkeet/guard-32.png',
+    data: { url: viesti.url || '/guard' },
+  }));
+});
+
+// Ilmoituksen painallus avaa sovelluksen oikeaan näkymään. Jos sovellus on jo auki,
+// käytetään sitä eikä avata toista ikkunaa.
+self.addEventListener('notificationclick', (tapahtuma) => {
+  tapahtuma.notification.close();
+  const url = new URL(tapahtuma.notification.data?.url || '/guard', self.location.origin).href;
+  tapahtuma.waitUntil((async () => {
+    const ikkunat = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const auki = ikkunat.find((i) => new URL(i.url).pathname.startsWith('/guard'));
+    if (auki) {
+      await auki.navigate(url).catch(() => null);
+      return auki.focus();
+    }
+    return self.clients.openWindow(url);
+  })());
+});

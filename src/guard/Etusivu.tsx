@@ -11,7 +11,7 @@
 
 import type { ReactNode } from 'react';
 import {
-  ArrowRight, Boxes, Building2, CalendarDays, ClipboardList, History, Siren, Settings, Timer, Route,
+  ArrowRight, Boxes, Building2, CalendarDays, CalendarHeart, ClipboardList, History, Siren, Settings, Timer, Route,
   TriangleAlert, Users,
 } from 'lucide-react';
 
@@ -37,6 +37,8 @@ type Props = {
   // Työvuorosuunnittelu (erä 1). Riviksi kuten tehtävien jako: suunnittelua, ei
   // tilannetta joka vaatii huomiota juuri nyt.
   saaNahdaSuunnittelun: boolean;
+  // Omat työvuorot (10.10.2026): esimies tai suunnittelija joka tekee myös vuoroja.
+  saaNahdaOmatVuorot: boolean;
   kohteita: number;
   lauenneita: number;
   ajastimia: number;
@@ -51,16 +53,17 @@ type Props = {
   onTyontekijat: () => void;
   onSijaintihistoria: () => void;
   onSuunnittelu: () => void;
+  onOmatVuorot: () => void;
   onAsetukset: () => void;
 };
 
 export const Etusivu = ({
   saaNahdaKohteet, saaNahdaHalytyskeskus, saaNahdaAsetukset, saaJakaaTehtavia, saaNahdaKalusto,
-  saaNahdaTyontekijat, saaNahdaSijaintihistorian, saaNahdaSuunnittelun,
+  saaNahdaTyontekijat, saaNahdaSijaintihistorian, saaNahdaSuunnittelun, saaNahdaOmatVuorot,
   kohteita, lauenneita, ajastimia, kierroksiaKesken,
   kalustoa, kalustopyyntoja, kadonnuttaKalustoa,
   onKohteet, onKalusto, onHalytyskeskus, onTehtavanjako, onTyontekijat, onSijaintihistoria,
-  onSuunnittelu, onAsetukset,
+  onSuunnittelu, onOmatVuorot, onAsetukset,
 }: Props) => (
   <div>
     <div className="mb-8">
@@ -205,6 +208,17 @@ export const Etusivu = ({
       >
         <CalendarDays size={16} />
         Työvuorosuunnittelu
+      </button>
+    )}
+
+    {saaNahdaOmatVuorot && (
+      <button
+        type="button"
+        onClick={onOmatVuorot}
+        className="mt-6 mr-6 inline-flex items-center gap-2 text-sm font-medium text-ink-body hover:text-accent transition-colors"
+      >
+        <CalendarHeart size={16} />
+        Omat työvuorot
       </button>
     )}
 
