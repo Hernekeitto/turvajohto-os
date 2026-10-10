@@ -66,6 +66,20 @@ export type Vuorotyyppi = {
   // Lippu on VUOROTYYPILLÄ eikä tunnuksella, koska sama ihminen ajaa piiriä maanantaina
   // ja seisoo kohteessa tiistaina. Se kopioidaan vuoron tietueeseen vuoron alkaessa.
   piiri?: boolean;
+  // Työvuorosuunnittelu (erä 2): minä päivinä ja kuinka monella vartijalla tätä vuoroa
+  // tehdään. Puuttuva = vuoroa ei suunnitella listaan (esim. kellonajaton lisävuoro).
+  // Säännöt ja tarkistus: server/tyovuorolista.js (tarkistaMiehitys).
+  suunnittelu?: Miehitys;
+};
+
+export type Miehitys = {
+  // Vartijamäärä viikonpäivittäin, ma–su. 0 = ei vuoroa sinä päivänä.
+  maarat: number[];
+  // Voimassaolo 'YYYY-MM-DD'. Puuttuva alkaen = ei alarajaa, puuttuva asti = toistaiseksi.
+  alkaen?: string;
+  asti?: string;
+  // Pakollinen kun vuoro poikkeaa TES 10 §:stä (pituus tai klo 00–06).
+  tesPerustelu?: string;
 };
 
 // Kohteelle määritelty tehtävä työvuoroon. Kaksi muotoa:

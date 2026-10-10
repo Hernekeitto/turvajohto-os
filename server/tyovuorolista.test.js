@@ -13,6 +13,7 @@ import {
   OLETUKSET, SAANNOLLINEN_H, JAKSON_ENIMMAIS_H,
   jaksoPaivalle, listat, normalisoiAsetukset, onMaanantai, paivaksi, tamaPaiva, tarkistaAsetukset,
   tesPoikkeamat,
+  onMiehitys, suunnitellutVuorot, tarkistaMiehitys, vuoronKestoMin, vuoronTesPoikkeamat,
 } from './tyovuorolista.js';
 
 // 5.10.2026 on maanantai.
@@ -232,4 +233,125 @@ test('listat: kuuden viikon lista ennen ankkuria', () => {
   assert.equal(l[0].jaksot[0].numero, -2);
   assert.equal(l[0].jaksot[1].numero, -1);
   assert.equal(l[0].viimeinen, '2026-10-04');
+});
+
+// --- Erä 2: kohteen miehitys ---
+
+const ARKI = [1, 1, 1, 1, 1, 0, 0];
+const vt = (yli = {}) => ({
+  id: 'v1', nimi: 'Aamu', alkaa: '06:00', paattyy: '14:00',
+  suunnittelu: { maarat: ARKI }, ...yli,
+});
+
+test('kesto: tavallinen, puolenyön yli ja vuorokausi', () => {
+  assert.equal(vuoronKestoMin('06:00', '14:00'), 480);
+  assert.equal(vuoronKestoMin('18:00', '06:00'), 720);
+  assert.equal(vuoronKestoMin('07:00', '07:00'), 1440);
+  assert.equal(vuoronKestoMin('', '14:00'), null);
+});
+
+test('TES-poikkeamat: 06–14 ja 16–24 ovat sallittuja', () => {
+  assert.deepEqual(vuoronTesPoikkeamat(vt(), OLETUKSET), []);
+  assert.deepEqual(vuoronTesPoikkeamat(vt({ alkaa: '16:00', paattyy: '00:00' }), OLETUKSET), []);
+});
+
+test('TES-poikkeamat: yöllä päättyvä, lyhyt ja poikkeavan pitkä', () => {
+  assert.deepEqual(vuoronTesPoikkeamat(vt({ alkaa: '22:00', paattyy: '02:00' }), OLETUKSET), ['lyhyt', 'yo']);
+  assert.deepEqual(vuoronTesPoikkeamat(vt({ alkaa: '06:00', paattyy: '20:00' }), OLETUKSET), ['pitka']);
+  assert.deepEqual(vuoronTesPoikkeamat(vt({ alkaa: '18:00', paattyy: '06:00' }), OLETUKSET), []);
+});
+
+test('TES-poikkeamat: yörajoitus pois päältä', () => {
+  const a = { ...OLETUKSET, yorajoitus: false };
+  assert.deepEqual(vuoronTesPoikkeamat(vt({ alkaa: '02:00', paattyy: '10:00' }), a), []);
+});
+
+test('miehitys: tyhjä tai nollat ei ole miehitystä', () => {
+  assert.equal(onMiehitys({}), false);
+  assert.equal(onMiehitys({ suunnittelu: { maarat: [0, 0, 0, 0, 0, 0, 0] } }), false);
+  assert.equal(onMiehitys(vt()), true);
+});
+
+test('miehityksen tarkistus: vanha vuorotyyppi ilman suunnittelua kelpaa', () => {
+  assert.deepEqual(tarkistaMiehitys({ id: 'x', nimi: 'Lisä' }, OLETUKSET), []);
+});
+
+test('miehityksen tarkistus: kelvollinen', () => {
+  assert.deepEqual(tarkistaMiehitys(vt(), OLETUKSET), []);
+});
+
+test('miehityksen tarkistus: määrät', () => {
+  assert.equal(tarkistaMiehitys(vt({ suunnittelu: { maarat: [1, 1] } }), OLETUKSET).length, 1);
+  assert.equal(tarkistaMiehitys(vt({ suunnittelu: { maarat: [1, 1, 1, 1, 1, 1, -1] } }), OLETUKSET).length, 1);
+  assert.equal(tarkistaMiehitys(vt({ suunnittelu: { maarat: [1, 1, 1, 1, 1, 1, 1.5] } }), OLETUKSET).length, 1);
+});
+
+test('miehityksen tarkistus: miehitetty vuoro tarvitsee kellonajat', () => {
+  const v = tarkistaMiehitys(vt({ alkaa: undefined, paattyy: undefined }), OLETUKSET);
+  assert.match(v[0], /alkamis- ja päättymisaika/);
+});
+
+test('miehityksen tarkistus: yli 16 h on virhe perustelusta huolimatta', () => {
+  const v = tarkistaMiehitys(vt({
+    alkaa: '06:00', paattyy: '23:00', suunnittelu: { maarat: ARKI, tesPerustelu: 'Sovittu' },
+  }), OLETUKSET);
+  assert.equal(v.length, 1);
+  assert.match(v[0], /16 h/);
+});
+
+test('miehityksen tarkistus: poikkeava vuoro vaatii perustelun', () => {
+  const ilman = tarkistaMiehitys(vt({ alkaa: '06:00', paattyy: '20:00' }), OLETUKSET);
+  assert.equal(ilman.length, 1);
+  assert.match(ilman[0], /perustelun/);
+  const kanssa = tarkistaMiehitys(vt({
+    alkaa: '06:00', paattyy: '20:00',
+    suunnittelu: { maarat: ARKI, tesPerustelu: 'Pääluottamusmiehen kanssa 1.10.2026' },
+  }), OLETUKSET);
+  assert.deepEqual(kanssa, []);
+});
+
+test('miehityksen tarkistus: päivämäärät', () => {
+  assert.equal(tarkistaMiehitys(vt({ suunnittelu: { maarat: ARKI, alkaen: '2026-13-01' } }), OLETUKSET).length, 1);
+  const vaarinPain = tarkistaMiehitys(vt({ suunnittelu: { maarat: ARKI, alkaen: '2026-11-01', asti: '2026-10-01' } }), OLETUKSET);
+  assert.match(vaarinPain[0], /ennen alkupäivää/);
+});
+
+test('suunnitellut vuorot: arkipäivät ja vartijamäärä', () => {
+  const kohde = { id: 'k1', name: 'Kauppakeskus', vuorotyypit: [vt({ suunnittelu: { maarat: [2, 0, 0, 0, 0, 0, 1] } })] };
+  // Viikko ma 5.10. – su 11.10.
+  const r = suunnitellutVuorot([kohde], MAANANTAI, '2026-10-12');
+  assert.deepEqual(r.map((x) => `${x.pvm}#${x.paikka}`), ['2026-10-05#1', '2026-10-05#2', '2026-10-11#1']);
+  assert.equal(r[0].alkaa, '2026-10-05T06:00');
+  assert.equal(r[0].paattyy, '2026-10-05T14:00');
+  assert.equal(r[0].kestoMin, 480);
+  assert.equal(r[0].siteNimi, 'Kauppakeskus');
+});
+
+test('suunnitellut vuorot: yövuoro kuuluu alkamispäivälle ja päättyy seuraavana', () => {
+  const kohde = { id: 'k1', vuorotyypit: [vt({ alkaa: '18:00', paattyy: '06:00', suunnittelu: { maarat: [0, 0, 0, 0, 0, 0, 1] } })] };
+  const r = suunnitellutVuorot([kohde], MAANANTAI, '2026-10-12');
+  assert.equal(r.length, 1);
+  assert.equal(r[0].pvm, '2026-10-11');
+  assert.equal(r[0].paattyy, '2026-10-12T06:00');
+});
+
+test('suunnitellut vuorot: voimassaolo rajaa päivät', () => {
+  const kohde = { id: 'k1', vuorotyypit: [vt({ suunnittelu: { maarat: [1, 1, 1, 1, 1, 1, 1], alkaen: '2026-10-07', asti: '2026-10-08' } })] };
+  assert.deepEqual(suunnitellutVuorot([kohde], MAANANTAI, '2026-10-12').map((x) => x.pvm), ['2026-10-07', '2026-10-08']);
+});
+
+test('suunnitellut vuorot: arkistoitu kohde ja vuoro sekä miehittämätön jäävät pois', () => {
+  const kohteet = [
+    { id: 'a', archived: true, vuorotyypit: [vt()] },
+    { id: 'b', vuorotyypit: [vt({ arkistoitu: true }), { id: 'lisa', nimi: 'Lisä' }, vt({ alkaa: undefined })] },
+  ];
+  assert.deepEqual(suunnitellutVuorot(kohteet, MAANANTAI, '2026-10-12'), []);
+});
+
+test('suunnitellut vuorot: järjestys alkamisajan mukaan kohteiden yli', () => {
+  const kohteet = [
+    { id: 'k1', vuorotyypit: [vt({ id: 'ilta', alkaa: '14:00', paattyy: '22:00', suunnittelu: { maarat: [1, 0, 0, 0, 0, 0, 0] } })] },
+    { id: 'k2', vuorotyypit: [vt({ suunnittelu: { maarat: [1, 0, 0, 0, 0, 0, 0] } })] },
+  ];
+  assert.deepEqual(suunnitellutVuorot(kohteet, MAANANTAI, '2026-10-12').map((x) => x.siteId), ['k2', 'k1']);
 });

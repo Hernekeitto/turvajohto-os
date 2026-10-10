@@ -317,3 +317,200 @@ export function listat(asetukset, alkaen, lukumaara = 4) {
   }
   return tulos;
 }
+
+// --- Kohteen miehitys (erä 2) -------------------------------------------------------
+//
+// Ylläpito kertoo kohteen vuorotyypille, minä viikonpäivinä ja kuinka monella
+// vartijalla sitä tehdään (käyttäjän päätös 10.10.2026: "mihin aikaan vartijoille
+// suunnitellaan vuoroja kohteelle"). Tästä syntyvät listan avoimet vuorot.
+//
+// Miehitys on VUOROTYYPIN kenttä eikä erillinen tietue: vuorotyyppi kertoo jo kellonajat,
+// ja suunniteltu vuoro on täsmälleen se vuoro johon vartija myöhemmin kirjautuu. Silloin
+// perehdytys tarkistetaan samalla id:llä suunnittelussa ja aloituksessa.
+//
+//   suunnittelu: {
+//     maarat: [ma, ti, ke, to, pe, la, su]   vartijoita kunakin viikonpäivänä, 0 = ei vuoroa
+//     alkaen: 'YYYY-MM-DD' | puuttuu        ensimmäinen päivä; puuttuva = ei alarajaa
+//     asti:   'YYYY-MM-DD' | puuttuu        viimeinen päivä; puuttuva = toistaiseksi
+//     tesPerustelu: string                  pakollinen jos vuoro poikkeaa TES 10 §:stä
+//   }
+//
+// Muutos ajassa ("1.11. alkaen kaksi vartijaa") tehdään uutena vuorotyyppinä, jolle
+// annetaan alkupäivä, ja vanhalle loppupäivä. Yksi jakso per vuorotyyppi pitää mallin
+// yksinkertaisena ja vastaa sitä miten muutos oikeasti tapahtuu: uusi sopimus, uusi vuoro.
+
+export const VIIKONPAIVAT = ['ma', 'ti', 'ke', 'to', 'pe', 'la', 'su'];
+const MAX_VARTIJOITA = 20;
+const PERUSTELUN_MAX = 500;
+const YORAJA_MIN = 6 * 60;
+const VRK_MIN = 24 * 60;
+
+function kellonaika(hhmm) {
+  const osuma = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm ?? '').trim());
+  if (!osuma) return null;
+  const t = Number(osuma[1]);
+  const m = Number(osuma[2]);
+  return t > 23 || m > 59 ? null : t * 60 + m;
+}
+
+const kaksi = (n) => String(n).padStart(2, '0');
+
+/**
+ * Vuoron kesto minuutteina. Puolenyön ylittävä vuoro (22–06) on 8 h, ja sama alku ja loppu
+ * on vuorokauden mittainen vuoro — sama tulkinta kuin vuorot.js:ssä.
+ */
+export function vuoronKestoMin(alkaa, paattyy) {
+  const a = kellonaika(alkaa);
+  const p = kellonaika(paattyy);
+  if (a === null || p === null) return null;
+  return p > a ? p - a : p + VRK_MIN - a;
+}
+
+// TES 10 §: "Työvuoro ei saa alkaa eikä päättyä kello 24.00–06.00 välisenä aikana."
+//
+// TULKINTA (10.10.2026, vahvistettava): rajat itse ovat sallittuja eli vuoro voi päättyä
+// klo 24.00 ja alkaa klo 06.00. Muuten tavallinen iltavuoro 16–24 ja aamuvuoro 06–14
+// olisivat kumpikin poikkeamia, eikä se voi olla määräyksen tarkoitus.
+function yoaikana(min) {
+  return min > 0 && min < YORAJA_MIN;
+}
+
+/**
+ * Mitkä TES 10 §:n säännöt vuorotyyppi rikkoo. Palauttaa koodit:
+ *   'lyhyt'  alle vähimmäispituuden
+ *   'pitka'  yli tavallisen enimmäispituuden (poikkeava vuoro)
+ *   'yo'     alkaa tai päättyy klo 00–06
+ *
+ * Yli poikkeavan vuoron enimmäispituuden menevä vuoro ei ole poikkeama vaan virhe, eikä se
+ * siksi ole tässä listassa (ks. tarkistaMiehitys).
+ */
+export function vuoronTesPoikkeamat(vuorotyyppi, asetukset) {
+  const kesto = vuoronKestoMin(vuorotyyppi?.alkaa, vuorotyyppi?.paattyy);
+  if (kesto === null) return [];
+  const tulos = [];
+  if (kesto < asetukset.vuoronMinH * 60) tulos.push('lyhyt');
+  if (kesto > asetukset.vuoronMaxH * 60 && kesto <= asetukset.poikkeavanMaxH * 60) tulos.push('pitka');
+  if (asetukset.yorajoitus
+    && (yoaikana(kellonaika(vuorotyyppi.alkaa)) || yoaikana(kellonaika(vuorotyyppi.paattyy)))) {
+    tulos.push('yo');
+  }
+  return tulos;
+}
+
+export const POIKKEAMAN_TEKSTI = {
+  lyhyt: 'vuoro on lyhyempi kuin TES:n vähimmäispituus',
+  pitka: 'vuoro on pidempi kuin TES:n tavallinen enimmäispituus (poikkeava työvuoro)',
+  yo: 'vuoro alkaa tai päättyy klo 00–06',
+};
+
+/** Onko vuorotyypillä miehitystä eli tuottaako se yhtään suunniteltavaa vuoroa. */
+export function onMiehitys(vuorotyyppi) {
+  const m = vuorotyyppi?.suunnittelu?.maarat;
+  return Array.isArray(m) && m.some((n) => Number(n) > 0);
+}
+
+/**
+ * Vuorotyypin miehityksen tarkistus tallennuksessa. Palauttaa virheet tekstinä.
+ *
+ * TES:stä poikkeava vuoro (liian lyhyt, poikkeavan pitkä tai yöllä alkava/päättyvä) EI
+ * ole virhe, koska TES sallii ne perustellusta syystä ja paikallisesti sopien. Pysyvä
+ * poikkeus vaatii kuitenkin kirjatun perustelun — sama periaate kuin työaikasäännöissä.
+ *
+ * Vain miehitetty vuorotyyppi tarkistetaan: kellonajaton lisävuoro ja vanhat vuorotyypit
+ * ilman suunnittelua ovat edelleen sallittuja, koska niitä ei suunnitella listaan.
+ */
+export function tarkistaMiehitys(vuorotyyppi, asetukset) {
+  const s = vuorotyyppi?.suunnittelu;
+  if (s === undefined || s === null) return [];
+  const nimi = vuorotyyppi?.nimi || 'Nimetön vuoro';
+  const virheet = [];
+
+  if (!Array.isArray(s.maarat) || s.maarat.length !== 7
+    || !s.maarat.every((n) => Number.isInteger(n) && n >= 0 && n <= MAX_VARTIJOITA)) {
+    return [`${nimi}: vartijamäärät on annettava jokaiselle viikonpäivälle (0–${MAX_VARTIJOITA}).`];
+  }
+  const alkaenOk = !s.alkaen || paivaksi(s.alkaen) !== null;
+  const astiOk = !s.asti || paivaksi(s.asti) !== null;
+  if (!alkaenOk) virheet.push(`${nimi}: alkupäivä ei kelpaa.`);
+  if (!astiOk) virheet.push(`${nimi}: loppupäivä ei kelpaa.`);
+  if (s.alkaen && s.asti && alkaenOk && astiOk && s.asti < s.alkaen) {
+    virheet.push(`${nimi}: loppupäivä on ennen alkupäivää.`);
+  }
+  if (typeof s.tesPerustelu === 'string' && s.tesPerustelu.length > PERUSTELUN_MAX) {
+    virheet.push(`${nimi}: perustelu on liian pitkä (enintään ${PERUSTELUN_MAX} merkkiä).`);
+  }
+  if (!onMiehitys(vuorotyyppi)) return virheet;
+
+  const kesto = vuoronKestoMin(vuorotyyppi.alkaa, vuorotyyppi.paattyy);
+  if (kesto === null) {
+    virheet.push(`${nimi}: suunniteltavalla vuorolla on oltava alkamis- ja päättymisaika.`);
+    return virheet;
+  }
+  if (kesto > asetukset.poikkeavanMaxH * 60) {
+    virheet.push(`${nimi}: vuoro on pidempi kuin poikkeavan työvuoron enimmäispituus `
+      + `${asetukset.poikkeavanMaxH} h (TES 10 §).`);
+  }
+  const poikkeamat = vuoronTesPoikkeamat(vuorotyyppi, asetukset);
+  if (poikkeamat.length && String(s.tesPerustelu || '').trim().length < 3) {
+    virheet.push(`${nimi}: ${poikkeamat.map((p) => POIKKEAMAN_TEKSTI[p]).join(' ja ')}. `
+      + 'Pysyvä poikkeus vaatii perustelun (TES 10 § ja 51 §).');
+  }
+  return virheet;
+}
+
+/**
+ * Kohteiden suunnitellut vuorot aikavälillä [alku, loppu). Jokainen vartijapaikka on oma
+ * rivinsä: kahden vartijan yövuoro on kaksi riviä, koska listalle sijoitetaan ihmisiä
+ * eikä vuoroja.
+ *
+ * Vuoro kuuluu sille päivälle jona se ALKAA. Perjantain yövuoro 22–06 on perjantain vuoro,
+ * vaikka se päättyy lauantaina — muuten vuoro katoaisi listan rajalta tai näkyisi kahdesti.
+ *
+ * Rivin `alkaa` ja `paattyy` ovat paikallisia aikoja ilman aikavyöhykettä
+ * ('2026-10-05T22:00'). Lepoaikojen laskenta (erä 3) tehdään niillä minuutteina, ja
+ * kesäajan vaihtumisyön tunnin ero hyväksytään tietoisesti: se on kerran vuodessa ja
+ * tunnin suuntaan, eikä se muuta yhtään vuoroa sallitusta kielletyksi kuin rajalla.
+ */
+export function suunnitellutVuorot(kohteet, alku, loppu) {
+  const a = paivaksi(alku);
+  const l = paivaksi(loppu);
+  if (a === null || l === null || l <= a) return [];
+  const tulos = [];
+  for (const kohde of kohteet || []) {
+    if (!kohde || kohde.archived) continue;
+    for (const v of kohde.vuorotyypit || []) {
+      if (!v || v.arkistoitu || !onMiehitys(v)) continue;
+      const kesto = vuoronKestoMin(v.alkaa, v.paattyy);
+      if (kesto === null) continue;
+      const s = v.suunnittelu;
+      const alkuMin = kellonaika(v.alkaa);
+      for (let aika = a; aika < l; aika += PV_MS) {
+        const pvm = pvmMerkkijonoksi(aika);
+        if (s.alkaen && pvm < s.alkaen) continue;
+        if (s.asti && pvm > s.asti) continue;
+        // getUTCDay: 0 = su. Muunnetaan niin että 0 = ma.
+        const viikonpaiva = (new Date(aika).getUTCDay() + 6) % 7;
+        const maara = Number(s.maarat[viikonpaiva]) || 0;
+        if (maara === 0) continue;
+        const loppuMin = alkuMin + kesto;
+        const loppuPvm = lisaaPaivia(pvm, Math.floor(loppuMin / VRK_MIN));
+        const loppuKlo = loppuMin % VRK_MIN;
+        for (let paikka = 1; paikka <= maara; paikka++) {
+          tulos.push({
+            id: `${kohde.id}:${v.id}:${pvm}:${paikka}`,
+            siteId: kohde.id,
+            siteNimi: kohde.name || '',
+            vuorotyyppiId: v.id,
+            vuoroNimi: v.nimi || '',
+            pvm,
+            paikka,
+            alkaa: `${pvm}T${kaksi(Math.floor(alkuMin / 60))}:${kaksi(alkuMin % 60)}`,
+            paattyy: `${loppuPvm}T${kaksi(Math.floor(loppuKlo / 60))}:${kaksi(loppuKlo % 60)}`,
+            kestoMin: kesto,
+          });
+        }
+      }
+    }
+  }
+  return tulos.sort((x, y) => (x.alkaa < y.alkaa ? -1 : x.alkaa > y.alkaa ? 1 : x.id < y.id ? -1 : 1));
+}

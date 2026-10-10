@@ -55,6 +55,15 @@ export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props)
         </div>
       )}
 
+      {/* Erä 2: vuorot syntyvät kohteiden miehityksestä. Ilman yhtään miehitettyä vuoroa
+          kortit näyttäisivät nollaa ilman selitystä. */}
+      {tila && tila.listat.length > 0 && tila.listat.every((l) => l.vuoroja === 0) && (
+        <p className="mb-4 text-sm text-ink-muted">
+          Yhdellekään kohteelle ei ole vielä määritelty suunniteltavia vuoroja. Ne lisätään
+          kohteen hallinnassa Vuorot-välilehdellä kohdasta "Suunnitellaan työvuorolistaan".
+        </p>
+      )}
+
       {tila && tila.listat.length > 0 && (
         <section className="mb-8">
           <h3 className="text-lg font-bold text-ink flex items-center gap-2 mb-3">
@@ -130,6 +139,11 @@ const ListaKortti = ({ lista, tanaan, kuluva }: { lista: Lista; tanaan: string; 
       <p className="text-xs text-ink-muted mt-0.5">
         {lista.jaksot.length === 1 ? '1 jakso' : `${lista.jaksot.length} jaksoa`}
         {' · '}julkaistava viimeistään {pvm(lista.julkaistavaViimeistaan)}
+      </p>
+      <p className="text-sm text-ink-body mt-2">
+        {lista.vuoroja === 0
+          ? 'Ei suunniteltavia vuoroja'
+          : `${lista.vuoroja} ${lista.vuoroja === 1 ? 'vuoro' : 'vuoroa'} · ${String(lista.tunteja).replace('.', ',')} h`}
       </p>
       {maaraaika && (
         <p className={`text-sm mt-2 ${maaraaika.varoitus ? 'text-warning-ink font-medium' : 'text-ink-body'}`}>

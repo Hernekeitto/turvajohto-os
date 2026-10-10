@@ -43,7 +43,7 @@ import {
 } from './vuorot.js';
 import {
   ASETUKSET as TYOAIKA_ASETUKSET, JAKSON_ENIMMAIS_H, JAKSON_PITUUS_VK, SAANNOLLINEN_H,
-  listat, normalisoiAsetukset, tamaPaiva, tarkistaAsetukset, tesPoikkeamat,
+  listat, normalisoiAsetukset, suunnitellutVuorot, tamaPaiva, tarkistaAsetukset, tarkistaMiehitys, tesPoikkeamat,
 } from './tyovuorolista.js';
 import {
   onOsallistuja, loydaDm, luoDmKanava,
@@ -1133,6 +1133,31 @@ app.put('/api/data/:name', requireAuth, (req, res) => {
     verdict.data = tulos.data;
     uusiKorkein = tulos.korkein;
     if (Object.keys(tulos.korjatut).length) korjatutTunnisteet = tulos.korjatut;
+  }
+  // Kohteen miehitys (työvuorosuunnittelu, erä 2). Vuorotyypit kulkevat kohdetietueen
+  // mukana tätä reittiä, joten TES-tarkistus on tehtävä täällä — käyttöliittymän
+  // tarkistus olisi ohitettavissa suoralla kirjoituksella.
+  //
+  // VAIN MUUTTUNEET vuorotyypit tarkistetaan. Työaikasääntöjä voi tiukentaa jälkikäteen,
+  // ja silloin jo olemassa oleva miehitys estäisi koko kohteen tallennuksen — myös
+  // muutoksen johon miehityksellä ei ole mitään tekemistä. Vanha miehitys näkyy
+  // suunnittelussa omana varoituksenaan (erä 3).
+  if (name === 'guardSites') {
+    const asetukset = normalisoiAsetukset(tyoaikaTietue());
+    const vanhat = new Map();
+    for (const k of current) for (const v of k?.vuorotyypit || []) vanhat.set(`${k.id}:${v?.id}`, v);
+    const merkitsevat = (v) => JSON.stringify([v?.alkaa, v?.paattyy, v?.nimi, v?.suunnittelu]);
+    const virheet = [];
+    for (const k of verdict.data) {
+      for (const v of k?.vuorotyypit || []) {
+        const vanha = vanhat.get(`${k.id}:${v?.id}`);
+        if (vanha && merkitsevat(vanha) === merkitsevat(v)) continue;
+        virheet.push(...tarkistaMiehitys(v, asetukset).map((teksti) => `${k.name || 'Kohde'} / ${teksti}`));
+      }
+    }
+    if (virheet.length) {
+      return res.status(400).json({ ok: false, error: virheet[0], virheet });
+    }
   }
   const allowEmpty = req.query.allowEmpty === '1' && req.role === 'admin';
   if (!allowEmpty && wouldWipeNonEmptyCollection(current, verdict.data)) {
@@ -7861,8 +7886,25 @@ const tyoaikaTietue = () =>
 
 const saaSuunnitella = (req) => req.role === 'admin' || canView(req.permissions, null, 'guard_planning');
 
-function tyoaikaVastaus(tietue) {
+// Kohteet joita kutsuja saa lukea. Suunnittelun luvut lasketaan vain niistä: muuten
+// "listassa 140 vuoroa" kertoisi kohteista joita käyttäjä ei saa nähdä.
+const luettavatKohteet = (req) => {
+  const r = readableData(req.role, req.permissions, req.eventAccess, 'guardSites', readCollection('guardSites'));
+  return r.ok ? r.data || [] : [];
+};
+
+function tyoaikaVastaus(tietue, kohteet = []) {
   const asetukset = normalisoiAsetukset(tietue);
+  // Kuluva lista ja kolme seuraavaa. Jokaiselle lasketaan kohteiden miehityksestä
+  // syntyvä vuoromäärä (erä 2), jotta suunnittelija näkee työn koon ennen ruudukkoa.
+  const tulevat = listat(asetukset, tamaPaiva(), 4).map((l) => {
+    const vuorot = suunnitellutVuorot(kohteet, l.alku, l.loppu);
+    return {
+      ...l,
+      vuoroja: vuorot.length,
+      tunteja: Math.round(vuorot.reduce((s, v) => s + v.kestoMin, 0) / 6) / 10,
+    };
+  });
   return {
     ok: true,
     asetukset,
@@ -7871,9 +7913,9 @@ function tyoaikaVastaus(tietue) {
     jaksonPituusVk: JAKSON_PITUUS_VK,
     saannollinenH: SAANNOLLINEN_H,
     jaksonEnimmaisH: JAKSON_ENIMMAIS_H,
-    // Kuluva lista ja kolme seuraavaa. Edelliset eivät kuulu tähän: suunnittelu katsoo
-    // eteenpäin, ja menneet listat näkyvät erässä 4 omassa näkymässään.
-    listat: listat(asetukset, tamaPaiva(), 4),
+    // Edelliset listat eivät kuulu tähän: suunnittelu katsoo eteenpäin, ja menneet
+    // listat näkyvät erässä 4 omassa näkymässään.
+    listat: tulevat,
     tanaan: tamaPaiva(),
     muokattu: tietue?.muokattu || null,
     muokkasi: tietue?.muokkasi || null,
@@ -7881,10 +7923,13 @@ function tyoaikaVastaus(tietue) {
 }
 
 app.get('/api/tyovuorot/asetukset', requireAuth, guardPortti, (req, res) => {
-  if (!saaSuunnitella(req) && !canView(req.permissions, null, 'guard_settings')) {
+  // Kohteen muokkaaja (Vartioesimies) lukee säännöt, koska kohteen miehitys tarkistetaan
+  // niitä vastaan (erä 2) ja lomakkeen on kerrottava rajat ennen tallennusta.
+  if (!saaSuunnitella(req) && !canView(req.permissions, null, 'guard_settings')
+    && !canEdit(req.permissions, null, 'guard_sites')) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta työvuorosuunnitteluun.' });
   }
-  res.json(tyoaikaVastaus(tyoaikaTietue()));
+  res.json(tyoaikaVastaus(tyoaikaTietue(), luettavatKohteet(req)));
 });
 
 app.put('/api/tyovuorot/asetukset', requireAuth, guardPortti, requireAdmin, (req, res) => {
@@ -7911,7 +7956,7 @@ app.put('/api/tyovuorot/asetukset', requireAuth, guardPortti, requireAdmin, (req
     user: req.username, action: 'tyoaika_asetukset', recordId: TYOAIKA_ID,
     collection: 'tyoaikaAsetukset', muutokset, poikkeamat: tesPoikkeamat(tulos.asetukset),
   });
-  res.json(tyoaikaVastaus(tietue));
+  res.json(tyoaikaVastaus(tietue, luettavatKohteet(req)));
 });
 
 // ====================== HÄTÄTEKSTIVIESTIT (BulkSMS) ======================

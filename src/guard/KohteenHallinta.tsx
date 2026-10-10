@@ -8,6 +8,9 @@ import { muotoileTunniste } from '../shared/tunnisteet';
 import { KohteenTiedostot } from './KohteenTiedostot';
 import { haePerehdytettavat, type Perehdytettava } from './vuorot';
 import { uusiId, type Kierrospohja, type Kohde, type KohteenTiedosto, type Perehdytys, type Tehtava, type Vuorotyyppi } from './tyypit';
+import { MiehitysEditori } from './tyovuorot/MiehitysEditori';
+import { miehityksenEste, miehitysTekstina, onMiehitys, type Rajat } from './tyovuorot/miehitys';
+import { haeTyoaika } from './tyovuorot/tyoaika';
 
 // Kohteen hallinta: perustiedot, perehdytykset, vuorot ja työvuoron tehtävät omilla
 // välilehdillään. Kaikki ovat kohteen omia kenttiä, joten ne tallennetaan yhtenä
@@ -118,6 +121,16 @@ export const KohteenHallinta = ({
   });
   const [muokattavaTehtava, setMuokattavaTehtava] = useState<Tehtava | null>(null);
   const [muokattavaVuoro, setMuokattavaVuoro] = useState<Vuorotyyppi | null>(null);
+  // Työaikasäännöt miehityksen TES-tarkistukseen (erä 2). Haetaan vasta kun vuoroa
+  // muokataan; epäonnistunut haku jättää rajat pois, ja palvelin tarkistaa tallennuksessa.
+  const [rajat, setRajat] = useState<Rajat | null>(null);
+  const muokataanVuoroa = !!muokattavaVuoro;
+  useEffect(() => {
+    if (!muokataanVuoroa || rajat) return;
+    haeTyoaika()
+      .then((v) => setRajat(v.asetukset as unknown as Rajat))
+      .catch(() => { /* rajat jäävät pois, palvelin tarkistaa */ });
+  }, [muokataanVuoroa, rajat]);
   // Ketkä voidaan perehdyttää. Haetaan kapealta reitiltä eikä /api/users:ista, joka on
   // pääkäyttäjän takana — kohteita voi hallita ilman pääkäyttäjyyttä.
   const [perehdytettavat, setPerehdytettavat] = useState<Perehdytettava[]>([]);
@@ -166,6 +179,12 @@ export const KohteenHallinta = ({
     if (!muokattavaVuoro) return;
     const nimi = muokattavaVuoro.nimi.trim();
     if (!nimi) return;
+    const este = miehityksenEste(
+      muokattavaVuoro.alkaa?.trim(), muokattavaVuoro.paattyy?.trim(), muokattavaVuoro.suunnittelu, rajat,
+    );
+    // Este näkyy jo muokkaimessa (MiehitysEditori), joten tässä vain estetään sulkeminen.
+    if (este) return;
+    const s = muokattavaVuoro.suunnittelu;
     const puhdas: Vuorotyyppi = {
       ...muokattavaVuoro,
       nimi,
@@ -175,6 +194,16 @@ export const KohteenHallinta = ({
       alkaa: muokattavaVuoro.alkaa?.trim() || undefined,
       paattyy: muokattavaVuoro.paattyy?.trim() || undefined,
       kuvaus: muokattavaVuoro.kuvaus?.trim() || undefined,
+      // Pelkät nollat tallennetaan puuttuvana: ne eivät tuota yhtään vuoroa, ja tyhjä
+      // miehitys näyttäisi listassa suunnitellulta vuorolta jota ei ole.
+      suunnittelu: s && onMiehitys(s)
+        ? {
+          maarat: s.maarat,
+          ...(s.alkaen ? { alkaen: s.alkaen } : {}),
+          ...(s.asti ? { asti: s.asti } : {}),
+          ...(s.tesPerustelu?.trim() ? { tesPerustelu: s.tesPerustelu.trim() } : {}),
+        }
+        : undefined,
     };
     const uudet = vuorotyypit.some((v) => v.id === puhdas.id)
       ? vuorotyypit.map((v) => (v.id === puhdas.id ? puhdas : v))
@@ -640,6 +669,13 @@ export const KohteenHallinta = ({
                         </span>
                       )}
                     </p>
+                    {onMiehitys(v.suunnittelu) && (
+                      <p className="text-xs text-ink-body">
+                        Työvuorolistassa: {miehitysTekstina(v.suunnittelu)}
+                        {v.suunnittelu?.alkaen && ` · alkaen ${v.suunnittelu.alkaen.split('-').reverse().map(Number).join('.')}`}
+                        {v.suunnittelu?.asti && ` · asti ${v.suunnittelu.asti.split('-').reverse().map(Number).join('.')}`}
+                      </p>
+                    )}
                     <p className="text-xs text-ink-muted">
                       {lkm((v.tehtavaIdt || []).length, 'tehtävä', 'tehtävää')}
                       {' · '}
@@ -662,6 +698,9 @@ export const KohteenHallinta = ({
                           paattyy: v.paattyy || '',
                           tehtavaIdt: [...(v.tehtavaIdt || [])],
                           pohjaIdt: [...(v.pohjaIdt || [])],
+                          suunnittelu: v.suunnittelu
+                            ? { ...v.suunnittelu, maarat: [...v.suunnittelu.maarat] }
+                            : undefined,
                         })}
                         className="shrink-0 text-xs font-medium text-ink-body hover:text-accent transition-colors"
                       >
@@ -736,6 +775,14 @@ export const KohteenHallinta = ({
                   </span>
                 </span>
               </label>
+
+              <MiehitysEditori
+                alkaa={muokattavaVuoro.alkaa}
+                paattyy={muokattavaVuoro.paattyy}
+                miehitys={muokattavaVuoro.suunnittelu}
+                onChange={(m) => setMuokattavaVuoro({ ...muokattavaVuoro, suunnittelu: m })}
+                rajat={rajat}
+              />
 
               <div>
                 <span className="block text-sm font-medium text-ink-body mb-2">Vuoron tehtävät</span>

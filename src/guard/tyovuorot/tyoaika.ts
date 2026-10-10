@@ -31,6 +31,9 @@ export type Lista = {
   viimeinen: string;
   jaksot: Jakso[];
   julkaistavaViimeistaan: string;
+  // Kohteiden miehityksestä syntyvät vuorot (erä 2): vartijapaikkojen määrä ja tunnit.
+  vuoroja: number;
+  tunteja: number;
 };
 
 export type TyoaikaVastaus = {
