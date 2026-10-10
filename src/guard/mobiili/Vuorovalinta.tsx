@@ -21,10 +21,11 @@
 // samasta syystä: toiseen pyydetään perehdytys, toiseen odotetaan tai soitetaan
 // hälytyskeskukseen, eivätkä ne ole sama ohje.
 import { useState } from 'react';
-import { ArrowLeft, Building2, ChevronRight, Clock, GraduationCap } from 'lucide-react';
+import { ArrowLeft, Building2, CalendarHeart, ChevronRight, Clock, GraduationCap } from 'lucide-react';
 
 import { LaiteSidonta } from '../../shared/komponentit/LaiteSidonta';
 import { voiAloittaa, type Vuorokohde, type VuoroVaihtoehto } from '../vuorot';
+import { OmatTyovuorot } from '../tyovuorot/OmatTyovuorot';
 
 type Props = {
   kohteet: Vuorokohde[];
@@ -60,6 +61,11 @@ export const Vuorovalinta = ({
   kohteet, ladattu, ilmanPerehdytysta, virhe, aloittaa, onValitse,
 }: Props) => {
   const [valittuId, setValittuId] = useState<string | null>(null);
+  // Työvuorotoiveet (erä 5). Täältä eikä omasta valikostaan: puhelimen ensimmäinen näkymä
+  // on vuoroon kirjautuminen, ja toiveet ovat sen vieressä oleva toinen asia joka koskee
+  // vartijan omia vuoroja.
+  const [toiveissa, setToiveissa] = useState(false);
+  if (toiveissa) return <OmatTyovuorot onTakaisin={() => setToiveissa(false)} />;
   // Haetaan tuoreesta `kohteet`-listasta id:llä eikä pidetä koko oliota tilassa: jos
   // vuorot päivittyvät kesken valinnan (esim. perehdytys myönnettiin juuri), näkymän on
   // näytettävä uusin tieto eikä sitä mikä oli voimassa kohdetta valittaessa.
@@ -141,9 +147,17 @@ export const Vuorovalinta = ({
   return (
     <div>
       <h2 className="text-2xl font-bold text-ink-strong mb-1">Kirjaudu vuoroon:</h2>
-      <p className="text-base text-ink-muted leading-relaxed mb-6">
+      <p className="text-base text-ink-muted leading-relaxed mb-2">
         Valitse kohde jossa olet tulossa työskentelemään.
       </p>
+      <button
+        type="button"
+        onClick={() => setToiveissa(true)}
+        className="mb-6 inline-flex items-center gap-2 text-sm font-medium text-accent hover:underline"
+      >
+        <CalendarHeart size={16} />
+        Työvuorotoiveet
+      </button>
 
       {virhe && (
         <div className="mb-6 rounded-lg border border-danger/30 bg-danger-soft px-4 py-3">

@@ -122,6 +122,12 @@ const COLLECTIONS = {
   // Palvelimen ylläpitämä, koska jokainen sijoitus tarkistetaan TES-sääntöjä vasten
   // (tyovuorolistat.js: sijoita) eikä kokoelmareitti tekisi sitä.
   tyovuorolistat: 'tyovuorolistat.json',
+  // Työvuorotoiveet ja poissaolot (erä 5). Palvelimen ylläpitämiä: toiveen lukitus
+  // listan julkaisun määräaikaan ja poissaolon tuntilaskenta tehdään omilla reiteillä
+  // (tyovuorotoiveet.js). Poissaolon laji voi olla sairaus, joten kokoelma on
+  // henkilötietoa jota näkee vain suunnittelija ja henkilö itse.
+  tyovuorotoiveet: 'tyovuorotoiveet.json',
+  poissaolot: 'poissaolot.json',
   // Tiedotteet (erä 8): sovelluksen sisäinen viesti kentälle, jonka lukeminen kuitataan.
   // Palvelimen ylläpitämä, koska kuittauslista on koko toiminnon sisältö — selaimesta
   // kirjoitettava kuittauslista ei todistaisi mitään.

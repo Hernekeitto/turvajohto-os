@@ -245,6 +245,19 @@ const COLLECTIONS = {
     touch: () => ['__paakayttaja__'],
     eventScoped: false,
   },
+  // Toiveet ja poissaolot (erä 5). Vain omilla reiteillä (index.js: /api/tyovuorot/omat
+  // ja /api/tyovuorot/poissaolot). Kokoelmareitillä ei kenelläkään muulla kuin
+  // pääkäyttäjällä: poissaolon laji voi olla sairaus.
+  tyovuorotoiveet: {
+    view: ['__paakayttaja__'],
+    touch: () => ['__paakayttaja__'],
+    eventScoped: false,
+  },
+  poissaolot: {
+    view: ['__paakayttaja__'],
+    touch: () => ['__paakayttaja__'],
+    eventScoped: false,
+  },
   fileShares: {
     view: ['eventfiles', 'guard_sites'],
     // Henkilökohtaisten tiedostojen jaot (lahde personalFiles, 29.9.2026) eivät näy

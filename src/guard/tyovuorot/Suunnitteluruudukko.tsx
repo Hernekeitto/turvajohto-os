@@ -9,10 +9,10 @@
 // on 42 saraketta, eikä se mahdu millekään näytölle.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CalendarDays, MessageSquareText, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CalendarOff, MessageSquareText, Trash2, X } from 'lucide-react';
 
 import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
-import { TYOAIKAMUOTO, haeLista, pvm, tallennaSijoitus } from './tyoaika';
+import { TYOAIKAMUOTO, haeLista, kirjaaPoissaolo, poistaPoissaolo, pvm, tallennaSijoitus } from './tyoaika';
 import type { Havainto, ListaNakyma, Sijoitus, SuunniteltuVuoro, Taso } from './tyoaika';
 import { listanPaivat, lyhytNimi, paivanOtsikko, rivit, solunTaso, valitsimenHenkilot } from './ruudukko';
 
@@ -150,6 +150,8 @@ export const Suunnitteluruudukko = ({ alku, onTakaisin }: Props) => {
       )}
 
       <Yhteenveto tila={tila} />
+
+      <Poissaolot tila={tila} onMuuttui={hae} />
 
       {valittu && (
         <Valitsin
@@ -303,7 +305,10 @@ const Valitsin = ({ vuoro, tila, sijoitus, onSulje, onTila, onVanhentunut }: Val
         ) : (
           <ul className="mt-3 max-h-[50vh] overflow-y-auto divide-y divide-line-soft border border-line rounded-lg">
             {vaihtoehdot.map(({ henkilo: h, perehdytetty, reservi }) => {
-              const kaytettavissa = perehdytetty && !reservi;
+              // Erä 5: poissaolo estää (palvelin hylkää), toive näkyy tiedoksi.
+              const poissa = tila.poissaolot.find((p) => p.username === h.username && p.alku <= vuoro.pvm && p.loppu >= vuoro.pvm);
+              const toive = tila.toiveet.find((t) => t.username === h.username && t.pvm === vuoro.pvm);
+              const kaytettavissa = perehdytetty && !reservi && !poissa;
               return (
                 <li key={h.username}>
                   <button
@@ -315,9 +320,16 @@ const Valitsin = ({ vuoro, tila, sijoitus, onSulje, onTila, onVanhentunut }: Val
                     <span className="block text-sm text-ink-strong">{h.nimi}</span>
                     <span className="block text-xs text-ink-muted">
                       {reservi ? 'Työvoimareservi — kuittaa vuoron itse'
-                        : !perehdytetty ? 'Ei perehdytystä tähän vuoroon'
-                          : `${TYOAIKAMUOTO[h.workTimeType || ''] || 'Työaikamuoto puuttuu'} · listalla ${tunnit(h.username) || 0} h`}
+                        : poissa ? `${tila.poissaololajit[poissa.laji] || 'Poissa'} ${pvm(poissa.alku)}–${pvm(poissa.loppu)}`
+                          : !perehdytetty ? 'Ei perehdytystä tähän vuoroon'
+                            : `${TYOAIKAMUOTO[h.workTimeType || ''] || 'Työaikamuoto puuttuu'} · jaksossa ${tunnit(h.username) || 0} h`}
                     </span>
+                    {toive && !poissa && (
+                      <span className={`block text-xs mt-0.5 ${toive.laji === 'vuoro' ? 'text-accent-ink' : 'text-warning-ink'}`}>
+                        {toive.laji === 'vuoro' ? 'Toivoo vuoroa' : toive.laji === 'este' ? 'Ilmoittanut ettei pääse' : 'Toivoo vapaata'}
+                        {toive.huom && ` — ${toive.huom}`}
+                      </span>
+                    )}
                   </button>
                 </li>
               );
@@ -392,7 +404,8 @@ const Yhteenveto = ({ tila }: { tila: ListaNakyma }) => {
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <p className="text-sm font-medium text-ink-strong">{h.nimi}</p>
                   <p className="text-xs text-ink-muted">
-                    {t.jaksot.map((j) => `${String(j.tunnit).replace('.', ',')} h`).join(' + ')}
+                    {t.jaksot.map((j) => `${String(j.tunnit).replace('.', ',')} h`
+                      + (j.poissaolotunnit ? ` (josta poissaoloa ${String(j.poissaolotunnit).replace('.', ',')} h)` : '')).join(' + ')}
                     {h.workTimeType === 'monthly' && ' (tavoite 120 h / jakso)'}
                   </p>
                 </div>
@@ -410,6 +423,135 @@ const Yhteenveto = ({ tila }: { tila: ListaNakyma }) => {
           })}
         </div>
       )}
+    </section>
+  );
+};
+
+// --- Poissaolot (erä 5) -----------------------------------------------------------------
+//
+// Listan aikana voimassa olevat poissaolot ja uuden kirjaus. Laji voi olla sairaus, joten
+// lisätietoon ei kirjoiteta diagnoosia: listan laatimiseen riittää tieto poissaolosta.
+
+const Poissaolot = ({ tila, onMuuttui }: { tila: ListaNakyma; onMuuttui: () => void }) => {
+  const [auki, setAuki] = useState(false);
+  const [lomake, setLomake] = useState({ username: '', laji: 'vuosiloma', alku: tila.lista.alku, loppu: tila.lista.alku, tunnit: '', huom: '' });
+  const [virhe, setVirhe] = useState<string | null>(null);
+  const [tyossa, setTyossa] = useState(false);
+  const nimi = (u: string) => tila.henkilot.find((h) => h.username === u)?.nimi || u;
+
+  const tallenna = async () => {
+    setTyossa(true);
+    setVirhe(null);
+    const v = await kirjaaPoissaolo({
+      username: lomake.username, laji: lomake.laji, alku: lomake.alku, loppu: lomake.loppu,
+      tunnit: lomake.tunnit === '' ? null : Number(lomake.tunnit.replace(',', '.')),
+      huom: lomake.huom,
+    });
+    setTyossa(false);
+    if (!v.ok) { setVirhe(v.error); return; }
+    setAuki(false);
+    setLomake((l) => ({ ...l, username: '', tunnit: '', huom: '' }));
+    onMuuttui();
+  };
+
+  const poista = async (id: string) => {
+    if (!window.confirm('Poistetaanko poissaolo?')) return;
+    const v = await poistaPoissaolo(id);
+    if (!v.ok) setVirhe(v.error); else onMuuttui();
+  };
+
+  const kentta = 'bg-surface border border-line rounded-md px-2 py-1.5 text-sm text-ink';
+
+  return (
+    <section className="mt-8">
+      <h3 className="text-lg font-bold text-ink flex items-center gap-2 mb-1">
+        <CalendarOff size={18} className="text-accent" />
+        Poissaolot
+      </h3>
+      <p className="text-xs text-ink-muted mb-3">
+        Poissaolon ajalle ei voi sijoittaa, ja sen tunnit lasketaan jakson työaikaan (TES 29 § ja 33 §).
+        Vuosilomalle ehdotetaan 6,7 h jokaiselta lomapäivältä (ma–la), jos tunteja ei anneta.
+      </p>
+      {virhe && <p className="text-sm text-danger mb-2">{virhe}</p>}
+      {tila.poissaolot.length === 0 ? (
+        <p className="text-sm text-ink-muted">Ei poissaoloja tämän listan aikana.</p>
+      ) : (
+        <ul className="bg-surface rounded-xl border border-line divide-y divide-line-soft mb-3">
+          {tila.poissaolot.map((p) => (
+            <li key={p.id} className="px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span>
+                <span className="font-medium text-ink-strong">{nimi(p.username)}</span>
+                {' · '}{tila.poissaololajit[p.laji] || p.laji} {pvm(p.alku)}–{pvm(p.loppu)}
+                {' · '}{String(p.tunnit).replace('.', ',')} h
+                {p.huom && <span className="text-ink-muted"> · {p.huom}</span>}
+              </span>
+              {tila.saaMuokata && (
+                <button type="button" onClick={() => poista(p.id)} className="text-ink-subtle hover:text-danger" title="Poista poissaolo">
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {tila.saaMuokata && (auki ? (
+        <div className="bg-sunken border border-line rounded-lg p-4 space-y-3">
+          <div className="flex flex-wrap gap-3">
+            <label className="text-xs text-ink-body">
+              <span className="block font-medium mb-1">Henkilö</span>
+              <select value={lomake.username} onChange={(e) => setLomake({ ...lomake, username: e.target.value })} className={kentta}>
+                <option value="">Valitse…</option>
+                {tila.henkilot.map((h) => <option key={h.username} value={h.username}>{h.nimi}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-ink-body">
+              <span className="block font-medium mb-1">Laji</span>
+              <select value={lomake.laji} onChange={(e) => setLomake({ ...lomake, laji: e.target.value })} className={kentta}>
+                {Object.entries(tila.poissaololajit).map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-ink-body">
+              <span className="block font-medium mb-1">Alkaen</span>
+              <input type="date" value={lomake.alku} onChange={(e) => setLomake({ ...lomake, alku: e.target.value })} className={kentta} />
+            </label>
+            <label className="text-xs text-ink-body">
+              <span className="block font-medium mb-1">Asti</span>
+              <input type="date" value={lomake.loppu} onChange={(e) => setLomake({ ...lomake, loppu: e.target.value })} className={kentta} />
+            </label>
+            <label className="text-xs text-ink-body">
+              <span className="block font-medium mb-1">Tunnit (työaikaan)</span>
+              <input
+                inputMode="decimal"
+                placeholder={lomake.laji === 'vuosiloma' ? 'automaattinen' : '0'}
+                value={lomake.tunnit}
+                onChange={(e) => setLomake({ ...lomake, tunnit: e.target.value })}
+                className={`${kentta} w-28`}
+              />
+            </label>
+          </div>
+          <label className="block text-xs text-ink-body">
+            <span className="block font-medium mb-1">Lisätieto (ei diagnooseja)</span>
+            <input maxLength={200} value={lomake.huom} onChange={(e) => setLomake({ ...lomake, huom: e.target.value })} className={`${kentta} w-full`} />
+          </label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={tyossa || !lomake.username}
+              onClick={tallenna}
+              className="px-4 py-2 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-60"
+            >
+              Kirjaa poissaolo
+            </button>
+            <button type="button" onClick={() => setAuki(false)} className="px-4 py-2 text-sm font-medium text-ink-muted hover:text-ink-body">
+              Peruuta
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" onClick={() => setAuki(true)} className="text-sm font-medium text-accent hover:underline">
+          + Kirjaa poissaolo
+        </button>
+      ))}
     </section>
   );
 };

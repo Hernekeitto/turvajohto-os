@@ -16,7 +16,7 @@
 // sijaintia vuoron jälkeen.
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Building2, ChevronDown, ChevronRight, Clock, GraduationCap, Monitor, MonitorSmartphone,
+  Building2, CalendarHeart, ChevronDown, ChevronRight, Clock, GraduationCap, Monitor, MonitorSmartphone,
   PlayCircle, StopCircle,
 } from 'lucide-react';
 
@@ -27,6 +27,7 @@ import {
 } from './vuorot';
 import type { Kohde } from './tyypit';
 import { VartijanToiminnot, type VartijanToiminto } from './VartijanToiminnot';
+import { OmatTyovuorot } from './tyovuorot/OmatTyovuorot';
 
 type Aloitustapa = Exclude<VuoronLaitteet, 'sovellus'>;
 
@@ -80,6 +81,8 @@ export const Vartijanakyma = ({ kohdeTiedot, kaikkiKohteet, sallitut, onToiminto
   const [tapa, setTapa] = useState<Aloitustapa>('tietokone_sovellus');
   const [kaynnissa, setKaynnissa] = useState(false);
   const [virhe, setVirhe] = useState<string | null>(null);
+  // Työvuorotoiveet (erä 5) avautuvat tämän näkymän tilalle ja palaavat tänne.
+  const [toiveissa, setToiveissa] = useState(false);
   const [paatetaanko, setPaatetaanko] = useState(false);
 
   const lataa = useCallback(async () => {
@@ -127,6 +130,8 @@ export const Vartijanakyma = ({ kohdeTiedot, kaikkiKohteet, sallitut, onToiminto
     setAuki(null);
     await lataa();
   };
+
+  if (toiveissa) return <OmatTyovuorot onTakaisin={() => setToiveissa(false)} />;
 
   if (vuoro) {
     const laitteet = vuoro.laitteet || 'sovellus';
@@ -203,12 +208,24 @@ export const Vartijanakyma = ({ kohdeTiedot, kaikkiKohteet, sallitut, onToiminto
 
   return (
     <div>
-      <h2 className="text-2xl font-bold text-ink-strong mb-1">Kohteet</h2>
-      <p className="text-sm text-ink-muted mb-6">
-        {kaikkiKohteet
-          ? 'Pääkäyttäjänä näet kaikki kohteet. Vuoron voi aloittaa vain niihin vuoroihin, joihin sinut on perehdytetty.'
-          : 'Kohteet, joihin sinut on perehdytetty. Valitse kohde ja aloita vuoro.'}
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-ink-strong mb-1">Kohteet</h2>
+          <p className="text-sm text-ink-muted">
+            {kaikkiKohteet
+              ? 'Pääkäyttäjänä näet kaikki kohteet. Vuoron voi aloittaa vain niihin vuoroihin, joihin sinut on perehdytetty.'
+              : 'Kohteet, joihin sinut on perehdytetty. Valitse kohde ja aloita vuoro.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setToiveissa(true)}
+          className="shrink-0 inline-flex items-center gap-2 bg-surface hover:bg-sunken text-ink-body border border-line text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
+        >
+          <CalendarHeart size={16} />
+          Työvuorotoiveet
+        </button>
+      </div>
 
       <fieldset className="mb-6">
         <legend className="text-sm font-medium text-ink-strong mb-2">Vuoron aloitus</legend>

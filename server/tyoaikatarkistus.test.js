@@ -257,3 +257,43 @@ test('pidennetyn vuoron jälkeinen lepo lasketaan ketjun lopusta', () => {
   const h = t.havainnot.find((x) => x.koodi === 'vuorokausilepo');
   assert.match(h.viesti, /8 h/);
 });
+
+// --- Erä 5: poissaolot ja toiveet ---
+
+test('poissaolo on este ja sen tunnit lasketaan jaksoon', () => {
+  const poissaolot = [{ laji: 'vuosiloma', alku: '2026-10-12', loppu: '2026-10-17', tunnit: 40.2 }];
+  const t = tarkistaHenkilo({
+    henkilo: HENKILO, vuorot: [vuoro(pv(0)), vuoro(pv(8))], kohteet: [KOHDE], asetukset: ASETUKSET, lista: LISTA, poissaolot,
+  });
+  const h = t.havainnot.find((x) => x.koodi === 'poissa');
+  assert.equal(h.taso, 'este');
+  assert.equal(h.vuoroIdt.length, 1);
+  assert.equal(t.jaksot[0].vuorotunnit, 16);
+  assert.equal(t.jaksot[0].poissaolotunnit, 40.2);
+  assert.equal(t.jaksot[0].tunnit, 56.2);
+});
+
+test('loma täydentää jakson: ei vajaus-huomiota', () => {
+  // Kaksi viikkoa töitä (80 h) ja viikon loma 40 h = 120 h.
+  const v = [0, 1, 2, 3, 4, 7, 8, 9, 10, 11].map((i) => vuoro(pv(i)));
+  const t = tarkistaHenkilo({
+    henkilo: HENKILO, vuorot: v, kohteet: [KOHDE], asetukset: ASETUKSET, lista: LISTA,
+    poissaolot: [{ laji: 'vuosiloma', alku: '2026-10-19', loppu: '2026-10-25', tunnit: 40 }],
+  });
+  assert.ok(!koodit(t).includes('vajaa'));
+});
+
+test('toive vapaasta ja este ovat varoituksia, toive vuorosta ei', () => {
+  const toiveet = [
+    { laji: 'vapaa', pvm: pv(0) },
+    { laji: 'este', pvm: pv(1), huom: 'lääkäri' },
+    { laji: 'vuoro', pvm: pv(2) },
+  ];
+  const t = tarkistaHenkilo({
+    henkilo: HENKILO, vuorot: [vuoro(pv(0)), vuoro(pv(1)), vuoro(pv(2))], kohteet: [KOHDE], asetukset: ASETUKSET, lista: LISTA, toiveet,
+  });
+  const h = t.havainnot.filter((x) => x.koodi === 'toive');
+  assert.equal(h.length, 2);
+  assert.ok(h.every((x) => x.taso === 'varoitus'));
+  assert.match(h[1].viesti, /lääkäri/);
+});

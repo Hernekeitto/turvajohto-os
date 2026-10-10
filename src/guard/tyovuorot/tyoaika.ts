@@ -138,7 +138,9 @@ export type Sijoitus = {
 
 export type HenkilonTarkistus = {
   havainnot: Havainto[];
-  jaksot: { alku: string; viimeinen: string; tunnit: number; vuoroIdt: string[] }[];
+  jaksot: {
+    alku: string; viimeinen: string; tunnit: number; vuorotunnit: number; poissaolotunnit: number; vuoroIdt: string[];
+  }[];
 };
 
 export type ListaNakyma = {
@@ -153,6 +155,9 @@ export type ListaNakyma = {
   henkilot: Henkilo[];
   tulokset: Record<string, HenkilonTarkistus>;
   perehdytetyt: Record<string, string[]>;
+  toiveet: Toive[];
+  poissaolot: Poissaolo[];
+  poissaololajit: Record<string, string>;
   saaMuokata: boolean;
 };
 
@@ -185,3 +190,64 @@ export async function tallennaSijoitus(
 }
 
 export const TASOJARJESTYS: Taso[] = ['este', 'poikkeama', 'varoitus', 'huomio'];
+
+// --- Toiveet, poissaolot ja reservi (erä 5) ----------------------------------------------
+
+export type Toive = { username: string; pvm: string; laji: 'vapaa' | 'vuoro' | 'este'; huom?: string };
+
+export type Poissaolo = {
+  id: string;
+  username: string;
+  laji: string;
+  alku: string;
+  loppu: string;
+  tunnit: number;
+  huom?: string;
+  kirjasi?: string;
+};
+
+export type OmaLista = { alku: string; loppu: string; viimeinen: string; julkaistavaViimeistaan: string; lukittu: boolean };
+
+export type AvoinVuoro = {
+  id: string; siteNimi: string; vuoroNimi: string; pvm: string; alkaa: string; paattyy: string; kestoMin: number;
+};
+
+export type OmatNakyma =
+  | { ok: true; suunniteltava: false }
+  | {
+    ok: true;
+    suunniteltava: true;
+    reservi: boolean;
+    nimi: string;
+    tanaan: string;
+    listat: OmaLista[];
+    toiveet: Toive[];
+    poissaolot: Poissaolo[];
+    toivelajit: Record<string, string>;
+    poissaololajit: Record<string, string>;
+    avoimet: AvoinVuoro[];
+  };
+
+async function jsonPyynto<T>(url: string, init?: RequestInit): Promise<T | { ok: false; error: string; havainnot?: Havainto[] }> {
+  try {
+    const r = await fetch(url, { credentials: 'include', ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } });
+    const vastaus = await r.json().catch(() => null);
+    return vastaus || { ok: false, error: `Pyyntö ei onnistunut (virhe ${r.status}).` };
+  } catch {
+    return { ok: false, error: 'Ei yhteyttä palvelimeen.' };
+  }
+}
+
+export const haeOmat = () => jsonPyynto<OmatNakyma>('/api/tyovuorot/omat');
+
+export const asetaOmaToive = (pvm: string, laji: string | null, huom?: string) =>
+  jsonPyynto<OmatNakyma>('/api/tyovuorot/omat/toive', { method: 'PUT', body: JSON.stringify({ pvm, laji, huom }) });
+
+export const kuittaaVuoro = (vuoroId: string) =>
+  jsonPyynto<OmatNakyma>('/api/tyovuorot/omat/kuittaa', { method: 'POST', body: JSON.stringify({ vuoroId }) });
+
+export const kirjaaPoissaolo = (p: { username: string; laji: string; alku: string; loppu: string; tunnit?: number | null; huom?: string }) =>
+  jsonPyynto<{ ok: true; poissaolo: Poissaolo }>('/api/tyovuorot/poissaolot', { method: 'POST', body: JSON.stringify(p) });
+
+export const poistaPoissaolo = (id: string) =>
+  jsonPyynto<{ ok: true }>(`/api/tyovuorot/poissaolot/${encodeURIComponent(id)}`, { method: 'DELETE' });

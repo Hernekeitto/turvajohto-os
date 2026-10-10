@@ -121,3 +121,48 @@ test('listan tarkistus kattaa kaikki henkilöt', () => {
   assert.deepEqual(Object.keys(tulokset).sort(), ['reservi', 'virtanen']);
   assert.equal(tulokset.virtanen.jaksot[0].tunnit, 8);
 });
+
+// --- Erä 5: poissaolot, toiveet ja reservin kuittaus ---
+
+test('poissaolon ajalle ei voi sijoittaa', () => {
+  const t = tee(tyhjaLista(LISTA), id('aamu', '2026-10-05'), 'virtanen', {
+    poissaolot: [{ username: 'virtanen', laji: 'vuosiloma', alku: '2026-10-05', loppu: '2026-10-11', tunnit: 40.2 }],
+  });
+  assert.equal(t.koodi, 'este');
+  assert.equal(t.havainnot[0].koodi, 'poissa');
+});
+
+test('toisen henkilön poissaolo ei vaikuta', () => {
+  const t = tee(tyhjaLista(LISTA), id('aamu', '2026-10-05'), 'virtanen', {
+    poissaolot: [{ username: 'joku', laji: 'vuosiloma', alku: '2026-10-05', loppu: '2026-10-11', tunnit: 0 }],
+  });
+  assert.equal(t.ok, true);
+});
+
+test('toive ei estä sijoitusta mutta näkyy havaintona', () => {
+  const t = tee(tyhjaLista(LISTA), id('aamu', '2026-10-05'), 'virtanen', {
+    toiveet: [{ username: 'virtanen', pvm: '2026-10-05', laji: 'vapaa' }],
+  });
+  assert.equal(t.ok, true);
+  assert.equal(t.havainnot[0].koodi, 'toive');
+});
+
+test('reservin kuittaus: avoin vuoro onnistuu ja merkitään kuittaukseksi', () => {
+  const t = tee(tyhjaLista(LISTA), id('aamu', '2026-10-06'), 'reservi', { reservinKuittaus: true, nytPaikallinen: '2026-10-05T12:00' });
+  assert.equal(t.ok, true);
+  assert.equal(t.tietue.sijoitukset[0].kuittaus, true);
+});
+
+test('reservin kuittaus: varattu, alkanut, ei-reservi ja poikkeama hylätään', () => {
+  const varattu = tee(tyhjaLista(LISTA), id('aamu', '2026-10-06'), 'virtanen').tietue;
+  const k = { reservinKuittaus: true, nytPaikallinen: '2026-10-05T12:00' };
+  assert.equal(tee(varattu, id('aamu', '2026-10-06'), 'reservi', k).koodi, 'varattu');
+  assert.equal(tee(tyhjaLista(LISTA), id('aamu', '2026-10-05'), 'reservi', k).koodi, 'alkanut');
+  assert.equal(tee(tyhjaLista(LISTA), id('aamu', '2026-10-06'), 'virtanen', k).koodi, 'reservi');
+  // Reservi on perehdytetty vain aamuun. Ilta 5.10. + aamu 6.10. = 8 h lepo → poikkeama.
+  const kohde = { ...KOHDE, perehdytykset: [{ username: 'reservi', vuorotyyppiIdt: ['aamu', 'ilta'] }] };
+  const eka = tee(tyhjaLista(LISTA), id('ilta', '2026-10-05'), 'reservi', { ...k, nytPaikallinen: '2026-10-05T10:00', kohteet: [kohde] });
+  assert.equal(eka.ok, true);
+  const toka = tee(eka.tietue, id('aamu', '2026-10-06'), 'reservi', { ...k, kohteet: [kohde], syy: 'yritys' });
+  assert.equal(toka.koodi, 'poikkeama');
+});

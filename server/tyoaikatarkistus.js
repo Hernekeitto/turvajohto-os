@@ -17,13 +17,15 @@
 //              jakson ylitys, kortti vanhenemassa.
 //   huomio     tietoa: kuukausipalkkaisen jakso jää vajaaksi.
 //
-// --- Mitä tämä EI vielä tiedä ------------------------------------------------------------
+// --- Poissaolot ja toiveet (erä 5) ----------------------------------------------------------
 //
-// Poissaolot (vuosiloma, vuosivapaa, sairaus) tulevat erässä 5 toiveiden ja estojen
-// mukana. Siihen asti jakson tunnit ovat pelkkiä vuorotunteja: vuosilomaviikon vajaus
-// näkyy huomiona, vaikka se on TES 33 §:n mukaan työaikaan rinnastettavaa aikaa.
+// Poissaolo (vuosiloma, vuosivapaa, sairaus) on este, ja sen tunnit lisätään jakson
+// tunteihin työaikaan rinnastettavana aikana (TES 29 § ja 33 §). Toive on varoitus.
+// Molemmat tulevat kutsujalta valmiiksi henkilöittäin suodatettuina
+// (tyovuorotoiveet.js).
 
 import { perehdytetytVuorot } from './vuorot.js';
+import { POISSAOLOLAJIT, poissaolotunnitJaksolle } from './tyovuorotoiveet.js';
 import {
   JAKSON_ENIMMAIS_H, SAANNOLLINEN_H, lisaaPaivia, paivaksi, pvmMerkkijonoksi,
 } from './tyovuorolista.js';
@@ -81,7 +83,7 @@ const tunnit = (min) => String(Math.round(min / 6) / 10).replace('.', ',');
  * Palauttaa { havainnot, jaksot }. Havainnossa on `vuoroIdt`, jotta käyttöliittymä voi
  * merkitä täsmälleen ne vuorot joita se koskee.
  */
-export function tarkistaHenkilo({ henkilo, vuorot, kohteet, asetukset, lista }) {
+export function tarkistaHenkilo({ henkilo, vuorot, kohteet, asetukset, lista, poissaolot = [], toiveet = [] }) {
   const havainnot = [];
   const lisaa = (taso, koodi, viesti, vuoroIdt = []) => havainnot.push({ taso, koodi, viesti, vuoroIdt });
 
@@ -102,6 +104,26 @@ export function tarkistaHenkilo({ henkilo, vuorot, kohteet, asetukset, lista }) 
     .has(String(v.vuorotyyppiId)));
   if (ilmanPerehdytysta.length) {
     lisaa('este', 'ei_perehdytysta', `Ei perehdytystä ${ilmanPerehdytysta.length === 1 ? 'vuoroon' : `${ilmanPerehdytysta.length} vuoroon`}.`, ilmanPerehdytysta);
+  }
+
+  // Poissaolo (erä 5) on este: vuosilomalle tai sairauslomalle ei sijoiteta. Vuoro kuuluu
+  // alkamispäivälleen, joten loman alkua edeltävän illan yövuoro ei ole este.
+  for (const p of poissaolot) {
+    const paalla = ryhma((v) => v.pvm >= p.alku && v.pvm <= p.loppu);
+    if (paalla.length) {
+      lisaa('este', 'poissa', `${POISSAOLOLAJIT[p.laji] || 'Poissaolo'} ${fi(p.alku)}–${fi(p.loppu)}.`, paalla);
+    }
+  }
+
+  // Toive (erä 5) on varoitus eikä este: työnantaja päättää listasta, mutta
+  // suunnittelijan pitää nähdä että vartija on pyytänyt toisin.
+  for (const t of toiveet) {
+    if (t.laji !== 'vapaa' && t.laji !== 'este') continue;
+    const paalla = ryhma((v) => v.pvm === t.pvm);
+    if (paalla.length) {
+      const teksti = t.laji === 'este' ? 'ilmoittanut ettei pääse töihin' : 'toivonut vapaata';
+      lisaa('varoitus', 'toive', `Vartija on ${teksti} ${fi(t.pvm)}${t.huom ? ` (${t.huom})` : ''}.`, paalla);
+    }
   }
 
   if (henkilo.employmentStart && paivaksi(henkilo.employmentStart) !== null) {
@@ -273,10 +295,20 @@ export function tarkistaHenkilo({ henkilo, vuorot, kohteet, asetukset, lista }) 
 
   // --- Jakson tunnit (TES 9 § ja 29 §) ------------------------------------------------
 
+  // Poissaolotunnit rinnastetaan työaikaan (TES 29 § ja 33 §): ne lisätään jakson
+  // tunteihin, jottei vuosilomaviikko näytä vajaalta jaksolta. Erikseen näkyvissä, koska
+  // suunnittelijan on tiedettävä paljonko jaksosta on oikeasti vuoroja.
   const jaksot = (lista.jaksot || []).map((j) => {
     const jakson = listalla.filter((v) => v.pvm >= j.alku && v.pvm < j.loppu);
     const min = jakson.reduce((s, v) => s + v.kestoMin, 0);
-    return { alku: j.alku, viimeinen: j.viimeinen, tunnit: Math.round(min / 6) / 10, vuoroIdt: jakson.map((v) => v.id) };
+    const poissa = poissaolotunnitJaksolle(poissaolot, j.alku, j.loppu);
+    return {
+      alku: j.alku, viimeinen: j.viimeinen,
+      tunnit: Math.round((min / 60 + poissa) * 10) / 10,
+      vuorotunnit: Math.round(min / 6) / 10,
+      poissaolotunnit: poissa,
+      vuoroIdt: jakson.map((v) => v.id),
+    };
   });
 
   const vahimmais = Number(String(henkilo.minHoursPer3Weeks ?? '').replace(',', '.')) || 0;

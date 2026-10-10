@@ -45,7 +45,9 @@ export function kaikkiSijoitukset(tietueet) {
  * Henkilöiden tarkistukset listalle. `vuorot` on Map vuoroId -> vuoro, ja sen on katettava
  * myös listaa edeltävät viikot, jotta listan alun lepoajat lasketaan oikein.
  */
-export function tarkistaLista({ lista, sijoitukset, vuorot, henkilot, kohteet, asetukset }) {
+export function tarkistaLista({
+  lista, sijoitukset, vuorot, henkilot, kohteet, asetukset, poissaolot = [], toiveet = [],
+}) {
   const perHenkilo = new Map();
   for (const s of sijoitukset) {
     const v = vuorot.get(s.vuoroId);
@@ -57,21 +59,33 @@ export function tarkistaLista({ lista, sijoitukset, vuorot, henkilot, kohteet, a
   for (const h of henkilot) {
     tulokset[h.username] = tarkistaHenkilo({
       henkilo: h, vuorot: perHenkilo.get(h.username) || [], kohteet, asetukset, lista,
+      ...omat(h.username, poissaolot, toiveet),
     });
   }
   return tulokset;
 }
+
+const omat = (username, poissaolot, toiveet) => ({
+  poissaolot: (poissaolot || []).filter((p) => p.username === username),
+  toiveet: (toiveet || []).filter((t) => t.username === username),
+});
 
 /**
  * Yhden vuoron sijoitus tai sen poisto (`username` null).
  *
  * Palauttaa { ok: true, tietue, havainnot } tai { ok: false, status, koodi, error, havainnot }.
  * Koodit: 'tuntematon_vuoro', 'tuntematon_henkilo', 'reservi', 'este', 'syy_puuttuu',
- * 'syy_kelvoton'. `havainnot` ovat ne, jotka koskevat juuri tätä vuoroa.
+ * 'syy_kelvoton', 'varattu', 'alkanut', 'poikkeama'. `havainnot` ovat ne, jotka koskevat
+ * juuri tätä vuoroa.
+ *
+ * `reservinKuittaus` (erä 5): työvoimareservi ottaa avoimen vuoron itse. Silloin vuoron on
+ * oltava vapaa ja alkamatta, eikä TES-poikkeamaa voi kuitata syyllä — poikkeamasta sovitaan
+ * suunnittelijan kanssa, ei kuittausnapilla.
  */
 export function sijoita({
   tietue, lista, vuoroId, username, syy, vuorot, listanVuorot, henkilot, kohteet, asetukset,
-  muutSijoitukset, tekija, nyt = new Date(),
+  muutSijoitukset, tekija, nyt = new Date(), poissaolot = [], toiveet = [], reservinKuittaus = false,
+  nytPaikallinen = null,
 }) {
   const nykyiset = Array.isArray(tietue?.sijoitukset) ? tietue.sijoitukset : [];
   const ilman = nykyiset.filter((s) => s.vuoroId !== vuoroId);
@@ -97,19 +111,36 @@ export function sijoita({
   if (!henkilo) {
     return { ok: false, status: 404, koodi: 'tuntematon_henkilo', error: 'Henkilöä ei voi suunnitella.', havainnot: [] };
   }
-  if (henkilo.workTimeType === 'oncall') {
+  if (reservinKuittaus) {
+    if (henkilo.workTimeType !== 'oncall') {
+      return { ok: false, status: 403, koodi: 'reservi', error: 'Vain työvoimareservi kuittaa vuoroja itse.', havainnot: [] };
+    }
+    if (nykyiset.some((s) => s.vuoroId === vuoroId)) {
+      return { ok: false, status: 409, koodi: 'varattu', error: 'Vuoro on jo varattu.', havainnot: [] };
+    }
+    // Paikallinen 'YYYY-MM-DDTHH:MM' samassa muodossa kuin vuoron alku, joten vertailu
+    // merkkijonona on oikea.
+    if (nytPaikallinen && listanVuorot.get(vuoroId).alkaa <= nytPaikallinen) {
+      return { ok: false, status: 409, koodi: 'alkanut', error: 'Vuoro on jo alkanut.', havainnot: [] };
+    }
+  } else if (henkilo.workTimeType === 'oncall') {
     return {
       ok: false, status: 409, koodi: 'reservi', havainnot: [],
       error: 'Työvoimareservi kuittaa vuoron itse eikä sitä sijoiteta listaan.',
     };
   }
 
-  const uusi = { vuoroId, username, sijoitti: tekija, sijoitettu: nyt.toISOString() };
+  const uusi = {
+    vuoroId, username, sijoitti: tekija, sijoitettu: nyt.toISOString(),
+    ...(reservinKuittaus ? { kuittaus: true } : {}),
+  };
   const henkilonVuorot = [...muutSijoitukset, ...ilman, uusi]
     .filter((s) => s.username === username)
     .map((s) => vuorot.get(s.vuoroId))
     .filter(Boolean);
-  const { havainnot } = tarkistaHenkilo({ henkilo, vuorot: henkilonVuorot, kohteet, asetukset, lista });
+  const { havainnot } = tarkistaHenkilo({
+    henkilo, vuorot: henkilonVuorot, kohteet, asetukset, lista, ...omat(username, poissaolot, toiveet),
+  });
   const koskevat = havainnot.filter((h) => h.vuoroIdt.includes(vuoroId));
 
   const esteet = koskevat.filter((h) => h.taso === 'este');
@@ -117,6 +148,12 @@ export function sijoita({
     return { ok: false, status: 409, koodi: 'este', error: esteet[0].viesti, havainnot: koskevat };
   }
   const poikkeamat = koskevat.filter((h) => h.taso === 'poikkeama');
+  if (reservinKuittaus && poikkeamat.length) {
+    return {
+      ok: false, status: 409, koodi: 'poikkeama', havainnot: koskevat,
+      error: 'Vuoro poikkeaisi työaikasäännöistä. Ota yhteys vuorosuunnittelijaan.',
+    };
+  }
   const siistiSyy = typeof syy === 'string' ? syy.trim() : '';
   if (poikkeamat.length) {
     if (siistiSyy.length < SYYN_MIN) {
