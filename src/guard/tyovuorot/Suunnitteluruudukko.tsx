@@ -29,9 +29,11 @@ const TASON_NIMI: Record<Taso, string> = {
   este: 'Este', poikkeama: 'TES-poikkeama', varoitus: 'Varoitus', huomio: 'Huomio',
 };
 
-type Props = { alku: string; onTakaisin: () => void };
+// kaynnista: avataan lista suoraan täyttö käynnissä (etusivun "Luo uusi lista" ja
+// henkilönäkymän "Täytä vapautuneet").
+type Props = { alku: string; kaynnista?: Taytto; onTakaisin: () => void };
 
-export const Suunnitteluruudukko = ({ alku, onTakaisin }: Props) => {
+export const Suunnitteluruudukko = ({ alku, kaynnista, onTakaisin }: Props) => {
   const [tila, setTila] = useState<ListaNakyma | null>(null);
   const [virhe, setVirhe] = useState<string | null>(null);
   const [ilmoitus, setIlmoitus] = useState<string | null>(null);
@@ -81,6 +83,7 @@ export const Suunnitteluruudukko = ({ alku, onTakaisin }: Props) => {
         <Julkaisu tila={tila} onTila={setTila} />
         <Generaattori
           tila={tila}
+          kaynnista={kaynnista}
           ehdotus={ehdotus}
           onEhdotus={setEhdotus}
           onTila={(uusi, viesti) => { setTila(uusi); setEhdotus(null); setIlmoitus(viesti); }}
@@ -808,9 +811,10 @@ const Muutosloki = ({ tila }: { tila: ListaNakyma }) => {
 // käsin (sopia poikkeama, kysyä ylityötä tai tarjota reserville).
 
 const Generaattori = ({
-  tila, ehdotus, onEhdotus, onTila,
+  tila, kaynnista, ehdotus, onEhdotus, onTila,
 }: {
   tila: ListaNakyma;
+  kaynnista?: Taytto;
   ehdotus: Ehdotus | null;
   onEhdotus: (e: Ehdotus | null) => void;
   onTila: (t: ListaNakyma, viesti: string | null) => void;
@@ -819,14 +823,25 @@ const Generaattori = ({
   const [virhe, setVirhe] = useState<string | null>(null);
   const [muutossyy, setMuutossyy] = useState('');
   const [syytAuki, setSyytAuki] = useState(false);
-  const [tapa, setTapa] = useState<Taytto>('optimi');
+  const [tapa, setTapa] = useState<Taytto>(kaynnista || 'optimi');
   const [edistyminen, setEdistyminen] = useState<{ sekuntia: number; aikarajaS: number } | null>(null);
 
-  if (!tila.saaMuokata) return null;
   const avoimia = tila.vuorot.filter((v) => !tila.sijoitukset.some((s) => s.vuoroId === v.id)).length;
+
+  // Automaattinen käynnistys kerran, kun lista avattiin täyttöä varten.
+  const [kaynnistetty, setKaynnistetty] = useState(false);
+  useEffect(() => {
+    if (!kaynnista || kaynnistetty || !tila.saaMuokata || avoimia === 0 || ehdotus) return;
+    setKaynnistetty(true);
+    void laske();
+    // laske lukee tilan sulkeumasta; ajetaan vain kerran.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kaynnista, kaynnistetty, tila.saaMuokata, avoimia, ehdotus]);
+
+  if (!tila.saaMuokata) return null;
   if (!ehdotus && avoimia === 0) return null;
 
-  const laske = async () => {
+  async function laske() {
     setTyossa(true);
     setVirhe(null);
     let v = await laskeListanEhdotus(tila.lista.alku, tapa);
@@ -846,7 +861,7 @@ const Generaattori = ({
     setTyossa(false);
     if (!v.ok) setVirhe(v.error);
     else if ('ehdotus' in v) onEhdotus(v);
-  };
+  }
 
   const hyvaksy = async () => {
     if (!ehdotus) return;

@@ -54,6 +54,8 @@ export type TyoaikaVastaus = {
   tanaan: string;
   muokattu: string | null;
   muokkasi: string | null;
+  // Saako kutsuja laatia listoja (guard_planning-muokkaus). Näyttää työkalut.
+  saaMuokata?: boolean;
 };
 
 // Suunniteltava henkilö: kapea ote työntekijäpankista (server/index.js: /api/tyovuorot/henkilot).
@@ -263,6 +265,39 @@ export const kirjaaPoissaolo = (p: { username: string; laji: string; alku: strin
 
 export const poistaPoissaolo = (id: string) =>
   jsonPyynto<{ ok: true }>(`/api/tyovuorot/poissaolot/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+// --- Henkilön työvuorot (11.10.2026) ---------------------------------------------------------
+
+export type HenkilonVuoro = {
+  vuoroId: string;
+  listaAlku: string;
+  pvm: string;
+  alkaa: string;
+  paattyy: string;
+  siteNimi: string;
+  vuoroNimi: string;
+  kestoMin: number;
+  julkaistu: boolean;
+  alkanut: boolean;
+};
+
+export type HenkilonNakyma = {
+  ok: true;
+  henkilo: Henkilo;
+  listat: { alku: string; viimeinen: string; julkaistu: boolean }[];
+  vuorot: HenkilonVuoro[];
+  poissaolot: Poissaolo[];
+  poissaololajit: Record<string, string>;
+};
+
+export const haeHenkilonVuorot = (username: string) =>
+  jsonPyynto<HenkilonNakyma>(`/api/tyovuorot/henkilo/${encodeURIComponent(username)}`);
+
+export const vapautaVuorot = (username: string, alku: string, loppu: string, muutossyy: string) =>
+  jsonPyynto<{ ok: true; vapautetut: { vuoroId: string; listaAlku: string }[] }>(
+    `/api/tyovuorot/henkilo/${encodeURIComponent(username)}/vapauta`,
+    { method: 'POST', body: JSON.stringify({ alku, loppu, muutossyy }) },
+  );
 
 // --- Julkaisu, muutokset ja vaihdot (erä 6) --------------------------------------------------
 

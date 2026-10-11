@@ -5,14 +5,15 @@
 // Listakortti avaa suunnitteluruudukon (erä 4, Suunnitteluruudukko.tsx).
 
 import { useEffect, useState } from 'react';
-import { CalendarClock, CalendarDays, TriangleAlert, Users } from 'lucide-react';
+import { CalendarClock, CalendarDays, CalendarPlus, PencilLine, TriangleAlert, UserRound, Users } from 'lucide-react';
 
 import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
 import { useTakaisinEste } from '../../shared/navigointi';
 import { Suunnitteluruudukko } from './Suunnitteluruudukko';
+import { HenkilonVuorot } from './HenkilonVuorot';
 import { PushIlmoitukset } from './PushIlmoitukset';
 import { TYOAIKAMUOTO, arvoTekstina, haeHenkilot, haeTyoaika, paiviaPaivaan, pvm } from './tyoaika';
-import type { Henkilo, Lista, TyoaikaVastaus } from './tyoaika';
+import type { Henkilo, Lista, Taytto, TyoaikaVastaus } from './tyoaika';
 
 type Props = {
   isAdmin: boolean;
@@ -26,8 +27,15 @@ export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props)
   const [henkilot, setHenkilot] = useState<Henkilo[] | null>(null);
   const [henkiloVirhe, setHenkiloVirhe] = useState<string | null>(null);
   // Avattu lista (erä 4). Takaisin-painike sulkee listan eikä poistu suunnittelusta.
-  const [avoinLista, setAvoinLista] = useState<string | null>(null);
-  useTakaisinEste(!!avoinLista, () => setAvoinLista(null));
+  // kaynnista: lista avataan täyttö käynnissä (Luo uusi lista, Täytä vapautuneet).
+  const [avoinLista, setAvoinLista] = useState<{ alku: string; kaynnista?: Taytto } | null>(null);
+  // Henkilön työvuorot (11.10.2026): '' = näkymä auki ilman valittua henkilöä.
+  const [henkiloNakyma, setHenkiloNakyma] = useState<string | null>(null);
+  // Henkilönäkymästä avattu lista palaa henkilönäkymään.
+  const [palaaHenkiloon, setPalaaHenkiloon] = useState<string | null>(null);
+  const [tyokalu, setTyokalu] = useState<'muokkaa' | 'luo' | null>(null);
+  useTakaisinEste(!!avoinLista, () => suljeLista());
+  useTakaisinEste(!avoinLista && henkiloNakyma !== null, () => setHenkiloNakyma(null));
 
   const hae = () => {
     haeTyoaika().then(setTila).catch((e: Error) => setVirhe(e.message));
@@ -35,9 +43,32 @@ export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props)
   };
   useEffect(hae, []);
 
-  if (avoinLista) {
-    return <Suunnitteluruudukko alku={avoinLista} onTakaisin={() => { setAvoinLista(null); hae(); }} />;
+  function suljeLista() {
+    setAvoinLista(null);
+    if (palaaHenkiloon !== null) { setHenkiloNakyma(palaaHenkiloon); setPalaaHenkiloon(null); }
+    hae();
   }
+
+  if (avoinLista) {
+    return <Suunnitteluruudukko key={avoinLista.alku} alku={avoinLista.alku} kaynnista={avoinLista.kaynnista} onTakaisin={suljeLista} />;
+  }
+
+  if (henkiloNakyma !== null && tila) {
+    return (
+      <HenkilonVuorot
+        henkilot={henkilot || []}
+        alkuperainen={henkiloNakyma || null}
+        saaMuokata={!!tila.saaMuokata}
+        tanaan={tila.tanaan}
+        onAvaaLista={(alku, kaynnista, username) => { setPalaaHenkiloon(username); setHenkiloNakyma(null); setAvoinLista({ alku, kaynnista }); }}
+        onTakaisin={() => { setHenkiloNakyma(null); hae(); }}
+      />
+    );
+  }
+
+  // "Uusi lista" = tuleva lista, jolla on vuoroja mutta ei yhtään sijoitusta. Listat
+  // syntyvät jaksorytmistä, joten luominen on niiden täyttämistä.
+  const tyhjat = tila ? tila.listat.filter((l) => l.vuoroja > 0 && l.sijoitettuja === 0 && l.alku > tila.tanaan) : [];
 
   return (
     <div>
@@ -80,6 +111,74 @@ export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props)
       )}
 
       {tila && tila.listat.length > 0 && (
+        <section className="mb-6">
+          <div className="flex flex-wrap gap-2">
+            {tila.saaMuokata && (
+              <button type="button" onClick={() => setTyokalu(tyokalu === 'luo' ? null : 'luo')} className={tyokaluNappi(tyokalu === 'luo', true)}>
+                <CalendarPlus size={16} />
+                Luo uusi lista
+              </button>
+            )}
+            <button type="button" onClick={() => setTyokalu(tyokalu === 'muokkaa' ? null : 'muokkaa')} className={tyokaluNappi(tyokalu === 'muokkaa')}>
+              <PencilLine size={16} />
+              {tila.saaMuokata ? 'Muokkaa listaa' : 'Avaa lista'}
+            </button>
+            <button type="button" onClick={() => setHenkiloNakyma('')} className={tyokaluNappi(false)}>
+              <UserRound size={16} />
+              Henkilön työvuorot{tila.saaMuokata ? ' ja poissaolot' : ''}
+            </button>
+          </div>
+
+          {tyokalu === 'muokkaa' && (
+            <div className="mt-3 bg-sunken border border-line rounded-lg p-3 flex flex-wrap gap-2">
+              {tila.listat.map((l) => (
+                <button
+                  key={l.alku}
+                  type="button"
+                  onClick={() => setAvoinLista({ alku: l.alku })}
+                  className="text-sm bg-surface border border-line rounded-md px-3 py-1.5 text-ink-body hover:border-accent"
+                >
+                  {pvm(l.alku)} – {pvm(l.viimeinen)}
+                  <span className="ml-1.5 text-xs text-ink-muted">{l.sijoitettuja}/{l.vuoroja}{l.julkaistu ? ' · julkaistu' : ''}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {tyokalu === 'luo' && (
+            <div className="mt-3 bg-sunken border border-line rounded-lg p-3">
+              {tyhjat.length === 0 ? (
+                <p className="text-sm text-ink-muted">
+                  Kaikilla tulevilla listoilla on jo sijoituksia. Avaa lista kohdasta Muokkaa listaa
+                  ja täytä avoimet vuorot sieltä.
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm text-ink-body mb-2">
+                    Valitse jakso. Lista avautuu ja tarkka optimointi laskee siihen ehdotuksen,
+                    jonka voit tarkistaa ennen hyväksyntää.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {tyhjat.map((l) => (
+                      <button
+                        key={l.alku}
+                        type="button"
+                        onClick={() => setAvoinLista({ alku: l.alku, kaynnista: 'optimi' })}
+                        className="text-sm bg-surface border border-line rounded-md px-3 py-1.5 text-ink-body hover:border-accent"
+                      >
+                        {pvm(l.alku)} – {pvm(l.viimeinen)}
+                        <span className="ml-1.5 text-xs text-ink-muted">{l.vuoroja} vuoroa</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {tila && tila.listat.length > 0 && (
         <section className="mb-8">
           <h3 className="text-lg font-bold text-ink flex items-center gap-2 mb-3">
             <CalendarDays size={18} className="text-accent" />
@@ -87,7 +186,7 @@ export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props)
           </h3>
           <div className="grid gap-3 sm:grid-cols-2">
             {tila.listat.map((l, i) => (
-              <ListaKortti key={l.alku} lista={l} tanaan={tila.tanaan} kuluva={i === 0} onAvaa={() => setAvoinLista(l.alku)} />
+              <ListaKortti key={l.alku} lista={l} tanaan={tila.tanaan} kuluva={i === 0} onAvaa={() => setAvoinLista({ alku: l.alku })} />
             ))}
           </div>
         </section>
@@ -153,6 +252,12 @@ export const Tyovuorosuunnittelu = ({ isAdmin, onAsetukset, onTakaisin }: Props)
     </div>
   );
 };
+
+const tyokaluNappi = (aktiivinen: boolean, ensisijainen = false) => `inline-flex items-center gap-2 text-sm font-medium rounded-lg px-4 py-2 transition-colors border ${
+  ensisijainen
+    ? 'bg-accent hover:bg-accent-hover text-white border-accent'
+    : aktiivinen ? 'bg-accent-soft text-accent-ink border-accent' : 'bg-surface hover:bg-sunken text-ink-body border-line'
+}`;
 
 // Listan kortti. Määräajan tila on tässä vaiheessa pelkkä kalenterilaskelma: julkaisua
 // ei vielä ole (erä 6), joten kortti kertoo vain kuinka paljon aikaa on jäljellä.

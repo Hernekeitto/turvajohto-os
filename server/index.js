@@ -46,7 +46,7 @@ import {
 } from './vuorot.js';
 import {
   ASETUKSET as TYOAIKA_ASETUKSET, JAKSON_ENIMMAIS_H, JAKSON_PITUUS_VK, SAANNOLLINEN_H,
-  lisaaPaivia, listat, normalisoiAsetukset, suunnitellutVuorot, tamaPaiva, tarkistaAsetukset, tarkistaMiehitys,
+  lisaaPaivia, listat, normalisoiAsetukset, paivaksi, suunnitellutVuorot, tamaPaiva, tarkistaAsetukset, tarkistaMiehitys,
   tesPoikkeamat,
 } from './tyovuorolista.js';
 import { korttiVoimassaAsti, tarkistaHenkilo } from './tyoaikatarkistus.js';
@@ -7959,7 +7959,7 @@ app.get('/api/tyovuorot/asetukset', requireAuth, guardPortti, (req, res) => {
     && !canEdit(req.permissions, null, 'guard_sites')) {
     return res.status(403).json({ ok: false, error: 'Ei oikeutta työvuorosuunnitteluun.' });
   }
-  res.json(tyoaikaVastaus(tyoaikaTietue(), luettavatKohteet(req)));
+  res.json({ ...tyoaikaVastaus(tyoaikaTietue(), luettavatKohteet(req)), saaMuokata: saaMuokataListaa(req) });
 });
 
 app.put('/api/tyovuorot/asetukset', requireAuth, guardPortti, requireAdmin, (req, res) => {
@@ -8408,6 +8408,135 @@ app.delete('/api/tyovuorot/poissaolot/:id', requireAuth, guardPortti, (req, res)
     kohde: poistettava.username, laji: poistettava.laji, alku: poistettava.alku, loppu: poistettava.loppu,
   });
   res.json({ ok: true });
+});
+
+// --- Henkilön työvuorot (11.10.2026) ------------------------------------------------------
+//
+// Suunnittelijan näkymä yhteen henkilöön kaikilta tulevilta listoilta. Tarve on sairastuminen
+// ja muu äkillinen poissaolo: poissaolo kirjataan, henkilön vuorot vapautetaan sen ajalta
+// kerralla, ja vapautuneet täytetään listoittain. Ilman tätä jokainen vuoro olisi pitänyt
+// etsiä ja tyhjentää käsin eri listoilta.
+
+const HENKILON_LISTOJA = 6;
+const VAPAUTUS_MAX_PV = 92;
+
+app.get('/api/tyovuorot/henkilo/:username', requireAuth, guardPortti, (req, res) => {
+  if (!saaSuunnitella(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta työvuorosuunnitteluun.' });
+  }
+  const henkilo = suunniteltavatHenkilot().find((h) => h.username === req.params.username);
+  if (!henkilo) return res.status(404).json({ ok: false, error: 'Henkilöä ei voi suunnitella.' });
+  const asetukset = normalisoiAsetukset(tyoaikaTietue());
+  const tulevat = listat(asetukset, tamaPaiva(), HENKILON_LISTOJA);
+  if (!tulevat.length) return res.json({ ok: true, henkilo, listat: [], vuorot: [], poissaolot: [] });
+  const kohteet = luettavatKohteet(req);
+  const vuorot = new Map(suunnitellutVuorot(kohteet, tulevat[0].alku, tulevat[tulevat.length - 1].loppu).map((v) => [v.id, v]));
+  const tietueet = readCollection('tyovuorolistat') || [];
+  const nyt = paikallinenHetki();
+  const omat = [];
+  for (const l of tulevat) {
+    const tietue = tietueet.find((t) => t?.id === l.alku);
+    for (const s of tietue?.sijoitukset || []) {
+      if (s.username !== henkilo.username) continue;
+      const v = vuorot.get(s.vuoroId);
+      if (!v) continue;
+      omat.push({
+        vuoroId: v.id, listaAlku: l.alku, pvm: v.pvm, alkaa: v.alkaa, paattyy: v.paattyy,
+        siteNimi: v.siteNimi, vuoroNimi: v.vuoroNimi, kestoMin: v.kestoMin,
+        julkaistu: !!tietue?.julkaistu, alkanut: v.alkaa <= nyt,
+      });
+    }
+  }
+  omat.sort((a, b) => a.alkaa.localeCompare(b.alkaa));
+  const ensimmainen = tulevat[0].alku;
+  const poissaolot = (readCollection('poissaolot') || [])
+    .filter((p) => p?.username === henkilo.username && p.loppu >= ensimmainen)
+    .sort((a, b) => a.alku.localeCompare(b.alku));
+  res.json({
+    ok: true,
+    henkilo,
+    listat: tulevat.map((l) => ({
+      alku: l.alku, viimeinen: l.viimeinen,
+      julkaistu: !!tietueet.find((t) => t?.id === l.alku)?.julkaistu,
+    })),
+    vuorot: omat,
+    poissaolot,
+    poissaololajit: POISSAOLOLAJIT,
+  });
+});
+
+// Vapauttaa henkilön alkamattomat vuorot aikaväliltä. Julkaistulla listalla jokainen
+// poisto on muutos, joka vaatii syyn ja ilmoitetaan (sama tie kuin käsin poistossa).
+// Syy tarkistetaan ennen ensimmäistäkään muutosta, jottei vapautus jää puolitiehen.
+app.post('/api/tyovuorot/henkilo/:username/vapauta', requireAuth, guardPortti, (req, res) => {
+  if (!saaMuokataListaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta muokata työvuorolistaa.' });
+  }
+  const username = String(req.params.username || '');
+  const henkilot = suunniteltavatHenkilot();
+  if (!henkilot.some((h) => h.username === username)) {
+    return res.status(404).json({ ok: false, error: 'Henkilöä ei voi suunnitella.' });
+  }
+  const alku = String(req.body?.alku || '');
+  const loppu = String(req.body?.loppu || '');
+  if (paivaksi(alku) === null || paivaksi(loppu) === null || loppu < alku) {
+    return res.status(400).json({ ok: false, error: 'Anna kelvollinen aikaväli.' });
+  }
+  if ((paivaksi(loppu) - paivaksi(alku)) / 86400000 > VAPAUTUS_MAX_PV) {
+    return res.status(400).json({ ok: false, error: `Aikaväli on liian pitkä (enintään ${VAPAUTUS_MAX_PV} päivää).` });
+  }
+  const muutossyy = String(req.body?.muutossyy || '').trim();
+  const asetukset = normalisoiAsetukset(tyoaikaTietue());
+  const kattavat = listat(asetukset, alku, 8).filter((l) => l.alku <= loppu);
+  const nyt = paikallinenHetki();
+
+  // Ensin kootaan mitä vapautetaan, sitten tarkistetaan syy, vasta sitten muutetaan.
+  const suunnitelma = [];
+  for (const l of kattavat) {
+    const ymp = listanYmparisto(req, l.alku);
+    if (!ymp) continue;
+    const poistettavat = ymp.tietue.sijoitukset.filter((s) => {
+      if (s.username !== username) return false;
+      const v = ymp.vuorot.get(s.vuoroId);
+      return v && v.pvm >= alku && v.pvm <= loppu && v.alkaa > nyt;
+    });
+    if (poistettavat.length) suunnitelma.push({ ymp, poistettavat });
+  }
+  if (suunnitelma.some((s) => s.ymp.tietue.julkaistu) && muutossyy.length < 3) {
+    return res.status(409).json({
+      ok: false, koodi: 'muutossyy_puuttuu',
+      error: 'Osa vuoroista on julkaistulla listalla. Kirjaa muutoksen syy — se näkyy muutoksen kohteille.',
+    });
+  }
+
+  const vapautetut = [];
+  for (const { ymp, poistettavat } of suunnitelma) {
+    let tietue = ymp.tietue;
+    for (const s of poistettavat) {
+      const tulos = sijoita({
+        tietue, lista: ymp.lista, vuoroId: s.vuoroId, username: null, vuorot: ymp.vuorot,
+        listanVuorot: ymp.listanVuorot, henkilot, kohteet: ymp.kohteet, asetukset: ymp.asetukset,
+        muutSijoitukset: ymp.muutSijoitukset, poissaolot: ymp.poissaolot, toiveet: ymp.toiveet,
+        tekija: req.username, muutossyy, nytPaikallinen: nyt,
+      });
+      if (!tulos.ok) continue;
+      tietue = tulos.tietue;
+      vapautetut.push({ vuoroId: s.vuoroId, listaAlku: ymp.lista.alku });
+    }
+    if (tietue !== ymp.tietue) {
+      const muut = (readCollection('tyovuorolistat') || []).filter((t) => t?.id !== ymp.lista.alku);
+      writeCollection('tyovuorolistat', [...muut, tietue]);
+      ilmoitaMuutoksista(ymp.tietue, tietue, req.username);
+    }
+  }
+  if (vapautetut.length) {
+    logAudit({
+      user: req.username, action: 'tyovuorot_vapautettu', collection: 'tyovuorolistat',
+      kohde: username, alku, loppu, vapautettu: vapautetut.length,
+      ...(muutossyy ? { muutossyy } : {}),
+    });
+  }
+  res.json({ ok: true, vapautetut });
 });
 
 // --- Vartijan omat: toiveet ja reservin kuittaus (erä 5) ---------------------------------
