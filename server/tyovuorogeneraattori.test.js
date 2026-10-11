@@ -160,3 +160,25 @@ test('niukoilla tunneilla osa-aikaisten minimit täyttyvät ennen kuukausipalkka
   for (const e of r.ehdotus) t[e.username] = (t[e.username] || 0) + 8;
   assert.ok(t.p1 >= 40 && t.p2 >= 48 && t.p3 >= 24, JSON.stringify(t));
 });
+
+test('osa-aikainen ei saa minimin yli tunteja kun kuukausipalkkaisella on vajetta', () => {
+  // Vain aamuvuorot: 21 × 8 h = 168 h. Kaksi kuukausipalkkaista (tavoite 240 h) ja
+  // osa-aikainen minimillä 40 h: osa-aikainen saa minimin, loput kuukausipalkkaisille.
+  const k = kohde([1, 1, 1, 1, 1, 1, 1], ['a', 'b', 'p']);
+  k.vuorotyypit[1].suunnittelu.maarat = [0, 0, 0, 0, 0, 0, 0];
+  const r = laske({ kohteet: [k], henkilot: [henkilo('a'), henkilo('b'), henkilo('p', { workTimeType: 'parttime', minHoursPer3Weeks: '40' })] });
+  const t = {};
+  for (const e of r.ehdotus) t[e.username] = (t[e.username] || 0) + 8;
+  assert.equal(t.p, 40, JSON.stringify(t));
+  assert.equal(t.a + t.b, 128, JSON.stringify(t));
+});
+
+test('vanheneva mutta voimassa oleva kortti ei vähennä vuoroja', () => {
+  // Kortti voimassa listan loppuun (31.10.) mutta vanhenee 45 pv sisällä.
+  const k = kohde([1, 1, 1, 1, 1, 1, 1], ['a', 'b']);
+  k.vuorotyypit[1].suunnittelu.maarat = [0, 0, 0, 0, 0, 0, 0];
+  const r = laske({ kohteet: [k], henkilot: [henkilo('a', { guardCardValidUntil: '2026-10' }), henkilo('b')] });
+  const t = {};
+  for (const e of r.ehdotus) t[e.username] = (t[e.username] || 0) + 8;
+  assert.ok(Math.abs(t.a - t.b) <= 8, JSON.stringify(t));
+});

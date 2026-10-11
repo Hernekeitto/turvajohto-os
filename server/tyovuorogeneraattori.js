@@ -25,12 +25,16 @@
 // ja kuhunkin valitaan pienimmän pistemäärän ehdokas. Pisteet:
 //
 //   vähimmäistyöaika osa-aikainen jonka sopimuksen minimi ei täyty menee aina edelle
+//   lisätyö          osa-aikainen minimin yli menee aina kuukausipalkkaisten jälkeen
 //   tuntivaje        jakson tavoitteesta puuttuva OSUUS vähentää pisteitä: vajaa
 //                    jakso täytetään ensin (kuukausipalkka 120 h, osa-aikainen sopimuksen
 //                    vähimmäistyöaika)
 //   toive           "toivon vuoroa" pienentää, "toivon vapaata"/"en pääse" kasvattaa
 //                    paljon — toive on varoitus eikä este, mutta generaattori kunnioittaa sitä
-//   varoitukset      jokainen vuoroa koskeva varoitus (putki, pitkä viikonloppu, kortti)
+//   varoitukset      jokainen vuoroa koskeva varoitus (putki, pitkä viikonloppu). Kortin
+//                    vanhenemisvaroitus ei vaikuta: kortti on voimassa vuoron aikana, tai
+//                    sijoitus olisi este — varoitus on muistutus uusinnasta, ei syy jättää
+//                    vartijaa ilman vuoroja (koeajo 11.10.2026: 65 h muiden ~95 h)
 //   tasapuolisuus    jo saadut yö- ja viikonloppuvuorot kasvattavat pisteitä samanlaisessa
 //                    vuorossa (TES 10 § soveltamisohje: vuorot jakautuvat tasapuolisesti)
 //   jatkuvuus        sama kohde edellisenä päivänä pienentää hieman
@@ -55,6 +59,12 @@ const PISTEET = {
   // 56/60). Arvo on suurempi kuin tyhjän jakson koko tuntivaje, joten järjestys on
   // ehdoton eikä pisteiden painotus.
   vahimmaistyoaika: -200,
+  // Osa-aikaisen tunnit minimin yli: vasta kun yhdellekään kuukausipalkkaiselle ei voi
+  // antaa vuoroa (käyttäjän päätös 11.10.2026). Kuukausipalkkaiselle maksetaan sovittu
+  // 120 h joka tapauksessa, joten vuoro osa-aikaiselle hänen sijastaan on maksettu tunti
+  // kahteen kertaan. Arvo on suurempi kuin tyhjän jakson tuntivaje, joten järjestys on
+  // ehdoton: minimi → kuukausipalkkaiset kohti 120 h → osa-aikaisten lisätunnit.
+  lisatyo: 150,
   toiveVuoro: -15,
   toiveVapaa: 120,
   varoitus: 20,
@@ -137,11 +147,11 @@ export function laskeEhdotus({
       const tav = tavoite(h);
       let pisteet = 0;
       if (tav > 0) pisteet += (Math.max(0, tav - ennen) / tav) * PISTEET.tuntivaje;
-      if (h.workTimeType === 'parttime' && tav > 0 && ennen < tav) pisteet += PISTEET.vahimmaistyoaika;
+      if (h.workTimeType === 'parttime' && tav > 0) pisteet += ennen < tav ? PISTEET.vahimmaistyoaika : PISTEET.lisatyo;
       const toive = omatToiveet(h.username).find((t) => t.pvm === v.pvm);
       if (toive?.laji === 'vuoro') pisteet += PISTEET.toiveVuoro;
       if (toive?.laji === 'vapaa' || toive?.laji === 'este') pisteet += PISTEET.toiveVapaa;
-      pisteet += koskevat.filter((x) => x.taso === 'varoitus' && x.koodi !== 'toive').length * PISTEET.varoitus;
+      pisteet += koskevat.filter((x) => x.taso === 'varoitus' && x.koodi !== 'toive' && x.koodi !== 'kortti_vanhenee').length * PISTEET.varoitus;
       const listanOmat = omat.get(h.username).filter((x) => x.pvm >= lista.alku);
       if (onYovuoro(v)) pisteet += listanOmat.filter(onYovuoro).length * PISTEET.tasapuolisuus;
       if (onViikonloppu(v)) pisteet += listanOmat.filter(onViikonloppu).length * PISTEET.tasapuolisuus;
