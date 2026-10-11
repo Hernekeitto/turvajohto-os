@@ -297,3 +297,25 @@ test('toive vapaasta ja este ovat varoituksia, toive vuorosta ei', () => {
   assert.ok(h.every((x) => x.taso === 'varoitus'));
   assert.match(h[1].viesti, /lääkäri/);
 });
+
+test('viikkovapaa: pitkä vapaa, josta vain osa osuu viikolle, riittää (korjaus 11.10.2026)', () => {
+  // ma–ke iltavuorot, seuraava vuoro vasta 11 päivän päästä. Edellisen viikon
+  // sunnuntaina iltavuoro. Viikolla 12.10. ei ole 30 h vapaata koko vapaan "enimmän osan"
+  // mielessä, mutta torstaista sunnuntaihin on 97 tuntia vapaata.
+  const asetukset = normalisoiAsetukset({ jaksotAlkaen: '2026-10-05', listanPituusVk: 6 });
+  const lista = listat(asetukset, '2026-10-05', 1)[0];
+  const v = [
+    vuoro(pv(6), '15:00', '23:00'),
+    vuoro(pv(7), '15:00', '23:00'), vuoro(pv(8), '15:00', '23:00'), vuoro(pv(9), '15:00', '23:00'),
+    vuoro(pv(20), '23:00', '07:00'),
+  ];
+  const t = tarkistaHenkilo({ henkilo: HENKILO, vuorot: v, kohteet: [KOHDE], asetukset, lista });
+  assert.ok(!koodit(t).includes('viikkovapaa'), JSON.stringify(t.havainnot));
+});
+
+test('viikkovapaa: vapaa joka on lähes kokonaan toisella viikolla ei kelpaa', () => {
+  // Viikolla 5.10. töitä ma–su klo 06–14, ja vapaa alkaa sunnuntaina klo 14: viikolle osuu
+  // vain 10 h, joten enintään 20 h lepoa voi lukea tälle viikolle.
+  const v = [0, 1, 2, 3, 4, 5, 6].map((i) => vuoro(pv(i), '06:00', '14:00'));
+  assert.ok(koodit(tarkista(v)).includes('viikkovapaa'));
+});

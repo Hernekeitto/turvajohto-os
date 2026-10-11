@@ -223,10 +223,17 @@ export function tarkistaHenkilo({ henkilo, vuorot, kohteet, asetukset, lista, po
     for (const g of aukot) {
       const paallekkain = Math.min(g.l, we) - Math.max(g.a, ws);
       if (paallekkain <= 0) continue;
+      // Pisin lepojakso joka mahtuu tähän vapaaseen ja jonka enin osa on tällä viikolla:
+      // enintään vapaan pituus, ja enintään kaksi kertaa viikolle osuva osuus.
+      //
+      // Korjattu 11.10.2026. Aiemmin koko vapaa hyväksyttiin vain, jos sen enin osa oli
+      // viikolla, mikä hylkäsi pitkät vapaat: yhdentoista päivän vapaasta vain neljä oli
+      // viikolla, joten viikko näytti vapaattomalta — vaikka sen sisään mahtuu mikä
+      // tahansa 30 tunnin lepo. TES 16 §:n "enin osa" koskee itse viikkolepoa, ei koko
+      // vuorojen välistä aukkoa. Listan ulkopuolelle jatkuva tuntematon aika (Infinity)
+      // käsitellään samalla kaavalla, joten se ei voi näyttää loputtomalta levolta.
       const pituus = g.l - g.a;
-      const tehollinen = Number.isFinite(pituus)
-        ? (paallekkain * 2 >= pituus ? pituus : 0)
-        : paallekkain;
+      const tehollinen = Math.min(pituus, 2 * paallekkain);
       paras = Math.max(paras, tehollinen);
     }
     return paras;
