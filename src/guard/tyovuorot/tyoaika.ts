@@ -315,8 +315,8 @@ export type Ehdotus = {
   avoimiksi: { vuoroId: string; syy: string }[];
 };
 
-export const laskeListanEhdotus = (alku: string) =>
-  jsonPyynto<Ehdotus>(`/api/tyovuorot/lista/${encodeURIComponent(alku)}/ehdotus`, { method: 'POST', body: '{}' });
+export const laskeListanEhdotus = (alku: string, tapa: 'tasainen' | 'keskitetty' = 'tasainen') =>
+  jsonPyynto<Ehdotus>(`/api/tyovuorot/lista/${encodeURIComponent(alku)}/ehdotus`, { method: 'POST', body: JSON.stringify({ tapa }) });
 
 export const hyvaksyEhdotus = (alku: string, ehdotus: { vuoroId: string; username: string }[], muutossyy?: string) =>
   jsonPyynto<ListaNakyma & { generaattori: { tehty: number; ohitetut: { vuoroId: string; username: string; syy: string }[] } }>(

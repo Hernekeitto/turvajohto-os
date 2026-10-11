@@ -8241,6 +8241,9 @@ app.post('/api/tyovuorot/lista/:alku/ehdotus', requireAuth, guardPortti, (req, r
     henkilot: suunniteltavatHenkilot(), kohteet: ymp.kohteet, asetukset: ymp.asetukset,
     muutSijoitukset: ymp.muutSijoitukset, poissaolot: ymp.poissaolot, toiveet: ymp.toiveet,
     nytPaikallinen: paikallinenHetki(),
+    // Täyttötapa: tasainen (vaje jaetaan) tai keskitetty (kuukausipalkkaiset 120 h täyteen
+    // aakkosjärjestyksessä; myöhemmin kohdeprosentin mukaan).
+    tapa: req.body?.tapa === 'keskitetty' ? 'keskitetty' : 'tasainen',
   });
   res.json({ ok: true, versio: ymp.tietue.versio || 0, ...tulos });
 });

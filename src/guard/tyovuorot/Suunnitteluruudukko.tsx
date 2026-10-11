@@ -819,6 +819,7 @@ const Generaattori = ({
   const [virhe, setVirhe] = useState<string | null>(null);
   const [muutossyy, setMuutossyy] = useState('');
   const [syytAuki, setSyytAuki] = useState(false);
+  const [tapa, setTapa] = useState<'tasainen' | 'keskitetty'>('keskitetty');
 
   if (!tila.saaMuokata) return null;
   const avoimia = tila.vuorot.filter((v) => !tila.sijoitukset.some((s) => s.vuoroId === v.id)).length;
@@ -827,7 +828,7 @@ const Generaattori = ({
   const laske = async () => {
     setTyossa(true);
     setVirhe(null);
-    const v = await laskeListanEhdotus(tila.lista.alku);
+    const v = await laskeListanEhdotus(tila.lista.alku, tapa);
     setTyossa(false);
     if (v.ok) onEhdotus(v); else setVirhe(v.error);
   };
@@ -851,7 +852,7 @@ const Generaattori = ({
 
   if (!ehdotus) {
     return (
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <button
           type="button"
           disabled={tyossa}
@@ -861,7 +862,19 @@ const Generaattori = ({
           <Wand2 size={16} />
           {tyossa ? 'Lasketaan…' : `Täytä avoimet (${avoimia})`}
         </button>
-        {virhe && <p className="mt-2 text-sm text-danger">{virhe}</p>}
+        {/* Täyttötapa (11.10.2026). Keskitetty täyttää kuukausipalkkaiset 120 tuntiin
+            järjestyksessä (nyt aakkoset, myöhemmin kohdeprosentti), koska sovittu 120 h
+            maksetaan joka tapauksessa. */}
+        <select
+          value={tapa}
+          onChange={(e) => setTapa(e.target.value as 'tasainen' | 'keskitetty')}
+          aria-label="Täyttötapa"
+          className="bg-surface border border-line rounded-lg px-2 py-2 text-sm text-ink"
+        >
+          <option value="keskitetty">Kuukausipalkkaiset 120 h täyteen (aakkosjärjestys)</option>
+          <option value="tasainen">Tasainen jako kaikille</option>
+        </select>
+        {virhe && <p className="w-full text-sm text-danger">{virhe}</p>}
       </div>
     );
   }

@@ -182,3 +182,29 @@ test('vanheneva mutta voimassa oleva kortti ei vähennä vuoroja', () => {
   for (const e of r.ehdotus) t[e.username] = (t[e.username] || 0) + 8;
   assert.ok(Math.abs(t.a - t.b) <= 8, JSON.stringify(t));
 });
+
+test('keskitetty: kuukausipalkkaiset täyttyvät 120 h aakkosjärjestyksessä', () => {
+  // 42 vuoroa × 8 h = 336 h kolmelle kuukausipalkkaiselle: kaksi ensimmäistä 120 h, kolmas loput.
+  const r = laske({ tapa: 'keskitetty' });
+  const t = {};
+  for (const e of r.ehdotus) t[e.username] = (t[e.username] || 0) + 8;
+  assert.equal(t.a, 120, JSON.stringify(t));
+  assert.equal(t.b, 120, JSON.stringify(t));
+  assert.equal(t.c, 96, JSON.stringify(t));
+  assert.deepEqual(tarkistaTulos(r), []);
+});
+
+test('keskitetty: annettu järjestys ohittaa aakkoset, osa-aikaisen minimi silti ensin', () => {
+  const r = laske({
+    tapa: 'keskitetty', prioriteetti: ['c', 'b', 'a'],
+    henkilot: [henkilo('a'), henkilo('b'), henkilo('c'), henkilo('p', { workTimeType: 'parttime', minHoursPer3Weeks: '40' })],
+    kohteet: [kohde(undefined, ['a', 'b', 'c', 'p'])],
+  });
+  const t = {};
+  for (const e of r.ehdotus) t[e.username] = (t[e.username] || 0) + 8;
+  assert.equal(t.c, 120, JSON.stringify(t));
+  // Toinen järjestyksessä jää enintään yhden vuoron vajaaksi: viimeinen vuoro ei aina mahdu
+  // lepoaikojen takia yksittäisellä siirrolla.
+  assert.ok(t.b >= 112 && t.b > t.a, JSON.stringify(t));
+  assert.ok(t.p >= 40, JSON.stringify(t));
+});
