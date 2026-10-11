@@ -24,6 +24,7 @@
 // Ahne algoritmi: vuorot käydään läpi vaikeimmasta alkaen (vähiten kelvollisia ehdokkaita),
 // ja kuhunkin valitaan pienimmän pistemäärän ehdokas. Pisteet:
 //
+//   vähimmäistyöaika osa-aikainen jonka sopimuksen minimi ei täyty menee aina edelle
 //   tuntivaje        jakson tavoitteesta puuttuva OSUUS vähentää pisteitä: vajaa
 //                    jakso täytetään ensin (kuukausipalkka 120 h, osa-aikainen sopimuksen
 //                    vähimmäistyöaika)
@@ -47,6 +48,13 @@ const PISTEET = {
   // tunteina laskettu vaje täytti ensin kuukausipalkkaiset ja jätti osa-aikaisen alle
   // sopimuksen vähimmäistyöajan).
   tuntivaje: -100,
+  // Osa-aikainen jonka sopimuksen vähimmäistyöaika ei vielä täyty menee aina edelle
+  // (käyttäjän päätös 11.10.2026). Vähimmäistyöaika on sopimuksessa luvattu, mutta
+  // kuukausipalkkainen saa palkkansa vajaallakin jaksolla. Ilman tätä vaje jaettiin
+  // tasan, ja koeajossa kaikki kolme osa-aikaista jäivät alle miniminsä (40/48, 73/80,
+  // 56/60). Arvo on suurempi kuin tyhjän jakson koko tuntivaje, joten järjestys on
+  // ehdoton eikä pisteiden painotus.
+  vahimmaistyoaika: -200,
   toiveVuoro: -15,
   toiveVapaa: 120,
   varoitus: 20,
@@ -129,6 +137,7 @@ export function laskeEhdotus({
       const tav = tavoite(h);
       let pisteet = 0;
       if (tav > 0) pisteet += (Math.max(0, tav - ennen) / tav) * PISTEET.tuntivaje;
+      if (h.workTimeType === 'parttime' && tav > 0 && ennen < tav) pisteet += PISTEET.vahimmaistyoaika;
       const toive = omatToiveet(h.username).find((t) => t.pvm === v.pvm);
       if (toive?.laji === 'vuoro') pisteet += PISTEET.toiveVuoro;
       if (toive?.laji === 'vapaa' || toive?.laji === 'este') pisteet += PISTEET.toiveVapaa;

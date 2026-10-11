@@ -138,13 +138,25 @@ test('loman tunnit lasketaan kattoon', () => {
   assert.ok(a + 100 <= 120, `a: ${a} h + 100 h lomaa`);
 });
 
-test('osa-aikaisen vähimmäistyöaika täyttyy samassa tahdissa kuin kuukausipalkkaisten', () => {
-  // 36 vuoroa × 8 h = 288 h, tavoitteet 120 + 120 + 60 = 300 h: vaje jaetaan, ei kasata.
+test('osa-aikaisen vähimmäistyöaika täyttyy ensin, vaje jää kuukausipalkkaisille', () => {
+  // 36 vuoroa × 8 h = 288 h, tavoitteet 120 + 120 + 60 = 300 h.
   const k = kohde([1, 1, 1, 1, 1, 1, 1]);
   k.vuorotyypit[1].suunnittelu.maarat = [1, 1, 1, 1, 1, 0, 0];
   const r = laske({ kohteet: [k], henkilot: [henkilo('a'), henkilo('b'), henkilo('c', { workTimeType: 'parttime', minHoursPer3Weeks: '60' })] });
   const t = {};
   for (const e of r.ehdotus) t[e.username] = (t[e.username] || 0) + 8;
-  assert.ok(t.c >= 56 && t.c <= 64, JSON.stringify(t));
+  assert.ok(t.c >= 60, JSON.stringify(t));
   assert.ok(t.a >= 104 && t.b >= 104, JSON.stringify(t));
+});
+
+test('niukoilla tunneilla osa-aikaisten minimit täyttyvät ennen kuukausipalkkaisia', () => {
+  // Vain aamuvuorot: 21 × 8 h = 168 h. Kolme osa-aikaista (minimit 40 + 48 + 24 = 112 h)
+  // ja kaksi kuukausipalkkaista. Minimien on täytyttävä vaikka kuukausipalkkaisilla on vajetta.
+  const k = kohde([1, 1, 1, 1, 1, 1, 1], ['a', 'b', 'p1', 'p2', 'p3']);
+  k.vuorotyypit[1].suunnittelu.maarat = [0, 0, 0, 0, 0, 0, 0];
+  const pt = (u, min) => henkilo(u, { workTimeType: 'parttime', minHoursPer3Weeks: String(min) });
+  const r = laske({ kohteet: [k], henkilot: [henkilo('a'), henkilo('b'), pt('p1', 40), pt('p2', 48), pt('p3', 24)] });
+  const t = {};
+  for (const e of r.ehdotus) t[e.username] = (t[e.username] || 0) + 8;
+  assert.ok(t.p1 >= 40 && t.p2 >= 48 && t.p3 >= 24, JSON.stringify(t));
 });
