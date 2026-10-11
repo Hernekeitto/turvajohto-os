@@ -264,6 +264,20 @@ export function forceLogout(username) {
   return true;
 }
 
+// Salasanan vaihto katkaisee käyttäjän selainistunnot, mutta ei sidottua laitetta:
+// laite todentautuu avaimellaan eikä salasanalla (laite.js), ja forceLogoutin
+// mitätöimää laitetta ei voi sitoa uudelleen ilman hälytyskeskuksen nollausta.
+// Hetki pyöristetään alas täyteen sekuntiin, koska JWT:n iat on sekunteina: muuten
+// samassa pyynnössä myönnetty uusi eväste olisi syntyessään jo mitätöity.
+export function mitatoiSelainistunnot(username) {
+  const users = readUsers();
+  const existing = users.find((u) => u.username === username);
+  if (!existing) return false;
+  existing.browser_sessions_invalidated_at = Math.floor(Date.now() / 1000) * 1000;
+  writeUsers(users);
+  return true;
+}
+
 // displayId on työntekijän pysyvä tunnistenumero (#1000 ->), joka annetaan
 // työntekijäpankissa ja kopioidaan tunnukselle sen luonnin yhteydessä. Sitä EI koskaan
 // muuteta jälkikäteen: raporttien kirjaajamerkintä ("Ensiapu 1 #1028") viittaa siihen,

@@ -21,6 +21,7 @@ import {
   resetTotpSecret,
   setTotpRequired,
   forceLogout,
+  mitatoiSelainistunnot,
 } from './db.js';
 import {
   readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage, lueKorkeinTunniste, kirjaaKorkeinTunniste, vapidAvaimet,
@@ -464,6 +465,11 @@ function getSessionUser(req) {
   // myönnetyt evästeet (myös vielä muuten voimassa olevat) mitätöityvät välittömästi,
   // eikä uutta evästettä tietenkään anneta ennen kuin käyttäjä kirjautuu uudelleen.
   if (user.session_invalidated_at && payload.iat * 1000 < user.session_invalidated_at) {
+    return null;
+  }
+  // Salasanan vaihto: ennen sitä myönnetyt evästeet eivät enää kelpaa (db.js:
+  // mitatoiSelainistunnot). Vertailu on sekunnin tarkkuudella kuten iat itse.
+  if (user.browser_sessions_invalidated_at && payload.iat * 1000 < user.browser_sessions_invalidated_at) {
     return null;
   }
   return payload.sub;
@@ -1730,8 +1736,16 @@ app.post('/api/users/:username/password', requireAuth, requireAdmin, async (req,
   const arvottu = arvoSalasana();
   updatePassword(username, bcrypt.hashSync(arvottu, 12));
   setMustChangePassword(username, true);
-  // Vanhat istunnot katkaistaan: syy nollaukseen voi olla vuotanut salasana.
-  if (user.role !== 'admin') forceLogout(username);
+  // Vanhat istunnot katkaistaan: syy nollaukseen voi olla vuotanut salasana. Koskee
+  // myös pääkäyttäjää, jolla on laajimmat oikeudet. Oman tunnuksen nollauksessa
+  // katkaistaan vain muut selainistunnot, jotta nollaaja ei putoa ulos ennen kuin
+  // on nähnyt uuden salasanan.
+  if (username === req.username) {
+    mitatoiSelainistunnot(username);
+    if (lueIstuntoToken(req)) setSessionCookie(res, username, user.role, onSovellusIstunto(req));
+  } else {
+    forceLogout(username);
+  }
   logAudit({ user: req.username, action: 'user_password_set', targetUser: username });
   let toimitus = null;
   try {
@@ -1769,6 +1783,11 @@ app.post('/api/change-password', requireAuth, loginLimiter, (req, res) => {
   }
   const hash = bcrypt.hashSync(newPassword, 12);
   updatePassword(req.username, hash);
+  // Muut selainistunnot katkeavat: salasana vaihdetaan usein juuri siksi, että joku
+  // muu on päässyt tunnukselle. Tämä istunto jatkuu uudella evästeellä. Sidottu
+  // laite jää voimaan (ks. db.js: mitatoiSelainistunnot).
+  mitatoiSelainistunnot(req.username);
+  if (lueIstuntoToken(req)) setSessionCookie(res, req.username, req.role, onSovellusIstunto(req));
   logAudit({ user: req.username, action: 'password_change' });
   res.json({ ok: true });
 });
