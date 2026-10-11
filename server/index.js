@@ -22,6 +22,7 @@ import {
   setTotpRequired,
   forceLogout,
   mitatoiSelainistunnot,
+  peruIstunto,
 } from './db.js';
 import {
   readCollection, writeCollection, KNOWN_COLLECTIONS, getStorageUsage, lueKorkeinTunniste, kirjaaKorkeinTunniste, vapidAvaimet,
@@ -321,9 +322,11 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync('ei-oikea-kayttaja-vakioaikaista-ver
 // jokaisessa pyynnössä erikseen: muuten sama eväste voisi vaihtaa pituuttaan sen
 // mukaan kummasta — sovelluksesta vai selaimesta — viimeisin pyyntö tuli, ja
 // selaimessa käynti lyhentäisi kentällä olevan vartijan istunnon.
-function setSessionCookie(res, username, role, sovellus = false) {
+// `sid` yksilöi istunnon kirjautumisesta uloskirjautumiseen: uusinta säilyttää sen, ja
+// uloskirjautuminen perii sen (db.js: peruIstunto). Uusi kirjautuminen saa uuden.
+function setSessionCookie(res, username, role, sovellus = false, sid = crypto.randomUUID()) {
   const maxAgeSeconds = istunnonKesto({ role, sovellus });
-  const token = jwt.sign({ sub: username, sovellus: sovellus || undefined }, JWT_SECRET, {
+  const token = jwt.sign({ sub: username, sid, sovellus: sovellus || undefined }, JWT_SECRET, {
     expiresIn: maxAgeSeconds,
   });
   res.setHeader(
@@ -472,6 +475,10 @@ function getSessionUser(req) {
   if (user.browser_sessions_invalidated_at && payload.iat * 1000 < user.browser_sessions_invalidated_at) {
     return null;
   }
+  // Uloskirjattu istunto: myös sen aiemmat, uusinnassa korvatut evästeet hylätään.
+  if (payload.sid && (user.revoked_sessions || []).some((r) => r.sid === payload.sid)) {
+    return null;
+  }
   return payload.sub;
 }
 
@@ -537,6 +544,11 @@ app.post('/api/logout', (req, res) => {
   // vapaa-ajalla ei seurata, koska tietoa ei silloin ole olemassa.
   const username = getSessionUser(req);
   if (username) unohdaSijainti(username);
+  // Evästeen poisto ei yksin riitä: talteen otettu kopio kelpaisi vanhenemiseensa asti.
+  // Ennen sid-kenttää myönnetyllä evästeellä ei ole perittävää tunnistetta; se vanhenee
+  // omaan tahtiinsa.
+  const istunto = lueIstuntoToken(req);
+  if (username && istunto?.sid) peruIstunto(username, istunto.sid, istunto.exp * 1000);
   clearSessionCookie(res);
   res.json({ ok: true });
 });
@@ -554,7 +566,7 @@ app.get('/api/session', (req, res) => {
   // kuin sovellusta oikeasti käytetään. Uusinta saa SAMAN keston kuin kirjautuminen
   // antoi, ks. setSessionCookie.
   if (user.role !== 'admin' && !laiteIstunto(req)) {
-    setSessionCookie(res, user.username, user.role, onSovellusIstunto(req));
+    setSessionCookie(res, user.username, user.role, onSovellusIstunto(req), lueIstuntoToken(req)?.sid);
   }
   res.json({
     authenticated: true,
@@ -640,7 +652,7 @@ function requireAuth(req, res, next) {
   // sidonta ja allekirjoitus, ja evästeen myöntäminen loisi rinnakkaisen istunnon jota
   // pakkouloskirjaus ei enää koskisi samalla säännöllä.
   if (user.role !== 'admin' && !laiteIstunto(req)) {
-    setSessionCookie(res, user.username, user.role, onSovellusIstunto(req));
+    setSessionCookie(res, user.username, user.role, onSovellusIstunto(req), lueIstuntoToken(req)?.sid);
   }
   next();
 }
@@ -1742,7 +1754,7 @@ app.post('/api/users/:username/password', requireAuth, requireAdmin, async (req,
   // on nähnyt uuden salasanan.
   if (username === req.username) {
     mitatoiSelainistunnot(username);
-    if (lueIstuntoToken(req)) setSessionCookie(res, username, user.role, onSovellusIstunto(req));
+    if (lueIstuntoToken(req)) setSessionCookie(res, username, user.role, onSovellusIstunto(req), lueIstuntoToken(req)?.sid);
   } else {
     forceLogout(username);
   }
@@ -1787,7 +1799,7 @@ app.post('/api/change-password', requireAuth, loginLimiter, (req, res) => {
   // muu on päässyt tunnukselle. Tämä istunto jatkuu uudella evästeellä. Sidottu
   // laite jää voimaan (ks. db.js: mitatoiSelainistunnot).
   mitatoiSelainistunnot(req.username);
-  if (lueIstuntoToken(req)) setSessionCookie(res, req.username, req.role, onSovellusIstunto(req));
+  if (lueIstuntoToken(req)) setSessionCookie(res, req.username, req.role, onSovellusIstunto(req), lueIstuntoToken(req)?.sid);
   logAudit({ user: req.username, action: 'password_change' });
   res.json({ ok: true });
 });

@@ -208,7 +208,9 @@ export function findUser(username) {
 // Käyttäjälista ilman salasanatiivistettä tai TOTP-salaisuutta — turvallinen
 // palauttaa suoraan APIsta. TOTP-salaisuus haetaan erikseen omalla admin-reitillään.
 export function listUsers() {
-  return readUsers().map(({ password_hash: _password_hash, totp_secret: _totp_secret, ...rest }) => rest);
+  return readUsers().map(({
+    password_hash: _password_hash, totp_secret: _totp_secret, revoked_sessions: _revoked_sessions, ...rest
+  }) => rest);
 }
 
 // Palauttaa käyttäjän TOTP-salaisuuden selväkielisenä (luodaan automaattisesti
@@ -274,6 +276,23 @@ export function mitatoiSelainistunnot(username) {
   const existing = users.find((u) => u.username === username);
   if (!existing) return false;
   existing.browser_sessions_invalidated_at = Math.floor(Date.now() / 1000) * 1000;
+  writeUsers(users);
+  return true;
+}
+
+// Uloskirjautuminen perii yhden istunnon (sid), ei käyttäjän muita istuntoja. Merkintä
+// pidetään istunnon viimeisimmän evästeen vanhenemiseen asti: liukuvan istunnon
+// aiemmat evästeet vanhenevat viimeistään silloin, joten myöhemmin merkintää ei
+// tarvita. Vanhentuneet merkinnät karsitaan jokaisella kirjauksella.
+export function peruIstunto(username, sid, voimassaMs) {
+  const users = readUsers();
+  const existing = users.find((u) => u.username === username);
+  if (!existing || !sid) return false;
+  const nyt = Date.now();
+  existing.revoked_sessions = [
+    ...(existing.revoked_sessions || []).filter((r) => r.voimassaMs > nyt && r.sid !== sid),
+    { sid, voimassaMs },
+  ];
   writeUsers(users);
   return true;
 }
