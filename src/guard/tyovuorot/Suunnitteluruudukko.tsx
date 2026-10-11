@@ -13,9 +13,9 @@ import { AlertTriangle, CalendarDays, CalendarOff, History, MessageSquareText, R
 
 import { TakaisinLinkki } from '../../shared/komponentit/TakaisinLinkki';
 import {
-  TYOAIKAMUOTO, haeLista, hyvaksyEhdotus, julkaiseLista, kirjaaPoissaolo, laskeListanEhdotus, poistaPoissaolo, pvm, ratkaiseVaihto, tallennaSijoitus,
+  TYOAIKAMUOTO, haeLista, haeOptimointi, hyvaksyEhdotus, julkaiseLista, kirjaaPoissaolo, laskeListanEhdotus, poistaPoissaolo, pvm, ratkaiseVaihto, tallennaSijoitus,
 } from './tyoaika';
-import type { Ehdotus, Havainto, ListaNakyma, Sijoitus, SuunniteltuVuoro, Taso } from './tyoaika';
+import type { Ehdotus, Havainto, ListaNakyma, Sijoitus, SuunniteltuVuoro, Taso, Taytto } from './tyoaika';
 import { listanPaivat, lyhytNimi, paivanOtsikko, rivit, solunTaso, valitsimenHenkilot } from './ruudukko';
 
 const TASON_VARI: Record<Taso, string> = {
@@ -819,7 +819,8 @@ const Generaattori = ({
   const [virhe, setVirhe] = useState<string | null>(null);
   const [muutossyy, setMuutossyy] = useState('');
   const [syytAuki, setSyytAuki] = useState(false);
-  const [tapa, setTapa] = useState<'tasainen' | 'keskitetty'>('keskitetty');
+  const [tapa, setTapa] = useState<Taytto>('optimi');
+  const [edistyminen, setEdistyminen] = useState<{ sekuntia: number; aikarajaS: number } | null>(null);
 
   if (!tila.saaMuokata) return null;
   const avoimia = tila.vuorot.filter((v) => !tila.sijoitukset.some((s) => s.vuoroId === v.id)).length;
@@ -828,9 +829,23 @@ const Generaattori = ({
   const laske = async () => {
     setTyossa(true);
     setVirhe(null);
-    const v = await laskeListanEhdotus(tila.lista.alku, tapa);
+    let v = await laskeListanEhdotus(tila.lista.alku, tapa);
+    // Optimointi on taustatyö: kysytään tulosta kolmen sekunnin välein.
+    if (v.ok && 'tyo' in v) {
+      const { tyo, aikarajaS } = v;
+      setEdistyminen({ sekuntia: 0, aikarajaS });
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const t = await haeOptimointi(tila.lista.alku, tyo);
+        if (t.ok && 'kesken' in t) { setEdistyminen({ sekuntia: t.sekuntia, aikarajaS: t.aikarajaS }); continue; }
+        v = t;
+        break;
+      }
+      setEdistyminen(null);
+    }
     setTyossa(false);
-    if (v.ok) onEhdotus(v); else setVirhe(v.error);
+    if (!v.ok) setVirhe(v.error);
+    else if ('ehdotus' in v) onEhdotus(v);
   };
 
   const hyvaksy = async () => {
@@ -860,20 +875,31 @@ const Generaattori = ({
           className="inline-flex items-center gap-2 bg-surface hover:bg-sunken text-ink-body border border-line text-sm font-medium rounded-lg px-4 py-2 transition-colors disabled:opacity-60"
         >
           <Wand2 size={16} />
-          {tyossa ? 'Lasketaan…' : `Täytä avoimet (${avoimia})`}
+          {tyossa
+            ? edistyminen ? `Optimoidaan… ${edistyminen.sekuntia} / ${edistyminen.aikarajaS} s` : 'Lasketaan…'
+            : `Täytä avoimet (${avoimia})`}
         </button>
         {/* Täyttötapa (11.10.2026). Keskitetty täyttää kuukausipalkkaiset 120 tuntiin
             järjestyksessä (nyt aakkoset, myöhemmin kohdeprosentti), koska sovittu 120 h
-            maksetaan joka tapauksessa. */}
+            maksetaan joka tapauksessa. Tarkka optimointi tekee saman koko listalle kerralla
+            ja kierrättää pitkät viikonloput (server/tyovuorooptimointi.js). */}
         <select
           value={tapa}
-          onChange={(e) => setTapa(e.target.value as 'tasainen' | 'keskitetty')}
+          disabled={tyossa}
+          onChange={(e) => setTapa(e.target.value as Taytto)}
           aria-label="Täyttötapa"
-          className="bg-surface border border-line rounded-lg px-2 py-2 text-sm text-ink"
+          className="max-w-full bg-surface border border-line rounded-lg px-2 py-2 text-sm text-ink"
         >
-          <option value="keskitetty">Kuukausipalkkaiset 120 h täyteen (aakkosjärjestys)</option>
+          <option value="optimi">Tarkka optimointi (suositus)</option>
+          <option value="keskitetty">Nopea: 120 h täyteen aakkosjärjestyksessä</option>
           <option value="tasainen">Tasainen jako kaikille</option>
         </select>
+        {tapa === 'optimi' && (
+          <p className="w-full text-xs text-ink-muted">
+            Täyttää kuukausipalkkaiset tasan 120 tuntiin järjestyksessä ja kierrättää pitkät vapaat
+            viikonloput (TES 16 §) koko listalle kerralla. Laskenta kestää enintään puolitoista minuuttia.
+          </p>
+        )}
         {virhe && <p className="w-full text-sm text-danger">{virhe}</p>}
       </div>
     );
@@ -895,6 +921,13 @@ const Generaattori = ({
         Ehdotetut näkyvät ruudukossa katkoviivoin. Ehdotus ei sisällä esteitä, TES-poikkeamia eikä
         yli 120 tunnin jaksoja. Mitään ei ole vielä tallennettu.
       </p>
+      {ehdotus.optimi && (
+        <p className="text-xs text-ink-muted mt-0.5">
+          {ehdotus.optimi.tila === 'optimi' && `Tarkka optimointi: paras mahdollinen ratkaisu (${String(ehdotus.optimi.sekuntia).replace('.', ',')} s).`}
+          {ehdotus.optimi.tila === 'aikaraja' && `Tarkka optimointi: paras aikarajassa löydetty ratkaisu (${String(ehdotus.optimi.sekuntia).replace('.', ',')} s).`}
+          {ehdotus.optimi.tila === 'virhe' && 'Tarkka optimointi epäonnistui, joten ehdotus on laskettu nopealla täytöllä.'}
+        </p>
+      )}
       {syyt.size > 0 && (
         <div className="mt-2">
           <button type="button" onClick={() => setSyytAuki(!syytAuki)} className="text-xs font-medium text-accent hover:underline">

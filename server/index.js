@@ -51,6 +51,7 @@ import {
 } from './tyovuorolista.js';
 import { korttiVoimassaAsti, tarkistaHenkilo } from './tyoaikatarkistus.js';
 import { laskeEhdotus } from './tyovuorogeneraattori.js';
+import { optimoiTaustalla } from './tyovuorooptimointi.js';
 import {
   julkaise, kaikkiSijoitukset, kuittaaMuutokset, kuittaamattomat, sijoita, tarkistaLista, tyhjaLista,
 } from './tyovuorolistat.js';
@@ -8236,16 +8237,59 @@ app.post('/api/tyovuorot/lista/:alku/ehdotus', requireAuth, guardPortti, (req, r
   }
   const ymp = listanYmparisto(req, req.params.alku);
   if (!ymp) return res.status(404).json({ ok: false, error: 'Listaa ei löytynyt tälle päivälle.' });
-  const tulos = laskeEhdotus({
+  const syote = {
     tietue: ymp.tietue, lista: ymp.lista, vuorot: ymp.vuorot, listanVuorot: ymp.listanVuorot,
     henkilot: suunniteltavatHenkilot(), kohteet: ymp.kohteet, asetukset: ymp.asetukset,
     muutSijoitukset: ymp.muutSijoitukset, poissaolot: ymp.poissaolot, toiveet: ymp.toiveet,
     nytPaikallinen: paikallinenHetki(),
-    // Täyttötapa: tasainen (vaje jaetaan) tai keskitetty (kuukausipalkkaiset 120 h täyteen
-    // aakkosjärjestyksessä; myöhemmin kohdeprosentin mukaan).
-    tapa: req.body?.tapa === 'keskitetty' ? 'keskitetty' : 'tasainen',
-  });
+  };
+  // Tarkka optimointi (11.10.2026): koko lista kerralla, pitkien viikonloppujen kierto
+  // mukana. Kestää aikarajan verran (nginx katkaisisi pitkän pyynnön), joten se käynnistetään
+  // taustatyönä ja selain kysyy tulosta (GET .../ehdotus/:tyo). Kerrallaan yksi.
+  if (req.body?.tapa === 'optimi') {
+    const kaynnissa = [...optimoinnit.values()].find((o) => !o.vastaus);
+    if (kaynnissa) {
+      if (kaynnissa.alku === ymp.lista.alku) return res.status(202).json({ ok: true, tyo: kaynnissa.id, aikarajaS: OPTIMOINNIN_AIKARAJA_S });
+      return res.status(429).json({ ok: false, error: 'Toinen optimointi on käynnissä. Yritä hetken päästä uudelleen.' });
+    }
+    const tyo = { id: crypto.randomUUID(), alku: ymp.lista.alku, kayttaja: req.username, alkoi: Date.now(), vastaus: null };
+    optimoinnit.set(tyo.id, tyo);
+    const versio = ymp.tietue.versio || 0;
+    optimoiTaustalla(syote, { aikarajaS: OPTIMOINNIN_AIKARAJA_S }).then((tulos) => {
+      if (tulos.ok) {
+        tyo.vastaus = { ok: true, versio, ...tulos.tulos };
+      } else {
+        // Varalla ahne keskitetty täyttö, jottei suunnittelija jää tyhjin käsin.
+        console.error('[optimointi]', tulos.virhe);
+        try {
+          tyo.vastaus = { ok: true, versio, ...laskeEhdotus({ ...syote, tapa: 'keskitetty' }), optimi: { tila: 'virhe', varalla: 'keskitetty' } };
+        } catch (e) {
+          tyo.vastaus = { ok: false, error: 'Ehdotuksen laskenta epäonnistui.' };
+        }
+      }
+      tyo.valmistui = Date.now();
+      // Tulos säilyy kymmenen minuuttia noutoa varten.
+      setTimeout(() => optimoinnit.delete(tyo.id), 10 * 60 * 1000).unref?.();
+    });
+    return res.status(202).json({ ok: true, tyo: tyo.id, aikarajaS: OPTIMOINNIN_AIKARAJA_S });
+  }
+  // Täyttötapa: tasainen (vaje jaetaan) tai keskitetty (kuukausipalkkaiset 120 h täyteen
+  // aakkosjärjestyksessä; myöhemmin kohdeprosentin mukaan).
+  const tulos = laskeEhdotus({ ...syote, tapa: req.body?.tapa === 'keskitetty' ? 'keskitetty' : 'tasainen' });
   res.json({ ok: true, versio: ymp.tietue.versio || 0, ...tulos });
+});
+
+const OPTIMOINNIN_AIKARAJA_S = 90;
+const optimoinnit = new Map();
+
+app.get('/api/tyovuorot/lista/:alku/ehdotus/:tyo', requireAuth, guardPortti, (req, res) => {
+  if (!saaMuokataListaa(req)) {
+    return res.status(403).json({ ok: false, error: 'Ei oikeutta muokata työvuorolistaa.' });
+  }
+  const tyo = optimoinnit.get(String(req.params.tyo));
+  if (!tyo || tyo.alku !== req.params.alku) return res.status(404).json({ ok: false, error: 'Optimointia ei löytynyt. Laske ehdotus uudelleen.' });
+  if (!tyo.vastaus) return res.json({ ok: true, kesken: true, sekuntia: Math.round((Date.now() - tyo.alkoi) / 1000), aikarajaS: OPTIMOINNIN_AIKARAJA_S });
+  res.json(tyo.vastaus);
 });
 
 const EHDOTUKSEN_MAX = 5000;

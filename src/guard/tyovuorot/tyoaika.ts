@@ -313,10 +313,22 @@ export type Ehdotus = {
   versio: number;
   ehdotus: { vuoroId: string; username: string; pisteet: number }[];
   avoimiksi: { vuoroId: string; syy: string }[];
+  // Tarkka optimointi (11.10.2026): 'optimi' = todistetusti paras, 'aikaraja' = paras
+  // aikarajassa löydetty, 'virhe' = optimointi epäonnistui ja tilalla on ahne täyttö.
+  optimi?: { tila: string; sekuntia?: number; varalla?: string };
 };
 
-export const laskeListanEhdotus = (alku: string, tapa: 'tasainen' | 'keskitetty' = 'tasainen') =>
-  jsonPyynto<Ehdotus>(`/api/tyovuorot/lista/${encodeURIComponent(alku)}/ehdotus`, { method: 'POST', body: JSON.stringify({ tapa }) });
+export type Taytto = 'optimi' | 'keskitetty' | 'tasainen';
+
+// Optimointi käynnistyy taustatyönä (202) ja tulos haetaan erikseen.
+export type OptimointiKesken = { ok: true; tyo: string; aikarajaS: number };
+export type OptimoinninTila = { ok: true; kesken: true; sekuntia: number; aikarajaS: number };
+
+export const laskeListanEhdotus = (alku: string, tapa: Taytto = 'tasainen') =>
+  jsonPyynto<Ehdotus | OptimointiKesken>(`/api/tyovuorot/lista/${encodeURIComponent(alku)}/ehdotus`, { method: 'POST', body: JSON.stringify({ tapa }) });
+
+export const haeOptimointi = (alku: string, tyo: string) =>
+  jsonPyynto<Ehdotus | OptimoinninTila>(`/api/tyovuorot/lista/${encodeURIComponent(alku)}/ehdotus/${encodeURIComponent(tyo)}`);
 
 export const hyvaksyEhdotus = (alku: string, ehdotus: { vuoroId: string; username: string }[], muutossyy?: string) =>
   jsonPyynto<ListaNakyma & { generaattori: { tehty: number; ohitetut: { vuoroId: string; username: string; syy: string }[] } }>(

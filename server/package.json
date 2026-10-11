@@ -15,6 +15,7 @@
     "cookie": "^2.0.1",
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
+    "highs": "1.15.3",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.0",
     "nodemailer": "^10.0.10",
