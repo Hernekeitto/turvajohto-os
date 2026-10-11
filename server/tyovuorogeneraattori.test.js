@@ -208,3 +208,20 @@ test('keskitetty: annettu järjestys ohittaa aakkoset, osa-aikaisen minimi silti
   assert.ok(t.b >= 112 && t.b > t.a, JSON.stringify(t));
   assert.ok(t.p >= 40, JSON.stringify(t));
 });
+
+test('keskitetty: 8 ja 9 tunnin vuoroista koottu jakso osuu tasan 120 tuntiin', () => {
+  // Aamu 06–15 (9 h) ja ilta 15–23 (8 h): 21 × 17 h = 357 h neljälle. Kahden ensimmäisen on
+  // oltava tasan 120 h (esim. 15 × 8 tai 8 × 9 + 6 × 8), ei 113 tai 116.
+  const k = kohde([1, 1, 1, 1, 1, 1, 1]);
+  k.vuorotyypit[0].paattyy = '15:00';
+  k.vuorotyypit[1].alkaa = '15:00';
+  k.vuorotyypit[1].paattyy = '23:00';
+  k.perehdytykset.push({ username: 'd', vuorotyyppiIdt: ['aamu', 'ilta'] });
+  const r = laske({ kohteet: [k], tapa: 'keskitetty', henkilot: [henkilo('a'), henkilo('b'), henkilo('c'), henkilo('d')] });
+  const t = {};
+  for (const e of r.ehdotus) t[e.username] = (t[e.username] || 0) + r.syote.vuorot.get(e.vuoroId).kestoMin / 60;
+  assert.equal(r.avoimiksi.length, 0);
+  assert.equal(t.a, 120, JSON.stringify(t));
+  assert.equal(t.b, 120, JSON.stringify(t));
+  assert.deepEqual(tarkistaTulos(r), []);
+});

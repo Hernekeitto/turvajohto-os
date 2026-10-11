@@ -263,47 +263,130 @@ export function laskeEhdotus({
   // --- Keskitys (tapa 'keskitetty', 11.10.2026) --------------------------------------
   //
   // Kattavan jaon jälkeen vuoroja siirretään järjestyksen viimeisiltä ensimmäisille
-  // kuukausipalkkaisille, kunnes nämä ovat 120 tunnissa. Vuoro vain vaihtaa omistajaa,
-  // joten yhtään vuoroa ei avata. Siirto tehdään vain kun vastaanottajalle ei tule estettä
-  // tai poikkeamaa eikä yli 120 tuntia, ja osa-aikaiselta ei oteta vuoroa minimin alle.
-  // Varoitusta (putki, pitkä viikonloppu) ei hyväksytä vastaanottajalle: täysi jakso ei
-  // saa tarkoittaa yhdeksää peräkkäistä vuoroa ilman viikkovapaata.
+  // kuukausipalkkaisille, kunnes nämä ovat TASAN 120 tunnissa. Vuoro vain vaihtaa
+  // omistajaa, joten yhtään vuoroa ei avata.
+  //
+  // Kaksi siirtolajia:
+  //   siirto  vastaanottaja ottaa lahjoittajan vuoron
+  //   vaihto  vastaanottaja antaa oman vuoronsa lahjoittajalle ja ottaa tältä toisen.
+  //           Tällä kierretään lepoaikaesteet (vuoro ei mahdu viereisen vuoron takia) ja
+  //           vaihdetaan 9 h vuoro 8 h vuoroksi, jotta summa osuu tasan 120 tuntiin.
+  //
+  // Tavoite on tasan 120 h, ei "seuraava ei mahdu" (korjattu 11.10.2026: 13 × 8 + 1 × 9 =
+  // 113 h jäi vajaaksi, vaikka 15 × 8 = 120 olisi ollut mahdollinen). Jäännös joka ei ole
+  // koottavissa listan vuoropituuksista (esim. 7 h kun vuorot ovat 8 ja 9 h) on umpikuja,
+  // joten siihen johtavia siirtoja ei tehdä.
+  //
+  // Vastaanottajalle ei hyväksytä estettä, poikkeamaa eikä varoitusta (putki, pitkä
+  // viikonloppu): täysi jakso ei saa tarkoittaa yhdeksää vuoroa putkeen. Lahjoittajalle
+  // vaihdossa annettava vuoro ei saa tuoda estettä eikä poikkeamaa, eikä osa-aikaiselta
+  // viedä tunteja minimin alle.
   if (keskitetty) {
-    const tunnitJaksolla = (u, vuoro) => {
-      const h = sijoitettavat.find((x) => x.username === u);
-      const { jaksot } = tarkistaHenkilo({
-        henkilo: h, vuorot: omat.get(u), kohteet, asetukset, lista,
+    const pituudet = [...new Set(avoimet.map((v) => v.kestoMin))].filter((m) => m > 0);
+    const koottavissa = new Map();
+    const koottava = (min) => {
+      if (min === 0) return true;
+      if (min < 0) return false;
+      if (koottavissa.has(min)) return koottavissa.get(min);
+      koottavissa.set(min, false);
+      const tulos = pituudet.some((p) => koottava(min - p));
+      koottavissa.set(min, tulos);
+      return tulos;
+    };
+    const katto = SAANNOLLINEN_H * 60;
+    const henkilo = (u) => sijoitettavat.find((x) => x.username === u);
+    const arvio = (u, vuorolista, kohde) => {
+      const { havainnot, jaksot } = tarkistaHenkilo({
+        henkilo: henkilo(u), vuorot: vuorolista, kohteet, asetukset, lista,
         poissaolot: omatPoissaolot(u), toiveet: omatToiveet(u),
       });
-      return jaksot.find((j) => vuoro.pvm >= j.alku && vuoro.pvm <= j.viimeinen)?.tunnit || 0;
+      const jakso = jaksot.find((j) => kohde.pvm >= j.alku && kohde.pvm <= j.viimeinen);
+      return { havainnot, min: Math.round((jakso ? jakso.tunnit : 0) * 60) };
+    };
+    const puhdasVastaanottajalle = (havainnot, id) => !havainnot.some((x) => x.vuoroIdt.includes(id)
+      && x.taso !== 'huomio' && x.koodi !== 'kortti_vanhenee');
+    const kelpaaLahjoittajalle = (havainnot, id) => !havainnot.some((x) => x.vuoroIdt.includes(id)
+      && (x.taso === 'este' || x.taso === 'poikkeama'));
+    const osaAikaOk = (u, minUusi, kohde) => {
+      const h = henkilo(u);
+      return h.workTimeType !== 'parttime' || minUusi >= tavoite(h) * 60 || minUusi >= arvio(u, omat.get(u), kohde).min;
+    };
+    const omistaja = new Map(ehdotus.map((e) => [e.vuoroId, e]));
+    const siirra = (id, keneltä, kenelle) => {
+      const s = vuoroKartta.get(id);
+      omat.set(keneltä, omat.get(keneltä).filter((x) => x.id !== id));
+      omat.get(kenelle).push(s);
+      omistaja.get(id).username = kenelle;
     };
     const vastaanottajat = jarjestysLista
-      .map((u) => sijoitettavat.find((h) => h.username === u))
+      .map((u) => henkilo(u))
       .filter((h) => h && h.workTimeType === 'monthly');
-    let siirtyi = true;
-    while (siirtyi) {
-      siirtyi = false;
-      for (const r of vastaanottajat) {
-        // Lahjoittajat järjestyksen lopusta alkaen; vain generaattorin omia ehdotuksia.
-        const lahjoitettavat = ehdotus
-          .filter((e) => jarjestysNumero(e.username) > jarjestysNumero(r.username) && perehdytetyt(vuoroKartta.get(e.vuoroId)).some((h) => h.username === r.username))
-          .sort((a, b) => jarjestysNumero(b.username) - jarjestysNumero(a.username));
-        for (const e of lahjoitettavat) {
-          const s = vuoroKartta.get(e.vuoroId);
-          if (tunnitJaksolla(r.username, s) + s.kestoMin / 60 > SAANNOLLINEN_H) continue;
-          const antaja = sijoitettavat.find((h) => h.username === e.username);
-          if (antaja.workTimeType === 'parttime' && tunnitJaksolla(antaja.username, s) - s.kestoMin / 60 < tavoite(antaja)) continue;
-          const { havainnot } = tarkistaHenkilo({
-            henkilo: r, vuorot: [...omat.get(r.username), s], kohteet, asetukset, lista,
-            poissaolot: omatPoissaolot(r.username), toiveet: omatToiveet(r.username),
-          });
-          if (havainnot.some((x) => x.vuoroIdt.includes(s.id) && x.taso !== 'huomio' && x.koodi !== 'kortti_vanhenee')) continue;
-          omat.set(e.username, omat.get(e.username).filter((x) => x.id !== s.id));
-          omat.get(r.username).push(s);
-          e.username = r.username;
-          siirtyi = true;
+
+    for (let kierros = 0; kierros < 200; kierros++) {
+      let muuttui = false;
+      for (const jakso of lista.jaksot || []) {
+        const jaksossa = (v) => v.pvm >= jakso.alku && v.pvm <= jakso.viimeinen;
+        for (const r of vastaanottajat) {
+          const rOmat = () => omat.get(r.username);
+          const nyt = arvio(r.username, rOmat(), { pvm: jakso.alku }).min;
+          const jaannos = katto - nyt;
+          if (jaannos <= 0) continue;
+          // Lahjoittajat järjestyksen lopusta; vain generaattorin omia ehdotuksia.
+          const lahjoitettavat = ehdotus
+            .filter((e) => jaksossa(vuoroKartta.get(e.vuoroId)) && jarjestysNumero(e.username) > jarjestysNumero(r.username)
+              && perehdytetyt(vuoroKartta.get(e.vuoroId)).some((h) => h.username === r.username))
+            .sort((a, b) => jarjestysNumero(b.username) - jarjestysNumero(a.username));
+  
+          // Siirto. Ensin ne joiden jälkeen jäännös on koottavissa vuoropituuksista, sitten
+          // muut: koottamaton pieni jäännös (esim. 4 h) voidaan vielä kuroa umpeen 8 → 9 h
+          // vaihdoilla alla.
+          let tehty = false;
+          const siirrettavat = [
+            ...lahjoitettavat.filter((e) => koottava(jaannos - vuoroKartta.get(e.vuoroId).kestoMin)),
+            ...lahjoitettavat.filter((e) => !koottava(jaannos - vuoroKartta.get(e.vuoroId).kestoMin)),
+          ];
+          for (const e of siirrettavat) {
+            const s = vuoroKartta.get(e.vuoroId);
+            const uusiJaannos = jaannos - s.kestoMin;
+            if (uusiJaannos < 0) continue;
+            const antaja = e.username;
+            if (!osaAikaOk(antaja, arvio(antaja, omat.get(antaja).filter((x) => x.id !== s.id), s).min, s)) continue;
+            if (!puhdasVastaanottajalle(arvio(r.username, [...rOmat(), s], s).havainnot, s.id)) continue;
+            siirra(s.id, antaja, r.username);
+            tehty = true;
+            break;
+          }
+          if (tehty) { muuttui = true; continue; }
+  
+          // Vaihto: anna oma ehdotettu vuoro R, ota lahjoittajan vuoro S. Hyväksytään kun jäännös
+          // pienenee (myös 8 → 9 h, joka kuroo 4 tunnin jäännöksen umpeen neljällä vaihdolla).
+          const omatEhdotetut = rOmat().filter((x) => omistaja.get(x.id)?.username === r.username && jaksossa(x));
+          for (const e of lahjoitettavat) {
+            if (tehty) break;
+            const s = vuoroKartta.get(e.vuoroId);
+            const antaja = e.username;
+            for (const rv of omatEhdotetut) {
+              if (rv.id === s.id) continue;
+              const uusiJaannos = jaannos - s.kestoMin + rv.kestoMin;
+              if (uusiJaannos < 0 || uusiJaannos >= jaannos) continue;
+              if (!perehdytetyt(rv).some((h) => h.username === antaja)) continue;
+              const rUusi = [...rOmat().filter((x) => x.id !== rv.id), s];
+              if (!puhdasVastaanottajalle(arvio(r.username, rUusi, s).havainnot, s.id)) continue;
+              const aUusi = [...omat.get(antaja).filter((x) => x.id !== s.id), rv];
+              const aArvio = arvio(antaja, aUusi, rv);
+              if (!kelpaaLahjoittajalle(aArvio.havainnot, rv.id)) continue;
+              if (aArvio.min > katto) continue;
+              if (!osaAikaOk(antaja, aArvio.min, rv)) continue;
+              siirra(s.id, antaja, r.username);
+              siirra(rv.id, r.username, antaja);
+              tehty = true;
+              break;
+            }
+          }
+          if (tehty) muuttui = true;
         }
       }
+      if (!muuttui) break;
     }
   }
 
